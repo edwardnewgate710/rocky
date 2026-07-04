@@ -8,10 +8,10 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspace @chess-platform/core && npm run build --workspace @chess-platform/game",
-    "test": "npm run test --workspace @chess-platform/core && npm run test --workspace @chess-platform/game",
-    "lint": "npm run lint --workspace @chess-platform/core && npm run lint --workspace @chess-platform/game",
-    "clean": "npm run clean --workspace @chess-platform/core && npm run clean --workspace @chess-platform/game"
+    "build": "npm run build --workspace @chess-platform/core && npm run build --workspace @chess-platform/game && npm run build --workspace @chess-platform/realtime-gateway",
+    "test": "npm run test --workspace @chess-platform/core && npm run test --workspace @chess-platform/game && npm run test --workspace @chess-platform/realtime-gateway",
+    "lint": "npm run lint --workspace @chess-platform/core && npm run lint --workspace @chess-platform/game && npm run lint --workspace @chess-platform/realtime-gateway",
+    "clean": "npm run clean --workspace @chess-platform/core && npm run clean --workspace @chess-platform/game && npm run clean --workspace @chess-platform/realtime-gateway"
   },
   "engines": {
     "node": ">=20"

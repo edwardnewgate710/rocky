@@ -1,0 +1,198 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import type { TimeControl } from '@chess-platform/game';
+import { GameAuthority } from '../src/authority';
+import { InMemoryPubSub } from '../src/pubsub';
+import { InMemoryConnection } from '../src/transport';
+import { RealtimeGateway } from '../src/gateway';
+
+const TC: TimeControl = { initialMs: 300_000, incrementMs: 3_000, delayMs: 0, kind: 'increment' };
+
+/** Drain pending micro/macro tasks so async command application completes. */
+const flush = () => new Promise((r) => setImmediate(r));
+
+function harness() {
+  let clock = 1_000;
+  const now = () => (clock += 10);
+  const pubsub = new InMemoryPubSub();
+  const authority = new GameAuthority(pubsub, now);
+  const gateway = new RealtimeGateway(authority, pubsub, now);
+  authority.createGame({
+    gameId: 'g1',
+    timeControl: TC,
+    players: { white: 'alice', black: 'bob' },
+    rated: true,
+  });
+  const connect = (id: string) => {
+    const c = new InMemoryConnection(id);
+    gateway.handleConnection(c);
+    return c;
+  };
+  return { authority, pubsub, gateway, connect };
+}
+
+test('join assigns the correct role and returns current state', () => {
+  const { connect } = harness();
+  const alice = connect('a');
+  alice.deliver({ t: 'join', gameId: 'g1', userId: 'alice' });
+  const joined = alice.last('joined');
+  assert.ok(joined);
+  assert.equal(joined!.role, 'white');
+  assert.equal(joined!.state.turn, 'w');
+
+  const sam = connect('s');
+  sam.deliver({ t: 'join', gameId: 'g1', userId: 'sam' });
+  assert.equal(sam.last('joined')!.role, 'spectator');
+});
+
+test('presence reflects seats and spectator count', () => {
+  const { connect } = harness();
+  const alice = connect('a');
+  const bob = connect('b');
+  const sam = connect('s');
+  alice.deliver({ t: 'join', gameId: 'g1', userId: 'alice' });
+  bob.deliver({ t: 'join', gameId: 'g1', userId: 'bob' });
+  sam.deliver({ t: 'join', gameId: 'g1', userId: 'sam' });
+  const p = sam.last('presence')!;
+  assert.equal(p.white, true);
+  assert.equal(p.black, true);
+  assert.equal(p.spectators, 1);
+});
+
+test('a legal move is broadcast to players and spectators', async () => {
+  const { connect } = harness();
+  const alice = connect('a');
+  const bob = connect('b');
+  const sam = connect('s');
+  for (const [c, u] of [
+    [alice, 'alice'],
+    [bob, 'bob'],
+    [sam, 'sam'],
+  ] as const) {
+    c.deliver({ t: 'join', gameId: 'g1', userId: u });
+  }
+  alice.deliver({ t: 'move', gameId: 'g1', uci: 'e2e4', clientSeq: 1 });
+  await flush();
+  for (const c of [alice, bob, sam]) {
+    const mv = c.last('move');
+    assert.ok(mv, `${c.id} should receive the move`);
+    assert.equal(mv!.ply, 1);
+    assert.equal(mv!.san, 'e4');
+  }
+});
+
+test('an illegal move is rejected referencing its clientSeq (rollback signal)', async () => {
+  const { connect } = harness();
+  const alice = connect('a');
+  alice.deliver({ t: 'join', gameId: 'g1', userId: 'alice' });
+  alice.deliver({ t: 'move', gameId: 'g1', uci: 'e2e5', clientSeq: 7 });
+  await flush();
+  const rej = alice.last('reject')!;
+  assert.equal(rej.code, 'illegal_move');
+  assert.equal(rej.ref, 7);
+});
+
+test('stale or duplicate clientSeq is rejected', async () => {
+  const { connect } = harness();
+  const alice = connect('a');
+  alice.deliver({ t: 'join', gameId: 'g1', userId: 'alice' });
+  alice.deliver({ t: 'move', gameId: 'g1', uci: 'e2e4', clientSeq: 1 });
+  await flush();
+  alice.deliver({ t: 'move', gameId: 'g1', uci: 'd2d4', clientSeq: 1 });
+  await flush();
+  const rej = alice.last('reject')!;
+  assert.equal(rej.code, 'stale_seq');
+});
+
+test('a spectator cannot move; an unjoined connection cannot move', async () => {
+  const { connect } = harness();
+  const sam = connect('s');
+  sam.deliver({ t: 'join', gameId: 'g1', userId: 'sam' });
+  sam.deliver({ t: 'move', gameId: 'g1', uci: 'e2e4', clientSeq: 1 });
+  await flush();
+  assert.equal(sam.last('reject')!.code, 'not_a_player');
+
+  const ghost = connect('g');
+  ghost.deliver({ t: 'move', gameId: 'g1', uci: 'e2e4', clientSeq: 1 });
+  await flush();
+  assert.equal(ghost.last('reject')!.code, 'not_joined');
+});
+
+test('reconnect: rejoin restores seat + state, resume replays missed moves', async () => {
+  const { connect } = harness();
+  const alice = connect('a');
+  const bob = connect('b');
+  alice.deliver({ t: 'join', gameId: 'g1', userId: 'alice' });
+  bob.deliver({ t: 'join', gameId: 'g1', userId: 'bob' });
+  alice.deliver({ t: 'move', gameId: 'g1', uci: 'e2e4', clientSeq: 1 });
+  await flush();
+  bob.deliver({ t: 'move', gameId: 'g1', uci: 'e7e5', clientSeq: 1 });
+  await flush();
+
+  // Alice drops after seeing only ply 1.
+  alice.close();
+  assert.equal(alice.isClosed, true);
+
+  // She reconnects on a fresh socket.
+  const alice2 = connect('a2');
+  alice2.deliver({ t: 'join', gameId: 'g1', userId: 'alice' });
+  const joined = alice2.last('joined')!;
+  assert.equal(joined.role, 'white'); // seat restored
+  assert.equal(joined.state.ply, 2); // current authoritative state
+
+  // She asks for everything after the last ply she saw (1).
+  alice2.deliver({ t: 'resume', gameId: 'g1', lastPly: 1 });
+  const resumed = alice2.last('resumed')!;
+  const missedPlies = resumed.missed.filter((m) => m.t === 'move').map((m) => (m.t === 'move' ? m.ply : 0));
+  assert.deepEqual(missedPlies, [2]);
+  assert.equal(resumed.state.ply, 2);
+
+  // And she can keep playing; the move reaches bob.
+  alice2.deliver({ t: 'move', gameId: 'g1', uci: 'g1f3', clientSeq: 2 });
+  await flush();
+  assert.equal(bob.last('move')!.ply, 3);
+});
+
+test('draw offer pushes state; acceptance ends the game as a draw', async () => {
+  const { connect } = harness();
+  const alice = connect('a');
+  const bob = connect('b');
+  alice.deliver({ t: 'join', gameId: 'g1', userId: 'alice' });
+  bob.deliver({ t: 'join', gameId: 'g1', userId: 'bob' });
+
+  alice.deliver({ t: 'offerDraw', gameId: 'g1' });
+  await flush();
+  const st = bob.last('state')!;
+  assert.equal(st.state.drawOffer, 'w');
+
+  bob.deliver({ t: 'acceptDraw', gameId: 'g1' });
+  await flush();
+  const ended = bob.last('ended')!;
+  assert.equal(ended.result, '1/2-1/2');
+  assert.equal(ended.termination, 'agreement');
+});
+
+test('join to an unknown game is rejected', () => {
+  const { connect } = harness();
+  const c = connect('c');
+  c.deliver({ t: 'join', gameId: 'ghost', userId: 'alice' });
+  assert.equal(c.last('reject')!.code, 'unknown_game');
+});
+
+test('ping is answered with a pong carrying a server timestamp', () => {
+  const { connect } = harness();
+  const c = connect('c');
+  c.deliver({ t: 'ping', ts: 42 });
+  const pong = c.last('pong')!;
+  assert.equal(pong.ts, 42);
+  assert.equal(typeof pong.serverTs, 'number');
+});
+
+test('closing the last connection frees the room', async () => {
+  const { connect, gateway } = harness();
+  const alice = connect('a');
+  alice.deliver({ t: 'join', gameId: 'g1', userId: 'alice' });
+  assert.equal(gateway.roomCount, 1);
+  alice.close();
+  assert.equal(gateway.roomCount, 0);
+});

@@ -55,8 +55,8 @@ designed here and implemented on the roadmap.
 
 | Service | Responsibility | Scaling model |
 |---|---|---|
-| **Realtime Gateway** | WS connections, room membership, presence, fanout of authoritative events, latency/ping | Stateless; sticky by connection, state in Redis |
-| **Game Authority** | Owns live game state; validates every move with `@chess-platform/core`; emits events; clocks | Sharded actors keyed by gameId; one owner per game |
+| **Realtime Gateway** ✅ | WS connections, room membership, presence, fanout of authoritative events, latency/ping | Stateless; sticky by connection, state in Redis |
+| **Game Authority** ✅ | Owns live game state; validates every move with `@chess-platform/core`; emits events; clocks | Sharded actors keyed by gameId; one owner per game |
 | **API / Core** | Users, profiles, ratings, seeks/lobby, tournaments, social graph, studies, learning | Stateless replicas behind gateway |
 | **AI Orchestrator** | Routes AI requests to providers, benchmarking, voting/ensemble, caching, cost/rate control | Stateless; queue-backed for heavy jobs |
 | **Engine Bridge** | UCI process pool for Stockfish + Fairy-Stockfish (variants); analysis, hints, bots | Worker pool, autoscaled by queue depth |
@@ -67,7 +67,13 @@ with *spectators* (can be huge for a broadcast), while state ownership scales
 with *active games*. Decoupling lets 100k spectators watch a game held by one
 authoritative shard.
 
-## 4. Real-time protocol
+## 4. Real-time protocol ✅
+
+Implemented in `@chess-platform/realtime-gateway` (M3). The protocol,
+authority, rooms, presence, reconnect/resume, and latency helpers ship as a
+dependency-free, fully-tested domain; the WebSocket transport and Redis pub/sub
+are documented adapter seams bound in the deployable service (M14). The
+description below is the shipped contract.
 
 - Transport: WebSocket (WSS), binary frames (MessagePack) for moves, JSON for
   control. Fallback to long-poll only for degraded networks.

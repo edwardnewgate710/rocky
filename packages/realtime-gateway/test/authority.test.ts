@@ -1,0 +1,159 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import type { TimeControl } from '@chess-platform/game';
+import { GameAuthority, AuthorityError } from '../src/authority';
+import { InMemoryPubSub, gameChannel } from '../src/pubsub';
+import type { Broadcast } from '../src/protocol';
+
+const TC: TimeControl = { initialMs: 300_000, incrementMs: 3_000, delayMs: 0, kind: 'increment' };
+
+function setup() {
+  let clock = 1_000;
+  const now = () => clock;
+  const advance = (ms: number) => (clock += ms);
+  const pubsub = new InMemoryPubSub();
+  const authority = new GameAuthority(pubsub, now);
+  authority.createGame({
+    gameId: 'g1',
+    timeControl: TC,
+    players: { white: 'alice', black: 'bob' },
+    rated: true,
+  });
+  return { authority, pubsub, advance, now };
+}
+
+test('createGame registers a game and exposes authoritative state', () => {
+  const { authority } = setup();
+  assert.equal(authority.has('g1'), true);
+  const s = authority.getState('g1');
+  assert.equal(s.ply, 0);
+  assert.equal(s.turn, 'w');
+  assert.equal(s.status.over, false);
+  assert.equal(s.fenHash.length, 12);
+  assert.deepEqual(s.players, { white: 'alice', black: 'bob' });
+});
+
+test('duplicate game id is refused', () => {
+  const { authority } = setup();
+  assert.throws(
+    () =>
+      authority.createGame({
+        gameId: 'g1',
+        timeControl: TC,
+        players: { white: 'x', black: 'y' },
+        rated: false,
+      }),
+    (e) => e instanceof AuthorityError && e.code === 'invalid_command',
+  );
+});
+
+test('a legal move is applied and published as an authoritative broadcast', async () => {
+  const { authority, pubsub } = setup();
+  const got: Broadcast[] = [];
+  pubsub.subscribe(gameChannel('g1'), (m) => got.push(m));
+
+  const res = await authority.apply('g1', 'alice', { kind: 'move', uci: 'e2e4' });
+  assert.equal(res.broadcasts.length, 1);
+  assert.equal(got.length, 1);
+  const mv = got[0]!;
+  assert.equal(mv.t, 'move');
+  if (mv.t === 'move') {
+    assert.equal(mv.ply, 1);
+    assert.equal(mv.san, 'e4');
+    assert.equal(mv.by, 'w');
+    assert.equal(mv.fenHash.length, 12);
+  }
+  assert.equal(authority.getState('g1').turn, 'b');
+});
+
+test('moving out of turn is rejected with not_your_turn', async () => {
+  const { authority } = setup();
+  await assert.rejects(
+    authority.apply('g1', 'bob', { kind: 'move', uci: 'e7e5' }),
+    (e) => e instanceof AuthorityError && e.code === 'not_your_turn',
+  );
+});
+
+test('an illegal move is rejected with illegal_move and does not change state', async () => {
+  const { authority } = setup();
+  await assert.rejects(
+    authority.apply('g1', 'alice', { kind: 'move', uci: 'e2e5' }),
+    (e) => e instanceof AuthorityError && e.code === 'illegal_move',
+  );
+  assert.equal(authority.getState('g1').ply, 0);
+});
+
+test('a spectator (non-player) cannot issue commands', async () => {
+  const { authority } = setup();
+  await assert.rejects(
+    authority.apply('g1', 'eve', { kind: 'move', uci: 'e2e4' }),
+    (e) => e instanceof AuthorityError && e.code === 'not_a_player',
+  );
+});
+
+test('commands are serialized per game (submission order, no interleaving)', async () => {
+  const { authority } = setup();
+  // Fire White's and Black's first moves concurrently. The per-game lock must
+  // apply them strictly in submission order — White's e4 first (legal), then
+  // Black's e5 (now legal because it is Black's turn) — never interleaving into
+  // a corrupt state. Both succeed and the log is exactly [e4, e5].
+  const [white, black] = await Promise.allSettled([
+    authority.apply('g1', 'alice', { kind: 'move', uci: 'e2e4' }),
+    authority.apply('g1', 'bob', { kind: 'move', uci: 'e7e5' }),
+  ]);
+  assert.equal(white.status, 'fulfilled');
+  assert.equal(black.status, 'fulfilled');
+  const state = authority.getState('g1');
+  assert.equal(state.ply, 2);
+  assert.deepEqual(state.moves.map((m) => m.san), ['e4', 'e5']);
+  assert.equal(state.turn, 'w');
+});
+
+test('an out-of-turn move loses the race and is rejected', async () => {
+  const { authority } = setup();
+  // If Black tries to move first (submitted first), it is rejected because it
+  // is White's turn; a subsequent White move still succeeds.
+  const [black, whiteLate] = await Promise.allSettled([
+    authority.apply('g1', 'bob', { kind: 'move', uci: 'e7e5' }),
+    authority.apply('g1', 'alice', { kind: 'move', uci: 'e2e4' }),
+  ]);
+  assert.equal(black.status, 'rejected');
+  assert.equal(whiteLate.status, 'fulfilled');
+  assert.equal(authority.getState('g1').ply, 1);
+});
+
+test('resignation ends the game and broadcasts a terminal event', async () => {
+  const { authority, pubsub } = setup();
+  const got: Broadcast[] = [];
+  pubsub.subscribe(gameChannel('g1'), (m) => got.push(m));
+  const res = await authority.apply('g1', 'bob', { kind: 'resign' });
+  const ended = res.broadcasts.find((b) => b.t === 'ended');
+  assert.ok(ended);
+  if (ended && ended.t === 'ended') {
+    assert.equal(ended.result, '1-0');
+    assert.equal(ended.termination, 'resignation');
+    assert.equal(ended.winner, 'w');
+  }
+  assert.equal(authority.getState('g1').status.over, true);
+  assert.ok(got.some((b) => b.t === 'ended'));
+});
+
+test('getMissedSince returns only broadcasts after the given ply', async () => {
+  const { authority } = setup();
+  for (const uci of ['e2e4', 'e7e5', 'g1f3']) {
+    await authority.apply('g1', uci[1] === '2' || uci[1] === '1' ? 'alice' : 'bob', { kind: 'move', uci });
+  }
+  const missedFrom1 = authority.getMissedSince('g1', 1);
+  const plies = missedFrom1.filter((b) => b.t === 'move').map((b) => (b.t === 'move' ? b.ply : 0));
+  assert.deepEqual(plies, [2, 3]);
+  assert.equal(authority.getMissedSince('g1', 0).length, 3);
+  assert.equal(authority.getMissedSince('g1', 3).length, 0);
+});
+
+test('unknown game raises unknown_game', () => {
+  const { authority } = setup();
+  assert.throws(
+    () => authority.getState('nope'),
+    (e) => e instanceof AuthorityError && e.code === 'unknown_game',
+  );
+});
