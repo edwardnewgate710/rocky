@@ -1,6 +1,6 @@
 # ADR 0002 — Engine Bridge decisions (Milestone 5)
 
-- **Status:** Proposed (refined after gate approval-in-principle)
+- **Status:** Accepted (implemented by `@chess-platform/engine`, M5)
 - **Date:** 2026-07-04
 - **Context milestone:** M5 (Engine Bridge)
 - **Supersedes:** none

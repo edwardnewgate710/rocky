@@ -1,11 +1,11 @@
 # Gambit — Engine Bridge Architecture
 
-> **Status:** PROPOSED (Milestone 5 gate) — refined after gate approval-in-principle.
-> This is the contract the future `@chess-platform/engine` package implements and
-> that the AI orchestrator (M7), `api`, and the deployable analysis/bot service
-> consume. Decisions are recorded in [`docs/adr/0002-engine-bridge.md`](adr/0002-engine-bridge.md).
-> **No engine code is written until this document is approved**, mirroring the M4
-> `DATABASE.md` gate. Refines [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) §3 & §6.
+> **Status:** ACCEPTED & IMPLEMENTED (Milestone 5). This is the contract that
+> `@chess-platform/engine` implements and that the AI orchestrator (M7), `api`, and the
+> deployable analysis/bot service (M14) consume. Decisions are recorded in
+> [`docs/adr/0002-engine-bridge.md`](adr/0002-engine-bridge.md) (Accepted). The package is
+> shipped and green (51 tests); items marked "deferred to M14" below are the only parts not
+> yet wired. Refines [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) §3 & §6.
 
 This document defines the architecture of the `@chess-platform/engine` package and
 the Engine Bridge service: how compute providers (native UCI engines today; neural

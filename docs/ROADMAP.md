@@ -128,14 +128,33 @@ The database architecture is defined and approved in
 > features that justify nested, client-driven reads (studies, master-game
 > explorer, social graph) in **M10–M11**.
 
-## 🚧 Milestone 5 — Engine bridge
+## ✅ Milestone 5 — Engine bridge (`@chess-platform/engine`)
 
-> **Gate status:** Architecture design proposed in `docs/ENGINE_BRIDGE.md` and `docs/adr/0002-engine-bridge.md`. **Pending review.** No code implementation yet.
+> **Gate:** APPROVED — design in [`docs/ENGINE_BRIDGE.md`](ENGINE_BRIDGE.md); decisions in
+> [`docs/adr/0002-engine-bridge.md`](adr/0002-engine-bridge.md) (Status: Accepted). The package
+> is **implemented and green**; a real-engine golden test and the authority↔bot wiring are
+> env-gated / deferred to M14, mirroring the M3/M4 scope split.
 
-- Stockfish + Fairy-Stockfish UCI worker pool; analysis, eval bars, hints, bots
-  with rating-calibrated strength.
-- **Acceptance:** analysis of a known game matches expected best moves; pool
-  autoscales under queue load.
+Provider-agnostic UCI engine bridge behind clean seams (`AnalysisProvider`, `EngineManager`,
+`EnginePool`, `EngineInstance`, `EnginePlugin`, `AnalysisCache`, `EngineTransport`) driving
+analysis, hints, eval bars, and rating-calibrated bots — never in the gameplay legality path.
+
+- ✅ Dependency-free domain; native processes and any client isolated behind seams.
+- ✅ Multi-engine, capability-discovery routing (Stockfish + Fairy-Stockfish + future engines);
+  no engine-name conditionals; engine version negotiation + build fingerprinting.
+- ✅ Worker lifecycle: warm pool, autoscale by queue depth, crash detection + hot replacement,
+  per-pool circuit breaker, graceful drain, health interfaces.
+- ✅ Priority scheduler (bot > live analysis > batch > background) with aging + backpressure;
+  cooperative + hard (watchdog) cancellation.
+- ✅ `AnalysisCache` port with in-process LRU default (durable backend deferred — future ADR-0003,
+  so M5 does not touch the approved `DATABASE.md` contract).
+- ✅ **Acceptance (in-package, deterministic):** 51/51 tests pass against a `FakeEngineTransport`
+  — info/multi-PV parsing, pool autoscaling under queue pressure, crash → hot-replacement with no
+  job loss, circuit-breaker trip, graceful drain, cancellation, watchdog kill, version-floor
+  enforcement, cache correctness, and a full scripted bot game. Strict TypeScript, lint clean.
+- ⬜ **Deferred to M14 (deployable service):** real-engine golden test (env-gated; needs a pinned
+  binary in CI), live-infra autoscaling, distributed remote workers, and wiring the bot/analysis
+  path into the M3 `GameAuthority` + M4 `EventStore`.
 
 ## ⬜ Milestone 6 — Web frontend (playable)
 

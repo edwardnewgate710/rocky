@@ -4,11 +4,12 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-04 — Principal Software Architect. **Milestone 5 gate: design
-REFINED, awaiting final approval.** M1–M4 remain complete and green (119 tests). This
-commit refines the engine-bridge design (`docs/ENGINE_BRIDGE.md`) and `ADR-0002` after
-a ten-point review — adding an `EngineManager` orchestrator, a plugin + capability-
-discovery model, an `AnalysisProvider` abstraction above UCI, a cache **port**
+_Last updated: 2026-07-04 — Principal Software Architect. **Milestone 5 COMPLETE:** the
+`@chess-platform/engine` package is implemented, tested (51/51), and reviewed. ADR-0002 is
+**Accepted**. Whole repo now 170 tests green. This commit ships the engine bridge and updates
+the handover. Base commit before this one: `c465fba` ("docs: refine M5 engine-bridge design"). The
+prior refinement note (kept for history): a ten-point review adding an `EngineManager` orchestrator,
+a plugin + capability-discovery model, an `AnalysisProvider` abstraction above UCI, a cache **port**
 (reversing the earlier durable-Postgres choice), and reliability seams (isolation, hot
 replacement, graceful shutdown, health). **No engine code is written until the gate is
 approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate opened)._
@@ -35,8 +36,9 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 | **M3** ✅ | `@chess-platform/realtime-gateway` | Server-authoritative WS protocol, `GameAuthority`, rooms/presence/fanout, resume, latency comp; `PubSub`/`Transport` seams | 26/26 |
 | **M4a** ✅ | `@chess-platform/persistence` | Durable append-only event store (in-memory + Postgres), migrations, repositories, Glicko-2, UUIDv7 | 14/14 (+2 DB-gated) |
 | **M4b** ✅ | `@chess-platform/api` | Stateless REST + identity (scrypt/`PasswordHasher`, HMAC access tokens, rotating refresh tokens, RBAC), seeks/ratings/games, published OpenAPI 3.1 | 45/45 |
+| **M5** ✅ | `@chess-platform/engine` | Provider-agnostic UCI engine bridge: `AnalysisProvider`/`EngineManager`/`EnginePool`/`EngineInstance`/`EnginePlugin`/`AnalysisCache`/`EngineTransport`; capability discovery, priority scheduler, watchdog/cancellation, crash→hot-replacement, circuit breaker, graceful drain, health | 51/51 |
 
-**Whole-repo total: 119 tests pass (2 Postgres-gated skips).** Strict TS, zero errors, lint clean.
+**Whole-repo total: 170 tests pass (2 Postgres-gated skips).** Strict TS, zero errors, lint clean.
 
 ## 3. Architecture summary (as-built)
 
@@ -185,9 +187,10 @@ needs no database — it runs against in-memory fakes.
 - A user's ratings profile issues one `RatingsRepository.get` per variant (≤8);
   fine now, but add a bulk `ratingsForUser` query before it's hot.
 
-### Milestone 5 gate — status (design refined, awaiting final approval)
-**NO ENGINE CODE YET.** Gate docs: `docs/ENGINE_BRIDGE.md` + `docs/adr/0002-engine-bridge.md`
-(ADR Status: Proposed). A ten-point refinement review was applied; outcomes:
+### Milestone 5 — IMPLEMENTED (`@chess-platform/engine` shipped)
+**Status: implemented, 51/51 tests green, strict TS + lint clean.** Gate docs:
+`docs/ENGINE_BRIDGE.md` + `docs/adr/0002-engine-bridge.md` (ADR Status: **Accepted**). The
+ten-point refinement (all adopted) is realised in code as these seams:
 
 - **EngineManager** orchestrator over `EnginePool` over `EngineInstance` — adopted.
 - **Plugin-oriented engines** + **capability discovery** (no engine-name conditionals) — adopted.
@@ -203,15 +206,39 @@ No item was rejected; each is a seam within the new `@chess-platform/engine` pac
 changes the platform architecture, service map, or milestone plan. **Additional ADR evaluation:**
 only ADR-0002 is required now; ADR-0003 (durable cache) is flagged for later.
 
-**On approval:** flip ADR-0002 → *Accepted*, mark ROADMAP M5 → build, and scaffold
-`packages/engine` starting from the ports + `FakeEngineTransport` (dependency-free domain first).
-The M4 identity-hardening pass (WebAuthn/passkeys, §5) remains a tracked alternative if M5 is paused.
+**As-built (`packages/engine`, dependency-free domain, native processes behind seams):**
+- `src/provider.ts` — `AnalysisProvider` (the contract every caller depends on).
+- `src/manager.ts` — `EngineManager`: registry, capability-based routing, cache + FEN boundary,
+  health aggregation, graceful shutdown (also `AnalysisProvider` + `AsyncDisposable`).
+- `src/pool.ts` — `EnginePool`: warm workers, autoscale by queue depth, crash→hot-replacement,
+  per-pool circuit breaker, graceful drain.
+- `src/instance.ts` — `UciEngineInstance`: UCI state machine, per-search watchdog, cooperative
+  (`stop`) + hard cancellation, crash detection, version floor.
+- `src/plugin.ts` — `EnginePlugin` + built-in Stockfish / Fairy-Stockfish descriptors.
+- `src/transport.ts` — `EngineTransport` seam + deterministic `FakeEngineTransport`;
+  `src/child-process-transport.ts` — hardened native `ChildProcessTransport`.
+- `src/cache.ts` — `AnalysisCache` port + `InMemoryLruCache`/`NullCache` (durable backend deferred).
+- `src/queue.ts` — priority scheduler (aging + backpressure); `src/capabilities.ts` — discovery,
+  fingerprint, version negotiation; `src/uci/protocol.ts` — pure UCI codec; `src/bootstrap.ts` —
+  `createEngineManager` composition root + `BinaryResolver`.
+
+**Deferred (tracked, not lost):** real-engine golden test (env-gated, needs a pinned binary in CI),
+live-infra autoscaling, distributed remote workers, and wiring the bot/analysis path into the M3
+`GameAuthority` + M4 `EventStore` — all land with the deployable service in **M14**. A durable
+analysis cache remains a future **ADR-0003** (would amend `DATABASE.md`).
+
+### Exact next step for the next agent
+**Do not start Milestone 6 yet.** M5 is complete. The recommended next tracks (choose per product
+priority): (1) the M4 identity-hardening pass — WebAuthn/passkeys (§5); or (2) begin the M14 wiring
+of `@chess-platform/engine` into a deployable analysis/bot service (bind `ChildProcessTransport` to a
+pinned engine binary via `createEngineManager`, add the env-gated real-engine golden test, and connect
+bots to the `GameAuthority`). Read `docs/AI_HANDOVER.md` for the quickstart and guardrails.
 
 ## 8. How to build & test today
 
 ```bash
 npm install                 # workspaces root
-npm run build               # core → game → realtime-gateway → persistence → api
+npm run build               # core → game → realtime-gateway → persistence → api → engine
 npm test                    # runs all package test suites (node --test)
 npm run openapi -w @chess-platform/api   # regenerate packages/api/openapi.json
 ```
