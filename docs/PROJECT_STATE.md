@@ -69,14 +69,30 @@ start of Milestone 4._
 - **Realtime (M3):** ship `ws` + Redis production adapters (M14); binary
   (MessagePack) move frames; per-user connection quotas / backpressure (M12).
 
-## 6. Technical debt found during onboarding (NEW — needs action)
+## 6. Technical debt found during onboarding (status)
 
-1. **No CI exists** despite README claiming `.github/workflows/` (build + typecheck
-   + test). → Add a real GitHub Actions workflow. **Recommended as part of M4** so
-   the new packages are gated by CI from day one.
-2. **No `LICENSE` file** despite AGPL-3.0 declared in README/package.json. → Add
-   `LICENSE` (AGPL-3.0). Low effort, do alongside M4.
-3. **Stray root file `chess`** (contents `#chess`) — likely accidental. → Remove.
+These are small maintenance tasks handled alongside M4; they do **not** change the
+roadmap or interrupt milestone work.
+
+1. **`LICENSE` — ✅ DONE.** AGPL-3.0-or-later was declared everywhere but the license
+   text was missing. Added verbatim GNU AGPL-3.0 (`LICENSE`, commit `d295ad2`).
+2. **CI — ✅ STAGED, activation pending.** README referenced a `.github/workflows/`
+   CI that did not exist. A complete workflow (install → build → typecheck → test
+   on Node 20 & 22, build-before-lint/test for the core-types dependency) is
+   written. It could **not** be committed to `.github/workflows/` because the push
+   credential lacks the GitHub **`workflow`** scope (API returns *"does not have the
+   correct permissions to execute CreateCommitOnBranch"* for workflow paths only).
+   The workflow is staged at **`docs/ci/ci.yml`** with activation instructions in
+   **`docs/CI_SETUP.md`** (commit `4a0db4f`). **Action for a maintainer:** `git mv
+   docs/ci/ci.yml .github/workflows/ci.yml` and push with a `workflow`-scoped
+   credential (or paste via the Actions UI). Then add a root `package-lock.json`
+   and switch `npm install` → `npm ci`, and add a CI badge to the README.
+3. **Stray root file `chess` — confirmed unreferenced, removal pending.** Contents
+   are just `#chess`. Verified it is referenced **nowhere**: no `bin`/`main`, no
+   imports, no README/docs/build reference, not in `.gitignore`. It is safe to
+   delete. The connected GitHub integration exposes **no delete-file operation**
+   (only create/update), so it could not be removed programmatically. **Action for
+   a maintainer:** `git rm chess && git commit -m "Remove stray root chess file"`.
 
 ## 7. Next milestone — M4 (API & identity, REST)
 
