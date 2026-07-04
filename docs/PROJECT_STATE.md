@@ -4,10 +4,14 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-04 — Principal Software Architect. **Milestone 4 complete:**
-both `persistence` and `api` packages shipped and green. This commit adds the
-`api` package (stateless REST + identity, published OpenAPI). Base commit before
-this one: `9885a87` ("docs: mark M4 persistence shipped")._
+_Last updated: 2026-07-04 — Principal Software Architect. **Milestone 5 gate: design
+REFINED, awaiting final approval.** M1–M4 remain complete and green (119 tests). This
+commit refines the engine-bridge design (`docs/ENGINE_BRIDGE.md`) and `ADR-0002` after
+a ten-point review — adding an `EngineManager` orchestrator, a plugin + capability-
+discovery model, an `AnalysisProvider` abstraction above UCI, a cache **port**
+(reversing the earlier durable-Postgres choice), and reliability seams (isolation, hot
+replacement, graceful shutdown, health). **No engine code is written until the gate is
+approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate opened)._
 
 ---
 
@@ -181,8 +185,27 @@ needs no database — it runs against in-memory fakes.
 - A user's ratings profile issues one `RatingsRepository.get` per variant (≤8);
   fine now, but add a bulk `ratingsForUser` query before it's hot.
 
-### Exact first step for the next agent
-**Review and approve the Milestone 5 architecture gate:** `docs/ENGINE_BRIDGE.md` and `docs/adr/0002-engine-bridge.md`. Once approved, either (1) implement the engine bridge according to the accepted design, OR (2) execute the M4 identity hardening pass (WebAuthn/passkeys). Do **not** implement engine code until the gate is approved.
+### Milestone 5 gate — status (design refined, awaiting final approval)
+**NO ENGINE CODE YET.** Gate docs: `docs/ENGINE_BRIDGE.md` + `docs/adr/0002-engine-bridge.md`
+(ADR Status: Proposed). A ten-point refinement review was applied; outcomes:
+
+- **EngineManager** orchestrator over `EnginePool` over `EngineInstance` — adopted.
+- **Plugin-oriented engines** + **capability discovery** (no engine-name conditionals) — adopted.
+- **AnalysisProvider** abstraction above UCI (future non-UCI/AI providers drop in) — adopted.
+- **Engine version negotiation** (min-version floor + fingerprint + advertised-option-only) — adopted.
+- **Cache abstraction** (`AnalysisCache` port; in-process LRU default) — adopted; this
+  **reverses ADR-0002 v1's durable-Postgres decision**, so M5 no longer touches the approved
+  `DATABASE.md` contract. A durable cache is deferred to a future **ADR-0003** + DB addendum.
+- **Failure isolation** (process bulkhead + per-pool circuit breaker), **hot worker replacement**,
+  **graceful shutdown/recovery**, and **health-monitoring interfaces** — all adopted.
+
+No item was rejected; each is a seam within the new `@chess-platform/engine` package and none
+changes the platform architecture, service map, or milestone plan. **Additional ADR evaluation:**
+only ADR-0002 is required now; ADR-0003 (durable cache) is flagged for later.
+
+**On approval:** flip ADR-0002 → *Accepted*, mark ROADMAP M5 → build, and scaffold
+`packages/engine` starting from the ports + `FakeEngineTransport` (dependency-free domain first).
+The M4 identity-hardening pass (WebAuthn/passkeys, §5) remains a tracked alternative if M5 is paused.
 
 ## 8. How to build & test today
 
