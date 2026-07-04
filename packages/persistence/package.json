@@ -1,0 +1,37 @@
+{
+  "name": "@chess-platform/persistence",
+  "version": "0.1.0",
+  "description": "Durable data layer: append-only event store, migrations, repositories, Glicko-2, UUIDv7.",
+  "license": "AGPL-3.0-or-later",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./pg": {
+      "types": "./dist/pg/index.d.ts",
+      "default": "./dist/pg/index.js"
+    }
+  },
+  "files": ["dist", "src", "migrations"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/test/",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "migrate": "node dist/pg/migrate-cli.js",
+    "clean": "rm -rf dist dist-test"
+  },
+  "keywords": ["chess", "postgres", "event-sourcing", "persistence", "glicko2"],
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@chess-platform/game": "file:../game",
+    "pg": "^8.12.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^20.0.0",
+    "@types/pg": "^8.11.0"
+  }
+}
