@@ -1,0 +1,40 @@
+{
+  "name": "@chess-platform/api",
+  "version": "0.1.0",
+  "description": "Stateless REST API & identity service: auth, sessions, RBAC, seeks, ratings, games, OpenAPI.",
+  "license": "AGPL-3.0-or-later",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./pg": {
+      "types": "./dist/bootstrap.d.ts",
+      "default": "./dist/bootstrap.js"
+    }
+  },
+  "files": ["dist", "src", "openapi.json"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/test/",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "openapi": "node dist/scripts/generate-openapi.js",
+    "serve": "node dist/scripts/serve.js",
+    "clean": "rm -rf dist dist-test"
+  },
+  "keywords": ["chess", "rest", "api", "identity", "rbac", "openapi"],
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@chess-platform/core": "file:../chess-core",
+    "@chess-platform/game": "file:../game",
+    "@chess-platform/persistence": "file:../persistence",
+    "pg": "^8.12.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^20.0.0",
+    "@types/pg": "^8.11.0"
+  }
+}

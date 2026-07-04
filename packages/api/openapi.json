@@ -1,0 +1,1514 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Gambit API",
+    "version": "0.1.0",
+    "description": "Gambit REST API — identity, sessions, seeks, ratings, and games.",
+    "license": {
+      "name": "AGPL-3.0-or-later",
+      "identifier": "AGPL-3.0-or-later"
+    }
+  },
+  "paths": {
+    "/v1/health": {
+      "get": {
+        "summary": "Liveness probe",
+        "tags": [
+          "meta"
+        ],
+        "operationId": "get_v1_health",
+        "responses": {
+          "200": {
+            "description": "Service is up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/openapi.json": {
+      "get": {
+        "summary": "OpenAPI specification",
+        "tags": [
+          "meta"
+        ],
+        "operationId": "get_v1_openapi_json",
+        "responses": {
+          "200": {
+            "description": "The OpenAPI 3.1 document"
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/register": {
+      "post": {
+        "summary": "Register a new account",
+        "tags": [
+          "auth"
+        ],
+        "operationId": "post_v1_auth_register",
+        "responses": {
+          "201": {
+            "description": "Account created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Handle taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/login": {
+      "post": {
+        "summary": "Log in with a password",
+        "tags": [
+          "auth"
+        ],
+        "operationId": "post_v1_auth_login",
+        "responses": {
+          "200": {
+            "description": "Authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/refresh": {
+      "post": {
+        "summary": "Rotate a refresh token",
+        "tags": [
+          "auth"
+        ],
+        "operationId": "post_v1_auth_refresh",
+        "responses": {
+          "200": {
+            "description": "New credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid/expired/reused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/logout": {
+      "post": {
+        "summary": "Revoke the presented refresh token",
+        "tags": [
+          "auth"
+        ],
+        "operationId": "post_v1_auth_logout",
+        "responses": {
+          "204": {
+            "description": "Logged out"
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/sessions": {
+      "get": {
+        "summary": "List the caller's sessions",
+        "tags": [
+          "auth"
+        ],
+        "operationId": "get_v1_auth_sessions",
+        "responses": {
+          "200": {
+            "description": "Sessions, most recent first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/users/me": {
+      "get": {
+        "summary": "Get the authenticated account",
+        "tags": [
+          "users"
+        ],
+        "operationId": "get_v1_users_me",
+        "responses": {
+          "200": {
+            "description": "The caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SelfUser"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/users/{handle}": {
+      "get": {
+        "summary": "Get a public profile with ratings",
+        "tags": [
+          "users"
+        ],
+        "operationId": "get_v1_users_by_handle",
+        "responses": {
+          "200": {
+            "description": "Profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserProfile"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "handle",
+            "in": "path",
+            "required": true,
+            "description": "User handle",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/users/{handle}/ratings": {
+      "get": {
+        "summary": "Get a user's ratings across variants",
+        "tags": [
+          "users",
+          "ratings"
+        ],
+        "operationId": "get_v1_users_by_handle_ratings",
+        "responses": {
+          "200": {
+            "description": "Ratings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RatingList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "handle",
+            "in": "path",
+            "required": true,
+            "description": "User handle",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/users/{handle}/games": {
+      "get": {
+        "summary": "Get a user's recent games",
+        "tags": [
+          "users",
+          "games"
+        ],
+        "operationId": "get_v1_users_by_handle_games",
+        "responses": {
+          "200": {
+            "description": "Recent games",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "handle",
+            "in": "path",
+            "required": true,
+            "description": "User handle",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum number of results.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/v1/users/{userId}/roles": {
+      "post": {
+        "summary": "Grant a role to a user (admin only)",
+        "tags": [
+          "users",
+          "admin"
+        ],
+        "operationId": "post_v1_users_by_userId_roles",
+        "responses": {
+          "204": {
+            "description": "Role granted"
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "description": "Target user id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrantRoleRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/leaderboard/{variant}": {
+      "get": {
+        "summary": "Top players for a variant",
+        "tags": [
+          "ratings"
+        ],
+        "operationId": "get_v1_leaderboard_by_variant",
+        "responses": {
+          "200": {
+            "description": "Leaderboard",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeaderboardList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Bad variant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "variant",
+            "in": "path",
+            "required": true,
+            "description": "Variant code",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum number of results.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/v1/seeks": {
+      "get": {
+        "summary": "List open seeks",
+        "tags": [
+          "seeks"
+        ],
+        "operationId": "get_v1_seeks",
+        "responses": {
+          "200": {
+            "description": "Open seeks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeekList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum number of results.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "post": {
+        "summary": "Create a seek",
+        "tags": [
+          "seeks"
+        ],
+        "operationId": "post_v1_seeks",
+        "responses": {
+          "201": {
+            "description": "Seek created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeekView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSeekRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/seeks/{id}": {
+      "delete": {
+        "summary": "Cancel a seek (owner or moderator)",
+        "tags": [
+          "seeks"
+        ],
+        "operationId": "delete_v1_seeks_by_id",
+        "responses": {
+          "204": {
+            "description": "Cancelled"
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such seek",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Seek id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/games/{id}": {
+      "get": {
+        "summary": "Get a game summary",
+        "tags": [
+          "games"
+        ],
+        "operationId": "get_v1_games_by_id",
+        "responses": {
+          "200": {
+            "description": "Game",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such game",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Game id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWS (HS256)"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message",
+              "requestId"
+            ],
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requestId": {
+                "type": "string"
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      },
+      "TimeControl": {
+        "type": "object",
+        "description": "Chess time control. All durations are in milliseconds.",
+        "required": [
+          "initialMs",
+          "incrementMs",
+          "delayMs",
+          "kind"
+        ],
+        "properties": {
+          "initialMs": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Base thinking time per side."
+          },
+          "incrementMs": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Fischer increment per move."
+          },
+          "delayMs": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Bronstein/US delay per move."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "increment",
+              "delay",
+              "sudden_death",
+              "unlimited"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "TokenPair": {
+        "type": "object",
+        "required": [
+          "accessToken",
+          "tokenType",
+          "expiresIn",
+          "refreshToken",
+          "refreshExpiresAt"
+        ],
+        "properties": {
+          "accessToken": {
+            "type": "string",
+            "description": "HMAC-SHA256 (HS256) bearer token."
+          },
+          "tokenType": {
+            "type": "string",
+            "enum": [
+              "Bearer"
+            ]
+          },
+          "expiresIn": {
+            "type": "integer",
+            "description": "Access-token lifetime in seconds."
+          },
+          "refreshToken": {
+            "type": "string",
+            "description": "Opaque, single-use refresh token."
+          },
+          "refreshExpiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "PublicUser": {
+        "type": "object",
+        "required": [
+          "id",
+          "handle",
+          "country",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "country": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SelfUser": {
+        "type": "object",
+        "required": [
+          "id",
+          "handle",
+          "country",
+          "createdAt",
+          "roles"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "country": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "user",
+                "coach",
+                "tournament_director",
+                "moderator",
+                "admin"
+              ]
+            }
+          }
+        }
+      },
+      "RatingView": {
+        "type": "object",
+        "required": [
+          "variant",
+          "rating",
+          "rd",
+          "vol",
+          "updatedAt"
+        ],
+        "properties": {
+          "variant": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "chess960",
+              "kingofthehill",
+              "atomic",
+              "crazyhouse",
+              "threecheck",
+              "horde",
+              "racingkings"
+            ]
+          },
+          "rating": {
+            "type": "number"
+          },
+          "rd": {
+            "type": "number"
+          },
+          "vol": {
+            "type": "number"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      },
+      "LeaderboardEntry": {
+        "type": "object",
+        "required": [
+          "userId",
+          "variant",
+          "rating",
+          "rd"
+        ],
+        "properties": {
+          "userId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "variant": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "chess960",
+              "kingofthehill",
+              "atomic",
+              "crazyhouse",
+              "threecheck",
+              "horde",
+              "racingkings"
+            ]
+          },
+          "rating": {
+            "type": "number"
+          },
+          "rd": {
+            "type": "number"
+          }
+        }
+      },
+      "SessionView": {
+        "type": "object",
+        "required": [
+          "id",
+          "createdAt",
+          "expiresAt",
+          "revokedAt",
+          "lastSeenAt",
+          "lastIp",
+          "lastUserAgent"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "revokedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "lastSeenAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "lastIp": {
+            "type": "string",
+            "nullable": true
+          },
+          "lastUserAgent": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "SeekView": {
+        "type": "object",
+        "required": [
+          "id",
+          "creatorId",
+          "variant",
+          "speed",
+          "timeControl",
+          "rated",
+          "minRating",
+          "maxRating",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "creatorId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "variant": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "chess960",
+              "kingofthehill",
+              "atomic",
+              "crazyhouse",
+              "threecheck",
+              "horde",
+              "racingkings"
+            ]
+          },
+          "speed": {
+            "type": "string"
+          },
+          "timeControl": {
+            "$ref": "#/components/schemas/TimeControl"
+          },
+          "rated": {
+            "type": "boolean"
+          },
+          "minRating": {
+            "type": "integer",
+            "nullable": true
+          },
+          "maxRating": {
+            "type": "integer",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "GameSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "variant",
+          "rated",
+          "speed",
+          "whiteId",
+          "blackId",
+          "result",
+          "termination",
+          "plyCount",
+          "startedAt",
+          "endedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "variant": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "chess960",
+              "kingofthehill",
+              "atomic",
+              "crazyhouse",
+              "threecheck",
+              "horde",
+              "racingkings"
+            ]
+          },
+          "rated": {
+            "type": "boolean"
+          },
+          "speed": {
+            "type": "string"
+          },
+          "whiteId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "blackId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "result": {
+            "type": "string",
+            "nullable": true
+          },
+          "termination": {
+            "type": "string",
+            "nullable": true
+          },
+          "plyCount": {
+            "type": "integer"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "required": [
+          "status",
+          "name",
+          "version"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "UserProfile": {
+        "type": "object",
+        "required": [
+          "user",
+          "ratings"
+        ],
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/PublicUser"
+          },
+          "ratings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RatingView"
+            }
+          }
+        }
+      },
+      "RatingList": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/RatingView"
+        }
+      },
+      "SessionList": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/SessionView"
+        }
+      },
+      "SeekList": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/SeekView"
+        }
+      },
+      "LeaderboardList": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/LeaderboardEntry"
+        }
+      },
+      "GameList": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/GameSummary"
+        }
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "required": [
+          "handle",
+          "password"
+        ],
+        "properties": {
+          "handle": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 30,
+            "description": "Alphanumeric, _ and -."
+          },
+          "password": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 1024
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": [
+          "handle",
+          "password"
+        ],
+        "properties": {
+          "handle": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RefreshRequest": {
+        "type": "object",
+        "required": [
+          "refreshToken"
+        ],
+        "properties": {
+          "refreshToken": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AuthResponse": {
+        "type": "object",
+        "required": [
+          "user",
+          "tokens"
+        ],
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/SelfUser"
+          },
+          "tokens": {
+            "$ref": "#/components/schemas/TokenPair"
+          }
+        }
+      },
+      "CreateSeekRequest": {
+        "type": "object",
+        "required": [
+          "variant",
+          "timeControl"
+        ],
+        "properties": {
+          "variant": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "chess960",
+              "kingofthehill",
+              "atomic",
+              "crazyhouse",
+              "threecheck",
+              "horde",
+              "racingkings"
+            ]
+          },
+          "timeControl": {
+            "$ref": "#/components/schemas/TimeControl"
+          },
+          "rated": {
+            "type": "boolean",
+            "description": "Defaults to true."
+          },
+          "minRating": {
+            "type": "integer",
+            "nullable": true
+          },
+          "maxRating": {
+            "type": "integer",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "GrantRoleRequest": {
+        "type": "object",
+        "required": [
+          "role"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "coach",
+              "tournament_director",
+              "moderator",
+              "admin"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}

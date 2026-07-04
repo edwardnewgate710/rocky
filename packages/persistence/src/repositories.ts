@@ -170,6 +170,7 @@ export interface NewSeek {
 
 export interface SeeksRepository {
   create(seek: NewSeek): Promise<SeekRow>;
+  findById(id: string): Promise<SeekRow | null>;
   listOpen(limit: number): Promise<SeekRow[]>;
   remove(id: string): Promise<void>;
 }

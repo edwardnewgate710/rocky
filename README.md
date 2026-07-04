@@ -5,10 +5,13 @@ Lichess and Chess.com, plus a first-class AI layer. This repository is built
 **milestone by milestone**, and every milestone ships real, tested, typed code —
 no skeletons, no placeholders.
 
-> **Status:** Milestones 1–3 complete — a perft-verified, variant-aware chess
+> **Status:** Milestones 1–4 complete — a perft-verified, variant-aware chess
 > rules engine (`@chess-platform/core`), an event-sourced game authority with
-> clocks (`@chess-platform/game`), and a real-time gateway with authoritative
-> move fanout, presence, and reconnect/resume (`@chess-platform/realtime-gateway`).
+> clocks (`@chess-platform/game`), a real-time gateway with authoritative move
+> fanout, presence, and reconnect/resume (`@chess-platform/realtime-gateway`), a
+> durable Postgres data layer with an append-only event store, migrations,
+> Glicko-2 and UUIDv7 (`@chess-platform/persistence`), and a stateless REST +
+> identity service with a published OpenAPI spec (`@chess-platform/api`).
 > See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what is built vs. planned.
 
 ## Why "milestone by milestone" and not "all at once"
@@ -26,17 +29,21 @@ chess-platform/
 ├── packages/
 │   ├── chess-core/         # ✅ Rules engine: legal moves, variants, FEN, SAN, perft
 │   ├── game/               # ✅ Event-sourced game authority: clocks, commands, replay
-│   └── realtime-gateway/   # ✅ WebSocket rooms, presence, authoritative fanout, resume
+│   ├── realtime-gateway/   # ✅ WebSocket rooms, presence, authoritative fanout, resume
+│   ├── persistence/        # ✅ Durable data: event store, migrations, repositories, Glicko-2
+│   └── api/                # ✅ Stateless REST + identity service, published OpenAPI 3.1
 ├── docs/
 │   ├── ARCHITECTURE.md     # Full system design (services, data, real-time, AI, security)
+│   ├── DATABASE.md         # Approved database architecture (M4 gate)
+│   ├── PROJECT_STATE.md    # Living engineering handover — read this to continue
 │   └── ROADMAP.md          # Milestone plan with acceptance criteria
 ├── .github/workflows/      # CI: build + typecheck + test every package
 └── README.md
 ```
 
-Planned packages (see roadmap): `api` (REST/GraphQL), `ai-orchestrator`,
-`web` (frontend), `engine-bridge` (Stockfish/Fairy-Stockfish), `search`, and
-`infra` (Terraform/K8s).
+Planned packages (see roadmap): `ai-orchestrator`, `web` (frontend),
+`engine-bridge` (Stockfish/Fairy-Stockfish), `search`, and `infra`
+(Terraform/K8s).
 
 ## `@chess-platform/core`
 
@@ -164,6 +171,59 @@ cd packages/realtime-gateway && npm install && npm run build && npm test
 
 > Note: connection identity is trusted from the upstream for now; authenticated
 > sessions, passkeys, and RBAC arrive with the API/identity milestone (M4).
+
+## `@chess-platform/persistence`
+
+The durable data layer. An append-only event store makes the M3 game authority
+persistable and exactly reconstructable via `Game.fromEvents`, alongside the
+relational projections and identity tables.
+
+- **Event store as a seam:** `InMemoryEventStore` (dependency-free) +
+  `PostgresEventStore` (append-only, optimistic concurrency on `(game_id, seq)`,
+  `event_version` + upcaster path). The `pg` driver is isolated behind the
+  `@chess-platform/persistence/pg` subpath.
+- **Schema & migrations:** event log, identity/RBAC, Glicko-2 ratings, seeks,
+  games projection, and an observability-rich audit log; lookup tables + CHECK
+  (not native ENUM). Forward-only, checksum-verified migration runner + CLI.
+- **UUIDv7** (time-ordered ids) and a **Glicko-2** implementation verified against
+  Glickman's worked example.
+- 14 tests pass (Postgres integration tests gated on `DATABASE_URL`); the
+  play → store → `Game.fromEvents` round-trip is verified.
+
+```bash
+cd packages/persistence && npm install && npm run build && npm test
+```
+
+## `@chess-platform/api`
+
+The stateless REST + identity service, built on Node's `http` module with a
+typed router and dependency injection — no web framework, no third-party runtime
+dependency at the root entry.
+
+- **Identity:** a `PasswordHasher` abstraction with a built-in **scrypt** default
+  (argon2id/KMS are drop-in replacements — the stored hash is self-describing),
+  **HMAC-SHA256 access tokens** verified with no database round-trip, and
+  **opaque, single-use refresh tokens** with rotation and theft (reuse) detection.
+- **RBAC** (`user`/`coach`/`tournament_director`/`moderator`/`admin`) enforced
+  declaratively per route.
+- **Resources:** accounts, profiles, sessions, seeks/lobby, Glicko-2 ratings and
+  per-variant leaderboards, and game summaries.
+- **Published OpenAPI 3.1** generated from the live route table (served at
+  `/v1/openapi.json`, committed to `packages/api/openapi.json`).
+- 45 tests pass, including the M4 **authorization matrix**. Strict TS, zero errors.
+
+```ts
+import { createPgApiServer } from '@chess-platform/api/pg';
+const { server } = createPgApiServer();     // needs ACCESS_TOKEN_SECRET + DATABASE_URL
+await server.listen(8080);
+```
+
+```bash
+cd packages/api && npm install && npm run build && npm test
+```
+
+See [`packages/api/README.md`](packages/api/README.md) for the full endpoint list
+and the in-memory (no-database) quick start.
 
 ## License
 

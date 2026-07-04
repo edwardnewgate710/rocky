@@ -1,0 +1,42 @@
+/**
+ * @packageDocumentation
+ * The dependency bundle wired into the API. Everything the services and routes
+ * need arrives here explicitly (constructor injection) — there are no module-level
+ * singletons, so the whole server can be constructed with in-memory fakes for
+ * tests or Postgres-backed implementations in production without changing a line
+ * of route or service code.
+ */
+
+import type {
+  GamesRepository,
+  RatingsRepository,
+  SeeksRepository,
+  SessionsRepository,
+  UsersRepository,
+} from '@chess-platform/persistence';
+import type { PasswordHasher } from './auth/password';
+import type { AccessTokenService } from './auth/tokens';
+import type { AuditRepository } from './ports/audit';
+import type { Clock } from './ports/clock';
+import type { IdGenerator } from './ports/ids';
+import type { ApiConfig } from './config';
+
+/** The full set of repositories the API consumes. */
+export interface Repositories {
+  readonly users: UsersRepository;
+  readonly sessions: SessionsRepository;
+  readonly ratings: RatingsRepository;
+  readonly games: GamesRepository;
+  readonly seeks: SeeksRepository;
+  readonly audit: AuditRepository;
+}
+
+/** Everything `createApiServer` needs to construct the service. */
+export interface ApiDependencies {
+  readonly repos: Repositories;
+  readonly hasher: PasswordHasher;
+  readonly tokens: AccessTokenService;
+  readonly clock: Clock;
+  readonly ids: IdGenerator;
+  readonly config: ApiConfig;
+}

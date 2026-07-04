@@ -379,6 +379,15 @@ export class PgSeeksRepository implements SeeksRepository {
     return toSeek(res.rows[0]!);
   }
 
+  async findById(id: string): Promise<SeekRow | null> {
+    const res = await this.pool.query<SeekDbRow>(
+      `SELECT id, creator_id, variant, time_control, rated, min_rating, max_rating, created_at
+       FROM seeks WHERE id = $1`,
+      [id],
+    );
+    return res.rows[0] ? toSeek(res.rows[0]) : null;
+  }
+
   async listOpen(limit: number): Promise<SeekRow[]> {
     const res = await this.pool.query<SeekDbRow>(
       `SELECT id, creator_id, variant, time_control, rated, min_rating, max_rating, created_at

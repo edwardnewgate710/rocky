@@ -80,11 +80,11 @@ multi-client game surface.
 deployable gateway service (M14); binary (MessagePack) move frames; per-user
 connection quotas / backpressure (hardened in M12).
 
-## 🚧 Milestone 4 — API & identity (REST)  *(in progress)*
+## ✅ Milestone 4 — API & identity (REST)
 
 > **Gate status:** The database architecture in [`docs/DATABASE.md`](DATABASE.md)
 > is **APPROVED** (see [`docs/adr/0001-persistence-data-modeling.md`](adr/0001-persistence-data-modeling.md)).
-> The **`persistence` package is shipped**; the `api` package is next. See
+> Both packages are shipped: **`persistence`** and **`api`**. See
 > [`docs/PROJECT_STATE.md`](PROJECT_STATE.md) for the live handover.
 
 Split into two new packages: `persistence` (durable data: schema, migrations,
@@ -101,18 +101,25 @@ The database architecture is defined and approved in
   sessions with security metadata, ratings, games, seeks). 14 tests pass
   (Postgres integration tests gated on `DATABASE_URL`); the play→store→
   `Game.fromEvents` round-trip is verified. Strict TS, zero errors.
-- ⬜ REST API + published **OpenAPI** spec (GraphQL deferred — see note below).
-- ⬜ Identity: argon2id passwords, WebAuthn/passkeys, session + refresh-token
-  rotation with revocation, RBAC (user/coach/tournament-director/moderator/admin).
-- ⬜ Users, profiles, seeks/lobby, **Glicko-2 ratings per variant**, leaderboards
-  (rating math already implemented in `persistence`).
+- ✅ REST API + published **OpenAPI** spec (GraphQL deferred — see note below).
+  Node built-in HTTP + a typed router with DI (`createApiServer`); OpenAPI 3.1
+  generated from the live route table and committed to `packages/api/openapi.json`.
+- ✅ Identity: **`PasswordHasher` abstraction with a scrypt default** (argon2id is
+  a drop-in — the stored hash is self-describing), session + **refresh-token
+  rotation with revocation and reuse (theft) detection**, RBAC
+  (user/coach/tournament-director/moderator/admin). *WebAuthn/passkeys deferred*
+  (the `webauthn_credentials` table exists; the flow lands in a later hardening
+  pass — see PROJECT_STATE §5).
+- ✅ Users, profiles, seeks/lobby, **Glicko-2 ratings per variant**, leaderboards
+  (rating math implemented in `persistence`, surfaced by `api`).
 - ✅ Durable **event store** for games so the M3 authority can persist and
   rehydrate game state exactly from its log (authority wiring lands with the
   deployable service in M14).
-- **Acceptance:** authZ-matrix tests; rating updates verified against a Glicko-2
-  reference *(done in `persistence`)*; OpenAPI published; DB integration tests
-  (ephemeral Postgres); game persistence round-trip (store → `Game.fromEvents` →
-  identical state) *(done in `persistence`)*.
+- **Acceptance:** ✅ authZ-matrix tests (in `api`); ✅ rating updates verified
+  against a Glicko-2 reference (in `persistence`); ✅ OpenAPI published
+  (`packages/api/openapi.json`, served at `/v1/openapi.json`); ✅ DB integration
+  tests (ephemeral Postgres, gated on `DATABASE_URL`); ✅ game persistence
+  round-trip (store → `Game.fromEvents` → identical state, in `persistence`).
 
 > **Roadmap decision (M4):** GraphQL is intentionally deferred. Shipping REST +
 > GraphQL together doubles the security/ops surface (query-cost limiting,
