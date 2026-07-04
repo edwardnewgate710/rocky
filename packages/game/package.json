@@ -1,0 +1,24 @@
+{
+  "name": "@chess-platform/game",
+  "version": "0.1.0",
+  "description": "Event-sourced chess game authority: clocks, legality, and durable event log.",
+  "license": "AGPL-3.0-or-later",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "src"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/test/",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist dist-test"
+  },
+  "keywords": ["chess", "event-sourcing", "clock", "game-server"],
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@chess-platform/core": "file:../chess-core"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^20.0.0"
+  }
+}

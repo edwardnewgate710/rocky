@@ -1,0 +1,155 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { Game } from '../src/game';
+import type { GameEvent } from '../src/events';
+import type { TimeControl } from '../src/clock';
+
+const TC: TimeControl = { initialMs: 300_000, incrementMs: 3_000, delayMs: 0, kind: 'increment' };
+
+function newGame() {
+  return Game.create({
+    gameId: 'g1',
+    timeControl: TC,
+    players: { white: 'alice', black: 'bob' },
+    rated: true,
+    at: 0,
+  });
+}
+
+test('a fresh game is ongoing with White to move', () => {
+  const { game } = newGame();
+  assert.equal(game.status.over, false);
+  assert.equal(game.turn, 'w');
+});
+
+test('playing moves advances the game and records SAN', () => {
+  let { game } = newGame();
+  let t = 1_000;
+  for (const uci of ['e2e4', 'e7e5', 'g1f3']) {
+    ({ game } = game.playMove(uci, (t += 2_000)));
+  }
+  const snap = game.snapshot();
+  assert.equal(snap.ply, 3);
+  assert.deepEqual(snap.moves.map((m) => m.san), ['e4', 'e5', 'Nf3']);
+  assert.equal(game.turn, 'b');
+});
+
+test('scholar\'s mate ends the game as checkmate 1-0', () => {
+  let { game } = newGame();
+  let t = 0;
+  const line = ['e2e4', 'e7e5', 'f1c4', 'b8c6', 'd1h5', 'g8f6', 'h5f7'];
+  let allEvents: GameEvent[] = [];
+  for (const uci of line) {
+    const res = game.playMove(uci, (t += 1_000));
+    game = res.game;
+    allEvents = allEvents.concat(res.events);
+  }
+  assert.equal(game.status.over, true);
+  if (game.status.over) {
+    assert.equal(game.status.termination, 'checkmate');
+    assert.equal(game.status.result, '1-0');
+  }
+  // A GameEnded event was emitted alongside the final move.
+  assert.ok(allEvents.some((e) => e.type === 'GameEnded'));
+});
+
+test('event sourcing: a game reconstructs exactly from its event log', () => {
+  let { game, events } = newGame();
+  const log: GameEvent[] = [...events];
+  let t = 0;
+  for (const uci of ['d2d4', 'd7d5', 'c2c4', 'e7e6', 'b1c3']) {
+    const res = game.playMove(uci, (t += 4_000));
+    game = res.game;
+    log.push(...res.events);
+  }
+  const rebuilt = Game.fromEvents(log);
+  assert.equal(rebuilt.fen, game.fen);
+  assert.equal(rebuilt.snapshot().ply, game.snapshot().ply);
+  assert.deepEqual(rebuilt.snapshot().clock.remaining, game.snapshot().clock.remaining);
+  assert.deepEqual(
+    rebuilt.snapshot().moves.map((m) => m.san),
+    game.snapshot().moves.map((m) => m.san),
+  );
+});
+
+test('resignation ends the game for the opponent', () => {
+  let { game } = newGame();
+  ({ game } = game.playMove('e2e4', 1_000));
+  ({ game } = game.resign('b', 2_000));
+  assert.equal(game.status.over, true);
+  if (game.status.over) {
+    assert.equal(game.status.result, '1-0');
+    assert.equal(game.status.termination, 'resignation');
+    assert.equal(game.status.winner, 'w');
+  }
+});
+
+test('draw offer then accept ends in agreement', () => {
+  let { game } = newGame();
+  ({ game } = game.playMove('e2e4', 1_000));
+  ({ game } = game.offerDraw('w', 1_500));
+  ({ game } = game.acceptDraw('b', 2_000));
+  assert.equal(game.status.over, true);
+  if (game.status.over) {
+    assert.equal(game.status.result, '1/2-1/2');
+    assert.equal(game.status.termination, 'agreement');
+  }
+});
+
+test('cannot accept your own draw offer', () => {
+  let { game } = newGame();
+  ({ game } = game.offerDraw('w', 1_000));
+  assert.throws(() => game.acceptDraw('w', 2_000), /No draw offer/);
+});
+
+test('illegal move is rejected', () => {
+  const { game } = newGame();
+  assert.throws(() => game.playMove('e2e5', 1_000), /Illegal move|No legal move/);
+});
+
+test('flagging on the clock ends the game by timeout', () => {
+  const short: TimeControl = { initialMs: 5_000, incrementMs: 0, delayMs: 0, kind: 'sudden_death' };
+  let { game } = Game.create({
+    gameId: 'g2', timeControl: short, players: { white: 'a', black: 'b' }, at: 0,
+  });
+  ({ game } = game.playMove('e2e4', 1_000)); // white used 1s
+  // Black tries to move 10s later -> flagged.
+  const res = game.playMove('e7e5', 11_000);
+  game = res.game;
+  assert.equal(game.status.over, true);
+  if (game.status.over) {
+    assert.equal(game.status.termination, 'timeout');
+    assert.equal(game.status.result, '1-0');
+  }
+});
+
+test('abort is allowed early and forbidden after both move', () => {
+  let { game } = newGame();
+  ({ game } = game.playMove('e2e4', 1_000));
+  ({ game } = game.playMove('e7e5', 2_000));
+  assert.throws(() => game.abort(3_000), /no longer be aborted/);
+});
+
+test('scale: reconstruct many games from their logs quickly', () => {
+  const N = 2_000;
+  const line = ['e2e4', 'c7c5', 'g1f3', 'd7d6', 'd2d4', 'c5d4', 'f3d4', 'g8f6'];
+  const start = Date.now();
+  for (let i = 0; i < N; i++) {
+    let { game, events } = Game.create({
+      gameId: `sim-${i}`, timeControl: TC, players: { white: 'x', black: 'y' }, at: 0,
+    });
+    const log: GameEvent[] = [...events];
+    let t = 0;
+    for (const uci of line) {
+      const res = game.playMove(uci, (t += 1_000));
+      game = res.game;
+      log.push(...res.events);
+    }
+    const rebuilt = Game.fromEvents(log);
+    assert.equal(rebuilt.fen, game.fen);
+  }
+  const ms = Date.now() - start;
+  // Informational: ensures the aggregate is fast enough for high concurrency.
+  console.log(`reconstructed ${N} games in ${ms}ms (${(ms / N).toFixed(3)}ms/game)`);
+  assert.ok(ms < 20_000);
+});

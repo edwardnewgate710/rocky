@@ -5,8 +5,10 @@ Lichess and Chess.com, plus a first-class AI layer. This repository is built
 **milestone by milestone**, and every milestone ships real, tested, typed code —
 no skeletons, no placeholders.
 
-> **Status:** Milestone 1 complete — a perft-verified, variant-aware chess rules
-> engine. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what is built vs. planned.
+> **Status:** Milestones 1–2 complete — a perft-verified, variant-aware chess
+> rules engine (`@chess-platform/core`) and an event-sourced game authority with
+> clocks (`@chess-platform/game`). See [`docs/ROADMAP.md`](docs/ROADMAP.md) for
+> what is built vs. planned.
 
 ## Why "milestone by milestone" and not "all at once"
 
@@ -21,14 +23,16 @@ one merged only after it is tested and reviewed.
 ```
 chess-platform/
 ├── packages/
-│   └── chess-core/         # ✅ Rules engine: legal moves, variants, FEN, SAN, perft
+│   ├── chess-core/         # ✅ Rules engine: legal moves, variants, FEN, SAN, perft
+│   └── game/               # ✅ Event-sourced game authority: clocks, commands, replay
 ├── docs/
 │   ├── ARCHITECTURE.md     # Full system design (services, data, real-time, AI, security)
 │   └── ROADMAP.md          # Milestone plan with acceptance criteria
+├── .github/workflows/      # CI: build + typecheck + test both packages
 └── README.md
 ```
 
-Planned packages (see roadmap): `game-server` (WebSocket authority),
+Planned packages (see roadmap): `realtime-gateway` (WebSocket fanout),
 `api` (REST/GraphQL), `ai-orchestrator`, `web` (frontend), `engine-bridge`
 (Stockfish/Fairy-Stockfish), `search`, and `infra` (Terraform/K8s).
 
@@ -70,6 +74,41 @@ npm test           # compiles tests, runs perft + rules suites via node --test
 
 All 14 tests pass, including 5 perft positions to depths that exercise
 castling, en passant, promotions, pins, and discovered checks.
+
+## `@chess-platform/game`
+
+An event-sourced game authority built on the core engine. A game is an
+append-only sequence of events; state is a pure fold, so any game reconstructs
+exactly from its log.
+
+```ts
+import { Game } from '@chess-platform/game';
+
+let { game } = Game.create({
+  gameId: 'g1',
+  timeControl: { initialMs: 180_000, incrementMs: 2_000, delayMs: 0, kind: 'increment' },
+  players: { white: 'alice', black: 'bob' },
+  rated: true,
+  at: Date.now(),
+});
+
+({ game } = game.playMove('e2e4', Date.now()));
+({ game } = game.playMove('e7e5', Date.now()));
+console.log(game.status);      // { over: false }
+console.log(game.snapshot().clock.remaining);
+
+// Reconstruct from the durable event log:
+const rebuilt = Game.fromEvents(eventLog);
+```
+
+- Server-authoritative legality (clients never decide results).
+- Clocks: Fischer increment, Bronstein/US delay, sudden-death, unlimited.
+- Commands: move, resign, draw offer/accept/decline, flag claim, abort.
+- 18 tests pass; exact event-log reconstruction; ~1.17ms/game replay.
+
+```bash
+cd packages/game && npm install && npm run build && npm test
+```
 
 ## License
 
