@@ -80,12 +80,30 @@ multi-client game surface.
 deployable gateway service (M14); binary (MessagePack) move frames; per-user
 connection quotas / backpressure (hardened in M12).
 
-## ⬜ Milestone 4 — API & identity
+## ⬜ Milestone 4 — API & identity (REST)
 
-- REST + GraphQL, argon2id + passkeys, sessions/refresh rotation, RBAC.
-- Users, profiles, seeks/lobby, Glicko-2 ratings per variant, leaderboards.
-- **Acceptance:** authZ matrix tests; rating updates verified against Glicko-2
-  reference; OpenAPI published.
+Split into two new packages: `persistence` (durable data: schema, migrations,
+repositories, the game event store) and `api` (the stateless REST service).
+The database architecture is defined and approved in
+[`docs/DATABASE.md`](DATABASE.md) **before any DB code is written**.
+
+- REST API + published **OpenAPI** spec (GraphQL deferred — see note below).
+- Identity: argon2id passwords, WebAuthn/passkeys, session + refresh-token
+  rotation with revocation, RBAC (user/coach/tournament-director/moderator/admin).
+- Users, profiles, seeks/lobby, **Glicko-2 ratings per variant**, leaderboards.
+- Durable **event store** for games so the M3 authority can persist and
+  rehydrate game state exactly from its log.
+- **Acceptance:** authZ-matrix tests; rating updates verified against a Glicko-2
+  reference; OpenAPI published; DB integration tests (ephemeral Postgres);
+  game persistence round-trip (authority → store → `Game.fromEvents` → identical
+  state).
+
+> **Roadmap decision (M4):** GraphQL is intentionally deferred. Shipping REST +
+> GraphQL together doubles the security/ops surface (query-cost limiting,
+> persisted queries) for no near-term gain — gameplay real-time is already the
+> WebSocket gateway's job. A GraphQL read layer is introduced with the
+> features that justify nested, client-driven reads (studies, master-game
+> explorer, social graph) in **M10–M11**.
 
 ## ⬜ Milestone 5 — Engine bridge
 
@@ -122,7 +140,8 @@ Arena + Swiss + round-robin, pairings, tiebreaks, live broadcast multiplexing.
 
 Teams/communities, forums, messaging, friends/followers, achievements; lessons,
 courses, video library, PGN import, studies (collaborative), opening/endgame
-encyclopedias, master game explorer.
+encyclopedias, master game explorer. **GraphQL read layer** introduced here (and
+extended in M11) for the nested, client-driven reads these features need.
 
 ## ⬜ Milestone 11 — Search
 
