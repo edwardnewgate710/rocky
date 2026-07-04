@@ -1,0 +1,25 @@
+{
+  "name": "@chess-platform/realtime-gateway",
+  "version": "0.1.0",
+  "description": "Real-time gateway: WebSocket rooms, presence, authoritative game fanout, reconnect/resume.",
+  "license": "AGPL-3.0-or-later",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "src"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/test/",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist dist-test"
+  },
+  "keywords": ["chess", "websocket", "realtime", "pubsub", "game-server"],
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@chess-platform/core": "file:../chess-core",
+    "@chess-platform/game": "file:../game"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^20.0.0"
+  }
+}
