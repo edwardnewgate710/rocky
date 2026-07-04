@@ -128,7 +128,9 @@ The database architecture is defined and approved in
 > features that justify nested, client-driven reads (studies, master-game
 > explorer, social graph) in **M10–M11**.
 
-## ⬜ Milestone 5 — Engine bridge
+## 🚧 Milestone 5 — Engine bridge
+
+> **Gate status:** Architecture design proposed in `docs/ENGINE_BRIDGE.md` and `docs/adr/0002-engine-bridge.md`. **Pending review.** No code implementation yet.
 
 - Stockfish + Fairy-Stockfish UCI worker pool; analysis, eval bars, hints, bots
   with rating-calibrated strength.

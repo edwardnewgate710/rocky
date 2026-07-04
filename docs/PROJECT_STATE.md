@@ -182,13 +182,7 @@ needs no database — it runs against in-memory fakes.
   fine now, but add a bulk `ratingsForUser` query before it's hot.
 
 ### Exact first step for the next agent
-Start the **identity hardening pass**: add WebAuthn/passkeys. (1) Write a
-migration-free `WebAuthnRepository` interface in `persistence` + a Pg impl over the
-existing `webauthn_credentials` table; (2) add `src/auth/webauthn.ts` in `api`
-with registration/assertion ceremonies behind a `WebAuthnVerifier` port (mirroring
-`PasswordHasher`); (3) add `POST /v1/auth/webauthn/register/{options,verify}` and
-`.../login/{options,verify}` routes with OpenAPI + tests. Keep the port
-provider-agnostic and the domain packages dependency-free.
+**Review and approve the Milestone 5 architecture gate:** `docs/ENGINE_BRIDGE.md` and `docs/adr/0002-engine-bridge.md`. Once approved, either (1) implement the engine bridge according to the accepted design, OR (2) execute the M4 identity hardening pass (WebAuthn/passkeys). Do **not** implement engine code until the gate is approved.
 
 ## 8. How to build & test today
 
