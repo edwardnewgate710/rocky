@@ -80,7 +80,9 @@ multi-client game surface.
 deployable gateway service (M14); binary (MessagePack) move frames; per-user
 connection quotas / backpressure (hardened in M12).
 
-## ⬜ Milestone 4 — API & identity (REST)
+## 🚧 Milestone 4 — API & identity (REST)  *(in progress)*
+
+> **Gate status:** The database architecture is defined in [`docs/DATABASE.md`](DATABASE.md) and is **pending approval**. Per the rule below, no DB code is written until it is approved. See [`docs/PROJECT_STATE.md`](PROJECT_STATE.md) for the live handover.
 
 Split into two new packages: `persistence` (durable data: schema, migrations,
 repositories, the game event store) and `api` (the stateless REST service).
