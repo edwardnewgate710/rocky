@@ -82,23 +82,37 @@ connection quotas / backpressure (hardened in M12).
 
 ## 🚧 Milestone 4 — API & identity (REST)  *(in progress)*
 
-> **Gate status:** The database architecture is defined in [`docs/DATABASE.md`](DATABASE.md) and is **pending approval**. Per the rule below, no DB code is written until it is approved. See [`docs/PROJECT_STATE.md`](PROJECT_STATE.md) for the live handover.
+> **Gate status:** The database architecture in [`docs/DATABASE.md`](DATABASE.md)
+> is **APPROVED** (see [`docs/adr/0001-persistence-data-modeling.md`](adr/0001-persistence-data-modeling.md)).
+> The **`persistence` package is shipped**; the `api` package is next. See
+> [`docs/PROJECT_STATE.md`](PROJECT_STATE.md) for the live handover.
 
 Split into two new packages: `persistence` (durable data: schema, migrations,
 repositories, the game event store) and `api` (the stateless REST service).
 The database architecture is defined and approved in
 [`docs/DATABASE.md`](DATABASE.md) **before any DB code is written**.
 
-- REST API + published **OpenAPI** spec (GraphQL deferred — see note below).
-- Identity: argon2id passwords, WebAuthn/passkeys, session + refresh-token
+- ✅ **`persistence` package (`@chess-platform/persistence`).** Append-only
+  `EventStore` (in-memory + Postgres) keyed by per-game `seq` with optimistic
+  concurrency and `event_version`; forward-only checksum-verified migration runner
+  + `0001_init.sql` (event log, identity/RBAC, Glicko-2 ratings, seeks, games
+  projection, observability-rich audit log; lookup tables + CHECK, not ENUM);
+  UUIDv7 ids; verified Glicko-2; typed repositories (users/credentials/roles,
+  sessions with security metadata, ratings, games, seeks). 14 tests pass
+  (Postgres integration tests gated on `DATABASE_URL`); the play→store→
+  `Game.fromEvents` round-trip is verified. Strict TS, zero errors.
+- ⬜ REST API + published **OpenAPI** spec (GraphQL deferred — see note below).
+- ⬜ Identity: argon2id passwords, WebAuthn/passkeys, session + refresh-token
   rotation with revocation, RBAC (user/coach/tournament-director/moderator/admin).
-- Users, profiles, seeks/lobby, **Glicko-2 ratings per variant**, leaderboards.
-- Durable **event store** for games so the M3 authority can persist and
-  rehydrate game state exactly from its log.
+- ⬜ Users, profiles, seeks/lobby, **Glicko-2 ratings per variant**, leaderboards
+  (rating math already implemented in `persistence`).
+- ✅ Durable **event store** for games so the M3 authority can persist and
+  rehydrate game state exactly from its log (authority wiring lands with the
+  deployable service in M14).
 - **Acceptance:** authZ-matrix tests; rating updates verified against a Glicko-2
-  reference; OpenAPI published; DB integration tests (ephemeral Postgres);
-  game persistence round-trip (authority → store → `Game.fromEvents` → identical
-  state).
+  reference *(done in `persistence`)*; OpenAPI published; DB integration tests
+  (ephemeral Postgres); game persistence round-trip (store → `Game.fromEvents` →
+  identical state) *(done in `persistence`)*.
 
 > **Roadmap decision (M4):** GraphQL is intentionally deferred. Shipping REST +
 > GraphQL together doubles the security/ops surface (query-cost limiting,

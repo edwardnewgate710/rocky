@@ -4,8 +4,8 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-04 — by the incoming Principal Software Architect, at the
-start of Milestone 4._
+_Last updated: 2026-07-04 — Principal Software Architect. Milestone 4 in progress:
+`persistence` package shipped and green; `api` package is next._
 
 ---
 
@@ -94,24 +94,44 @@ roadmap or interrupt milestone work.
    (only create/update), so it could not be removed programmatically. **Action for
    a maintainer:** `git rm chess && git commit -m "Remove stray root chess file"`.
 
-## 7. Next milestone — M4 (API & identity, REST)
+## 7. Milestone 4 — API & identity (REST): status & next steps
 
-**Immediate gate (in progress):** `docs/DATABASE.md` authored and submitted for
-approval. **No DB code until approved.**
+**DB design:** APPROVED (`docs/DATABASE.md`, refinements in ADR-0001).
 
-**Planned build order once approved:**
-1. `packages/persistence`: migration runner + schema, `EventStore`
-   (`InMemory` + `Postgres`), repositories (users, sessions, ratings, games,
-   seeks), Glicko-2. Integration tests on ephemeral Postgres incl. the
-   authority→store→`fromEvents` round-trip.
-2. Wire the optional `EventStore` into `GameAuthority` (non-breaking).
-3. `packages/api`: identity (argon2id, passkeys, session/refresh rotation, RBAC),
-   users/profiles/seeks/ratings/leaderboards, published **OpenAPI** spec.
-4. Address tech-debt items 1–3 above.
+**✅ Done — `packages/persistence` (`@chess-platform/persistence`):**
+- `EventStore` seam: `InMemoryEventStore` (dependency-free) + `PostgresEventStore`
+  (append-only, optimistic concurrency on `(game_id, seq)`, `event_version` +
+  upcaster path). Exposed pg-free from the root entry; Postgres impls under the
+  `/pg` subpath so consumers (e.g. the gateway) needn't pull in `pg`.
+- `migrations/0001_init.sql`: event log (+append-only trigger), identity/RBAC,
+  Glicko-2 ratings, seeks, games projection, audit log with
+  `request_id/trace_id/ip/user_agent`. Lookup tables (`variants`, `terminations`)
+  + CHECK, not native ENUM. Forward-only checksum-verified migration runner + CLI.
+- `ids.ts` UUIDv7 (app-side, monotonic within a ms); `glicko2.ts` verified against
+  Glickman's worked example; typed repositories (users/credentials/roles,
+  sessions w/ security metadata, ratings, games, seeks).
+- **Tests: 14 pass** under `node --test` (ids, glicko2, in-memory event store,
+  play→store→`Game.fromEvents` round-trip). Postgres integration tests (migrations
+  idempotency, pg round-trip + concurrency) **skip without `DATABASE_URL`** — run
+  them in CI with a Postgres service. Strict TS, zero errors.
+- Root `package.json` build/test/lint/clean now include `persistence`.
 
-**M4 acceptance (from roadmap):** authZ-matrix tests; Glicko-2 verified vs
-reference; OpenAPI published; DB integration tests (ephemeral Postgres); game
-persistence round-trip identical to live state.
+**⬜ Next — build order:**
+1. `packages/api`: identity (argon2id, passkeys, session/refresh rotation, RBAC),
+   users/profiles/seeks/ratings/leaderboards, published **OpenAPI** spec. Consumes
+   `@chess-platform/persistence` (repositories + Glicko-2) and `/pg` for wiring.
+2. Wire the optional `EventStore` into `GameAuthority` (non-breaking) — **deferred
+   to the deployable service in M14** per DATABASE.md §3.3; the seam is ready now.
+3. Tech-debt items 1–3 in §6 (CI activation needs the `workflow` scope; stray file
+   needs a manual `git rm`).
+
+**Remaining M4 acceptance:** authZ-matrix tests + OpenAPI published (in `api`).
+Glicko-2-vs-reference and the store→`fromEvents` round-trip are **already done** in
+`persistence`; DB integration tests exist and run in CI with Postgres.
+
+**Verification note for the next engineer:** to run the gated integration tests,
+set `DATABASE_URL` to a Postgres 16 instance and run
+`npm test -w @chess-platform/persistence` (the runner applies `0001_init.sql`).
 
 ## 8. How to build & test today
 
