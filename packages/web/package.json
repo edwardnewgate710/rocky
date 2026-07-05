@@ -13,15 +13,10 @@
     "lint": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist dist-test"
   },
-  "keywords": [
-    "chess",
-    "frontend",
-    "board",
-    "pwa",
-    "web"
-  ],
-  "engines": {
-    "node": ">=20"
+  "dependencies": {
+    "@chess-platform/core": "*",
+    "@chess-platform/api": "*",
+    "@chess-platform/realtime-gateway": "*"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
