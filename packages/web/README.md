@@ -5,8 +5,8 @@ consumes the already-approved contracts — the M4 REST API and the M3 realtime
 WebSocket gateway — and renders a fast, accessible, installable (PWA) chess
 client.
 
-> **Status: Milestone 6 — in progress (increment 3C).** Increments 1–2 shipped
-> the dependency-free, unit-tested *view core* and the *interactive board*
+> **Status: Milestone 6 — in progress (increment 3B).** Increments 1–2 shipped
+> the dependency-free, unit-tested *view core* and the **interactive board**
 > (drag & drop, click-to-move, highlights, promotion, premoves). Increment 3A
 > added the **REST networking foundation** (transport port, `HttpClient`, typed
 > `GambitClient`, session/auth abstraction). Increment 3B adds the **WebSocket
@@ -14,10 +14,8 @@ client.
 > `WsClient` (reconnect with backoff, heartbeat), wire-protocol models mirroring
 > the M3 gateway, and a `GameSync` layer (join/resume, authoritative state,
 > optimistic move tracking, ply-gap resync) — all framework-independent and
-> unit-tested, with networking kept separate from UI. **Increment 3C** wires the
-> REST + WS clients, GameSync, and CoreMoveOracle into the `App` composition root.
-> Lobby/profile, Playwright e2e and the Lighthouse a11y gate land in following
-> increments.
+> unit-tested, with networking kept separate from UI. Lobby/profile, Playwright
+> e2e and the Lighthouse a11y gate land in following increments.
 
 ## Layout
 
@@ -32,7 +30,6 @@ src/core/    Dependency-free, DOM-free, unit-tested presentation logic
   mover.ts        view-only optimistic move projection (not a rules engine)
 src/ports/   Injected seams
   move-oracle.ts  LegalMoveOracle port (+ Null/Static adapters)
-  core-oracle.ts  CoreMoveOracle: @chess-platform/core-backed legality (inc 3C)
   http.ts         HttpTransport port (+ fetch adapter)
   ws.ts           WebSocketConnection port (+ browser adapter)
 src/net/     Networking foundation (framework-independent, unit-tested)
@@ -47,13 +44,12 @@ src/api/     Typed REST layer
   models.ts       request/response models mirroring openapi.json
   client.ts       GambitClient (auth injection + 401 refresh-retry)
 src/ui/      DOM rendering + input (board-view.ts)
-src/app.ts   App composition root (inc 3C): wires REST + WS + GameSync + oracle
-src/main.ts  App entry: thin bootstrap that instantiates App
+src/main.ts  App entry: mounts the interactive board, registers the SW
 public/      PWA manifest + offline service worker
 ```
 
 Design rationale and the consumed contracts are documented in
-[`docs/FRONTEND.md`](../docs/FRONTEND.md).
+[`docs/FRONTEND.md`](../../docs/FRONTEND.md).
 
 ## Why no formal gate (ADR)
 
