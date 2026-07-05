@@ -4,7 +4,11 @@
  * never imports this directly (the app composition root does).
  */
 export * from '../ports/http.js';
+export * from '../ports/ws.js';
 export * from './errors.js';
 export * from './retry.js';
 export * from './http-client.js';
 export * from './session.js';
+export * from './ws-protocol.js';
+export * from './ws-client.js';
+export * from './game-sync.js';

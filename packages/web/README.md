@@ -5,15 +5,17 @@ consumes the already-approved contracts — the M4 REST API and the M3 realtime
 WebSocket gateway — and renders a fast, accessible, installable (PWA) chess
 client.
 
-> **Status: Milestone 6 — in progress (increment 3A).** Increments 1–2 shipped
+> **Status: Milestone 6 — in progress (increment 3B).** Increments 1–2 shipped
 > the dependency-free, unit-tested *view core* and the **interactive board**
 > (drag & drop, click-to-move, highlights, promotion, premoves). Increment 3A
-> adds the **networking foundation**: a `fetch`-based transport port, an
-> `HttpClient` (timeout, safe-method retry, typed errors), a session/auth
-> abstraction with token refresh, and the typed `GambitClient` over the M4 REST
-> contract — all framework-independent and unit-tested, with the UI kept separate
-> from networking. The WS game stream, lobby/profile, Playwright e2e and the
-> Lighthouse a11y gate land in following increments.
+> added the **REST networking foundation** (transport port, `HttpClient`, typed
+> `GambitClient`, session/auth abstraction). Increment 3B adds the **WebSocket
+> foundation + gameplay synchronization**: a `WebSocketConnection` port, a typed
+> `WsClient` (reconnect with backoff, heartbeat), wire-protocol models mirroring
+> the M3 gateway, and a `GameSync` layer (join/resume, authoritative state,
+> optimistic move tracking, ply-gap resync) — all framework-independent and
+> unit-tested, with networking kept separate from UI. Lobby/profile, Playwright
+> e2e and the Lighthouse a11y gate land in following increments.
 
 ## Layout
 
@@ -29,11 +31,15 @@ src/core/    Dependency-free, DOM-free, unit-tested presentation logic
 src/ports/   Injected seams
   move-oracle.ts  LegalMoveOracle port (+ Null/Static adapters)
   http.ts         HttpTransport port (+ fetch adapter)
+  ws.ts           WebSocketConnection port (+ browser adapter)
 src/net/     Networking foundation (framework-independent, unit-tested)
   errors.ts       typed error taxonomy (network/timeout/http/decode)
   retry.ts        exponential backoff + safe-method retry policy (pure)
   http-client.ts  HttpClient: timeout, retry, JSON, error mapping
   session.ts      token store + SessionManager (proactive/single-flight refresh)
+  ws-protocol.ts  typed wire models mirroring realtime-gateway + JSON codec
+  ws-client.ts    WsClient: state machine, reconnect, heartbeat
+  game-sync.ts    GameSync: join/resume, authoritative state, optimistic moves
 src/api/     Typed REST layer
   models.ts       request/response models mirroring openapi.json
   client.ts       GambitClient (auth injection + 401 refresh-retry)

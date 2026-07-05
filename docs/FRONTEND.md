@@ -1,6 +1,6 @@
 # Gambit — Web Frontend Architecture (Milestone 6)
 
-> **Status:** IN PROGRESS (M6, increment 3A landed). **Non-gating** design doc.
+> **Status:** IN PROGRESS (M6, increment 3B landed). **Non-gating** design doc.
 > The frontend is a *leaf consumer* of the approved REST (M4) and realtime WS
 > (M3) contracts and introduces no new durable/shared contract, so — per the
 > repo's gate rule (see `AI_HANDOVER.md`; precedents `DATABASE.md`/ADR-0001 and
@@ -49,12 +49,17 @@ core/ (pure, tested)  ->  ui/ (DOM + input)  ->  app/ (state + client seams)
   an 8x8 grid + piece layer and emits `move-intent` events; it decides no
   legality. *Interactive board landed (increment 2): drag & drop, click-to-move,
   selection/legal/last-move/premove highlights, promotion overlay.*
-- **net/** + **api/** — the networking foundation (increment 3A): a `fetch`-based
-  `HttpTransport` **port**, a transport-level `HttpClient` (timeout, safe-method
-  retry with backoff, JSON, typed error taxonomy), a `SessionManager` (pluggable
-  token store + proactive, single-flight refresh), and the typed `GambitClient`
-  over the M4 REST contract. Framework-independent and unit-tested; the DOM never
-  imports it. *Landed in increment 3A.*
+- **net/** + **api/** — the networking foundation (increments 3A + 3B):
+  - *3A (REST):* a `fetch`-based `HttpTransport` **port**, a transport-level
+    `HttpClient` (timeout, safe-method retry with backoff, JSON, typed error
+    taxonomy), a `SessionManager` (pluggable token store + proactive, single-flight
+    refresh), and the typed `GambitClient` over the M4 REST contract.
+  - *3B (WebSocket):* a `WebSocketConnection` **port** + browser adapter, a typed
+    `WsClient` (state machine, automatic reconnect with backoff + jitter, ping/pong
+    heartbeat with silent-link detection), wire-protocol models mirroring the M3
+    gateway, and a `GameSync` synchronization layer (join/resume, authoritative
+    snapshot + live move ledger, optimistic move tracking with confirm/rollback,
+    ply-gap resync). Framework-independent and unit-tested; the DOM never imports it.
 - **app/** — composition root: wires the REST client + WS game stream into the
   UI, game state reducer, routing (board / lobby / profile), premove application
   on opponent moves. *Next increment.*
@@ -76,8 +81,8 @@ core/ (pure, tested)  ->  ui/ (DOM + input)  ->  app/ (state + client seams)
 ## 5. Testing strategy
 
 - **Unit (`node --test`, hermetic):** all `core/` logic plus the `net/` and
-  `api/` layers, the latter driven through an in-memory `HttpTransport` double
-  (no real sockets). *Whole web suite 94 tests green (increment 3A).*
+  `api/` layers, the latter driven through in-memory transport doubles (no real
+  sockets or HTTP). *Whole web suite 115 tests green (increment 3B).*
 - **Component/interaction:** board input + premove application (landed in
   increment 2).
 - **e2e (Playwright):** full game vs. bot and vs. human against a running stack;
@@ -99,7 +104,11 @@ core/ (pure, tested)  ->  ui/ (DOM + input)  ->  app/ (state + client seams)
      `HttpClient` (timeout, retry, typed errors), request/response models, the
      `GambitClient`, and a session/auth abstraction with token refresh. UI stays
      decoupled from networking; no WebSocket, lobby or gameplay sync yet.
-   - **3B:** WS game stream + core/server-backed move oracle; wire the REST/WS
-     clients into the app and game view end-to-end.
+   - **3B (this commit):** WebSocket foundation + gameplay synchronization \u2014
+     `WebSocketConnection` port + `WsClient` (reconnect, heartbeat), typed wire
+     protocol mirroring the M3 gateway, and `GameSync` (join/resume, authoritative
+     state, optimistic move tracking, ply-gap resync). No lobby/profile UI yet.
+   - **3C (next):** wire the REST + WS clients into the app composition root and
+     game view end-to-end; core/server-backed move oracle.
 4. Lobby, profile, routing; PWA runtime caching.
 5. Playwright e2e (bot + human) and Lighthouse a11y gate -> M6 acceptance.
