@@ -156,12 +156,13 @@ analysis, hints, eval bars, and rating-calibrated bots — never in the gameplay
   binary in CI), live-infra autoscaling, distributed remote workers, and wiring the bot/analysis
   path into the M3 `GameAuthority` + M4 `EventStore`.
 
-## ⬜ Milestone 6 — Web frontend (playable)
+## 🚧 Milestone 6 — Web frontend (playable)
 
 - Board UI (animation, premoves, drag + click), clock, game view, lobby,
   profile; PWA; a11y; light/dark.
 - **Acceptance:** e2e (Playwright) plays a full game vs. bot and vs. human;
   Lighthouse a11y ≥ 95.
+- 🚧 **Increment 1 landed:** `@chess-platform/web` scaffold + dependency-free view core (board geometry, premove queue, chess clock, FEN placement) with 21 passing `node --test` tests, strict-TS + lint clean. Next: interactive board, REST/WS client seam, Playwright e2e, Lighthouse gate.
 
 ## ⬜ Milestone 7 — AI orchestration layer
 

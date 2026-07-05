@@ -56,7 +56,7 @@ see the M4 `DATABASE.md` and M5 `ENGINE_BRIDGE.md` precedents.
 
 ## Guardrails
 
-- **Do NOT start Milestone 6 yet.** M5 is complete; pick the next track from
+- **Milestone 6 is IN PROGRESS** (`@chess-platform/web` increment 1: tested view core + scaffold). M5 is complete; pick the next track from
   `docs/PROJECT_STATE.md` §"Exact next step" (M4 WebAuthn hardening, or M14 engine wiring).
 - Keep domain packages **dependency-free**; native/infra code stays behind documented seams.
 - No placeholders, TODO-implementations, or temporary hacks — production quality only.

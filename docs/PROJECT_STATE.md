@@ -228,7 +228,7 @@ live-infra autoscaling, distributed remote workers, and wiring the bot/analysis 
 analysis cache remains a future **ADR-0003** (would amend `DATABASE.md`).
 
 ### Exact next step for the next agent
-**Do not start Milestone 6 yet.** M5 is complete. The recommended next tracks (choose per product
+**Milestone 6 is now IN PROGRESS.** Increment 1 landed: `@chess-platform/web` dependency-free view core (board/premove/clock/FEN, 21 tests green) + app scaffold, wired into the root workspace scripts; design in `docs/FRONTEND.md` (non-gating). M5 remains complete. The recommended next tracks (choose per product
 priority): (1) the M4 identity-hardening pass — WebAuthn/passkeys (§5); or (2) begin the M14 wiring
 of `@chess-platform/engine` into a deployable analysis/bot service (bind `ChildProcessTransport` to a
 pinned engine binary via `createEngineManager`, add the env-gated real-engine golden test, and connect
