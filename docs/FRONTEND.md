@@ -1,6 +1,6 @@
 # Gambit — Web Frontend Architecture (Milestone 6)
 
-> **Status:** IN PROGRESS (M6, increment 2 landed). **Non-gating** design doc.
+> **Status:** IN PROGRESS (M6, increment 3A landed). **Non-gating** design doc.
 > The frontend is a *leaf consumer* of the approved REST (M4) and realtime WS
 > (M3) contracts and introduces no new durable/shared contract, so — per the
 > repo's gate rule (see `AI_HANDOVER.md`; precedents `DATABASE.md`/ADR-0001 and
@@ -26,8 +26,10 @@
 
 ## 2. Consumed contracts (unchanged)
 
-- **REST + identity (M4, `@chess-platform/api`):** typed client generated from
-  `packages/api/openapi.json`. Auth, profile, lobby/seeks, game creation.
+- **REST + identity (M4, `@chess-platform/api`):** consumed via a typed client
+  whose request/response models mirror `packages/api/openapi.json`. Increment 3A
+  covers health, auth/session, users/profile, ratings, leaderboard and game
+  summaries; lobby/seeks and game creation land with the lobby increment.
 - **Realtime WS (M3, `@chess-platform/realtime-gateway`):** live game stream —
   moves, clocks, chat, presence — over the existing message protocol.
 - **Engine (M5) is consumed indirectly** via the server's analysis/bot endpoints
@@ -47,9 +49,15 @@ core/ (pure, tested)  ->  ui/ (DOM + input)  ->  app/ (state + client seams)
   an 8x8 grid + piece layer and emits `move-intent` events; it decides no
   legality. *Interactive board landed (increment 2): drag & drop, click-to-move,
   selection/legal/last-move/premove highlights, promotion overlay.*
-- **app/** — composition root: REST + WS client seams, game state reducer,
-  routing (board / lobby / profile), premove application on opponent moves.
-  *Next increment.*
+- **net/** + **api/** — the networking foundation (increment 3A): a `fetch`-based
+  `HttpTransport` **port**, a transport-level `HttpClient` (timeout, safe-method
+  retry with backoff, JSON, typed error taxonomy), a `SessionManager` (pluggable
+  token store + proactive, single-flight refresh), and the typed `GambitClient`
+  over the M4 REST contract. Framework-independent and unit-tested; the DOM never
+  imports it. *Landed in increment 3A.*
+- **app/** — composition root: wires the REST client + WS game stream into the
+  UI, game state reducer, routing (board / lobby / profile), premove application
+  on opponent moves. *Next increment.*
 
 ## 4. Technology choices
 
@@ -67,9 +75,11 @@ core/ (pure, tested)  ->  ui/ (DOM + input)  ->  app/ (state + client seams)
 
 ## 5. Testing strategy
 
-- **Unit (`node --test`, hermetic):** all `core/` logic. *21 tests green in
-  increment 1.*
-- **Component/interaction:** board input + premove application (next increment).
+- **Unit (`node --test`, hermetic):** all `core/` logic plus the `net/` and
+  `api/` layers, the latter driven through an in-memory `HttpTransport` double
+  (no real sockets). *Whole web suite 94 tests green (increment 3A).*
+- **Component/interaction:** board input + premove application (landed in
+  increment 2).
 - **e2e (Playwright):** full game vs. bot and vs. human against a running stack;
   the ROADMAP acceptance gate.
 - **Lighthouse a11y >= 95** in CI (once CI is active — see deferred maintenance).
@@ -84,7 +94,12 @@ core/ (pure, tested)  ->  ui/ (DOM + input)  ->  app/ (state + client seams)
    premove application over the Increment-1 premove core; a legality **port**
    (`LegalMoveOracle`) keeps rules out of the UI; a view-only optimistic mover
    updates the board immediately. Legality/reconciliation stays server-side.
-3. Client seams: generated REST client + WS game stream; core/server-backed
-   move oracle; game view end-to-end.
+3. Client seams, split across sub-increments:
+   - **3A (this commit):** REST networking foundation — `HttpTransport` port +
+     `HttpClient` (timeout, retry, typed errors), request/response models, the
+     `GambitClient`, and a session/auth abstraction with token refresh. UI stays
+     decoupled from networking; no WebSocket, lobby or gameplay sync yet.
+   - **3B:** WS game stream + core/server-backed move oracle; wire the REST/WS
+     clients into the app and game view end-to-end.
 4. Lobby, profile, routing; PWA runtime caching.
 5. Playwright e2e (bot + human) and Lighthouse a11y gate -> M6 acceptance.

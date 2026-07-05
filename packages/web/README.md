@@ -5,12 +5,15 @@ consumes the already-approved contracts — the M4 REST API and the M3 realtime
 WebSocket gateway — and renders a fast, accessible, installable (PWA) chess
 client.
 
-> **Status: Milestone 6 — in progress (increment 2).** Increments 1–2 ship the
-> dependency-free, unit-tested *view core* and the **interactive board**:
-> drag & drop, click-to-move, selection/legal/last-move/premove highlighting,
-> promotion UI, and premove application over the Increment-1 premove core. The
-> REST/WS client seam, lobby/profile, Playwright e2e and the Lighthouse a11y
-> gate land in following increments.
+> **Status: Milestone 6 — in progress (increment 3A).** Increments 1–2 shipped
+> the dependency-free, unit-tested *view core* and the **interactive board**
+> (drag & drop, click-to-move, highlights, promotion, premoves). Increment 3A
+> adds the **networking foundation**: a `fetch`-based transport port, an
+> `HttpClient` (timeout, safe-method retry, typed errors), a session/auth
+> abstraction with token refresh, and the typed `GambitClient` over the M4 REST
+> contract — all framework-independent and unit-tested, with the UI kept separate
+> from networking. The WS game stream, lobby/profile, Playwright e2e and the
+> Lighthouse a11y gate land in following increments.
 
 ## Layout
 
@@ -25,6 +28,15 @@ src/core/    Dependency-free, DOM-free, unit-tested presentation logic
   mover.ts        view-only optimistic move projection (not a rules engine)
 src/ports/   Injected seams
   move-oracle.ts  LegalMoveOracle port (+ Null/Static adapters)
+  http.ts         HttpTransport port (+ fetch adapter)
+src/net/     Networking foundation (framework-independent, unit-tested)
+  errors.ts       typed error taxonomy (network/timeout/http/decode)
+  retry.ts        exponential backoff + safe-method retry policy (pure)
+  http-client.ts  HttpClient: timeout, retry, JSON, error mapping
+  session.ts      token store + SessionManager (proactive/single-flight refresh)
+src/api/     Typed REST layer
+  models.ts       request/response models mirroring openapi.json
+  client.ts       GambitClient (auth injection + 401 refresh-retry)
 src/ui/      DOM rendering + input (board-view.ts)
 src/main.ts  App entry: mounts the interactive board, registers the SW
 public/      PWA manifest + offline service worker

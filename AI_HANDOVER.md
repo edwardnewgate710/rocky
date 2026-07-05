@@ -56,7 +56,7 @@ see the M4 `DATABASE.md` and M5 `ENGINE_BRIDGE.md` precedents.
 
 ## Guardrails
 
-- **Milestone 6 is IN PROGRESS** (`@chess-platform/web` increment 2: tested view core + interactive board — drag/click/highlights/promotion/premove, 54 tests). M5 is complete; pick the next track from
+- **Milestone 6 is IN PROGRESS** (`@chess-platform/web` increment 3A: tested view core + interactive board + **REST networking foundation** — `HttpTransport` port, `HttpClient` (timeout/retry/typed errors), typed `GambitClient`, and a session/auth abstraction with token refresh; UI kept separate from networking; 94 web tests). Immediate next is **increment 3B** (WS game stream + move-oracle wiring). M5 is complete; for the broader track after M6 pick from
   `docs/PROJECT_STATE.md` §"Exact next step" (M4 WebAuthn hardening, or M14 engine wiring).
 - Keep domain packages **dependency-free**; native/infra code stays behind documented seams.
 - No placeholders, TODO-implementations, or temporary hacks — production quality only.

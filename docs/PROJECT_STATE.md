@@ -4,7 +4,13 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-04 — Principal Software Architect. **Milestone 5 COMPLETE:** the
+_Last updated: 2026-07-05 — Principal Software Architect. **Milestone 6 IN PROGRESS (increment 3A):**
+the web frontend's REST networking foundation landed — a `fetch`-based `HttpTransport` port, an
+`HttpClient` (per-request timeout, safe-method retry with backoff + jitter, JSON, typed error
+taxonomy), request/response models mirroring `packages/api/openapi.json`, the typed `GambitClient`,
+and a session/auth abstraction (pluggable token store + proactive, single-flight token refresh with
+401 replay). UI stays decoupled from networking; no WebSocket/lobby/gameplay-sync yet. Web suite
+94 tests green (strict-TS + lint clean, production build passes). Prior context below. **Milestone 5 COMPLETE:** the
 `@chess-platform/engine` package is implemented, tested (51/51), and reviewed. ADR-0002 is
 **Accepted**. Whole repo now 170 tests green. This commit ships the engine bridge and updates
 the handover. Base commit before this one: `c465fba` ("docs: refine M5 engine-bridge design"). The
@@ -228,7 +234,7 @@ live-infra autoscaling, distributed remote workers, and wiring the bot/analysis 
 analysis cache remains a future **ADR-0003** (would amend `DATABASE.md`).
 
 ### Exact next step for the next agent
-**Milestone 6 is now IN PROGRESS.** Increment 1 landed: `@chess-platform/web` dependency-free view core (board/premove/clock/FEN, 21 tests green) + app scaffold, wired into the root workspace scripts; design in `docs/FRONTEND.md` (non-gating). Increment 2 landed: interactive board (drag/click, selection/legal/last-move/premove highlighting, promotion UI, premove application) + `LegalMoveOracle` port + view-only optimistic mover; web suite now 54 tests green (strict-TS + lint clean). M5 remains complete. The recommended next tracks (choose per product
+**Milestone 6 is now IN PROGRESS.** Increment 1 landed: `@chess-platform/web` dependency-free view core (board/premove/clock/FEN, 21 tests green) + app scaffold, wired into the root workspace scripts; design in `docs/FRONTEND.md` (non-gating). Increment 2 landed: interactive board (drag/click, selection/legal/last-move/premove highlighting, promotion UI, premove application) + `LegalMoveOracle` port + view-only optimistic mover; web suite now 54 tests green (strict-TS + lint clean). Increment 3A landed: the REST networking foundation — a `fetch`-based `HttpTransport` port, an `HttpClient` (timeout, safe-method retry with backoff, JSON, typed error taxonomy), request/response models mirroring `packages/api/openapi.json`, the typed `GambitClient` (health, auth/session, users/profile, ratings, leaderboard, game summaries), and a session/auth abstraction (pluggable token store + proactive, single-flight refresh with 401 replay); UI kept separate from networking, no WS/lobby/gameplay-sync yet; web suite now 94 tests green (strict-TS + lint clean, production build passes). M5 remains complete. Immediate next: **Increment 3B** — the realtime WS game stream and a core/server-backed move oracle, wired into the app and game view. The recommended next tracks (choose per product
 priority): (1) the M4 identity-hardening pass — WebAuthn/passkeys (§5); or (2) begin the M14 wiring
 of `@chess-platform/engine` into a deployable analysis/bot service (bind `ChildProcessTransport` to a
 pinned engine binary via `createEngineManager`, add the env-gated real-engine golden test, and connect
