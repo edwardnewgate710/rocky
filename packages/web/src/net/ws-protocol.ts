@@ -75,6 +75,14 @@ export type GameStatus =
       readonly winner: WsColor | null;
     };
 
+/**
+ * Legal destination squares for the side to move, keyed by origin square (both
+ * in UCI square notation, e.g. `{ "e2": ["e3", "e4"] }`). Server-authoritative
+ * (computed by the core engine on the gateway); empty (`{}`) once the game is
+ * over. The frontend consumes this — it never derives legality itself.
+ */
+export type LegalMoves = { readonly [from: string]: readonly string[] };
+
 /** A complete authoritative snapshot; sufficient on its own to render a game. */
 export interface StateView {
   readonly gameId: string;
@@ -90,6 +98,8 @@ export interface StateView {
   readonly status: GameStatus;
   readonly drawOffer: WsColor | null;
   readonly moves: readonly MoveView[];
+  /** Legal destinations for the side to move (authoritative; empty once over). */
+  readonly legalMoves: LegalMoves;
 }
 
 // ─── Client → Server ─────────────────────────────────────────────────────────

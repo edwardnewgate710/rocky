@@ -35,6 +35,7 @@ function stateView(ply: number, turn: WsColor, moves: StateView['moves'] = []): 
     status: { over: false },
     drawOffer: null,
     moves,
+    legalMoves: {},
   };
 }
 

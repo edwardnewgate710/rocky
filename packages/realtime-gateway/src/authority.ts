@@ -18,9 +18,9 @@
 
 import { createHash } from 'node:crypto';
 import { Game, type GameEvent } from '@chess-platform/game';
-import type { Color } from '@chess-platform/core';
+import type { Color, Position } from '@chess-platform/core';
 import type { CreateGameParams } from '@chess-platform/game';
-import type { Broadcast, StateView } from './protocol';
+import type { Broadcast, LegalMoves, StateView } from './protocol';
 import { gameChannel, type PubSub } from './pubsub';
 
 /** A command an authenticated player may issue against a game. */
@@ -67,6 +67,32 @@ interface GameRecord {
 /** Short, stable hash of a FEN string for cheap desync detection. */
 export function fenHash(fen: string): string {
   return createHash('sha1').update(fen).digest('hex').slice(0, 12);
+}
+
+/**
+ * Legal destinations for the side to move, keyed by origin square. Reuses the
+ * position's own (perft-verified) move generator — the single source of truth
+ * for legality — and collapses promotions to their shared destination square.
+ * Returns `{}` for terminal positions (no legal moves).
+ */
+export function legalMovesOf(position: Position): LegalMoves {
+  const byFrom = new Map<string, Set<string>>();
+  for (const move of position.legalMoves()) {
+    const uci = position.toUci(move);
+    const from = uci.slice(0, 2);
+    const to = uci.slice(2, 4);
+    let dests = byFrom.get(from);
+    if (dests === undefined) {
+      dests = new Set<string>();
+      byFrom.set(from, dests);
+    }
+    dests.add(to);
+  }
+  const out: Record<string, readonly string[]> = {};
+  for (const [from, dests] of byFrom) {
+    out[from] = [...dests];
+  }
+  return out;
 }
 
 /** The result of applying a command. */
@@ -269,6 +295,7 @@ export class GameAuthority {
       status: snap.status,
       drawOffer: snap.drawOffer,
       moves: snap.moves.map((m) => ({ ply: m.ply, uci: m.uci, san: m.san, by: m.by })),
+      legalMoves: legalMovesOf(snap.position),
     };
   }
 

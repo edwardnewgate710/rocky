@@ -33,6 +33,36 @@ test('createGame registers a game and exposes authoritative state', () => {
   assert.deepEqual(s.players, { white: 'alice', black: 'bob' });
 });
 
+test('state exposes authoritative legal destinations for the side to move', () => {
+  const { authority } = setup();
+  const s = authority.getState('g1');
+  const total = Object.values(s.legalMoves).reduce((n, d) => n + d.length, 0);
+  assert.equal(total, 20, 'the opening position has 20 legal moves');
+  assert.deepEqual([...(s.legalMoves['e2'] ?? [])].sort(), ['e3', 'e4']);
+  assert.deepEqual([...(s.legalMoves['g1'] ?? [])].sort(), ['f3', 'h3']);
+  assert.equal(s.legalMoves['e7'], undefined, 'only the side to move has destinations');
+});
+
+test('legal destinations follow the authoritative turn after a move', async () => {
+  const { authority } = setup();
+  await authority.apply('g1', 'alice', { kind: 'move', uci: 'e2e4' });
+  const s = authority.getState('g1');
+  assert.equal(s.turn, 'b');
+  assert.deepEqual([...(s.legalMoves['e7'] ?? [])].sort(), ['e5', 'e6']);
+  assert.equal(s.legalMoves['e2'], undefined, 'white pieces are no longer to move');
+});
+
+test('legal destinations are empty once the game is over (checkmate)', async () => {
+  const { authority } = setup();
+  await authority.apply('g1', 'alice', { kind: 'move', uci: 'f2f3' });
+  await authority.apply('g1', 'bob', { kind: 'move', uci: 'e7e5' });
+  await authority.apply('g1', 'alice', { kind: 'move', uci: 'g2g4' });
+  await authority.apply('g1', 'bob', { kind: 'move', uci: 'd8h4' });
+  const s = authority.getState('g1');
+  assert.equal(s.status.over, true);
+  assert.deepEqual(s.legalMoves, {});
+});
+
 test('duplicate game id is refused', () => {
   const { authority } = setup();
   assert.throws(

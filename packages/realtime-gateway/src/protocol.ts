@@ -42,6 +42,17 @@ export interface MoveView {
 }
 
 /**
+ * Legal destination squares for the side to move, keyed by origin square (both
+ * in UCI square notation, e.g. `{ "e2": ["e3", "e4"] }`).
+ *
+ * Server-authoritative and computed by the perft-verified core engine — the
+ * client never derives legality itself. Empty (`{}`) once the game is over.
+ * Promotions collapse to their destination square (the promotion piece is
+ * chosen by the client on submission, then re-validated by the server).
+ */
+export type LegalMoves = { readonly [from: string]: readonly string[] };
+
+/**
  * A complete, authoritative snapshot of a game. Sufficient on its own for a
  * client to render correctly (used on join and on resume).
  */
@@ -67,6 +78,8 @@ export interface StateView {
   /** The side with an open draw offer, if any. */
   readonly drawOffer: Color | null;
   readonly moves: readonly MoveView[];
+  /** Legal destinations for the side to move (authoritative; empty once over). */
+  readonly legalMoves: LegalMoves;
 }
 
 // ─── Client → Server ────────────────────────────────────────────────────────

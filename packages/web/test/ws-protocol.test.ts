@@ -26,6 +26,21 @@ test('decodeServer parses each server message type', () => {
   assert.equal(reject?.t, 'reject');
 });
 
+test('decodeServer preserves the authoritative legalMoves on a state frame', () => {
+  const frame = decodeServer(
+    JSON.stringify({
+      t: 'state',
+      gameId: 'g',
+      state: { fen: 'startpos', turn: 'w', legalMoves: { e2: ['e3', 'e4'], g1: ['f3', 'h3'] } },
+    }),
+  );
+  assert.equal(frame?.t, 'state');
+  if (frame?.t === 'state') {
+    assert.deepEqual(frame.state.legalMoves['e2'], ['e3', 'e4']);
+    assert.deepEqual(frame.state.legalMoves['g1'], ['f3', 'h3']);
+  }
+});
+
 test('decodeServer rejects malformed, non-object, and unknown/client frames', () => {
   assert.equal(decodeServer('{not json'), null);
   assert.equal(decodeServer('42'), null);
