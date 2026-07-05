@@ -5,17 +5,22 @@ consumes the already-approved contracts — the M4 REST API and the M3 realtime
 WebSocket gateway — and renders a fast, accessible, installable (PWA) chess
 client.
 
-> **Status: Milestone 6 — in progress (increment 3B).** Increments 1–2 shipped
+> **Status: Milestone 6 — in progress (increment 3C-1).** Increments 1–2 shipped
 > the dependency-free, unit-tested *view core* and the **interactive board**
 > (drag & drop, click-to-move, highlights, promotion, premoves). Increment 3A
 > added the **REST networking foundation** (transport port, `HttpClient`, typed
-> `GambitClient`, session/auth abstraction). Increment 3B adds the **WebSocket
+> `GambitClient`, session/auth abstraction). Increment 3B added the **WebSocket
 > foundation + gameplay synchronization**: a `WebSocketConnection` port, a typed
 > `WsClient` (reconnect with backoff, heartbeat), wire-protocol models mirroring
 > the M3 gateway, and a `GameSync` layer (join/resume, authoritative state,
-> optimistic move tracking, ply-gap resync) — all framework-independent and
-> unit-tested, with networking kept separate from UI. Lobby/profile, Playwright
-> e2e and the Lighthouse a11y gate land in following increments.
+> optimistic move tracking, ply-gap resync). Increment 3C-1 adds the
+> **application composition root** (`src/app/`): `createApp` wires the REST stack,
+> the realtime `WsClient` and a per-game `GameSync` factory via dependency
+> injection (browser adapters as defaults, fakes in tests), and `main.ts` is
+> reduced to a thin DOM entry — UI kept separate from infrastructure. This
+> increment is **wiring only**: no connection is opened, no gameplay
+> synchronization or server-backed move oracle is implemented yet. Lobby/profile,
+> Playwright e2e and the Lighthouse a11y gate land in following increments.
 
 ## Layout
 
@@ -44,7 +49,12 @@ src/api/     Typed REST layer
   models.ts       request/response models mirroring openapi.json
   client.ts       GambitClient (auth injection + 401 refresh-retry)
 src/ui/      DOM rendering + input (board-view.ts)
-src/main.ts  App entry: mounts the interactive board, registers the SW
+src/app/     Composition root (the one place that knows every layer)
+  config.ts       AppConfig + resolveConfig (REST/WS endpoints from location)
+  composition.ts  createApp: DI wiring of GambitClient + WsClient + GameSync
+  board.ts        mountBoard: composes the interactive board (UI + core only)
+  bootstrap.ts    DOM entry: createApp + mountBoard
+src/main.ts  Thin app entry: runs bootstrap on DOM-ready, registers the SW
 public/      PWA manifest + offline service worker
 ```
 

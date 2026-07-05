@@ -1,0 +1,86 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createApp } from '../src/app/composition.js';
+import { resolveConfig } from '../src/app/config.js';
+import { GambitClient } from '../src/api/client.js';
+import { WsClient } from '../src/net/ws-client.js';
+import { GameSync } from '../src/net/game-sync.js';
+import { MemoryTokenStore } from '../src/net/session.js';
+import type { KeyValueStorage } from '../src/net/session.js';
+import { FakeTransport, json } from './support/fake-transport.js';
+import { FakeSocketFactory } from './support/fake-socket.js';
+
+const CONFIG = { apiBaseUrl: 'https://api.test', wsUrl: 'wss://api.test/ws' } as const;
+
+function make() {
+  const transport = new FakeTransport().onEach(() => json(200, {}));
+  const sockets = new FakeSocketFactory();
+  const app = createApp({
+    config: CONFIG,
+    httpTransport: transport,
+    wsFactory: sockets.factory,
+    tokenStore: new MemoryTokenStore(),
+  });
+  return { app, transport, sockets };
+}
+
+test('createApp wires a GambitClient and a WsClient', () => {
+  const { app } = make();
+  assert.ok(app.api instanceof GambitClient);
+  assert.ok(app.ws instanceof WsClient);
+  assert.equal(app.config, CONFIG);
+});
+
+test('createApp opens no connection and makes no request on construction', () => {
+  const { app, transport, sockets } = make();
+  assert.equal(transport.calls.length, 0, 'no HTTP request should be sent while wiring');
+  assert.equal(sockets.sockets.length, 0, 'no socket should be opened while wiring');
+  assert.equal(app.ws.state, 'idle');
+});
+
+test('createGameSync builds a GameSync bound to the shared realtime client', () => {
+  const { app } = make();
+  const sync = app.createGameSync({ gameId: 'g1', userId: 'u1' });
+  assert.ok(sync instanceof GameSync);
+  const state = sync.getState();
+  assert.equal(state.gameId, 'g1');
+  assert.equal(state.connected, false);
+});
+
+test('createApp injects the REST base URL into the client', async () => {
+  const { app, transport } = make();
+  await app.api.health();
+  assert.equal(transport.calls.length, 1);
+  assert.equal(transport.calls[0]!.url, 'https://api.test/v1/health');
+});
+
+test('createApp falls back to a Web Storage session store when given a storage seam', () => {
+  const backing = new Map<string, string>();
+  const storage: KeyValueStorage = {
+    getItem: (k) => backing.get(k) ?? null,
+    setItem: (k, v) => {
+      backing.set(k, v);
+    },
+    removeItem: (k) => {
+      backing.delete(k);
+    },
+  };
+  const app = createApp({
+    config: CONFIG,
+    httpTransport: new FakeTransport().onEach(() => json(200, {})),
+    wsFactory: new FakeSocketFactory().factory,
+    storage,
+  });
+  assert.equal(app.api.session.isAuthenticated, false);
+});
+
+test('resolveConfig derives same-origin REST and a scheme-matched socket', () => {
+  assert.deepEqual(
+    resolveConfig({ protocol: 'https:', host: 'gambit.test', origin: 'https://gambit.test' }),
+    { apiBaseUrl: 'https://gambit.test', wsUrl: 'wss://gambit.test/ws' },
+  );
+  assert.deepEqual(
+    resolveConfig({ protocol: 'http:', host: 'localhost:5173', origin: 'http://localhost:5173' }),
+    { apiBaseUrl: 'http://localhost:5173', wsUrl: 'ws://localhost:5173/ws' },
+  );
+});
