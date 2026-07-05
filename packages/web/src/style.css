@@ -4,6 +4,9 @@
   --light: #f0d9b5;
   --dark: #b58863;
   --sel: #20b2aa;
+  --hint: rgba(20, 85, 30, 0.5);
+  --last: rgba(155, 199, 0, 0.41);
+  --premove: rgba(20, 30, 200, 0.4);
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: light) {
@@ -61,15 +64,94 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
 }
 .cb-light { background: var(--light); }
 .cb-dark { background: var(--dark); }
 .cb-selected { outline: 3px solid var(--sel); outline-offset: -3px; }
+.cb-last::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--last);
+  pointer-events: none;
+}
+.cb-premove::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--premove);
+  pointer-events: none;
+}
+/* Legal destination: a dot for empty squares, a ring for captures. */
+.cb-legal::after {
+  content: '';
+  position: absolute;
+  width: 30%;
+  height: 30%;
+  border-radius: 50%;
+  background: var(--hint);
+  pointer-events: none;
+}
+.cb-capture::after {
+  content: '';
+  position: absolute;
+  inset: 6%;
+  border-radius: 50%;
+  border: 6px solid var(--hint);
+  pointer-events: none;
+}
 .cb-piece {
   font-size: clamp(20px, 8vw, 52px);
   line-height: 1;
   color: #111;
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
+  position: relative;
+  z-index: 1;
+  cursor: grab;
+}
+.cb-piece.cb-dragging { visibility: hidden; }
+.cb-float {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  color: #111;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+.cb-promotion {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: center;
+  justify-content: center;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.62);
+  z-index: 5;
+}
+.cb-promo-choice {
+  font-size: clamp(24px, 9vw, 48px);
+  line-height: 1;
+  width: 22%;
+  aspect-ratio: 1 / 1;
+  background: #fafafa;
+  color: #111;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.cb-promo-choice:focus-visible { outline: 3px solid var(--sel); }
+.cb-promo-cancel {
+  width: 22%;
+  aspect-ratio: 1 / 1;
+  background: transparent;
+  color: #fff;
+  border: 1px solid #fff;
+  border-radius: 6px;
+  cursor: pointer;
 }
 .sidebar { min-width: 0; }
 button {

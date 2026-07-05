@@ -5,21 +5,28 @@ consumes the already-approved contracts — the M4 REST API and the M3 realtime
 WebSocket gateway — and renders a fast, accessible, installable (PWA) chess
 client.
 
-> **Status: Milestone 6 — in progress (increment 1).** This increment ships the
-> dependency-free, unit-tested *view core* plus the app scaffold. Board
-> rendering polish, the REST/WS client seam, bots vs. human play, Playwright e2e
-> and the Lighthouse a11y gate land in following increments.
+> **Status: Milestone 6 — in progress (increment 2).** Increments 1–2 ship the
+> dependency-free, unit-tested *view core* and the **interactive board**:
+> drag & drop, click-to-move, selection/legal/last-move/premove highlighting,
+> promotion UI, and premove application over the Increment-1 premove core. The
+> REST/WS client seam, lobby/profile, Playwright e2e and the Lighthouse a11y
+> gate land in following increments.
 
 ## Layout
 
 ```
 src/core/    Dependency-free, DOM-free, unit-tested presentation logic
-  board.ts     square <-> index/pixel geometry, orientation
-  position.ts  view-only FEN placement parsing (no rules-engine dependency)
-  premove.ts   premove queue state machine
-  clock.ts     chess clock with injected time source (deterministic)
+  board.ts        square <-> index/pixel geometry, orientation
+  position.ts     view-only FEN placement parsing (no rules-engine dependency)
+  premove.ts      premove queue state machine
+  clock.ts        chess clock with injected time source (deterministic)
+  interaction.ts  board interaction state machine (selection, drag/click,
+                  highlights, promotion, premove application)
+  mover.ts        view-only optimistic move projection (not a rules engine)
+src/ports/   Injected seams
+  move-oracle.ts  LegalMoveOracle port (+ Null/Static adapters)
 src/ui/      DOM rendering + input (board-view.ts)
-src/main.ts  App entry: mounts the board, registers the service worker
+src/main.ts  App entry: mounts the interactive board, registers the SW
 public/      PWA manifest + offline service worker
 ```
 

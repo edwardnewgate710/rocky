@@ -163,6 +163,7 @@ analysis, hints, eval bars, and rating-calibrated bots — never in the gameplay
 - **Acceptance:** e2e (Playwright) plays a full game vs. bot and vs. human;
   Lighthouse a11y ≥ 95.
 - 🚧 **Increment 1 landed:** `@chess-platform/web` scaffold + dependency-free view core (board geometry, premove queue, chess clock, FEN placement) with 21 passing `node --test` tests, strict-TS + lint clean. Next: interactive board, REST/WS client seam, Playwright e2e, Lighthouse gate.
+- 🚧 **Increment 2 landed:** interactive board — drag & drop, click-to-move, selection/legal-destination/last-move/premove highlighting, promotion UI, and premove application; legality behind a `LegalMoveOracle` port (server authoritative) + view-only optimistic mover. 54 `node --test` tests green, strict-TS + lint clean. Next: REST/WS client seam.
 
 ## ⬜ Milestone 7 — AI orchestration layer
 

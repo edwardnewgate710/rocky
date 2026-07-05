@@ -7,3 +7,6 @@ export * from './board.js';
 export * from './premove.js';
 export * from './clock.js';
 export * from './position.js';
+export * from './interaction.js';
+export * from './mover.js';
+export * from '../ports/move-oracle.js';

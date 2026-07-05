@@ -1,6 +1,6 @@
 # Gambit — Web Frontend Architecture (Milestone 6)
 
-> **Status:** IN PROGRESS (M6, increment 1 landed). **Non-gating** design doc.
+> **Status:** IN PROGRESS (M6, increment 2 landed). **Non-gating** design doc.
 > The frontend is a *leaf consumer* of the approved REST (M4) and realtime WS
 > (M3) contracts and introduces no new durable/shared contract, so — per the
 > repo's gate rule (see `AI_HANDOVER.md`; precedents `DATABASE.md`/ADR-0001 and
@@ -45,7 +45,8 @@ core/ (pure, tested)  ->  ui/ (DOM + input)  ->  app/ (state + client seams)
   time). *Landed in increment 1.*
 - **ui/** — framework-light DOM rendering and pointer input. `BoardView` renders
   an 8x8 grid + piece layer and emits `move-intent` events; it decides no
-  legality. *Board scaffold landed; drag animation + promotion UI next.*
+  legality. *Interactive board landed (increment 2): drag & drop, click-to-move,
+  selection/legal/last-move/premove highlights, promotion overlay.*
 - **app/** — composition root: REST + WS client seams, game state reducer,
   routing (board / lobby / profile), premove application on opponent moves.
   *Next increment.*
@@ -78,8 +79,12 @@ core/ (pure, tested)  ->  ui/ (DOM + input)  ->  app/ (state + client seams)
 1. **Increment 1 (this commit):** design + dependency-free view core (board,
    position, premove, clock) with tests; app scaffold (board view, entry,
    styles, PWA manifest + service worker); workspace wiring.
-2. Interactive board: drag + animation, promotion dialog, premove application,
-   sound; live clock rendering.
-3. Client seams: generated REST client + WS game stream; game view end-to-end.
+2. **Increment 2 (this commit):** interactive board — drag & drop, click-to-move,
+   selection/legal-destination/last-move/premove highlighting, promotion UI, and
+   premove application over the Increment-1 premove core; a legality **port**
+   (`LegalMoveOracle`) keeps rules out of the UI; a view-only optimistic mover
+   updates the board immediately. Legality/reconciliation stays server-side.
+3. Client seams: generated REST client + WS game stream; core/server-backed
+   move oracle; game view end-to-end.
 4. Lobby, profile, routing; PWA runtime caching.
 5. Playwright e2e (bot + human) and Lighthouse a11y gate -> M6 acceptance.
