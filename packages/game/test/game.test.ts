@@ -153,3 +153,35 @@ test('scale: reconstruct many games from their logs quickly', () => {
   console.log(`reconstructed ${N} games in ${ms}ms (${(ms / N).toFixed(3)}ms/game)`);
   assert.ok(ms < 20_000);
 });
+
+// ── M3: Threefold repetition acceptance test ───────────────────────────────
+// This is the acceptance test the review requires. It defines the expected
+// behavior: when the same position occurs three times (with the same side to
+// move, castling rights, and en-passant possibilities), the game ends as a
+// draw by threefold repetition. The implementation may land as its own
+// increment, but this test enters the suite now as the specification.
+//
+// The test plays the classic Nf3/Ng1 shuffle: 1.Nf3 Nf6 2.Ng1 Ng8 3.Nf3 Nf6
+// 4.Ng1 Ng8 — after Black's 4...Ng8 the starting position has appeared three
+// times (initial, after 2...Ng8, after 4...Ng8) with White to move.
+//
+// SKIPPED until threefold detection is implemented in the Game aggregate.
+// Remove the .skip when the implementation lands.
+
+test.skip('M3 (acceptance): threefold repetition ends the game as a draw', () => {
+  let { game } = newGame();
+  let t = 1_000;
+  // 1.Nf3 Nf6 2.Ng1 Ng8 3.Nf3 Nf6 4.Ng1 Ng8
+  // After 4...Ng8 the starting position has appeared 3 times.
+  const moves = ['g1f3', 'g8f6', 'f3g1', 'f6g8', 'g1f3', 'g8f6', 'f3g1', 'f6g8'];
+  for (const uci of moves) {
+    const result = game.playMove(uci, (t += 2_000));
+    game = result.game;
+  }
+  assert.equal(game.status.over, true, 'game should be over after threefold repetition');
+  if (game.status.over) {
+    assert.equal(game.status.termination, 'threefold');
+    assert.equal(game.status.result, '1/2-1/2');
+    assert.equal(game.status.winner, null);
+  }
+});

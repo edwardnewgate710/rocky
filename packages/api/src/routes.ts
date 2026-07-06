@@ -17,7 +17,7 @@ import { json, noContent } from './http/context';
 import type { RequestContext } from './http/context';
 import { Router } from './http/router';
 import type { AuthPolicy } from './http/router';
-import { asObject, oneOf, optInt, optString, parseLimit, reqString } from './http/validate';
+import { strictObject, oneOf, optInt, optString, parseLimit, reqString } from './http/validate';
 import type { Clock } from './ports/clock';
 import type { IdGenerator } from './ports/ids';
 import {
@@ -91,7 +91,7 @@ export function buildRouter(deps: RouteDeps): Router {
     }),
     PUBLIC,
     async (ctx) => {
-      const body = asObject(ctx.body);
+      const body = strictObject(ctx.body, ['handle', 'password', 'email']);
       const handle = reqString(body, 'handle', { trim: true, pattern: HANDLE_PATTERN });
       const password = reqString(body, 'password', { min: 8, max: 1024 });
       const email = optString(body, 'email', { max: 320, trim: true });
@@ -110,7 +110,7 @@ export function buildRouter(deps: RouteDeps): Router {
     }),
     PUBLIC,
     async (ctx) => {
-      const body = asObject(ctx.body);
+      const body = strictObject(ctx.body, ['handle', 'password']);
       const handle = reqString(body, 'handle', { trim: true });
       const password = reqString(body, 'password');
       const result = await auth.login({ handle, password }, meta(ctx));
@@ -128,7 +128,7 @@ export function buildRouter(deps: RouteDeps): Router {
     }),
     PUBLIC,
     async (ctx) => {
-      const body = asObject(ctx.body);
+      const body = strictObject(ctx.body, ['refreshToken']);
       const refreshToken = reqString(body, 'refreshToken');
       const result = await auth.refresh(refreshToken, meta(ctx));
       return json(200, { user: selfUser(result.user, result.roles), tokens: result.tokens });
@@ -147,7 +147,7 @@ export function buildRouter(deps: RouteDeps): Router {
     AUTHED,
     async (ctx) => {
       const identity = requireAuth(ctx);
-      const body = asObject(ctx.body);
+      const body = strictObject(ctx.body, ['refreshToken']);
       const refreshToken = reqString(body, 'refreshToken');
       await auth.logout(refreshToken, meta(ctx), identity.userId);
       return noContent();
@@ -251,7 +251,7 @@ export function buildRouter(deps: RouteDeps): Router {
     ADMIN,
     async (ctx) => {
       const actor = requireAuth(ctx);
-      const body = asObject(ctx.body);
+      const body = strictObject(ctx.body, ['role']);
       const role = parseRole(reqString(body, 'role'));
       const targetId = ctx.params['userId']!;
       const target = await repos.users.findById(targetId);
@@ -318,7 +318,7 @@ export function buildRouter(deps: RouteDeps): Router {
     AUTHED,
     async (ctx) => {
       const identity = requireAuth(ctx);
-      const body = asObject(ctx.body);
+      const body = strictObject(ctx.body, ['variant', 'timeControl', 'rated', 'minRating', 'maxRating']);
       const variant = parseVariant(oneOf(reqString(body, 'variant'), VARIANTS, 'variant'));
       const timeControl = parseTimeControl(body['timeControl']);
       const rated = body['rated'] === undefined ? true : body['rated'] === true;

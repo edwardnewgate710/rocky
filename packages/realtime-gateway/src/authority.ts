@@ -66,7 +66,7 @@ interface GameRecord {
 
 /** Short, stable hash of a FEN string for cheap desync detection. */
 export function fenHash(fen: string): string {
-  return createHash('sha1').update(fen).digest('hex').slice(0, 12);
+  return createHash('sha256').update(fen).digest('hex').slice(0, 12);
 }
 
 /**
@@ -227,10 +227,18 @@ export class GameAuthority {
     rec.game = result.game;
     rec.events.push(...result.events);
 
+    // Compute the resulting position's legal moves once per command.
+    // For MovePlayed broadcasts this is the post-move position's side-to-move
+    // legal moves (empty if the move ended the game). For GameEnded broadcasts
+    // the game is over so legal moves are always {}.
+    const resultingSnap = rec.game.snapshot();
+    const resultingLegalMoves: LegalMoves =
+      resultingSnap.status.over ? {} : legalMovesOf(resultingSnap.position);
+
     const resultingFenHash = fenHash(rec.game.fen);
     const broadcasts: Broadcast[] = [];
     for (const ev of result.events) {
-      const msg = this.toBroadcast(gameId, ev, resultingFenHash);
+      const msg = this.toBroadcast(gameId, ev, resultingFenHash, resultingLegalMoves);
       if (!msg) continue;
       const seq = ++rec.broadcastSeq;
       rec.broadcasts.push({ seq, ply: msg.t === 'move' ? msg.ply : null, msg });
@@ -251,7 +259,7 @@ export class GameAuthority {
     }
   }
 
-  private toBroadcast(gameId: string, ev: GameEvent, resultingFenHash: string): Broadcast | null {
+  private toBroadcast(gameId: string, ev: GameEvent, resultingFenHash: string, resultingLegalMoves: LegalMoves): Broadcast | null {
     switch (ev.type) {
       case 'MovePlayed':
         return {
@@ -264,6 +272,7 @@ export class GameAuthority {
           fenHash: resultingFenHash,
           clock: { w: ev.remaining.w, b: ev.remaining.b },
           serverTs: ev.at,
+          legalMoves: resultingLegalMoves,
         };
       case 'GameEnded':
         return {
@@ -295,7 +304,7 @@ export class GameAuthority {
       status: snap.status,
       drawOffer: snap.drawOffer,
       moves: snap.moves.map((m) => ({ ply: m.ply, uci: m.uci, san: m.san, by: m.by })),
-      legalMoves: legalMovesOf(snap.position),
+      legalMoves: snap.status.over ? {} : legalMovesOf(snap.position),
     };
   }
 

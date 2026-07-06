@@ -144,3 +144,58 @@ test('game summaries and per-user history are served', async () => {
     await h.close();
   }
 });
+
+// ── M4: strict unknown-field rejection ─────────────────────────────────────
+
+test('M4: register rejects unknown fields with 422', async () => {
+  const h = await startHarness();
+  try {
+    const res = await h.json('POST', '/v1/auth/register', {
+      body: { handle: 'testuser', password: 'password123', extraField: true },
+    });
+    assert.equal(res.status, 422);
+    assert.ok(res.body.error, 'should have an error envelope');
+  } finally {
+    await h.close();
+  }
+});
+
+test('M4: login rejects unknown fields with 422', async () => {
+  const h = await startHarness();
+  try {
+    const res = await h.json('POST', '/v1/auth/login', {
+      body: { handle: 'testuser', password: 'pass', rogue: 'mass-assign' },
+    });
+    assert.equal(res.status, 422);
+  } finally {
+    await h.close();
+  }
+});
+
+test('M4: create seek rejects unknown fields with 422', async () => {
+  const h = await startHarness();
+  try {
+    const { token } = await h.makeUser('sk', ['user']);
+    const res = await h.json('POST', '/v1/seeks', {
+      token,
+      body: { variant: 'standard', timeControl: INC, injected: 'evil' },
+    });
+    assert.equal(res.status, 422);
+  } finally {
+    await h.close();
+  }
+});
+
+test('M4: grant role rejects unknown fields with 422', async () => {
+  const h = await startHarness();
+  try {
+    const { token, userId } = await h.makeUser('admin', ['user', 'admin']);
+    const res = await h.json('POST', `/v1/users/${userId}/roles`, {
+      token,
+      body: { role: 'moderator', extra: 'field' },
+    });
+    assert.equal(res.status, 422);
+  } finally {
+    await h.close();
+  }
+});
