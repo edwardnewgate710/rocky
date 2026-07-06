@@ -31,6 +31,11 @@ export interface GameControllerCallbacks {
   onClock: (whiteMs: number, blackMs: number) => void;
   /** Called when the game status changes (e.g. "playing", "checkmate 1-0"). */
   onStatus: (text: string) => void;
+  /**
+   * Called when the last move changes (from/to squares), so the board can
+   * highlight it. Called with `null` when there are no moves yet.
+   */
+  onLastMove?: (from: string | null, to: string | null) => void;
 }
 
 /**
@@ -58,6 +63,7 @@ export class GameController {
   private unsubscribe: (() => void) | null = null;
   private currentFen = '';
   private currentTurn: WsColor | null | undefined = undefined;
+  private currentLastMove: { from: string; to: string } | null | undefined = undefined;
 
   constructor(options: GameControllerOptions) {
     this.gameSync = options.gameSync;
@@ -121,6 +127,21 @@ export class GameController {
     // --- Status ---
     const statusText = this.statusText(state);
     this.callbacks.onStatus(statusText);
+
+    // --- Last move ---
+    if (this.callbacks.onLastMove) {
+      const lastMove = state.moves.length > 0
+        ? { from: state.moves[state.moves.length - 1]!.uci.slice(0, 2), to: state.moves[state.moves.length - 1]!.uci.slice(2, 4) }
+        : null;
+      const changed = (this.currentLastMove === undefined) ||
+        (lastMove === null && this.currentLastMove !== null) ||
+        (lastMove !== null && (this.currentLastMove === null || this.currentLastMove === undefined ||
+          lastMove.from !== this.currentLastMove.from || lastMove.to !== this.currentLastMove.to));
+      if (changed) {
+        this.currentLastMove = lastMove;
+        this.callbacks.onLastMove(lastMove?.from ?? null, lastMove?.to ?? null);
+      }
+    }
   }
 
   private statusText(state: GameSyncState): string {

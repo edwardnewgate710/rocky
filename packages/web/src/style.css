@@ -154,6 +154,31 @@ body {
   cursor: pointer;
 }
 .sidebar { min-width: 0; }
+.clock {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 1.5rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+}
+.clock-side {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.clock-side[data-active="true"] {
+  color: var(--sel);
+}
+.clock-label {
+  font-size: 0.75rem;
+  font-weight: 400;
+  opacity: 0.7;
+}
 button {
   font: inherit;
   padding: 6px 14px;

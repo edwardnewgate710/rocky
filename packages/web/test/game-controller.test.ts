@@ -216,3 +216,66 @@ test('fen getter returns the last projected FEN', () => {
   controller.stop();
   sync.stop();
 });
+
+test('onLastMove callback fires with from/to after a move broadcast', () => {
+  const { factory, sync, controller } = setup('w');
+  const lastMoves: Array<[string | null, string | null]> = [];
+  // Replace callbacks to capture onLastMove
+  controller.stop();
+  const controller2 = new GameController({
+    gameSync: sync,
+    myColor: 'w',
+    callbacks: {
+      onPosition: () => {},
+      onTurn: () => {},
+      onClock: () => {},
+      onStatus: () => {},
+      onLastMove: (from, to) => lastMoves.push([from, to]),
+    },
+  });
+  controller2.start();
+  sync.start();
+  factory.last.open();
+  factory.last.emit({
+    t: 'joined', gameId: 'g1', role: 'white',
+    state: stateView(0, 'w', 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
+  });
+  // No moves yet — onLastMove should fire with null, null
+  assert.deepEqual(lastMoves.at(-1), [null, null]);
+
+  // White plays e4
+  factory.last.emit({
+    t: 'move', gameId: 'g1', ply: 1, uci: 'e2e4', san: 'e4', by: 'w',
+    fenHash: 'h1', clock: { w: 59_000, b: 60_000 }, serverTs: 1,
+  });
+  assert.deepEqual(lastMoves.at(-1), ['e2', 'e4']);
+
+  // Black plays e5
+  factory.last.emit({
+    t: 'move', gameId: 'g1', ply: 2, uci: 'e7e5', san: 'e5', by: 'b',
+    fenHash: 'h2', clock: { w: 59_000, b: 59_000 }, serverTs: 2,
+  });
+  assert.deepEqual(lastMoves.at(-1), ['e7', 'e5']);
+
+  controller2.stop();
+  sync.stop();
+});
+
+test('onLastMove is optional — controller works without it', () => {
+  const { factory, sync, controller, positions } = setup('w');
+  controller.start();
+  sync.start();
+  factory.last.open();
+  factory.last.emit({
+    t: 'joined', gameId: 'g1', role: 'white',
+    state: stateView(0, 'w', 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
+  });
+  // Should not throw even though onLastMove is not provided.
+  factory.last.emit({
+    t: 'move', gameId: 'g1', ply: 1, uci: 'e2e4', san: 'e4', by: 'w',
+    fenHash: 'h1', clock: { w: 59_000, b: 60_000 }, serverTs: 1,
+  });
+  assert.ok(positions.length > 0);
+  controller.stop();
+  sync.stop();
+});
