@@ -104,12 +104,13 @@ test('move broadcast replays on top of snapshot FEN', () => {
     fenHash: 'h1', clock: { w: 59_000, b: 60_000 }, serverTs: 1,
   });
 
-  // The controller should have projected the position after e2e4.
-  // The FEN after 1.e4 should contain "e4" in the placement.
+  // The FEN after 1.e4 should have the e-pawn on the 4th rank.
   const lastFen = positions.at(-1)!;
-  assert.ok(lastFen.includes('e4'), `FEN should reflect e4 pawn push: ${lastFen}`);
+  const placement = lastFen.split(' ')[0]!;
+  const ranks = placement.split('/');
+  const rank4 = ranks[4]!; // 5th element (rank 4, 0-indexed from rank 8)
+  assert.ok(rank4.includes('P'), `Rank 4 should contain a white pawn: ${rank4}`);
   // Turn should now be black — not our turn.
-  // (positions and turns arrays have entries from the snapshot + the move)
   controller.stop();
   sync.stop();
 });
@@ -135,7 +136,11 @@ test('opponent move updates position and switches turn to our side', () => {
   });
 
   const lastFen = positions.at(-1)!;
-  assert.ok(lastFen.includes('e5'), `FEN should reflect e5 pawn push: ${lastFen}`);
+  const placement = lastFen.split(' ')[0]!;
+  const ranks = placement.split('/');
+  // After 1.e4 e5: white pawn on rank 4, black pawn on rank 5 (index 3)
+  const rank5 = ranks[3]!;
+  assert.ok(rank5.includes('p'), `Rank 5 should contain a black pawn: ${rank5}`);
   // After black's move, it's white's turn again — our turn.
   assert.deepEqual(turns.at(-1), true);
   controller.stop();

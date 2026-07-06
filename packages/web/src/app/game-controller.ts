@@ -57,7 +57,7 @@ export class GameController {
   private readonly callbacks: GameControllerCallbacks;
   private unsubscribe: (() => void) | null = null;
   private currentFen = '';
-  private currentTurn: WsColor | null = null;
+  private currentTurn: WsColor | null | undefined = undefined;
 
   constructor(options: GameControllerOptions) {
     this.gameSync = options.gameSync;
