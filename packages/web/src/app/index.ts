@@ -7,3 +7,4 @@ export * from './config.js';
 export * from './composition.js';
 export * from './board.js';
 export * from './bootstrap.js';
+export * from './game-controller.js';
