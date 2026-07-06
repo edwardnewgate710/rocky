@@ -52,25 +52,12 @@ export function formatClock(ms: number): string {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
-/**
- * Generate a random guest ID for anonymous visitors. Uses crypto.randomUUID
- * when available, otherwise falls back to a timestamp + random string.
- * Each visitor gets a unique id so two anonymous tabs don't collide as the
- * same user. This is a temporary path until full token-based identity wiring.
- */
-function generateGuestId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID().slice(0, 8);
-  }
-  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-}
-
 /** Injectable seams for the bootstrap. Omit any to use browser defaults. */
 export interface BootstrapDependencies extends Partial<AppDependencies> {
   /** Override the game ID (takes precedence over URL extraction). */
   readonly gameId?: string;
-  /** Override the user ID. */
-  readonly userId?: string;
+  /** Override the access token (for authenticated join). */
+  readonly token?: string;
 }
 
 /**
@@ -103,11 +90,11 @@ export function bootstrap(
   const gameId = deps?.gameId ?? extractGameId(
     typeof location !== 'undefined' ? location.pathname : '/',
   );
-  const userId = deps?.userId ?? `guest-${generateGuestId()}`;
+  const token = deps?.token;
 
   if (boardEl && gameId) {
     // --- Full game view wiring ---
-    const gameSync = app.createGameSync({ gameId, userId });
+    const gameSync = app.createGameSync({ gameId, ...(token !== undefined ? { token } : {}) });
     const oracle = app.createGameOracle(gameSync);
 
     // m7: Declare controller before mountBoard's onMove closure references it.

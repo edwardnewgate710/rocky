@@ -76,7 +76,8 @@ export interface GameSyncState {
 
 export interface GameSyncOptions {
   readonly gameId: string;
-  readonly userId: string;
+  /** Access token for authenticated join; omitted for anonymous spectators. */
+  readonly token?: string;
 }
 
 export type GameSyncListener = (state: GameSyncState) => void;
@@ -105,7 +106,7 @@ function initialState(gameId: string): GameSyncState {
 export class GameSync {
   private readonly client: WsClient;
   private readonly gameId: string;
-  private readonly userId: string;
+  private readonly token: string | undefined;
   private state: GameSyncState;
   private clientSeq = 0;
   private joined = false;
@@ -115,7 +116,7 @@ export class GameSync {
   constructor(client: WsClient, options: GameSyncOptions) {
     this.client = client;
     this.gameId = options.gameId;
-    this.userId = options.userId;
+    this.token = options.token;
     this.state = initialState(options.gameId);
   }
 
@@ -200,7 +201,7 @@ export class GameSync {
     if (this.joined) {
       this.client.send({ t: 'resume', gameId: this.gameId, lastPly: this.state.ply });
     } else {
-      this.client.send({ t: 'join', gameId: this.gameId, userId: this.userId });
+      this.client.send({ t: 'join', gameId: this.gameId, ...(this.token !== undefined ? { token: this.token } : {}) });
     }
   }
 

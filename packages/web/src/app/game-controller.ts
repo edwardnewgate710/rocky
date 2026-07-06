@@ -66,8 +66,9 @@ export class GameController {
   private readonly callbacks: GameControllerCallbacks;
   private unsubscribe: (() => void) | null = null;
   private currentFen = '';
-  private currentTurn: WsColor | null | undefined = undefined;
+  private currentMyTurn: boolean | undefined = undefined;
   private currentLastMove: { from: string; to: string } | null | undefined = undefined;
+  private currentClock: { w: number; b: number } | undefined = undefined;
   private colorEmitted = false;
 
   constructor(options: GameControllerOptions) {
@@ -138,19 +139,27 @@ export class GameController {
     // Derive myTurn from GameSyncState: it's our turn only when the server
     // assigned us a color, it's our color's turn, and no optimistic move is
     // pending (the pending===null term closes the stale-oracle race during
-    // the optimistic window — see M6).
-    if (state.turn !== this.currentTurn) {
-      this.currentTurn = state.turn;
-      const myTurn = state.turn !== null
-        && state.myColor !== null
-        && state.turn === state.myColor
-        && state.pending === null;
+    // the optimistic window — see M6). Fire onTurn when the *derived* value
+    // changes, not just when state.turn changes, because pending toggles
+    // while turn stays constant.
+    const myTurn = state.turn !== null
+      && state.myColor !== null
+      && state.turn === state.myColor
+      && state.pending === null;
+    if (myTurn !== this.currentMyTurn) {
+      this.currentMyTurn = myTurn;
       this.callbacks.onTurn(myTurn);
     }
 
-    // --- Clock ---
+    // --- Clock (with change detection) ---
     if (state.clock !== null) {
-      this.callbacks.onClock(state.clock.w, state.clock.b);
+      const clockChanged = this.currentClock === undefined
+        || this.currentClock.w !== state.clock.w
+        || this.currentClock.b !== state.clock.b;
+      if (clockChanged) {
+        this.currentClock = { w: state.clock.w, b: state.clock.b };
+        this.callbacks.onClock(state.clock.w, state.clock.b);
+      }
     }
 
     // --- Status ---
