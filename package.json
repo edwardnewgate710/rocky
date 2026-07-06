@@ -14,6 +14,6 @@
     "clean": "npm run clean --workspace @chess-platform/core && npm run clean --workspace @chess-platform/game && npm run clean --workspace @chess-platform/realtime-gateway && npm run clean --workspace @chess-platform/persistence && npm run clean --workspace @chess-platform/api && npm run clean --workspace @chess-platform/engine && npm run clean --workspace @chess-platform/web"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   }
 }

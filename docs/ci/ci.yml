@@ -1,11 +1,10 @@
 name: CI
 
 # Build, typecheck, and test every workspace package on each push and PR.
-# Dependency order matters: `@chess-platform/game` and
-# `@chess-platform/realtime-gateway` resolve `@chess-platform/core`'s types from
-# its built `dist/`, so we BUILD before we lint/test. The root `build`, `lint`,
-# and `test` scripts already fan out to the packages in the correct order
-# (core -> game -> realtime-gateway).
+# Dependency order matters: downstream packages resolve upstream types from
+# built `dist/`, so we BUILD before we lint/test. The root `build`, `lint`,
+# and `test` scripts already fan out to the packages in dependency order
+# (core -> game -> realtime-gateway -> persistence -> api -> engine -> web).
 
 on:
   push:
@@ -25,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: ['20.x', '22.x']
+        node-version: ['22.x', '24.x']
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,12 +35,10 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
 
-      # No root lockfile yet, so use `npm install` (workspaces). Switch to
-      # `npm ci` once a root package-lock.json is committed.
-      - name: Install dependencies (workspaces)
-        run: npm install
+      - name: Install dependencies (reproducible)
+        run: npm ci
 
-      - name: Build (core -> game -> realtime-gateway)
+      - name: Build (dependency order)
         run: npm run build
 
       - name: Typecheck (tsc --noEmit)
@@ -49,3 +46,42 @@ jobs:
 
       - name: Test (node --test)
         run: npm test
+
+  # Runs the Postgres-gated integration tests (persistence event store +
+  # repositories against a real database). Everything else is hermetic.
+  postgres-integration:
+    name: postgres integration (persistence)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: chess
+          POSTGRES_PASSWORD: chess
+          POSTGRES_DB: chess_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U chess"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://chess:chess@localhost:5432/chess_test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: npm
+
+      - name: Install dependencies (reproducible)
+        run: npm ci
+
+      - name: Build (dependency order)
+        run: npm run build
+
+      - name: Test persistence against Postgres
+        run: npm test --workspace @chess-platform/persistence

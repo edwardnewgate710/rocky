@@ -15,16 +15,28 @@
       "default": "./dist/pg/index.js"
     }
   },
-  "files": ["dist", "src", "migrations"],
+  "files": [
+    "dist",
+    "src",
+    "migrations"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "tsc -p tsconfig.test.json && node --test dist-test/test/",
+    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/test/**/*.test.js\"",
     "lint": "tsc -p tsconfig.json --noEmit",
     "migrate": "node dist/pg/migrate-cli.js",
     "clean": "rm -rf dist dist-test"
   },
-  "keywords": ["chess", "postgres", "event-sourcing", "persistence", "glicko2"],
-  "engines": { "node": ">=20" },
+  "keywords": [
+    "chess",
+    "postgres",
+    "event-sourcing",
+    "persistence",
+    "glicko2"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
     "@chess-platform/game": "file:../game",
     "pg": "^8.12.0"
