@@ -166,7 +166,8 @@ test('scale: reconstruct many games from their logs quickly', () => {
 // times (initial, after 2...Ng8, after 4...Ng8) with White to move.
 //
 // SKIPPED until threefold detection is implemented in the Game aggregate.
-// Remove the .skip when the implementation lands.
+// See ROADMAP §Milestone 2 "Scheduled — threefold repetition" for acceptance
+// criteria. Remove the .skip when the implementation lands.
 
 test.skip('M3 (acceptance): threefold repetition ends the game as a draw', () => {
   let { game } = newGame();
