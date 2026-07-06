@@ -19,6 +19,7 @@ import type { WsClient } from './ws-client.js';
 import type {
   EndedBroadcast,
   GameStatus,
+  LegalMoves,
   MoveBroadcast,
   MoveView,
   RejectMessage,
@@ -59,6 +60,13 @@ export interface GameSyncState {
   readonly drawOffer: WsColor | null;
   readonly fenHash: string | null;
   readonly presence: PresenceInfo | null;
+  /**
+   * Authoritative legal-move map for the side to move (origin square → legal
+   * destination squares), from the latest server snapshot. Stale after a live
+   * move broadcast until the next snapshot/resync; empty (`{}`) once the game
+   * is over. The frontend consumes this — it never derives legality itself.
+   */
+  readonly legalMoves: LegalMoves;
   /** Our un-acknowledged optimistic move, if any. */
   readonly pending: PendingMove | null;
   /** The most recent rejection (e.g. for surfacing a rollback reason). */
@@ -87,6 +95,7 @@ function initialState(gameId: string): GameSyncState {
     drawOffer: null,
     fenHash: null,
     presence: null,
+    legalMoves: {},
     pending: null,
     lastReject: null,
   };
@@ -225,6 +234,7 @@ export class GameSync {
       status: view.status,
       drawOffer: view.drawOffer,
       fenHash: view.fenHash,
+      legalMoves: view.legalMoves,
       // A full authoritative snapshot supersedes any optimistic pending move.
       pending: null,
     });
@@ -246,6 +256,9 @@ export class GameSync {
       clock: msg.clock,
       fenHash: msg.fenHash,
       drawOffer: null,
+      // Legal moves are stale after a live move broadcast; the next snapshot
+      // or resync will refresh them.
+      legalMoves: {},
       pending: confirmsPending ? null : pending,
     });
   }
@@ -253,6 +266,7 @@ export class GameSync {
   private applyEnded(msg: EndedBroadcast): void {
     this.patch({
       status: { over: true, result: msg.result, termination: msg.termination, winner: msg.winner },
+      legalMoves: {},
     });
   }
 

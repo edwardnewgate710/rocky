@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { WsClient } from '../src/net/ws-client.js';
 import { GameSync } from '../src/net/game-sync.js';
-import type { StateView, WsColor } from '../src/net/ws-protocol.js';
+import { AuthoritativeMoveOracle } from '../src/net/authoritative-oracle.js';
+import type { LegalMoves, StateView, WsColor } from '../src/net/ws-protocol.js';
 import { FakeSocketFactory, ManualScheduler } from './support/fake-socket.js';
 
 function setup() {
@@ -21,7 +22,12 @@ function setup() {
   return { factory, scheduler, client, sync };
 }
 
-function stateView(ply: number, turn: WsColor, moves: StateView['moves'] = []): StateView {
+function stateView(
+  ply: number,
+  turn: WsColor,
+  moves: StateView['moves'] = [],
+  legalMoves: LegalMoves = {},
+): StateView {
   return {
     gameId: 'g1',
     variant: 'standard',
@@ -35,7 +41,7 @@ function stateView(ply: number, turn: WsColor, moves: StateView['moves'] = []): 
     status: { over: false },
     drawOffer: null,
     moves,
-    legalMoves: {},
+    legalMoves,
   };
 }
 
@@ -155,4 +161,116 @@ test('stop closes the connection and marks disconnected', () => {
   sync.stop();
   assert.equal(sync.getState().connected, false);
   assert.ok(factory.last.closed);
+});
+
+// ── legalMoves surfacing (increment 3C-2B) ──────────────────────────────
+
+test('legalMoves defaults to empty before a snapshot', () => {
+  const { sync } = setup();
+  assert.deepEqual(sync.getState().legalMoves, {});
+});
+
+test('legalMoves are populated from the authoritative snapshot', () => {
+  const { factory, sync } = setup();
+  sync.start();
+  factory.last.open();
+  const lm: LegalMoves = { e2: ['e3', 'e4'], g1: ['f3', 'h3'] };
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w', [], lm) });
+  assert.deepEqual(sync.getState().legalMoves, lm);
+});
+
+test('legalMoves go stale (empty) after a live move broadcast', () => {
+  const { factory, sync } = setup();
+  sync.start();
+  factory.last.open();
+  const lm: LegalMoves = { e2: ['e3', 'e4'] };
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w', [], lm) });
+  assert.deepEqual(sync.getState().legalMoves, lm);
+
+  factory.last.emit({
+    t: 'move', gameId: 'g1', ply: 1, uci: 'e2e4', san: 'e4', by: 'w',
+    fenHash: 'h1', clock: { w: 59_000, b: 60_000 }, serverTs: 1,
+  });
+  assert.deepEqual(sync.getState().legalMoves, {});
+});
+
+test('legalMoves are cleared when the game ends', () => {
+  const { factory, sync } = setup();
+  sync.start();
+  factory.last.open();
+  const lm: LegalMoves = { e2: ['e3', 'e4'] };
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w', [], lm) });
+  assert.deepEqual(sync.getState().legalMoves, lm);
+
+  factory.last.emit({ t: 'ended', gameId: 'g1', result: '1-0', termination: 'checkmate', winner: 'w', serverTs: 5 });
+  assert.deepEqual(sync.getState().legalMoves, {});
+});
+
+test('legalMoves are refreshed by a resync snapshot', () => {
+  const { factory, sync } = setup();
+  sync.start();
+  factory.last.open();
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w', [], { e2: ['e3', 'e4'] }) });
+  factory.last.emit({
+    t: 'move', gameId: 'g1', ply: 1, uci: 'e2e4', san: 'e4', by: 'w',
+    fenHash: 'h1', clock: { w: 59_000, b: 60_000 }, serverTs: 1,
+  });
+  assert.deepEqual(sync.getState().legalMoves, {});
+
+  // Server sends a fresh snapshot (e.g. after a resync)
+  const lm: LegalMoves = { e7: ['e6', 'e5'] };
+  factory.last.emit({ t: 'state', gameId: 'g1', state: stateView(1, 'b', [], lm) });
+  assert.deepEqual(sync.getState().legalMoves, lm);
+});
+
+// ── AuthoritativeMoveOracle adapter (increment 3C-2B) ───────────────────
+
+test('AuthoritativeMoveOracle returns destinations from GameSync legalMoves', () => {
+  const { factory, sync } = setup();
+  sync.start();
+  factory.last.open();
+  const lm: LegalMoves = { e2: ['e3', 'e4'], g1: ['f3', 'h3'] };
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w', [], lm) });
+
+  const oracle = new AuthoritativeMoveOracle({ getLegalMoves: () => sync.getState().legalMoves });
+  oracle.setPosition('startpos');
+  assert.deepEqual([...oracle.destinations('e2')], ['e3', 'e4']);
+  assert.deepEqual([...oracle.destinations('g1')], ['f3', 'h3']);
+});
+
+test('AuthoritativeMoveOracle returns empty for unknown squares', () => {
+  const { factory, sync } = setup();
+  sync.start();
+  factory.last.open();
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w', [], { e2: ['e3'] }) });
+
+  const oracle = new AuthoritativeMoveOracle({ getLegalMoves: () => sync.getState().legalMoves });
+  assert.deepEqual([...oracle.destinations('a1')], []);
+});
+
+test('AuthoritativeMoveOracle returns empty when legalMoves are stale after a move', () => {
+  const { factory, sync } = setup();
+  sync.start();
+  factory.last.open();
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w', [], { e2: ['e3', 'e4'] }) });
+
+  const oracle = new AuthoritativeMoveOracle({ getLegalMoves: () => sync.getState().legalMoves });
+  assert.deepEqual([...oracle.destinations('e2')], ['e3', 'e4']);
+
+  factory.last.emit({
+    t: 'move', gameId: 'g1', ply: 1, uci: 'e2e4', san: 'e4', by: 'w',
+    fenHash: 'h1', clock: { w: 59_000, b: 60_000 }, serverTs: 1,
+  });
+  assert.deepEqual([...oracle.destinations('e2')], []);
+});
+
+test('AuthoritativeMoveOracle returns empty when game is over', () => {
+  const { factory, sync } = setup();
+  sync.start();
+  factory.last.open();
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w', [], { e2: ['e3'] }) });
+
+  const oracle = new AuthoritativeMoveOracle({ getLegalMoves: () => sync.getState().legalMoves });
+  factory.last.emit({ t: 'ended', gameId: 'g1', result: '1-0', termination: 'checkmate', winner: 'w', serverTs: 5 });
+  assert.deepEqual([...oracle.destinations('e2')], []);
 });

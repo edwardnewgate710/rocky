@@ -12,3 +12,4 @@ export * from './session.js';
 export * from './ws-protocol.js';
 export * from './ws-client.js';
 export * from './game-sync.js';
+export * from './authoritative-oracle.js';
