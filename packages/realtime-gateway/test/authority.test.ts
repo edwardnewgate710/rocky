@@ -187,3 +187,62 @@ test('unknown game raises unknown_game', () => {
     (e) => e instanceof AuthorityError && e.code === 'unknown_game',
   );
 });
+
+// ── C1: MoveBroadcast carries legalMoves for the resulting position ────────
+
+test('C1: a move broadcast carries legal destinations for the new side to move', async () => {
+  const { authority, pubsub } = setup();
+  const got: Broadcast[] = [];
+  pubsub.subscribe(gameChannel('g1'), (m) => got.push(m));
+
+  await authority.apply('g1', 'alice', { kind: 'move', uci: 'e2e4' });
+  const mv = got.find((b) => b.t === 'move');
+  assert.ok(mv, 'should have a move broadcast');
+  if (mv && mv.t === 'move') {
+    // After 1.e4, it's Black's turn — e7 should have e5/e6 as destinations.
+    assert.deepEqual([...(mv.legalMoves['e7'] ?? [])].sort(), ['e5', 'e6']);
+    // e4 (the moved pawn) should not be a legal origin for Black.
+    assert.equal(mv.legalMoves['e4'], undefined);
+    // e2 (the pawn's origin) should no longer have destinations (White moved).
+    assert.equal(mv.legalMoves['e2'], undefined);
+  }
+});
+
+test('C1: the mating move broadcast carries empty legalMoves', async () => {
+  const { authority, pubsub } = setup();
+  const got: Broadcast[] = [];
+  pubsub.subscribe(gameChannel('g1'), (m) => got.push(m));
+
+  // Fool's mate: f3 e5 g4 Qh4#
+  await authority.apply('g1', 'alice', { kind: 'move', uci: 'f2f3' });
+  await authority.apply('g1', 'bob', { kind: 'move', uci: 'e7e5' });
+  await authority.apply('g1', 'alice', { kind: 'move', uci: 'g2g4' });
+
+  got.length = 0; // clear to capture only the mating move
+  await authority.apply('g1', 'bob', { kind: 'move', uci: 'd8h4' });
+
+  const mv = got.find((b) => b.t === 'move');
+  assert.ok(mv, 'should have the mating move broadcast');
+  if (mv && mv.t === 'move') {
+    // The mating move's broadcast should carry empty legalMoves (game over).
+    assert.deepEqual(mv.legalMoves, {});
+  }
+  // The previous (non-mating) move broadcast should have had non-empty legalMoves.
+  // (g4 was the 3rd move; its broadcast should have had legalMoves for Black.)
+  // We already cleared `got`, so verify via the state:
+  assert.equal(authority.getState('g1').status.over, true);
+  assert.deepEqual(authority.getState('g1').legalMoves, {});
+});
+
+// ── M1: getState returns empty legalMoves for non-checkmate endings ────────
+
+test('M1: after resignation, getState legalMoves is {} while the position has moves', async () => {
+  const { authority } = setup();
+  // Play one move so the position is not the startpos (which also has moves).
+  await authority.apply('g1', 'alice', { kind: 'move', uci: 'e2e4' });
+  // Resign — the position still has legal moves, but the game is over.
+  await authority.apply('g1', 'bob', { kind: 'resign' });
+  const s = authority.getState('g1');
+  assert.equal(s.status.over, true);
+  assert.deepEqual(s.legalMoves, {}, 'legalMoves must be {} after resignation even though the position has moves');
+});
