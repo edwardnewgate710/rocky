@@ -4,10 +4,11 @@
  *
  * This adapter contains no chess rules. It reads the legal-move map that the
  * server (via the realtime gateway's `GameAuthority` and the perft-verified
- * core engine) embeds in every {@link StateView} snapshot. The map is keyed by
- * origin square (algebraic notation, e.g. `"e2"`) with values being arrays of
- * legal destination squares. It is empty (`{}`) once the game is over and is
- * stale after a live move broadcast until the next snapshot/resync refreshes it.
+ * core engine) embeds in every {@link StateView} snapshot **and every
+ * MoveBroadcast**. The map is keyed by origin square (algebraic notation, e.g.
+ * `"e2"`) with values being arrays of legal destination squares. It is empty
+ * (`{}`) once the game is over and is refreshed on every move broadcast via
+ * the push-based `legalMoves` field.
  *
  * The adapter is wired at the composition root (increment 3C-2C) so the
  * interaction layer can query `destinations(from)` for highlight rendering and
