@@ -5,6 +5,7 @@ import { resolveConfig } from '../src/app/config.js';
 import { GambitClient } from '../src/api/client.js';
 import { WsClient } from '../src/net/ws-client.js';
 import { GameSync } from '../src/net/game-sync.js';
+import { AuthoritativeMoveOracle } from '../src/net/authoritative-oracle.js';
 import { MemoryTokenStore } from '../src/net/session.js';
 import type { KeyValueStorage } from '../src/net/session.js';
 import { FakeTransport, json } from './support/fake-transport.js';
@@ -45,6 +46,62 @@ test('createGameSync builds a GameSync bound to the shared realtime client', () 
   const state = sync.getState();
   assert.equal(state.gameId, 'g1');
   assert.equal(state.connected, false);
+});
+
+test('createGameOracle returns an AuthoritativeMoveOracle reading from GameSync state', () => {
+  const { app } = make();
+  const sync = app.createGameSync({ gameId: 'g1', userId: 'u1' });
+  const oracle = app.createGameOracle(sync);
+  assert.ok(oracle instanceof AuthoritativeMoveOracle);
+
+  // Before any snapshot, legalMoves is empty — oracle returns no destinations.
+  assert.deepEqual([...oracle.destinations('e2')], []);
+
+  // Simulate a snapshot with legal moves by patching GameSync state.
+  // We use the public API: start, open, emit a joined message.
+  sync.start();
+  // Access the fake socket to emit a joined message.
+  // The FakeSocketFactory stores sockets; the last one is the one we need.
+  // But we don't have direct access here — we test via the getter contract instead.
+  // The oracle reads gameSync.getState().legalMoves; since no snapshot arrived,
+  // it stays empty. This verifies the wiring (getter) is correct.
+  sync.stop();
+});
+
+test('createGameOracle oracle reflects legalMoves from GameSync after a snapshot', () => {
+  const { app, sockets } = make();
+  const sync = app.createGameSync({ gameId: 'g1', userId: 'u1' });
+  const oracle = app.createGameOracle(sync);
+
+  sync.start();
+  sockets.last.open();
+  sockets.last.emit({
+    t: 'joined',
+    gameId: 'g1',
+    role: 'white',
+    state: {
+      gameId: 'g1',
+      variant: 'standard',
+      players: { white: 'u1', black: 'u2' },
+      timeControl: { initialMs: 60_000, incrementMs: 0, delayMs: 0, kind: 'sudden_death' },
+      fen: 'startpos',
+      fenHash: 'h0',
+      ply: 0,
+      turn: 'w',
+      clock: { w: 60_000, b: 60_000 },
+      status: { over: false },
+      drawOffer: null,
+      moves: [],
+      legalMoves: { e2: ['e3', 'e4'], g1: ['f3', 'h3'] },
+    },
+  });
+
+  // The oracle should now reflect the legal moves from the snapshot.
+  assert.deepEqual([...oracle.destinations('e2')], ['e3', 'e4']);
+  assert.deepEqual([...oracle.destinations('g1')], ['f3', 'h3']);
+  assert.deepEqual([...oracle.destinations('a1')], []);
+
+  sync.stop();
 });
 
 test('createApp injects the REST base URL into the client', async () => {

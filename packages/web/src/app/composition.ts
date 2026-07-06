@@ -18,6 +18,7 @@ import type { GambitClientOptions } from '../api/client.js';
 import { WsClient } from '../net/ws-client.js';
 import { GameSync } from '../net/game-sync.js';
 import type { GameSyncOptions } from '../net/game-sync.js';
+import { AuthoritativeMoveOracle } from '../net/authoritative-oracle.js';
 import { MemoryTokenStore, WebStorageTokenStore } from '../net/session.js';
 import type { KeyValueStorage, TokenStore } from '../net/session.js';
 import type { HttpTransport } from '../ports/http.js';
@@ -46,6 +47,14 @@ export interface App {
   readonly ws: WsClient;
   /** Build a per-game synchronization layer over the shared realtime client. */
   createGameSync(options: GameSyncOptions): GameSync;
+  /**
+   * Build a `LegalMoveOracle` backed by the authoritative `legalMoves` map in
+   * a {@link GameSync}'s state. The oracle reads the map live via a getter, so
+   * it stays in sync as the `GameSync` processes server snapshots and move
+   * broadcasts. Wire this into `mountBoard` so the board's legal-move
+   * highlights reflect the server's authoritative state.
+   */
+  createGameOracle(gameSync: GameSync): AuthoritativeMoveOracle;
 }
 
 /** Pick the session store: explicit store, else Web Storage, else in-memory. */
@@ -75,5 +84,9 @@ export function createApp(deps: AppDependencies): App {
     api,
     ws,
     createGameSync: (options: GameSyncOptions): GameSync => new GameSync(ws, options),
+    createGameOracle: (gameSync: GameSync): AuthoritativeMoveOracle =>
+      new AuthoritativeMoveOracle({
+        getLegalMoves: () => gameSync.getState().legalMoves,
+      }),
   };
 }

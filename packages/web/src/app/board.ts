@@ -11,15 +11,30 @@
 import { BoardView } from '../ui/board-view.js';
 import type { ResolvedMove } from '../ui/board-view.js';
 import { BoardInteraction } from '../core/interaction.js';
-import { StaticMoveOracle } from '../ports/move-oracle.js';
+import { NullMoveOracle } from '../ports/move-oracle.js';
+import type { LegalMoveOracle } from '../ports/move-oracle.js';
 import { applyMove } from '../core/mover.js';
 import { STARTING_FEN } from '../core/position.js';
 
-/** DOM elements the board binds to. */
+/**
+ * DOM elements the board binds to.
+ */
 export interface BoardElements {
   readonly boardEl: HTMLElement;
   readonly statusEl?: HTMLElement | null;
   readonly flipEl?: HTMLElement | null;
+}
+
+/**
+ * Optional configuration for {@link mountBoard}. The `oracle` is injected here
+ * so the board module never imports the networking layer; the composition root
+ * (or a game controller) creates an `AuthoritativeMoveOracle` from a `GameSync`
+ * and passes it in. When omitted, a {@link NullMoveOracle} is used — the board
+ * renders but offers no legal-move highlights.
+ */
+export interface MountBoardOptions {
+  /** Legal-move oracle; defaults to {@link NullMoveOracle}. */
+  readonly oracle?: LegalMoveOracle;
 }
 
 /** Handle to the mounted board. */
@@ -28,21 +43,20 @@ export interface MountedBoard {
 }
 
 /**
- * Opening-move table used only so the offline scaffold is demonstrable before a
- * real (core/server-backed) oracle is wired. Unchanged from Increment 2.
+ * Mount the interactive board into the DOM and return a handle to it.
+ *
+ * The `oracle` (if provided) supplies legal-move data from the authoritative
+ * server snapshot via `GameSync` state; when omitted, a `NullMoveOracle` is
+ * used and the board renders without legal-move highlights.
  */
-const OPENING_MOVES: Record<string, string[]> = {
-  a2: ['a3', 'a4'], b2: ['b3', 'b4'], c2: ['c3', 'c4'], d2: ['d3', 'd4'],
-  e2: ['e3', 'e4'], f2: ['f3', 'f4'], g2: ['g3', 'g4'], h2: ['h3', 'h4'],
-  b1: ['a3', 'c3'], g1: ['f3', 'h3'],
-};
-
-/** Mount the interactive board into the DOM and return a handle to it. */
-export function mountBoard(elements: BoardElements): MountedBoard {
+export function mountBoard(
+  elements: BoardElements,
+  options?: MountBoardOptions,
+): MountedBoard {
   const { boardEl, statusEl, flipEl } = elements;
 
   let fen = STARTING_FEN;
-  const oracle = new StaticMoveOracle({ [STARTING_FEN]: OPENING_MOVES });
+  const oracle = options?.oracle ?? new NullMoveOracle();
   const interaction = new BoardInteraction({ oracle, myTurn: true });
 
   const setStatus = (msg: string): void => {
