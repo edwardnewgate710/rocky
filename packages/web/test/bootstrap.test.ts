@@ -120,7 +120,7 @@ test('bootstrap without board element returns null board', () => {
 test('bootstrap with game ID creates a GameController', () => {
   const doc = makeDoc();
   const sockets = new FakeSocketFactory();
-  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', userId: 'u1' });
+  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', token: 'token-u1' });
   assert.ok(result.controller instanceof GameController);
   assert.ok(result.board);
 });
@@ -128,7 +128,7 @@ test('bootstrap with game ID creates a GameController', () => {
 test('bootstrap with game ID opens a connection via gameSync.start()', () => {
   const doc = makeDoc();
   const sockets = new FakeSocketFactory();
-  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', userId: 'u1' });
+  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', token: 'token-u1' });
   // C3: bootstrap now calls gameSync.start(), which opens the WebSocket.
   assert.equal(sockets.sockets.length, 1, 'a socket should be opened for a game view');
   assert.ok(result.controller);
@@ -137,7 +137,7 @@ test('bootstrap with game ID opens a connection via gameSync.start()', () => {
 test('bootstrap wires onPosition callback to board.setPosition', () => {
   const doc = makeDoc();
   const sockets = new FakeSocketFactory();
-  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', userId: 'u1' });
+  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', token: 'token-u1' });
   assert.ok(result.controller);
   assert.ok(result.board);
 
@@ -155,7 +155,7 @@ test('bootstrap wires onPosition callback to board.setPosition', () => {
 test('bootstrap wires onMove callback to controller.submitMove', () => {
   const doc = makeDoc();
   const sockets = new FakeSocketFactory();
-  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', userId: 'u1' });
+  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', token: 'token-u1' });
   assert.ok(result.controller);
   assert.ok(result.board);
 
@@ -174,7 +174,7 @@ test('bootstrap with data-color="b" sets myColor to black', () => {
   const doc = makeDocWithBoard(boardEl);
 
   const sockets = new FakeSocketFactory();
-  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', userId: 'u1' });
+  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', token: 'token-u1' });
   assert.ok(result.controller);
   result.controller!.stop();
 });
@@ -185,7 +185,7 @@ test('bootstrap with data-color="spectator" sets myColor to null', () => {
   const doc = makeDocWithBoard(boardEl);
 
   const sockets = new FakeSocketFactory();
-  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', userId: 'u1' });
+  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', token: 'token-u1' });
   assert.ok(result.controller);
   result.controller!.stop();
 });
@@ -197,7 +197,7 @@ test('bootstrap wires onClock to clock elements when present', () => {
   const doc = makeDoc(ids);
 
   const sockets = new FakeSocketFactory();
-  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', userId: 'u1' });
+  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', token: 'token-u1' });
   assert.ok(result.controller);
   result.controller!.stop();
 });
@@ -223,11 +223,11 @@ test('C3: bootstrap without game ID does not open a connection', () => {
   assert.equal(result.controller, null);
 });
 
-test('C3: bootstrap generates a guest-<id> userId when none provided', () => {
+test('C3: bootstrap opens a connection when no token is provided (anonymous spectator)', () => {
   const doc = makeDoc();
   const sockets = new FakeSocketFactory();
-  // We can't directly observe the userId, but we can verify the bootstrap
-  // doesn't throw and opens a connection (which requires a valid userId).
+  // Without a token, bootstrap still opens a connection — the join will be
+  // anonymous (spectator). The gateway handles the no-token case.
   const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1' });
   assert.ok(result.controller);
   assert.equal(sockets.sockets.length, 1);

@@ -107,7 +107,8 @@ export interface StateView {
 export interface JoinMessage {
   readonly t: 'join';
   readonly gameId: string;
-  readonly userId: string;
+  /** Access token; required for players, optional for anonymous spectators. */
+  readonly token?: string;
 }
 
 export interface MoveMessage {
@@ -213,7 +214,8 @@ export type RejectCode =
   | 'stale_seq'
   | 'unknown_game'
   | 'not_joined'
-  | 'invalid_command';
+  | 'invalid_command'
+  | 'unauthorized';
 
 export interface RejectMessage {
   readonly t: 'reject';

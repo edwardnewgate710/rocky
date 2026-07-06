@@ -18,7 +18,7 @@ function setup() {
     heartbeatMs: 0,
     reconnect: { baseDelayMs: 10, maxDelayMs: 10, jitter: 'none' },
   });
-  const sync = new GameSync(client, { gameId: 'g1', userId: 'u1' });
+  const sync = new GameSync(client, { gameId: 'g1', token: 'token-u1' });
   const positions: string[] = [];
   const turns: boolean[] = [];
   const clocks: Array<[number, number]> = [];
@@ -462,6 +462,40 @@ test('C3: myTurn is false for spectators even when a side is to move', () => {
   factory.last.open();
   factory.last.emit({ t: 'joined', gameId: 'g1', role: 'spectator', state: stateView(0, 'w', 'startpos') });
   assert.deepEqual(turns.at(-1), false, 'spectators never have myTurn = true');
+  controller.stop();
+  sync.stop();
+});
+
+// ── Review #02 item 3: turn change-detection fires on pending transitions ──
+
+test('R2#3: submit → onTurn(false) fires even when turn is held constant', () => {
+  const { factory, sync, controller, turns } = setup();
+  controller.start();
+  sync.start();
+  factory.last.open();
+  // Join as white, white to move → myTurn = true.
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w', 'startpos') });
+  // Clear the turns array to isolate the submit transition.
+  turns.length = 0;
+  // Submit a move — pending is set, turn stays 'w', but myTurn should go false.
+  sync.submitMove('e2e4');
+  assert.deepEqual(turns, [false], 'onTurn(false) should fire when pending is set (turn held constant)');
+  controller.stop();
+  sync.stop();
+});
+
+test('R2#3: reject rollback → onTurn(true) fires even when turn is held constant', () => {
+  const { factory, sync, controller, turns } = setup();
+  controller.start();
+  sync.start();
+  factory.last.open();
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w', 'startpos') });
+  // Submit a move → pending set → myTurn goes false.
+  sync.submitMove('e2e4');
+  turns.length = 0;
+  // Server rejects the move → pending cleared → myTurn goes back to true.
+  factory.last.emit({ t: 'reject', gameId: 'g1', ref: 1, code: 'illegal_move', message: 'nope' });
+  assert.deepEqual(turns, [true], 'onTurn(true) should fire when pending is cleared by reject (turn held constant)');
   controller.stop();
   sync.stop();
 });
