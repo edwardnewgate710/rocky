@@ -18,7 +18,7 @@ function setup() {
     heartbeatMs: 0,
     reconnect: { baseDelayMs: 10, maxDelayMs: 10, jitter: 'none' },
   });
-  const sync = new GameSync(client, { gameId: 'g1', userId: 'u1' });
+  const sync = new GameSync(client, { gameId: 'g1', token: 'token-u1' });
   return { factory, scheduler, client, sync };
 }
 
@@ -49,7 +49,7 @@ test('start joins on open', () => {
   const { factory, sync } = setup();
   sync.start();
   factory.last.open();
-  assert.deepEqual(JSON.parse(factory.last.sent[0]!), { t: 'join', gameId: 'g1', userId: 'u1' });
+  assert.deepEqual(JSON.parse(factory.last.sent[0]!), { t: 'join', gameId: 'g1', token: 'token-u1' });
   assert.equal(sync.getState().connected, true);
 });
 
@@ -301,8 +301,8 @@ test('M5: two GameSyncs on one client; stopping one leaves the other receiving',
     heartbeatMs: 0,
     reconnect: { baseDelayMs: 10, maxDelayMs: 10, jitter: 'none' },
   });
-  const sync1 = new GameSync(client, { gameId: 'g1', userId: 'u1' });
-  const sync2 = new GameSync(client, { gameId: 'g2', userId: 'u1' });
+  const sync1 = new GameSync(client, { gameId: 'g1', token: 'token-u1' });
+  const sync2 = new GameSync(client, { gameId: 'g2', token: 'token-u1' });
 
   sync1.start();
   sync2.start();
