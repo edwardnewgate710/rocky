@@ -189,7 +189,7 @@ export function bootstrap(
   const pathname = typeof location !== 'undefined' ? location.pathname : '/';
   const route = parseRoute(pathname);
   const gameId = deps?.gameId ?? (route.name === 'game' ? route.gameId : null);
-  const token = deps?.token;
+  const token = deps?.token ?? auth.currentSession?.accessToken;
 
   // --- Game view ---
   const boardEl = doc.getElementById('board');
