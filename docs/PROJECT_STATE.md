@@ -69,7 +69,7 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 | **M4b** ✅ | `@chess-platform/api` | Stateless REST + identity (scrypt/`PasswordHasher`, HMAC access tokens, rotating refresh tokens, RBAC), seeks/ratings/games, published OpenAPI 3.1 | 48/48 |
 | **M5** ✅ | `@chess-platform/engine` | Provider-agnostic UCI engine bridge: `AnalysisProvider`/`EngineManager`/`EnginePool`/`EngineInstance`/`EnginePlugin`/`AnalysisCache`/`EngineTransport`; capability discovery, priority scheduler, watchdog/cancellation, crash→hot-replacement, circuit breaker, graceful drain, health | 50/50 |
 
-**Whole-repo total: 364 tests (361 passed, 3 skipped: 2 Postgres-gated + 1 threefold specification).** Strict TS, zero errors, lint clean.
+**Whole-repo total: TBD (regenerating after Review #04 fixes).**
 
 ## 3. Architecture summary (as-built)
 
@@ -283,6 +283,8 @@ priority): (1) the M4 identity-hardening pass — WebAuthn/passkeys (§5); or (2
 of `@chess-platform/engine` into a deployable analysis/bot service (bind `ChildProcessTransport` to a
 pinned engine binary via `createEngineManager`, add the env-gated real-engine golden test, and connect
 bots to the `GameAuthority`). Read `docs/AI_HANDOVER.md` for the quickstart and guardrails.
+
+**Review #04 status:** M6 is 🚧 (not feature-complete). The Playwright acceptance specs (full game vs bot + vs human) and Lighthouse a11y ≥ 95 gate require running backend services. The service worker has been reworked (C2), PWA icons added (C3), @playwright/test declared as a devDependency (C4), and an auth controller + session-gated lobby are in place (C4/M2). Test counts will be regenerated from `scripts/test-counts.mjs` once the C1 router fix is verified green.
 
 ## 8. How to build & test today
 
