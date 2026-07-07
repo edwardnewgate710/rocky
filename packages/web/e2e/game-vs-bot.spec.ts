@@ -63,20 +63,28 @@ test('full game vs. bot — real moves via HTTP bridge, bot resigns, terminal st
   //    The bot receives the broadcast and replies (or resigns).
   //    The frontend's GameSync receives the broadcasts and updates the UI.
 
-  // Move 1: e2→e4
-  const move1Resp = await request.post(`/e2e/games/${gameId}/moves`, {
-    data: { uci: 'e2e4', userId },
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  expect(move1Resp.ok()).toBeTruthy();
+  // Move 1: e2→e4 (via fetch from the browser page — goes through vite proxy)
+  const move1Result = await page.evaluate(async ({ gameId, userId }) => {
+    const resp = await fetch(`/e2e/games/${gameId}/moves`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uci: 'e2e4', userId }),
+    });
+    return { ok: resp.ok, status: resp.status, body: await resp.text() };
+  }, { gameId, userId });
+  expect(move1Result.ok).toBeTruthy(`Move 1 failed: ${move1Result.status} ${move1Result.body}`);
   await page.waitForTimeout(2000); // Wait for bot reply
 
   // Move 2: d2→d3
-  const move2Resp = await request.post(`/e2e/games/${gameId}/moves`, {
-    data: { uci: 'd2d3', userId },
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  expect(move2Resp.ok()).toBeTruthy();
+  const move2Result = await page.evaluate(async ({ gameId, userId }) => {
+    const resp = await fetch(`/e2e/games/${gameId}/moves`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uci: 'd2d3', userId }),
+    });
+    return { ok: resp.ok, status: resp.status, body: await resp.text() };
+  }, { gameId, userId });
+  expect(move2Result.ok).toBeTruthy(`Move 2 failed: ${move2Result.status} ${move2Result.body}`);
   await page.waitForTimeout(3000); // Wait for bot to resign
 
   // 6. Assert the UI shows a terminal state
