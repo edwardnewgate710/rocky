@@ -62,16 +62,32 @@ test('navigate calls pushState with the correct URL', () => {
   assert.deepEqual(calls, ['/game/g42', '/']);
 });
 
-test('round-trip: parseRoute(routeToPath(route)) is stable', () => {
+test('round-trip: parseRoute(routeToPath(route)) is stable for all route shapes', () => {
   const routes: Route[] = [
     { name: 'lobby' },
     { name: 'game', gameId: 'abc' },
     { name: 'profile', handle: null },
     { name: 'profile', handle: 'bob' },
+    { name: 'not-found' },
   ];
   for (const r of routes) {
     const path = routeToPath(r);
     const parsed = parseRoute(path);
-    assert.equal(parsed.name, r.name);
+    assert.equal(parsed.name, r.name, `round-trip failed for ${r.name} via ${path}`);
+  }
+});
+
+// C1 regression: navigate with no injected history should use globalThis.history.
+test('C1 regression: navigate without injected history uses globalThis.history', () => {
+  const calls: string[] = [];
+  const original = (globalThis as any).history;
+  (globalThis as any).history = {
+    pushState: (data: unknown, title: string, url: string) => { calls.push(url); },
+  };
+  try {
+    navigate({ name: 'lobby' });
+    assert.deepEqual(calls, ['/']);
+  } finally {
+    (globalThis as any).history = original;
   }
 });

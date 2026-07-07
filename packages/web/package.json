@@ -11,7 +11,8 @@
     "preview": "vite preview",
     "test": "tsc -p tsconfig.test.json && node --test \"dist-test/test/**/*.test.js\"",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "clean": "rm -rf dist dist-test"
+    "clean": "rm -rf dist dist-test",
+    "e2e": "playwright test"
   },
   "keywords": [
     "chess",
@@ -26,6 +27,7 @@
   "devDependencies": {
     "@types/node": "^20.19.43",
     "@chess-platform/realtime-gateway": "file:../realtime-gateway",
+    "@playwright/test": "^1.40.0",
     "typescript": "^5.9.3",
     "vite": "^5.4.21"
   }

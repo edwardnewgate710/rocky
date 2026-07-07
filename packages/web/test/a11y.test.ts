@@ -8,8 +8,13 @@ import assert from 'node:assert/strict';
  * and semantic HTML in the index.html template. They parse the static
  * HTML to verify accessibility attributes are present and correct.
  *
- * Full Lighthouse a11y scoring (≥ 95) is validated by the Playwright
- * e2e suite which runs Lighthouse against the served app.
+ * Limitation (m2): these tests check the static markup only — they
+ * cannot see the rendered board/lobby/profile states after JavaScript
+ * executes. Full a11y validation requires:
+ *   1. The Lighthouse a11y audit (≥ 95) via the Playwright e2e suite.
+ *   2. A keyboard-drive-the-board Playwright spec that verifies
+ *      focus management and keyboard operability of the live board.
+ * Both are part of the M6 acceptance gate and run against the served app.
  */
 
 const HTML_TEMPLATE = `<!doctype html>
