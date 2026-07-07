@@ -26,7 +26,9 @@ import { ProfileController } from './profile-controller.js';
 import type { ProfileController as ProfileControllerType } from './profile-controller.js';
 import { ThemeToggle } from './theme-toggle.js';
 import type { ThemeToggle as ThemeToggleType } from './theme-toggle.js';
-import { parseRoute, navigate } from './router.js';
+import { AuthController } from './auth-controller.js';
+import type { AuthController as AuthControllerType } from './auth-controller.js';
+import { parseRoute } from './router.js';
 import type { SeekView } from '../api/models.js';
 
 /** Everything the bootstrap wired, returned for later increments and tests. */
@@ -36,6 +38,7 @@ export interface Bootstrapped {
   readonly controller: GameControllerType | null;
   readonly lobby: LobbyControllerType | null;
   readonly profile: ProfileControllerType | null;
+  readonly auth: AuthControllerType;
   readonly theme: ThemeToggleType;
 }
 
@@ -123,6 +126,65 @@ export function bootstrap(
   });
   theme.emit();
 
+  // --- Auth controller (always wired) ---
+  const authErrorEl = doc.getElementById('auth-error');
+  const authFormEl = doc.getElementById('auth-form');
+  const authHandleEl = doc.getElementById('auth-handle') as HTMLInputElement | null;
+  const authPasswordEl = doc.getElementById('auth-password') as HTMLInputElement | null;
+  const authSubmitEl = doc.getElementById('auth-submit');
+  const authLogoutEl = doc.getElementById('auth-logout');
+  const authStatusEl = doc.getElementById('auth-status');
+
+  const auth = new AuthController({
+    client: app.api,
+    callbacks: {
+      onSessionChange: (session) => {
+        if (authStatusEl) {
+          authStatusEl.textContent = session ? `Signed in as ${session.handle}` : 'Not signed in';
+        }
+        // Show/hide auth form vs logout button.
+        if (authFormEl) authFormEl.hidden = session !== null;
+        if (authLogoutEl) authLogoutEl.hidden = session === null;
+        // Update create-seek button state (M2 gating).
+        const createBtn = doc.getElementById('create-seek');
+        if (createBtn instanceof HTMLButtonElement) {
+          createBtn.disabled = session === null;
+          createBtn.title = session === null ? 'Sign in to create a seek' : '';
+        }
+      },
+      onPending: (pending) => {
+        if (authSubmitEl instanceof HTMLButtonElement) {
+          authSubmitEl.disabled = pending;
+        }
+      },
+      onError: (msg) => {
+        if (authErrorEl) authErrorEl.textContent = msg;
+      },
+    },
+    ...(deps?.storage !== undefined ? { storage: deps.storage } : {}),
+  });
+
+  // Wire auth form submit.
+  if (authSubmitEl instanceof HTMLButtonElement) {
+    authSubmitEl.addEventListener('click', () => {
+      const handle = authHandleEl?.value ?? '';
+      const password = authPasswordEl?.value ?? '';
+      if (handle && password) {
+        void auth.login(handle, password);
+      }
+    });
+  }
+
+  // Wire logout button.
+  if (authLogoutEl instanceof HTMLButtonElement) {
+    authLogoutEl.addEventListener('click', () => {
+      void auth.logout();
+    });
+  }
+
+  // Restore any persisted session.
+  auth.restore();
+
   // --- Determine route ---
   const pathname = typeof location !== 'undefined' ? location.pathname : '/';
   const route = parseRoute(pathname);
@@ -180,7 +242,7 @@ export function bootstrap(
     controller.start();
     gameSync.start();
 
-    return { app, board, controller, lobby: null, profile: null, theme };
+    return { app, board, controller, lobby: null, profile: null, auth, theme };
   }
 
   // --- Lobby view ---
@@ -197,16 +259,19 @@ export function bootstrap(
           if (seekListEl) renderSeeks(seekListEl, seeks);
         },
         onCreatePending: (pending) => {
-          if (createBtn) (createBtn as HTMLButtonElement).disabled = pending;
+          if (createBtn instanceof HTMLButtonElement) {
+            createBtn.disabled = pending || !auth.isAuthenticated();
+          }
         },
         onError: (msg) => {
           if (errorEl) errorEl.textContent = msg;
         },
       },
+      isAuthenticated: () => auth.isAuthenticated(),
     });
 
     // Wire create-seek button.
-    if (createBtn) {
+    if (createBtn instanceof HTMLButtonElement) {
       createBtn.addEventListener('click', () => {
         void lobby.createSeek({
           variant: 'standard',
@@ -219,8 +284,8 @@ export function bootstrap(
     // Wire cancel buttons (event delegation on the seek list).
     if (seekListEl) {
       seekListEl.addEventListener('click', (e) => {
-        const target = e.target as HTMLElement;
-        if (target.classList.contains('seek-cancel')) {
+        const target = e.target;
+        if (target instanceof HTMLElement && target.classList.contains('seek-cancel')) {
           const id = target.dataset.seekId;
           if (id) void lobby.cancelSeek(id);
         }
@@ -229,7 +294,7 @@ export function bootstrap(
 
     lobby.start();
 
-    return { app, board: null, controller: null, lobby, profile: null, theme };
+    return { app, board: null, controller: null, lobby, profile: null, auth, theme };
   }
 
   // --- Profile view ---
@@ -279,7 +344,7 @@ export function bootstrap(
       void profile.loadSelf();
     }
 
-    return { app, board: null, controller: null, lobby: null, profile, theme };
+    return { app, board: null, controller: null, lobby: null, profile, auth, theme };
   }
 
   // --- Standalone board (no game ID, no lobby, no profile) ---
@@ -287,5 +352,5 @@ export function bootstrap(
     ? mountBoard({ boardEl, statusEl, flipEl })
     : null;
 
-  return { app, board, controller: null, lobby: null, profile: null, theme };
+  return { app, board, controller: null, lobby: null, profile: null, auth, theme };
 }

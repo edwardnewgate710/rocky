@@ -28,6 +28,8 @@ export interface LobbyControllerOptions {
   readonly callbacks: LobbyCallbacks;
   /** Auto-refresh interval in milliseconds (0 = disabled). */
   readonly refreshIntervalMs?: number;
+  /** Whether the user is authenticated (gates create-seek). */
+  readonly isAuthenticated?: () => boolean;
   /** Injected timer (for tests). */
   readonly setInterval?: (fn: () => void, ms: number) => ReturnType<typeof setInterval>;
   readonly clearInterval?: (id: ReturnType<typeof setInterval>) => void;
@@ -44,6 +46,7 @@ export class LobbyController {
   private readonly client: GambitClient;
   private readonly callbacks: LobbyCallbacks;
   private readonly refreshIntervalMs: number;
+  private readonly isAuthenticated: (() => boolean) | undefined;
   private readonly _setInterval: (fn: () => void, ms: number) => ReturnType<typeof setInterval>;
   private readonly _clearInterval: (id: ReturnType<typeof setInterval>) => void;
   private timerId: ReturnType<typeof setInterval> | null = null;
@@ -54,6 +57,7 @@ export class LobbyController {
     this.client = opts.client;
     this.callbacks = opts.callbacks;
     this.refreshIntervalMs = opts.refreshIntervalMs ?? 10_000;
+    this.isAuthenticated = opts.isAuthenticated;
     this._setInterval = opts.setInterval ?? ((fn, ms) => setInterval(fn, ms));
     this._clearInterval = opts.clearInterval ?? ((id) => clearInterval(id));
   }
@@ -100,6 +104,11 @@ export class LobbyController {
     maxRating?: number | null;
   }): Promise<SeekView | null> {
     if (this.disposed) return null;
+    // M2: gate create-seek on session presence — POST /v1/seeks requires bearer auth.
+    if (this.isAuthenticated !== undefined && !this.isAuthenticated()) {
+      this.callbacks.onError('Sign in to create a seek.');
+      return null;
+    }
     this.callbacks.onCreatePending(true);
     try {
       const body: CreateSeekRequest = {

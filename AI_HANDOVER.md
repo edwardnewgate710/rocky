@@ -29,9 +29,9 @@ dependency-free domain packages** tested with the built-in `node --test` runner.
 | M4a | `@chess-platform/persistence` | ✅ durable event store + repositories | 14 (+2 gated) |
 | M4b | `@chess-platform/api` | ✅ stateless REST + identity | 48 |
 | M5 | `@chess-platform/engine` | ✅ engine bridge | 50 |
-| **M6** | `@chess-platform/web` | ✅ **complete — view core, interactive board, REST + WS networking, gameplay sync, composition root, legal-move oracle, game controller, live game view wiring, lobby controller + router + seeks API, lobby UI + profile + theme toggle, PWA + a11y + Playwright e2e** | 210 |
+| **M6** | `@chess-platform/web` | 🚧 **in progress — view core, interactive board, REST + WS networking, gameplay sync, composition root, legal-move oracle, game controller, live game view wiring, lobby controller + router + seeks API, lobby UI + profile + theme toggle, PWA + a11y + Playwright e2e (acceptance pending)** | 239 |
 
-**Whole repo: 415 total tests** (392 passed, 3 skipped: 2 Postgres-gated + 1 threefold specification). Strict TS, lint clean.
+**Whole repo: 425 total tests** (422 passed, 3 skipped: 2 Postgres-gated + 1 threefold specification). Strict TS, lint clean.
 
 M5 design/decisions: [`docs/ENGINE_BRIDGE.md`](docs/ENGINE_BRIDGE.md) +
 [`docs/adr/0002-engine-bridge.md`](docs/adr/0002-engine-bridge.md) (Accepted).
@@ -82,3 +82,6 @@ CI workflow activation was attempted but rejected: `hessiun710 does not have the
 permissions to execute CreateCommitOnBranch`. The workflow file remains staged at
 `docs/ci/ci.yml` and needs the `workflow` scope to activate. Committed lockfiles are
 inconsistent across packages. See `docs/PROJECT_STATE.md` §6.
+
+
+M6 acceptance (Playwright full-game + Lighthouse a11y ≥ 95) is pending — requires running backend services.

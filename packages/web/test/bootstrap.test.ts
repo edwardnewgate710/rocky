@@ -7,12 +7,41 @@ import { FakeTransport, json } from './support/fake-transport.js';
 import { FakeSocketFactory } from './support/fake-socket.js';
 import { MemoryTokenStore } from '../src/net/session.js';
 
+// Define HTMLButtonElement for Node.js test environment (m3: bootstrap uses instanceof checks).
+class FakeHTMLButtonElement {
+  textContent = '';
+  classList = new Set<string>();
+  addEventListener = () => {};
+  removeEventListener = () => {};
+  setAttribute = () => {};
+  getAttribute = () => null;
+  appendChild = () => null;
+  removeChild = () => null;
+  querySelectorAll = () => [];
+  style: Record<string, string> = {};
+  dataset: Record<string, string> = {};
+  id = '';
+  disabled = false;
+  title = '';
+  hidden = false;
+  type = 'button';
+}
+(globalThis as any).HTMLButtonElement = FakeHTMLButtonElement;
+
+/** IDs that should be treated as HTMLButtonElement instances. */
+const BUTTON_IDS = new Set(['auth-submit', 'auth-logout', 'create-seek', 'flip', 'theme-toggle']);
+
 /**
  * Minimal DOM shim: create a document with the given element IDs.
  * Returns a `Document` with `getElementById` backed by a map.
  * Each element has enough surface area for BoardView to not crash.
  */
 function makeFakeEl(id?: string): HTMLElement {
+  if (id && BUTTON_IDS.has(id)) {
+    const btn = new FakeHTMLButtonElement();
+    btn.id = id;
+    return btn as unknown as HTMLElement;
+  }
   const classList = new Set<string>();
   return {
     textContent: '',
@@ -35,24 +64,28 @@ function makeFakeEl(id?: string): HTMLElement {
   } as unknown as HTMLElement;
 }
 
-function makeDoc(ids: string[] = ['board', 'status', 'flip']): Document {
+function makeDoc(ids: string[] = ['board', 'status', 'flip', 'theme-toggle', 'auth-status', 'auth-logout', 'auth-submit', 'auth-error', 'auth-form', 'auth-handle', 'auth-password', 'create-seek']): Document {
   const elements = new Map<string, HTMLElement>();
   for (const id of ids) {
     elements.set(id, makeFakeEl(id));
   }
+  const docEl = makeFakeEl('documentElement');
   return {
     getElementById: (id: string) => elements.get(id) ?? null,
+    documentElement: docEl,
   } as unknown as Document;
 }
 
-function makeDocWithBoard(boardEl: HTMLElement, ids: string[] = ['status', 'flip']): Document {
+function makeDocWithBoard(boardEl: HTMLElement, ids: string[] = ['status', 'flip', 'theme-toggle', 'auth-status', 'auth-logout', 'auth-submit', 'auth-error', 'auth-form', 'auth-handle', 'auth-password', 'create-seek']): Document {
   const elements = new Map<string, HTMLElement>();
   elements.set('board', boardEl);
   for (const id of ids) {
     elements.set(id, makeFakeEl(id));
   }
+  const docEl = makeFakeEl('documentElement');
   return {
     getElementById: (id: string) => elements.get(id) ?? null,
+    documentElement: docEl,
   } as unknown as Document;
 }
 

@@ -45,8 +45,8 @@ test('load fetches profile and games by handle', async () => {
     },
   });
   await ctrl.load('bob');
-  assert.equal(receivedProfile?.user.handle, 'bob');
-  assert.equal(receivedGames?.length, 2);
+  assert.equal((receivedProfile as UserProfile | null)?.user?.handle ?? null, 'bob');
+  assert.equal((receivedGames as GameSummary[] | null)?.length ?? 0, 2);
   assert.equal(errors.length, 0);
 });
 
