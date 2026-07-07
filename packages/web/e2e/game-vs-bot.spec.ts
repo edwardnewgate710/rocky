@@ -36,7 +36,20 @@ async function playMoveViaWs(page: Page, gameId: string, token: string, uci: str
         const msg = JSON.parse(event.data);
         if (msg.t === 'joined') {
           ws.send(JSON.stringify({ t: 'move', gameId, uci, clientSeq: seq }));
-        } else if (msg.t === 'move' || msg.t === 'reject' || msg.t === 'ended') {
+        } else if (msg.t === 'reject') {
+          // Our move was rejected — close and return
+          clearTimeout(timeout);
+          ws.close();
+          resolve();
+        } else if (msg.t === 'move' && msg.by === 'w') {
+          // Our own move echo — wait for bot's reply, don't close yet
+        } else if (msg.t === 'move' && msg.by === 'b') {
+          // Bot replied — close and return
+          clearTimeout(timeout);
+          ws.close();
+          resolve();
+        } else if (msg.t === 'ended') {
+          // Game ended — close and return
           clearTimeout(timeout);
           ws.close();
           resolve();
@@ -99,7 +112,7 @@ test('full game vs. bot — real WS moves, bot resigns, terminal state shown', a
   let gameOver = false;
   for (let i = 0; i < 30; i++) {
     const statusText = await status.textContent();
-    if (i < 5 || i % 10 === 0) console.log(`[vs-bot] Status: ${statusText}`);
+
     if (statusText && (
       statusText.includes('Checkmate') ||
       statusText.includes('Stalemate') ||
