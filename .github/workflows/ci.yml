@@ -176,5 +176,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: lighthouse-report
-          path: packages/web/.lighthouseci/
+          path: |
+            packages/web/lighthouse-report.json
+            packages/web/lighthouse-report.html
           retention-days: 30
