@@ -68,7 +68,7 @@ test('full game vs. bot plays to completion', async ({ page, request }) => {
       gameOver = true;
       break;
     }
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(500);
   }
 
   // 5. Verify the game reached a terminal state
