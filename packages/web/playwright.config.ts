@@ -9,14 +9,12 @@
  * `test.skip(!process.env.GAMBIT_E2E_BACKEND, ...)` so `npm run e2e`
  * without backends only runs the static/offline specs.
  *
- * When GAMBIT_E2E_BACKEND=1, the webServer:
- *   1. Builds all packages (so e2e-harness dist/main.js exists)
- *   2. Starts the e2e harness in the background
- *   3. Starts vite preview on port 4173 (proxies /v1, /e2e, /ws to harness)
- * Playwright polls the `url` until 200 — no fixed sleep.
+ * When GAMBIT_E2E_BACKEND=1, the webServer starts the e2e harness in the
+ * background and then vite preview on port 4173 (which proxies /v1, /e2e,
+ * /ws to the harness). Playwright polls the `url` until 200 — no fixed sleep.
  *
  * Prerequisites for full acceptance:
- *   - npm run build (all packages, including e2e-harness)
+ *   - npm run build (all packages, including e2e-harness) — must be run first
  *   - GAMBIT_E2E_BACKEND=1 environment variable set
  */
 import type { PlaywrightTestConfig } from '@playwright/test';
@@ -35,13 +33,14 @@ const config: PlaywrightTestConfig = {
   },
   webServer: isBackend
     ? {
-        // Build first (so dist/main.js exists), then start the harness in the
-        // background, then start vite preview. Playwright polls `url` until 200.
+        // Start the e2e harness in the background, then start vite preview.
+        // The build must have already been run (npm run build from repo root).
+        // Playwright polls http://127.0.0.1:4173 until 200.
         command:
-          'npm run build && (node ../e2e-harness/dist/main.js &) && npm run preview -- --port 4173',
+          'node ../e2e-harness/dist/main.js & npm run preview -- --port 4173',
         url: 'http://127.0.0.1:4173',
         reuseExistingServer: true,
-        timeout: 120_000,
+        timeout: 60_000,
       }
     : {
         command: 'npm run build && npm run preview',
