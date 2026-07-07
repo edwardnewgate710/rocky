@@ -5,19 +5,14 @@
  *
  * Flow:
  *   1. Register a user via the API.
- *   2. Create a game via POST /e2e/games where the bot plays BOTH sides
- *      (whiteId and blackId both set to 'bot') with botResignsAfterPlies: 3.
- *      The bot plays moves for both sides and resigns after ply 3.
- *   3. Navigate to the game page as a spectator.
+ *   2. Create a game via POST /e2e/games with botResignsAfterPlies: 3.
+ *   3. Set the auth session in localStorage and navigate to the game page.
  *   4. Verify the board renders and the game connects.
- *   5. Wait for the bot to play moves and resign (the UI updates in real time
- *      as the GameSync receives move and ended broadcasts).
+ *   5. Play moves as white via POST /e2e/games/:gameId/moves (HTTP bridge
+ *      that calls authority.apply directly). The bot replies via the harness,
+ *      then resigns after ply 3. The frontend's GameSync receives the
+ *      broadcasts via WS and updates the UI in real time.
  *   6. Assert the UI shows a terminal state (resignation).
- *
- * The bot plays real moves through the authority (real game state, real
- * broadcasts). The frontend's GameSync receives the broadcasts and updates
- * the board and status text. This is a full game lifecycle — create →
- * join → play → terminate → terminal UI — through the real harness.
  *
  * Run with: GAMBIT_E2E_BACKEND=1 npm run e2e
  */
@@ -25,8 +20,8 @@ import { test, expect } from '@playwright/test';
 
 test.skip(!process.env['GAMBIT_E2E_BACKEND'], 'requires running backend — M6 acceptance gate');
 
-test('full game vs. bot — bot plays both sides and resigns, terminal state shown in UI', async ({ page, request }) => {
-  // 1. Register a user (for auth to view the game)
+test('full game vs. bot — real moves via HTTP bridge, bot resigns, terminal state shown', async ({ page, request }) => {
+  // 1. Register a user
   const handle = `e2e-bot-${Date.now()}`;
   const regResp = await request.post('/v1/auth/register', {
     data: { handle, password: 'test-password-123' },
@@ -34,11 +29,11 @@ test('full game vs. bot — bot plays both sides and resigns, terminal state sho
   expect(regResp.ok()).toBeTruthy();
   const auth = await regResp.json();
   const accessToken = auth.tokens.accessToken;
+  const userId = auth.user.id;
 
-  // 2. Create a game where the bot plays both sides
-  //    The bot will play moves for both white and black, then resign after ply 3.
+  // 2. Create a game via the bridge route with botResignsAfterPlies: 3
   const gameResp = await request.post('/e2e/games', {
-    data: { whiteId: 'bot', blackId: 'bot', botResignsAfterPlies: 3 },
+    data: { whiteId: userId, blackId: 'bot', botResignsAfterPlies: 3 },
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   expect(gameResp.ok()).toBeTruthy();
@@ -46,21 +41,43 @@ test('full game vs. bot — bot plays both sides and resigns, terminal state sho
   const gameId = game.gameId;
   expect(gameId).toBeTruthy();
 
-  // 3. Navigate to the game page (as a spectator — no localStorage)
+  // 3. Set the auth session in localStorage and navigate to the game page
+  await page.goto('/');
+  await page.evaluate(({ token, handle: h }) => {
+    localStorage.setItem('gambit-session', JSON.stringify({
+      accessToken: token, handle: h, userId: '', roles: [],
+    }));
+  }, { token: accessToken, handle });
+
   await page.goto(`/game/${gameId}`);
 
-  // 4. Verify the board renders and the game connects
+  // 4. Verify the board renders
   const board = page.locator('#board');
   await expect(board).toBeVisible({ timeout: 10_000 });
 
   const status = page.locator('#status');
   await expect(status).toBeVisible({ timeout: 10_000 });
 
-  // 5. Wait for the bot to play moves and resign
-  //    The bot plays both sides: white move (ply 1), black move (ply 2),
-  //    white move (ply 3), then bot resigns on black's turn (ply 3 >= 3).
-  //    The UI should update as broadcasts are received by the GameSync.
-  await page.waitForTimeout(5000); // Give the bot time to play and resign
+  // 5. Play moves as white via the HTTP bridge
+  //    The authority processes the move and broadcasts via pub/sub.
+  //    The bot receives the broadcast and replies (or resigns).
+  //    The frontend's GameSync receives the broadcasts and updates the UI.
+
+  // Move 1: e2→e4
+  const move1Resp = await request.post(`/e2e/games/${gameId}/moves`, {
+    data: { uci: 'e2e4', userId },
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  expect(move1Resp.ok()).toBeTruthy();
+  await page.waitForTimeout(2000); // Wait for bot reply
+
+  // Move 2: d2→d3
+  const move2Resp = await request.post(`/e2e/games/${gameId}/moves`, {
+    data: { uci: 'd2d3', userId },
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  expect(move2Resp.ok()).toBeTruthy();
+  await page.waitForTimeout(3000); // Wait for bot to resign
 
   // 6. Assert the UI shows a terminal state
   let gameOver = false;
