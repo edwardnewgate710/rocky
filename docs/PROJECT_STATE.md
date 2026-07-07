@@ -4,7 +4,7 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-06 — Principal Software Architect. **Milestone 6 IN PROGRESS (increment 3E):**
+_Last updated: 2026-07-07 — Principal Software Architect. **Review #03 fixes applied:**
 the authoritative `legalMoves` map from the server snapshot is now surfaced through `GameSync`
 state (populated from each `StateView`, stale after a live move broadcast, empty once the game ends)
 and a new `AuthoritativeMoveOracle` adapter implements the existing `LegalMoveOracle` port, fed by
@@ -64,12 +64,12 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 |---|---|---|---|
 | **M1** ✅ | `@chess-platform/core` | Variant-aware, perft-verified rules engine (0x88, immutable `Position`, FEN/UCI/SAN, 8 variants, terminal detection) | 16/16 |
 | **M2** ✅ | `@chess-platform/game` | Event-sourced `Game` aggregate + deterministic clocks; exact reconstruction via `Game.fromEvents` (~1.17ms/game) | 18/18 |
-| **M3** ✅ | `@chess-platform/realtime-gateway` | Server-authoritative WS protocol, `GameAuthority`, rooms/presence/fanout, resume, latency comp; `PubSub`/`Transport` seams | 26/26 |
+| **M3** ✅ | `@chess-platform/realtime-gateway` | Server-authoritative WS protocol, `GameAuthority`, rooms/presence/fanout, resume, latency comp; `PubSub`/`Transport` seams; token-based auth (`TokenVerifier` port, ADR-0004) | 31/31 |
 | **M4a** ✅ | `@chess-platform/persistence` | Durable append-only event store (in-memory + Postgres), migrations, repositories, Glicko-2, UUIDv7 | 14/14 (+2 DB-gated) |
 | **M4b** ✅ | `@chess-platform/api` | Stateless REST + identity (scrypt/`PasswordHasher`, HMAC access tokens, rotating refresh tokens, RBAC), seeks/ratings/games, published OpenAPI 3.1 | 45/45 |
 | **M5** ✅ | `@chess-platform/engine` | Provider-agnostic UCI engine bridge: `AnalysisProvider`/`EngineManager`/`EnginePool`/`EngineInstance`/`EnginePlugin`/`AnalysisCache`/`EngineTransport`; capability discovery, priority scheduler, watchdog/cancellation, crash→hot-replacement, circuit breaker, graceful drain, health | 51/51 |
 
-**Whole-repo total: 170 tests pass (2 Postgres-gated skips).** Strict TS, zero errors, lint clean.
+**Whole-repo total: 334 tests pass (2 Postgres-gated skips).** Strict TS, zero errors, lint clean.
 
 ## 3. Architecture summary (as-built)
 
@@ -84,6 +84,13 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 - **`api` is stateless.** Access tokens are self-contained (HMAC-SHA256), so any
   instance can serve any request with no shared session store; refresh tokens and
   identity live in Postgres via `persistence` repositories.
+- **Realtime wire protocol (as of Review #03):** The `JoinMessage` now carries a
+  `token` (not a client-asserted `userId`); the gateway derives identity exclusively
+  from the token via a `TokenVerifier` port (ADR-0004). When the token is absent, the
+  connection joins as an anonymous spectator; when present but invalid, the join is
+  rejected with `unauthorized`. The `MoveBroadcast` now carries a `legalMoves` map
+  (origin square → legal destinations for the side to move), computed server-side by
+  the core engine — clients never derive legality themselves (ADR-0003, Option 2).
 
 ### `api` package design (this milestone)
 
@@ -153,19 +160,30 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 - **Game (M2):** threefold-repetition in the aggregate; per-variant timeout rules.
 - **Realtime (M3):** ship `ws` + Redis production adapters (M14); MessagePack
   frames; per-user connection quotas / backpressure (M12).
+- **Token-storage tradeoff (web):** Refresh tokens currently persist in
+  `localStorage` on the client. This is acceptable for development but is not
+  secure against XSS exfiltration. The plan for the M12 hardening pass is to
+  move the refresh token to an `httpOnly` cookie (set by the API on login/refresh)
+  and keep the short-lived access token in memory only (never persisted to
+  `localStorage` or a cookie). This eliminates the XSS-exposable refresh token
+  while preserving the stateless access-token hot path.
 
 ## 6. Technical debt (status)
 
 1. **`LICENSE` — ✅ DONE** (AGPL-3.0, commit `d295ad2`).
-2. **CI — ✅ STAGED, activation pending.** Full workflow written; could not be
-   committed to `.github/workflows/` (push credential lacks the **`workflow`**
-   scope). Staged at **`docs/ci/ci.yml`** with instructions in **`docs/CI_SETUP.md`**.
-   **Maintainer action:** `git mv docs/ci/ci.yml .github/workflows/ci.yml`, then add
-   a root `package-lock.json` and switch `npm install` → `npm ci` (see item 4).
-3. **Stray root file `chess` — removal pending.** Contents are just `#chess`,
-   referenced nowhere. The GitHub integration exposes **no delete-file operation**,
-   so it could not be removed programmatically. **Maintainer action:** `git rm chess`.
-4. **No committed lockfiles.** Builds use `npm install`. Add a root
+2. **CI — ⚠️ ACTIVATION ATTEMPTED, REJECTED.** The workflow file was already
+   written at `docs/ci/ci.yml` with `npm ci` for reproducible installs and a
+   `npm run lint` (typecheck) step. Attempting to push it to
+   `.github/workflows/ci.yml` in this PR produced the exact rejection:
+   > `hessiun710 does not have the correct permissions to execute CreateCommitOnBranch`
+
+   The GitHub integration token lacks the `workflow` scope required to commit
+   files under `.github/workflows/`. **Maintainer action:** run
+   `git mv docs/ci/ci.yml .github/workflows/ci.yml` locally and push with a
+   token that has the `workflow` scope, or activate via the GitHub web UI.
+   The workflow itself is ready — it runs build + lint + test on Node 22.x/24.x
+   plus a Postgres-integration job.
+3. **No committed lockfiles.** Builds use `npm install`. Add a root
    `package-lock.json` and switch CI to `npm ci` for reproducible installs.
 
 ## 7. Milestone 4 — status & next steps
