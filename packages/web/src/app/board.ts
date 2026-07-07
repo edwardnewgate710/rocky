@@ -63,6 +63,8 @@ export interface MountedBoard {
   setLastMove: (from: string, to: string) => void;
   /** Update whose turn it is (affects legal highlights + premoves). */
   setTurn: (myTurn: boolean) => void;
+  /** Set the board orientation ('white' or 'black' perspective). */
+  setOrientation: (orientation: 'white' | 'black') => void;
 }
 
 /** Convert a {@link Premove} to UCI notation. */
@@ -129,5 +131,8 @@ export function mountBoard(
     setPosition: (f: string) => view.setPosition(f),
     setLastMove: (from: string, to: string) => view.setLastMove(from, to),
     setTurn: (myTurn: boolean) => view.setTurn(myTurn),
+    setOrientation: (orientation: 'white' | 'black') => {
+      if (view.orientationColor !== orientation) view.flip();
+    },
   };
 }

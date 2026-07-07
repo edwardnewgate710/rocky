@@ -16,6 +16,7 @@
 import type { GameSync, GameSyncState } from '../net/game-sync.js';
 import type { WsColor } from '../net/ws-protocol.js';
 import { applyMove } from '../core/mover.js';
+import type { PromotionRole } from '../core/interaction.js';
 
 /**
  * Callbacks the controller invokes when the projected game state changes.
@@ -36,6 +37,12 @@ export interface GameControllerCallbacks {
    * highlight it. Called with `null` when there are no moves yet.
    */
   onLastMove?: (from: string | null, to: string | null) => void;
+  /**
+   * Called when the controller's color is first resolved from the server's
+   * `joined` message (via `GameSyncState.myColor`). The bootstrap uses this
+   * to set board orientation. Called once, with `null` for spectators.
+   */
+  onColor?: (color: WsColor | null) => void;
 }
 
 /**
@@ -43,8 +50,6 @@ export interface GameControllerCallbacks {
  */
 export interface GameControllerOptions {
   readonly gameSync: GameSync;
-  /** Our wire color (`'w'` or `'b'`), or `null` for a spectator. */
-  readonly myColor: WsColor | null;
   readonly callbacks: GameControllerCallbacks;
 }
 
@@ -58,16 +63,16 @@ export interface GameControllerOptions {
  */
 export class GameController {
   private readonly gameSync: GameSync;
-  private readonly myColor: WsColor | null;
   private readonly callbacks: GameControllerCallbacks;
   private unsubscribe: (() => void) | null = null;
   private currentFen = '';
-  private currentTurn: WsColor | null | undefined = undefined;
+  private currentMyTurn: boolean | undefined = undefined;
   private currentLastMove: { from: string; to: string } | null | undefined = undefined;
+  private currentClock: { w: number; b: number } | undefined = undefined;
+  private colorEmitted = false;
 
   constructor(options: GameControllerOptions) {
     this.gameSync = options.gameSync;
-    this.myColor = options.myColor;
     this.callbacks = options.callbacks;
   }
 
@@ -102,9 +107,17 @@ export class GameController {
     // --- Position projection ---
     if (state.snapshot !== null) {
       let fen = state.snapshot.fen;
-      // Replay live moves on top of the snapshot FEN.
+      // Replay only moves that came after the snapshot ply. The snapshot FEN
+      // is already the position at snapshot.ply; the moves ledger includes
+      // snapshot moves + live broadcasts, so we must skip the pre-snapshot ones.
       for (const move of state.moves) {
-        fen = applyMove(fen, { from: move.uci.slice(0, 2), to: move.uci.slice(2, 4) });
+        if (move.ply > state.snapshot.ply) {
+          fen = applyMove(fen, {
+            from: move.uci.slice(0, 2),
+            to: move.uci.slice(2, 4),
+            ...(move.uci.length > 4 ? { promotion: move.uci[4] as PromotionRole } : {}),
+          });
+        }
       }
       if (fen !== this.currentFen) {
         this.currentFen = fen;
@@ -112,16 +125,41 @@ export class GameController {
       }
     }
 
+    // --- Color (emit once when resolved from server join) ---
+    if (!this.colorEmitted && state.myColor !== null) {
+      this.colorEmitted = true;
+      this.callbacks.onColor?.(state.myColor);
+    } else if (!this.colorEmitted && state.role !== null) {
+      // Spectator: role is resolved but myColor is null.
+      this.colorEmitted = true;
+      this.callbacks.onColor?.(null);
+    }
+
     // --- Turn ---
-    if (state.turn !== this.currentTurn) {
-      this.currentTurn = state.turn;
-      const myTurn = state.turn !== null && state.turn === this.myColor;
+    // Derive myTurn from GameSyncState: it's our turn only when the server
+    // assigned us a color, it's our color's turn, and no optimistic move is
+    // pending (the pending===null term closes the stale-oracle race during
+    // the optimistic window — see M6). Fire onTurn when the *derived* value
+    // changes, not just when state.turn changes, because pending toggles
+    // while turn stays constant.
+    const myTurn = state.turn !== null
+      && state.myColor !== null
+      && state.turn === state.myColor
+      && state.pending === null;
+    if (myTurn !== this.currentMyTurn) {
+      this.currentMyTurn = myTurn;
       this.callbacks.onTurn(myTurn);
     }
 
-    // --- Clock ---
+    // --- Clock (with change detection) ---
     if (state.clock !== null) {
-      this.callbacks.onClock(state.clock.w, state.clock.b);
+      const clockChanged = this.currentClock === undefined
+        || this.currentClock.w !== state.clock.w
+        || this.currentClock.b !== state.clock.b;
+      if (clockChanged) {
+        this.currentClock = { w: state.clock.w, b: state.clock.b };
+        this.callbacks.onClock(state.clock.w, state.clock.b);
+      }
     }
 
     // --- Status ---
@@ -149,8 +187,8 @@ export class GameController {
     if (!state.status.over) {
       if (state.turn === null) return 'Waiting…';
       const turnLabel = state.turn === 'w' ? 'White' : 'Black';
-      if (this.myColor === null) return `${turnLabel} to move`;
-      const myTurn = state.turn === this.myColor;
+      if (state.myColor === null) return `${turnLabel} to move`;
+      const myTurn = state.turn === state.myColor;
       return myTurn ? 'Your move' : `${turnLabel} to move`;
     }
     // Game over
@@ -164,6 +202,7 @@ export class GameController {
     if (termination === 'insufficient_material') return `Draw — insufficient material (${result})`;
     if (termination === 'fifty_move') return `Draw — fifty-move rule (${result})`;
     if (termination === 'threefold') return `Draw — threefold repetition (${result})`;
+    if (termination === 'variant') return `Variant end (${result})`;
     if (termination === 'aborted') return 'Game aborted';
     return `${result}`;
   }

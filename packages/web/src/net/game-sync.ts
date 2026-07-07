@@ -62,9 +62,10 @@ export interface GameSyncState {
   readonly presence: PresenceInfo | null;
   /**
    * Authoritative legal-move map for the side to move (origin square → legal
-   * destination squares), from the latest server snapshot. Stale after a live
-   * move broadcast until the next snapshot/resync; empty (`{}`) once the game
-   * is over. The frontend consumes this — it never derives legality itself.
+   * destination squares), from the latest server snapshot or move broadcast.
+   * Refreshed on every MoveBroadcast via the push-based `legalMoves` field;
+   * empty (`{}`) once the game is over. The frontend consumes this — it never
+   * derives legality itself.
    */
   readonly legalMoves: LegalMoves;
   /** Our un-acknowledged optimistic move, if any. */
@@ -75,7 +76,8 @@ export interface GameSyncState {
 
 export interface GameSyncOptions {
   readonly gameId: string;
-  readonly userId: string;
+  /** Access token for authenticated join; omitted for anonymous spectators. */
+  readonly token?: string;
 }
 
 export type GameSyncListener = (state: GameSyncState) => void;
@@ -104,7 +106,7 @@ function initialState(gameId: string): GameSyncState {
 export class GameSync {
   private readonly client: WsClient;
   private readonly gameId: string;
-  private readonly userId: string;
+  private readonly token: string | undefined;
   private state: GameSyncState;
   private clientSeq = 0;
   private joined = false;
@@ -114,7 +116,7 @@ export class GameSync {
   constructor(client: WsClient, options: GameSyncOptions) {
     this.client = client;
     this.gameId = options.gameId;
-    this.userId = options.userId;
+    this.token = options.token;
     this.state = initialState(options.gameId);
   }
 
@@ -139,20 +141,34 @@ export class GameSync {
     this.client.connect();
   }
 
-  /** Tear down: close the connection (observing the final state change), then unsubscribe. */
+  /**
+   * Tear down: unsubscribe from the client. Does NOT close the shared
+   * `WsClient` — the composition root owns the connection lifecycle (M5).
+   * Stopping one GameSync must not kill the app-wide socket and every other
+   * GameSync on it.
+   */
   stop(): void {
-    this.client.close();
     this.unsubscribe?.();
     this.unsubscribe = null;
   }
 
   /**
    * Submit an intended move. Assigns the next `clientSeq`, records it as the
-   * optimistic pending move, and sends it. Returns the pending move, or null if
-   * we are not a player or the send failed (e.g. socket not open).
+   * optimistic pending move, and sends it. Returns the pending move, or null if:
+   * - we are not a player (`myColor === null`)
+   * - the game is over (`status?.over`)
+   * - it is not our turn (`turn !== myColor`)
+   * - a move is already pending (`pending !== null` — one in-flight at a time)
+   * - the send failed (e.g. socket not open)
+   *
+   * The turn/over/pending gates (M6) prevent noisy rejected moves and UI jank
+   * from stale oracle destinations during the optimistic window.
    */
   submitMove(uci: string): PendingMove | null {
     if (this.state.myColor === null) return null;
+    if (this.state.status?.over) return null;
+    if (this.state.turn !== this.state.myColor) return null;
+    if (this.state.pending !== null) return null;
     const clientSeq = this.clientSeq + 1;
     const sent = this.client.send({ t: 'move', gameId: this.gameId, uci, clientSeq });
     if (!sent) return null;
@@ -185,7 +201,7 @@ export class GameSync {
     if (this.joined) {
       this.client.send({ t: 'resume', gameId: this.gameId, lastPly: this.state.ply });
     } else {
-      this.client.send({ t: 'join', gameId: this.gameId, userId: this.userId });
+      this.client.send({ t: 'join', gameId: this.gameId, ...(this.token !== undefined ? { token: this.token } : {}) });
     }
   }
 
@@ -256,9 +272,9 @@ export class GameSync {
       clock: msg.clock,
       fenHash: msg.fenHash,
       drawOffer: null,
-      // Legal moves are stale after a live move broadcast; the next snapshot
-      // or resync will refresh them.
-      legalMoves: {},
+      // The broadcast carries the authoritative legal-move map for the
+      // resulting position's side to move (empty if the game ended).
+      legalMoves: msg.legalMoves,
       pending: confirmsPending ? null : pending,
     });
   }

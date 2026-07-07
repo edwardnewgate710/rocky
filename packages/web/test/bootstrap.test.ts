@@ -78,8 +78,10 @@ test('extractGameId returns the id from /game/{id}', () => {
   assert.equal(extractGameId('/game/g42'), 'g42');
 });
 
-test('extractGameId returns the id from a single-segment path', () => {
-  assert.equal(extractGameId('/abc123'), 'abc123');
+test('extractGameId returns null for single-segment non-game paths (m4)', () => {
+  // m4: single-segment paths like /about are NOT treated as game IDs
+  assert.equal(extractGameId('/about'), null);
+  assert.equal(extractGameId('/abc123'), null);
 });
 
 test('extractGameId returns null for multi-segment non-game paths', () => {
@@ -118,24 +120,24 @@ test('bootstrap without board element returns null board', () => {
 test('bootstrap with game ID creates a GameController', () => {
   const doc = makeDoc();
   const sockets = new FakeSocketFactory();
-  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', userId: 'u1' });
+  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', token: 'token-u1' });
   assert.ok(result.controller instanceof GameController);
   assert.ok(result.board);
 });
 
-test('bootstrap with game ID does not open a connection on construction', () => {
+test('bootstrap with game ID opens a connection via gameSync.start()', () => {
   const doc = makeDoc();
   const sockets = new FakeSocketFactory();
-  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', userId: 'u1' });
-  // GameSync.start() is NOT called by bootstrap — only controller.start().
-  assert.equal(sockets.sockets.length, 0, 'no socket should be opened');
+  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', token: 'token-u1' });
+  // C3: bootstrap now calls gameSync.start(), which opens the WebSocket.
+  assert.equal(sockets.sockets.length, 1, 'a socket should be opened for a game view');
   assert.ok(result.controller);
 });
 
 test('bootstrap wires onPosition callback to board.setPosition', () => {
   const doc = makeDoc();
   const sockets = new FakeSocketFactory();
-  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', userId: 'u1' });
+  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', token: 'token-u1' });
   assert.ok(result.controller);
   assert.ok(result.board);
 
@@ -153,7 +155,7 @@ test('bootstrap wires onPosition callback to board.setPosition', () => {
 test('bootstrap wires onMove callback to controller.submitMove', () => {
   const doc = makeDoc();
   const sockets = new FakeSocketFactory();
-  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', userId: 'u1' });
+  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', token: 'token-u1' });
   assert.ok(result.controller);
   assert.ok(result.board);
 
@@ -172,7 +174,7 @@ test('bootstrap with data-color="b" sets myColor to black', () => {
   const doc = makeDocWithBoard(boardEl);
 
   const sockets = new FakeSocketFactory();
-  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', userId: 'u1' });
+  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', token: 'token-u1' });
   assert.ok(result.controller);
   result.controller!.stop();
 });
@@ -183,7 +185,7 @@ test('bootstrap with data-color="spectator" sets myColor to null', () => {
   const doc = makeDocWithBoard(boardEl);
 
   const sockets = new FakeSocketFactory();
-  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', userId: 'u1' });
+  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', token: 'token-u1' });
   assert.ok(result.controller);
   result.controller!.stop();
 });
@@ -195,7 +197,7 @@ test('bootstrap wires onClock to clock elements when present', () => {
   const doc = makeDoc(ids);
 
   const sockets = new FakeSocketFactory();
-  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', userId: 'u1' });
+  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1', token: 'token-u1' });
   assert.ok(result.controller);
   result.controller!.stop();
 });
@@ -208,4 +210,25 @@ test('bootstrap returns app with injected config', () => {
   const result = bootstrap(doc, deps);
   assert.equal(result.app.config.apiBaseUrl, 'https://api.test');
   assert.equal(result.app.config.wsUrl, 'wss://api.test/ws');
+});
+
+// ── C3: bootstrap calls gameSync.start() and derives color from server ─────
+
+test('C3: bootstrap without game ID does not open a connection', () => {
+  const doc = makeDoc();
+  const sockets = new FakeSocketFactory();
+  // No gameId override and no location.pathname that yields a game id.
+  const result = bootstrap(doc, { ...makeDeps(sockets) });
+  assert.equal(sockets.sockets.length, 0, 'no socket without a game id');
+  assert.equal(result.controller, null);
+});
+
+test('C3: bootstrap opens a connection when no token is provided (anonymous spectator)', () => {
+  const doc = makeDoc();
+  const sockets = new FakeSocketFactory();
+  // Without a token, bootstrap still opens a connection — the join will be
+  // anonymous (spectator). The gateway handles the no-token case.
+  const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1' });
+  assert.ok(result.controller);
+  assert.equal(sockets.sockets.length, 1);
 });

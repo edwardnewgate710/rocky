@@ -32,6 +32,7 @@ import type {
   RejectCode,
   Role,
   SimpleCommandMessage,
+  TokenVerifier,
 } from './protocol';
 
 interface Membership {
@@ -67,6 +68,7 @@ export class RealtimeGateway {
   constructor(
     private readonly authority: GameAuthority,
     private readonly pubsub: PubSub,
+    private readonly tokenVerifier: TokenVerifier,
     private readonly now: () => number = () => Date.now(),
   ) {}
 
@@ -86,7 +88,7 @@ export class RealtimeGateway {
   private onMessage(session: Session, msg: ClientMessage): void {
     switch (msg.t) {
       case 'join':
-        this.onJoin(session, msg.gameId, msg.userId);
+        this.onJoin(session, msg.gameId, msg.token);
         return;
       case 'move':
         this.onMove(session, msg);
@@ -112,11 +114,33 @@ export class RealtimeGateway {
     }
   }
 
-  private onJoin(session: Session, gameId: string, userId: string): void {
+  /**
+   * Handle a join request. Identity is derived from the token (never from a
+   * client-asserted userId). When the token is absent, the connection joins
+   * as an anonymous spectator. When the token is present but invalid, the
+   * join is rejected with `unauthorized`.
+   */
+  private onJoin(session: Session, gameId: string, token: string | undefined): void {
     if (!this.authority.has(gameId)) {
       this.reject(session, gameId, null, 'unknown_game', `no such game ${gameId}`);
       return;
     }
+
+    // Derive identity from the token. No token → anonymous spectator.
+    let userId: string;
+    if (token !== undefined) {
+      const verified = this.tokenVerifier.verify(token);
+      if (verified === null) {
+        this.reject(session, gameId, null, 'unauthorized', 'invalid or expired token');
+        return;
+      }
+      userId = verified.userId;
+    } else {
+      // Anonymous spectator: generate a unique id so two anonymous tabs don't
+      // collide as the same user. The spectator has no move authority.
+      userId = `anon-${session.conn.id}`;
+    }
+
     const color = this.authority.colorOf(gameId, userId);
     const role: Role = color === 'w' ? 'white' : color === 'b' ? 'black' : 'spectator';
 

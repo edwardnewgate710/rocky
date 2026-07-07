@@ -6,7 +6,7 @@ import { GameController } from '../src/app/game-controller.js';
 import type { StateView, WsColor } from '../src/net/ws-protocol.js';
 import { FakeSocketFactory, ManualScheduler } from './support/fake-socket.js';
 
-function setup(myColor: WsColor | null = 'w') {
+function setup() {
   const factory = new FakeSocketFactory();
   const scheduler = new ManualScheduler();
   const client = new WsClient({
@@ -18,22 +18,23 @@ function setup(myColor: WsColor | null = 'w') {
     heartbeatMs: 0,
     reconnect: { baseDelayMs: 10, maxDelayMs: 10, jitter: 'none' },
   });
-  const sync = new GameSync(client, { gameId: 'g1', userId: 'u1' });
+  const sync = new GameSync(client, { gameId: 'g1', token: 'token-u1' });
   const positions: string[] = [];
   const turns: boolean[] = [];
   const clocks: Array<[number, number]> = [];
   const statuses: string[] = [];
+  const colors: Array<WsColor | null> = [];
   const controller = new GameController({
     gameSync: sync,
-    myColor,
     callbacks: {
       onPosition: (fen) => positions.push(fen),
       onTurn: (myTurn) => turns.push(myTurn),
       onClock: (w, b) => clocks.push([w, b]),
       onStatus: (text) => statuses.push(text),
+      onColor: (color) => colors.push(color),
     },
   });
-  return { factory, scheduler, client, sync, controller, positions, turns, clocks, statuses };
+  return { factory, scheduler, client, sync, controller, positions, turns, clocks, statuses, colors };
 }
 
 function stateView(
@@ -74,7 +75,7 @@ test('start emits current (pre-join) state — empty position, waiting status', 
 });
 
 test('snapshot populates position, turn, clock, and status', () => {
-  const { factory, sync, controller, positions, turns, clocks, statuses } = setup('w');
+  const { factory, sync, controller, positions, turns, clocks, statuses } = setup();
   controller.start();
   sync.start();
   factory.last.open();
@@ -91,7 +92,7 @@ test('snapshot populates position, turn, clock, and status', () => {
 });
 
 test('move broadcast replays on top of snapshot FEN', () => {
-  const { factory, sync, controller, positions } = setup('w');
+  const { factory, sync, controller, positions } = setup();
   controller.start();
   sync.start();
   factory.last.open();
@@ -102,6 +103,7 @@ test('move broadcast replays on top of snapshot FEN', () => {
   factory.last.emit({
     t: 'move', gameId: 'g1', ply: 1, uci: 'e2e4', san: 'e4', by: 'w',
     fenHash: 'h1', clock: { w: 59_000, b: 60_000 }, serverTs: 1,
+  legalMoves: {},
   });
 
   // The FEN after 1.e4 should have the e-pawn on the 4th rank.
@@ -116,7 +118,7 @@ test('move broadcast replays on top of snapshot FEN', () => {
 });
 
 test('opponent move updates position and switches turn to our side', () => {
-  const { factory, sync, controller, positions, turns } = setup('w');
+  const { factory, sync, controller, positions, turns } = setup();
   controller.start();
   sync.start();
   factory.last.open();
@@ -127,12 +129,14 @@ test('opponent move updates position and switches turn to our side', () => {
   factory.last.emit({
     t: 'move', gameId: 'g1', ply: 1, uci: 'e2e4', san: 'e4', by: 'w',
     fenHash: 'h1', clock: { w: 59_000, b: 60_000 }, serverTs: 1,
+  legalMoves: {},
   });
 
   // Black plays e5 (UCI: e7e5)
   factory.last.emit({
     t: 'move', gameId: 'g1', ply: 2, uci: 'e7e5', san: 'e5', by: 'b',
     fenHash: 'h2', clock: { w: 59_000, b: 59_000 }, serverTs: 2,
+  legalMoves: {},
   });
 
   const lastFen = positions.at(-1)!;
@@ -148,7 +152,7 @@ test('opponent move updates position and switches turn to our side', () => {
 });
 
 test('game ended emits checkmate status', () => {
-  const { factory, sync, controller, statuses } = setup('w');
+  const { factory, sync, controller, statuses } = setup();
   controller.start();
   sync.start();
   factory.last.open();
@@ -162,7 +166,7 @@ test('game ended emits checkmate status', () => {
 });
 
 test('submitMove forwards to GameSync', () => {
-  const { factory, sync, controller } = setup('w');
+  const { factory, sync, controller } = setup();
   controller.start();
   sync.start();
   factory.last.open();
@@ -178,7 +182,7 @@ test('submitMove forwards to GameSync', () => {
 });
 
 test('spectator (myColor=null) gets "White to move" not "Your move"', () => {
-  const { factory, sync, controller, statuses } = setup(null);
+  const { factory, sync, controller, statuses } = setup();
   controller.start();
   sync.start();
   factory.last.open();
@@ -189,7 +193,7 @@ test('spectator (myColor=null) gets "White to move" not "Your move"', () => {
 });
 
 test('stop unsubscribes — no further callbacks after stop', () => {
-  const { factory, sync, controller, positions } = setup('w');
+  const { factory, sync, controller, positions } = setup();
   controller.start();
   sync.start();
   factory.last.open();
@@ -200,13 +204,14 @@ test('stop unsubscribes — no further callbacks after stop', () => {
   factory.last.emit({
     t: 'move', gameId: 'g1', ply: 1, uci: 'e2e4', san: 'e4', by: 'w',
     fenHash: 'h1', clock: { w: 59_000, b: 60_000 }, serverTs: 1,
+  legalMoves: {},
   });
   assert.equal(positions.length, countBefore, 'no callbacks after stop');
   sync.stop();
 });
 
 test('fen getter returns the last projected FEN', () => {
-  const { factory, sync, controller } = setup('w');
+  const { factory, sync, controller } = setup();
   controller.start();
   sync.start();
   factory.last.open();
@@ -218,13 +223,12 @@ test('fen getter returns the last projected FEN', () => {
 });
 
 test('onLastMove callback fires with from/to after a move broadcast', () => {
-  const { factory, sync, controller } = setup('w');
+  const { factory, sync, controller } = setup();
   const lastMoves: Array<[string | null, string | null]> = [];
   // Replace callbacks to capture onLastMove
   controller.stop();
   const controller2 = new GameController({
     gameSync: sync,
-    myColor: 'w',
     callbacks: {
       onPosition: () => {},
       onTurn: () => {},
@@ -247,6 +251,7 @@ test('onLastMove callback fires with from/to after a move broadcast', () => {
   factory.last.emit({
     t: 'move', gameId: 'g1', ply: 1, uci: 'e2e4', san: 'e4', by: 'w',
     fenHash: 'h1', clock: { w: 59_000, b: 60_000 }, serverTs: 1,
+  legalMoves: {},
   });
   assert.deepEqual(lastMoves.at(-1), ['e2', 'e4']);
 
@@ -254,6 +259,7 @@ test('onLastMove callback fires with from/to after a move broadcast', () => {
   factory.last.emit({
     t: 'move', gameId: 'g1', ply: 2, uci: 'e7e5', san: 'e5', by: 'b',
     fenHash: 'h2', clock: { w: 59_000, b: 59_000 }, serverTs: 2,
+  legalMoves: {},
   });
   assert.deepEqual(lastMoves.at(-1), ['e7', 'e5']);
 
@@ -262,7 +268,7 @@ test('onLastMove callback fires with from/to after a move broadcast', () => {
 });
 
 test('onLastMove is optional — controller works without it', () => {
-  const { factory, sync, controller, positions } = setup('w');
+  const { factory, sync, controller, positions } = setup();
   controller.start();
   sync.start();
   factory.last.open();
@@ -274,8 +280,222 @@ test('onLastMove is optional — controller works without it', () => {
   factory.last.emit({
     t: 'move', gameId: 'g1', ply: 1, uci: 'e2e4', san: 'e4', by: 'w',
     fenHash: 'h1', clock: { w: 59_000, b: 60_000 }, serverTs: 1,
+  legalMoves: {},
   });
   assert.ok(positions.length > 0);
+  controller.stop();
+  sync.stop();
+});
+
+// ── C2: mid-game join does not double-apply pre-snapshot moves ─────────────
+
+test('C2: joining mid-game replays only post-snapshot moves (no double-apply)', () => {
+  const { factory, sync, controller, positions } = setup();
+  controller.start();
+  sync.start();
+  factory.last.open();
+
+  // Simulate joining a game at ply 2. The snapshot already has 2 moves applied
+  // (1.e4 e5), with the correct FEN at ply 2. A ply-3 live broadcast follows.
+  const snapshotFen = 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2';
+  const snapshotMoves: StateView['moves'] = [
+    { ply: 1, uci: 'e2e4', san: 'e4', by: 'w' },
+    { ply: 2, uci: 'e7e5', san: 'e5', by: 'b' },
+  ];
+  factory.last.emit({
+    t: 'joined', gameId: 'g1', role: 'white',
+    state: stateView(2, 'w', snapshotFen, snapshotMoves),
+  });
+
+  // The position should be the snapshot FEN (no replay needed — moves are
+  // pre-snapshot). Verify we got the correct position.
+  assert.equal(positions.at(-1), snapshotFen);
+
+  // Now a live ply-3 broadcast arrives: White plays Nf3.
+  factory.last.emit({
+    t: 'move', gameId: 'g1', ply: 3, uci: 'g1f3', san: 'Nf3', by: 'w',
+    fenHash: 'h3', clock: { w: 59_000, b: 59_000 }, serverTs: 3,
+    legalMoves: {},
+  });
+
+  // The projected FEN should be the snapshot + Nf3, NOT snapshot + e4 + e5 + Nf3.
+  // If the bug were present, e4 and e5 would be re-applied on top of the snapshot
+  // that already contains them, corrupting the position.
+  const lastFen = positions.at(-1)!;
+  const placement = lastFen.split(' ')[0]!;
+  const ranks = placement.split('/');
+
+  // After 1.e4 e5 2.Nf3, the knight should be on f3 (rank 3, index 5).
+  const rank3 = ranks[5]!;
+  assert.ok(rank3.includes('N'), `Rank 3 should contain a white knight: ${rank3}`);
+
+  // The e-pawns should still be on e4 and e5 (not doubled or missing).
+  const rank4 = ranks[4]!;
+  assert.ok(rank4.includes('P'), `Rank 4 should contain the white e-pawn: ${rank4}`);
+  const rank5 = ranks[3]!;
+  assert.ok(rank5.includes('p'), `Rank 5 should contain the black e-pawn: ${rank5}`);
+
+  // g1 should no longer have a knight (it moved to f3).
+  // The starting position has 2 knights (b1 and g1); after Nf3, one is on f3
+  // and one is still on b1 — so still 2 knights total, but g1 is empty.
+  // Verify the knight is on f3 by checking rank 3.
+  const rank3AfterNf3 = ranks[5]!;
+  assert.ok(rank3AfterNf3.includes('N'), `Rank 3 should contain a white knight (Nf3): ${rank3AfterNf3}`);
+
+  controller.stop();
+  sync.stop();
+});
+
+// ── M2: promotion is propagated through the projection ────────────────────
+
+test('M2: promotion move broadcasts render the promoted piece', () => {
+  const { factory, sync, controller, positions } = setup();
+  controller.start();
+  sync.start();
+  factory.last.open();
+
+  // Use a position where a promotion is imminent: White pawn on e7, Black king on e8 area.
+  // FEN: White pawn on e7, Black to move but we'll set up White to move for simplicity.
+  // Actually, let's use a simpler setup: snapshot at a position where White has a pawn on a7.
+  const prePromoFen = '4k3/P7/8/8/8/8/8/4K3 w - - 0 1';
+  factory.last.emit({
+    t: 'joined', gameId: 'g1', role: 'white',
+    state: stateView(0, 'w', prePromoFen, []),
+  });
+
+  // White promotes a7-a8 to queen (UCI: a7a8q).
+  factory.last.emit({
+    t: 'move', gameId: 'g1', ply: 1, uci: 'a7a8q', san: 'a8=Q', by: 'w',
+    fenHash: 'h1', clock: { w: 59_000, b: 60_000 }, serverTs: 1,
+    legalMoves: {},
+  });
+
+  const lastFen = positions.at(-1)!;
+  const placement = lastFen.split(' ')[0]!;
+  const ranks = placement.split('/');
+
+  // After promotion, rank 8 (index 0) should contain a white queen 'Q'.
+  const rank8 = ranks[0]!;
+  assert.ok(rank8.includes('Q'), `Rank 8 should contain a promoted white queen: ${rank8}`);
+
+  // The pawn should no longer be on a7 (rank 7, index 1).
+  const rank7 = ranks[1]!;
+  assert.ok(!rank7.includes('P'), `Rank 7 should NOT contain a white pawn: ${rank7}`);
+
+  controller.stop();
+  sync.stop();
+});
+
+// ── C3: controller derives color/turn from GameSyncState (no myColor option) ─
+
+test('C3: onColor is emitted with the resolved color from the joined message', () => {
+  const { factory, sync, controller, colors } = setup();
+  controller.start();
+  sync.start();
+  factory.last.open();
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w', 'startpos') });
+  assert.deepEqual(colors, ['w'], 'onColor should be called with "w" for white role');
+  controller.stop();
+  sync.stop();
+});
+
+test('C3: onColor emits null for spectators', () => {
+  const { factory, sync, controller, colors } = setup();
+  controller.start();
+  sync.start();
+  factory.last.open();
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'spectator', state: stateView(0, 'w', 'startpos') });
+  assert.deepEqual(colors, [null], 'onColor should be called with null for spectator');
+  controller.stop();
+  sync.stop();
+});
+
+test('C3: onColor is emitted only once', () => {
+  const { factory, sync, controller, colors } = setup();
+  controller.start();
+  sync.start();
+  factory.last.open();
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w', 'startpos') });
+  factory.last.emit({ t: 'state', gameId: 'g1', state: stateView(0, 'w', 'startpos') });
+  factory.last.emit({ t: 'state', gameId: 'g1', state: stateView(0, 'w', 'startpos') });
+  assert.equal(colors.length, 1, 'onColor should fire only once');
+  controller.stop();
+  sync.stop();
+});
+
+test('C3: myTurn is false before join (no color resolved yet)', () => {
+  const { controller, turns } = setup();
+  controller.start();
+  // Pre-join: turn is null, myColor is null → myTurn = false.
+  assert.deepEqual(turns, [false]);
+  controller.stop();
+});
+
+test('C3: myTurn is true only after joined resolves myColor and it is our turn', () => {
+  const { factory, sync, controller, turns } = setup();
+  controller.start();
+  sync.start();
+  factory.last.open();
+  // Join as white, white to move → myTurn = true.
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w', 'startpos') });
+  assert.deepEqual(turns.at(-1), true, 'should be our turn after joining as white');
+  controller.stop();
+  sync.stop();
+});
+
+test('C3: myTurn is false when joined as black and white is to move', () => {
+  const { factory, sync, controller, turns } = setup();
+  controller.start();
+  sync.start();
+  factory.last.open();
+  // Join as black, white to move → myTurn = false.
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'black', state: stateView(0, 'w', 'startpos') });
+  assert.deepEqual(turns.at(-1), false, 'should not be our turn when white is to move and we are black');
+  controller.stop();
+  sync.stop();
+});
+
+test('C3: myTurn is false for spectators even when a side is to move', () => {
+  const { factory, sync, controller, turns } = setup();
+  controller.start();
+  sync.start();
+  factory.last.open();
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'spectator', state: stateView(0, 'w', 'startpos') });
+  assert.deepEqual(turns.at(-1), false, 'spectators never have myTurn = true');
+  controller.stop();
+  sync.stop();
+});
+
+// ── Review #02 item 3: turn change-detection fires on pending transitions ──
+
+test('R2#3: submit → onTurn(false) fires even when turn is held constant', () => {
+  const { factory, sync, controller, turns } = setup();
+  controller.start();
+  sync.start();
+  factory.last.open();
+  // Join as white, white to move → myTurn = true.
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w', 'startpos') });
+  // Clear the turns array to isolate the submit transition.
+  turns.length = 0;
+  // Submit a move — pending is set, turn stays 'w', but myTurn should go false.
+  sync.submitMove('e2e4');
+  assert.deepEqual(turns, [false], 'onTurn(false) should fire when pending is set (turn held constant)');
+  controller.stop();
+  sync.stop();
+});
+
+test('R2#3: reject rollback → onTurn(true) fires even when turn is held constant', () => {
+  const { factory, sync, controller, turns } = setup();
+  controller.start();
+  sync.start();
+  factory.last.open();
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w', 'startpos') });
+  // Submit a move → pending set → myTurn goes false.
+  sync.submitMove('e2e4');
+  turns.length = 0;
+  // Server rejects the move → pending cleared → myTurn goes back to true.
+  factory.last.emit({ t: 'reject', gameId: 'g1', ref: 1, code: 'illegal_move', message: 'nope' });
+  assert.deepEqual(turns, [true], 'onTurn(true) should fire when pending is cleared by reject (turn held constant)');
   controller.stop();
   sync.stop();
 });

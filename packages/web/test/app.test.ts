@@ -41,7 +41,7 @@ test('createApp opens no connection and makes no request on construction', () =>
 
 test('createGameSync builds a GameSync bound to the shared realtime client', () => {
   const { app } = make();
-  const sync = app.createGameSync({ gameId: 'g1', userId: 'u1' });
+  const sync = app.createGameSync({ gameId: 'g1', token: 'token-u1' });
   assert.ok(sync instanceof GameSync);
   const state = sync.getState();
   assert.equal(state.gameId, 'g1');
@@ -50,7 +50,7 @@ test('createGameSync builds a GameSync bound to the shared realtime client', () 
 
 test('createGameOracle returns an AuthoritativeMoveOracle reading from GameSync state', () => {
   const { app } = make();
-  const sync = app.createGameSync({ gameId: 'g1', userId: 'u1' });
+  const sync = app.createGameSync({ gameId: 'g1', token: 'token-u1' });
   const oracle = app.createGameOracle(sync);
   assert.ok(oracle instanceof AuthoritativeMoveOracle);
 
@@ -70,7 +70,7 @@ test('createGameOracle returns an AuthoritativeMoveOracle reading from GameSync 
 
 test('createGameOracle oracle reflects legalMoves from GameSync after a snapshot', () => {
   const { app, sockets } = make();
-  const sync = app.createGameSync({ gameId: 'g1', userId: 'u1' });
+  const sync = app.createGameSync({ gameId: 'g1', token: 'token-u1' });
   const oracle = app.createGameOracle(sync);
 
   sync.start();

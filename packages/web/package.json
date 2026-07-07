@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
+    "@chess-platform/realtime-gateway": "file:../realtime-gateway",
     "typescript": "^5.9.3",
     "vite": "^5.4.21"
   }

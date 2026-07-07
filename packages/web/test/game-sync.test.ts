@@ -18,7 +18,7 @@ function setup() {
     heartbeatMs: 0,
     reconnect: { baseDelayMs: 10, maxDelayMs: 10, jitter: 'none' },
   });
-  const sync = new GameSync(client, { gameId: 'g1', userId: 'u1' });
+  const sync = new GameSync(client, { gameId: 'g1', token: 'token-u1' });
   return { factory, scheduler, client, sync };
 }
 
@@ -49,7 +49,7 @@ test('start joins on open', () => {
   const { factory, sync } = setup();
   sync.start();
   factory.last.open();
-  assert.deepEqual(JSON.parse(factory.last.sent[0]!), { t: 'join', gameId: 'g1', userId: 'u1' });
+  assert.deepEqual(JSON.parse(factory.last.sent[0]!), { t: 'join', gameId: 'g1', token: 'token-u1' });
   assert.equal(sync.getState().connected, true);
 });
 
@@ -81,6 +81,7 @@ test('submitMove sends an incrementing clientSeq and a matching broadcast confir
   factory.last.emit({
     t: 'move', gameId: 'g1', ply: 1, uci: 'e2e4', san: 'e4', by: 'w',
     fenHash: 'h1', clock: { w: 59_000, b: 60_000 }, serverTs: 1,
+  legalMoves: {},
   });
   const s = sync.getState();
   assert.equal(s.pending, null);
@@ -111,6 +112,7 @@ test('an opponent move applies; a ply gap triggers a resume request', () => {
   factory.last.emit({
     t: 'move', gameId: 'g1', ply: 1, uci: 'e7e5', san: 'e5', by: 'b',
     fenHash: 'h1', clock: { w: 60_000, b: 59_000 }, serverTs: 1,
+  legalMoves: {},
   });
   assert.equal(sync.getState().ply, 1);
 
@@ -118,6 +120,7 @@ test('an opponent move applies; a ply gap triggers a resume request', () => {
   factory.last.emit({
     t: 'move', gameId: 'g1', ply: 3, uci: 'g1f3', san: 'Nf3', by: 'w',
     fenHash: 'h3', clock: { w: 59_000, b: 59_000 }, serverTs: 2,
+  legalMoves: {},
   });
   assert.equal(sync.getState().ply, 1); // gap not applied
   assert.deepEqual(JSON.parse(factory.last.sent.at(-1)!), { t: 'resume', gameId: 'g1', lastPly: 1 });
@@ -144,6 +147,7 @@ test('after an unexpected drop, reconnect resumes from the last ply', () => {
   factory.last.emit({
     t: 'move', gameId: 'g1', ply: 1, uci: 'e7e5', san: 'e5', by: 'b',
     fenHash: 'h1', clock: { w: 60_000, b: 59_000 }, serverTs: 1,
+  legalMoves: {},
   });
   assert.equal(sync.getState().ply, 1);
 
@@ -153,14 +157,15 @@ test('after an unexpected drop, reconnect resumes from the last ply', () => {
   assert.deepEqual(JSON.parse(factory.last.sent[0]!), { t: 'resume', gameId: 'g1', lastPly: 1 });
 });
 
-test('stop closes the connection and marks disconnected', () => {
+test('M5: stop unsubscribes but does NOT close the shared connection', () => {
   const { factory, sync } = setup();
   sync.start();
   factory.last.open();
   assert.equal(sync.getState().connected, true);
   sync.stop();
-  assert.equal(sync.getState().connected, false);
-  assert.ok(factory.last.closed);
+  // M5: GameSync.stop() no longer closes the WsClient — the composition root
+  // owns the connection. The socket should remain open.
+  assert.ok(!factory.last.closed, 'socket should NOT be closed by GameSync.stop()');
 });
 
 // ── legalMoves surfacing (increment 3C-2B) ──────────────────────────────
@@ -179,7 +184,7 @@ test('legalMoves are populated from the authoritative snapshot', () => {
   assert.deepEqual(sync.getState().legalMoves, lm);
 });
 
-test('legalMoves go stale (empty) after a live move broadcast', () => {
+test('legalMoves are refreshed by a live move broadcast (push-based)', () => {
   const { factory, sync } = setup();
   sync.start();
   factory.last.open();
@@ -187,11 +192,14 @@ test('legalMoves go stale (empty) after a live move broadcast', () => {
   factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w', [], lm) });
   assert.deepEqual(sync.getState().legalMoves, lm);
 
+  // The broadcast carries the resulting position's legal moves for the new side to move.
+  const postMoveLm: LegalMoves = { e7: ['e6', 'e5'] };
   factory.last.emit({
     t: 'move', gameId: 'g1', ply: 1, uci: 'e2e4', san: 'e4', by: 'w',
     fenHash: 'h1', clock: { w: 59_000, b: 60_000 }, serverTs: 1,
+    legalMoves: postMoveLm,
   });
-  assert.deepEqual(sync.getState().legalMoves, {});
+  assert.deepEqual(sync.getState().legalMoves, postMoveLm);
 });
 
 test('legalMoves are cleared when the game ends', () => {
@@ -214,8 +222,9 @@ test('legalMoves are refreshed by a resync snapshot', () => {
   factory.last.emit({
     t: 'move', gameId: 'g1', ply: 1, uci: 'e2e4', san: 'e4', by: 'w',
     fenHash: 'h1', clock: { w: 59_000, b: 60_000 }, serverTs: 1,
+    legalMoves: { e7: ['e6', 'e5'] },
   });
-  assert.deepEqual(sync.getState().legalMoves, {});
+  assert.deepEqual(sync.getState().legalMoves, { e7: ['e6', 'e5'] });
 
   // Server sends a fresh snapshot (e.g. after a resync)
   const lm: LegalMoves = { e7: ['e6', 'e5'] };
@@ -248,7 +257,7 @@ test('AuthoritativeMoveOracle returns empty for unknown squares', () => {
   assert.deepEqual([...oracle.destinations('a1')], []);
 });
 
-test('AuthoritativeMoveOracle returns empty when legalMoves are stale after a move', () => {
+test('AuthoritativeMoveOracle reflects push-based legalMoves after a move', () => {
   const { factory, sync } = setup();
   sync.start();
   factory.last.open();
@@ -257,11 +266,14 @@ test('AuthoritativeMoveOracle returns empty when legalMoves are stale after a mo
   const oracle = new AuthoritativeMoveOracle({ getLegalMoves: () => sync.getState().legalMoves });
   assert.deepEqual([...oracle.destinations('e2')], ['e3', 'e4']);
 
+  // After a move broadcast, the oracle reflects the new side's legal moves.
   factory.last.emit({
     t: 'move', gameId: 'g1', ply: 1, uci: 'e2e4', san: 'e4', by: 'w',
     fenHash: 'h1', clock: { w: 59_000, b: 60_000 }, serverTs: 1,
+    legalMoves: { e7: ['e6', 'e5'] },
   });
   assert.deepEqual([...oracle.destinations('e2')], []);
+  assert.deepEqual([...oracle.destinations('e7')], ['e6', 'e5']);
 });
 
 test('AuthoritativeMoveOracle returns empty when game is over', () => {
@@ -273,4 +285,71 @@ test('AuthoritativeMoveOracle returns empty when game is over', () => {
   const oracle = new AuthoritativeMoveOracle({ getLegalMoves: () => sync.getState().legalMoves });
   factory.last.emit({ t: 'ended', gameId: 'g1', result: '1-0', termination: 'checkmate', winner: 'w', serverTs: 5 });
   assert.deepEqual([...oracle.destinations('e2')], []);
+});
+
+// ── M5: connection ownership ───────────────────────────────────────────────
+
+test('M5: two GameSyncs on one client; stopping one leaves the other receiving', () => {
+  const factory = new FakeSocketFactory();
+  const scheduler = new ManualScheduler();
+  const client = new WsClient({
+    url: 'wss://example.test/ws',
+    factory: factory.factory,
+    scheduler,
+    now: () => 0,
+    rng: () => 0,
+    heartbeatMs: 0,
+    reconnect: { baseDelayMs: 10, maxDelayMs: 10, jitter: 'none' },
+  });
+  const sync1 = new GameSync(client, { gameId: 'g1', token: 'token-u1' });
+  const sync2 = new GameSync(client, { gameId: 'g2', token: 'token-u1' });
+
+  sync1.start();
+  sync2.start();
+  factory.last.open();
+
+  // Both should be connected and receiving.
+  assert.equal(sync1.getState().connected, true);
+  assert.equal(sync2.getState().connected, true);
+
+  // Stop sync1 — sync2 should still be connected.
+  sync1.stop();
+  assert.ok(!factory.last.closed, 'shared socket should still be open');
+  assert.equal(sync2.getState().connected, true, 'sync2 should still be connected');
+
+  sync2.stop();
+});
+
+// ── M6: submitMove gating ──────────────────────────────────────────────────
+
+test('M6: submitMove returns null when game is over', () => {
+  const { factory, sync } = setup();
+  sync.start();
+  factory.last.open();
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w') });
+  factory.last.emit({ t: 'ended', gameId: 'g1', result: '1-0', termination: 'checkmate', winner: 'w', serverTs: 5 });
+  const result = sync.submitMove('e2e4');
+  assert.equal(result, null, 'should not submit when game is over');
+  assert.equal(factory.last.sent.length, 1, 'no move message should be sent'); // only the join
+});
+
+test('M6: submitMove returns null when it is not our turn', () => {
+  const { factory, sync } = setup();
+  sync.start();
+  factory.last.open();
+  // Join as black, white to move → not our turn.
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'black', state: stateView(0, 'w') });
+  const result = sync.submitMove('e7e5');
+  assert.equal(result, null, 'should not submit when it is not our turn');
+});
+
+test('M6: submitMove returns null when a move is already pending', () => {
+  const { factory, sync } = setup();
+  sync.start();
+  factory.last.open();
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w') });
+  const first = sync.submitMove('e2e4');
+  assert.ok(first, 'first submit should succeed');
+  const second = sync.submitMove('d2d4');
+  assert.equal(second, null, 'second submit while pending should return null');
 });

@@ -84,12 +84,34 @@ export interface StateView {
 
 // ─── Client → Server ────────────────────────────────────────────────────────
 
-/** Join a game as a player (auto-resolved by identity) or spectator. */
+/**
+ * A gateway-local port that verifies an access token and derives the user
+ * identity from it. The gateway never trusts a client-asserted `userId`;
+ * identity comes exclusively from the token. See ADR-0004.
+ */
+export interface TokenVerifier {
+  /**
+   * Verify the token and return the authenticated user id, or `null` if the
+   * token is invalid, expired, or malformed.
+   */
+  verify(token: string): { readonly userId: string } | null;
+}
+
+/**
+ * Join a game as a player (identity derived from `token`) or as an anonymous
+ * spectator (when `token` is absent). The gateway verifies the token via the
+ * injected {@link TokenVerifier}; the client never asserts its own identity.
+ *
+ * Spectator policy (ADR-0004): when `token` is omitted, the connection is
+ * seated as an anonymous spectator — no move authority, no presence seat.
+ * When `token` is present but invalid, the join is rejected with
+ * `unauthorized`.
+ */
 export interface JoinMessage {
   readonly t: 'join';
   readonly gameId: string;
-  /** Stable user identity; matched against the game's players to assign a role. */
-  readonly userId: string;
+  /** Access token; required for players, optional for anonymous spectators. */
+  readonly token?: string;
 }
 
 /** An intended move. `clientSeq` must strictly increase per connection+game. */
@@ -155,6 +177,13 @@ export interface MoveBroadcast {
   readonly fenHash: string;
   readonly clock: ClockView;
   readonly serverTs: number;
+  /**
+   * Legal destinations for the side to move in the **resulting** position
+   * (after this move has been applied). Empty (`{}`) when the move ended the
+   * game. This is the push-based refresh mechanism: every broadcast carries
+   * the authoritative legal-move map so clients never starve after a live move.
+   */
+  readonly legalMoves: LegalMoves;
 }
 
 /** A terminal event broadcast to every member of a room. */
@@ -204,7 +233,8 @@ export type RejectCode =
   | 'stale_seq'
   | 'unknown_game'
   | 'not_joined'
-  | 'invalid_command';
+  | 'invalid_command'
+  | 'unauthorized';
 
 /** Echoed latency probe; carries the server timestamp for RTT estimation. */
 export interface PongMessage {

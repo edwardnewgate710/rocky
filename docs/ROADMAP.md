@@ -45,8 +45,19 @@ repetition via position-hash history; Chess960 castling-by-file; PGN parser.
   2,000-game reconstruction runs at ~1.17ms/game (headroom for high
   concurrency). Strict TypeScript, zero errors.
 
-**Follow-ups (tracked):** threefold-repetition via position-hash history in the
-aggregate; per-variant timeout material rules.
+**Follow-ups (tracked):** per-variant timeout material rules.
+
+**Scheduled — threefold repetition (M3 from Review #01, updated in Review #02):**
+Position-hash history in the `Game` aggregate (the aggregate owns history;
+`core` stays stateless), emitting `GameEnded('threefold')` on the third
+occurrence. Acceptance criteria:
+- The Nf3/Ng1 shuffle (1.Nf3 Nf6 2.Ng1 Ng8 3.Nf3 Nf6 4.Ng1 Ng8) ends the
+  game as a draw by threefold repetition at the third occurrence of the
+  starting position.
+- En-passant and castling-rights differences do **not** count as repeats.
+- The acceptance test is in `packages/game/test/game.test.ts` (currently
+  `test.skip` — remove the `.skip` when the implementation lands).
+Target: next increment after Review #02 fixes.
 
 ## ✅ Milestone 3 — Realtime Gateway (`@chess-platform/realtime-gateway`)
 

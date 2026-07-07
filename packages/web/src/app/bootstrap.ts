@@ -18,7 +18,6 @@ import { mountBoard } from './board.js';
 import type { MountedBoard } from './board.js';
 import { GameController } from './game-controller.js';
 import type { GameController as GameControllerType } from './game-controller.js';
-import type { WsColor } from '../net/ws-protocol.js';
 
 /** Everything the bootstrap wired, returned for later increments and tests. */
 export interface Bootstrapped {
@@ -30,16 +29,16 @@ export interface Bootstrapped {
 }
 
 /**
- * Extract a game ID from a URL-like path. The path is expected to be
- * `/game/{id}` or `/{id}`. Returns `null` when no game ID is found.
+ * Extract a game ID from a URL-like path. Only `/game/{id}` is accepted as
+ * a game view; single-segment paths (e.g. `/about`) are not treated as game
+ * IDs until proper routing exists.
+ * Returns `null` when no game ID is found.
  */
 export function extractGameId(pathname: string): string | null {
   const segments = pathname.split('/').filter(Boolean);
   if (segments.length === 0) return null;
-  // /game/{id}
+  // /game/{id} — the only accepted form
   if (segments[0] === 'game' && segments.length >= 2) return segments[1]!;
-  // /{id} — single-segment path, treat as game ID
-  if (segments.length === 1) return segments[0]!;
   return null;
 }
 
@@ -57,8 +56,8 @@ export function formatClock(ms: number): string {
 export interface BootstrapDependencies extends Partial<AppDependencies> {
   /** Override the game ID (takes precedence over URL extraction). */
   readonly gameId?: string;
-  /** Override the user ID. */
-  readonly userId?: string;
+  /** Override the access token (for authenticated join). */
+  readonly token?: string;
 }
 
 /**
@@ -91,17 +90,16 @@ export function bootstrap(
   const gameId = deps?.gameId ?? extractGameId(
     typeof location !== 'undefined' ? location.pathname : '/',
   );
-  const userId = deps?.userId ?? 'anon';
+  const token = deps?.token;
 
   if (boardEl && gameId) {
     // --- Full game view wiring ---
-    const gameSync = app.createGameSync({ gameId, userId });
+    const gameSync = app.createGameSync({ gameId, ...(token !== undefined ? { token } : {}) });
     const oracle = app.createGameOracle(gameSync);
 
-    // Determine our color from the DOM (data-color attribute) or default to white.
-    const colorAttr = boardEl.getAttribute('data-color');
-    const myColor: WsColor | null =
-      colorAttr === 'b' ? 'b' : colorAttr === 'spectator' ? null : 'w';
+    // m7: Declare controller before mountBoard's onMove closure references it.
+    // This avoids a TDZ hazard if mountBoard ever resolves a move synchronously.
+    let controller: GameController;
 
     const board = mountBoard(
       { boardEl, statusEl, flipEl },
@@ -113,9 +111,8 @@ export function bootstrap(
       },
     );
 
-    const controller = new GameController({
+    controller = new GameController({
       gameSync,
-      myColor,
       callbacks: {
         onPosition: (fen: string) => board.setPosition(fen),
         onTurn: (myTurn: boolean) => board.setTurn(myTurn),
@@ -132,14 +129,19 @@ export function bootstrap(
         onLastMove: (from: string | null, to: string | null) => {
           if (from && to) board.setLastMove(from, to);
         },
+        onColor: (color) => {
+          // Orientation follows color: black players see the board from
+          // black's side; spectators keep the default (white).
+          if (color === 'b') board.setOrientation('black');
+        },
       },
     });
 
-    // Start the controller (subscribes to GameSync state).
-    // GameSync.start() is NOT called here — the caller (or a game lobby)
-    // decides when to open the connection. The controller will emit state
-    // as soon as GameSync receives snapshots.
+    // Start the controller (subscribes to GameSync state) and open the
+    // connection. The composition root owns connection lifecycle (see M5
+    // for the teardown side).
     controller.start();
+    gameSync.start();
 
     return { app, board, controller };
   }

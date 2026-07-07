@@ -15,6 +15,27 @@ export function asObject(body: unknown, field = 'body'): Record<string, unknown>
   return body as Record<string, unknown>;
 }
 
+/**
+ * Assert the body is a JSON object and reject any keys not in `allowedKeys`.
+ * This enforces the OpenAPI contract's `additionalProperties: false` at runtime,
+ * preventing mass-assignment-style bugs. Use in place of `asObject` for any
+ * route whose request schema declares strict fields.
+ */
+export function strictObject(
+  body: unknown,
+  allowedKeys: readonly string[],
+  field = 'body',
+): Record<string, unknown> {
+  const obj = asObject(body, field);
+  const unexpected = Object.keys(obj).filter((k) => !allowedKeys.includes(k));
+  if (unexpected.length > 0) {
+    throw HttpError.validation('unexpected fields in request body', {
+      [field]: `unknown fields: ${unexpected.join(', ')}`,
+    });
+  }
+  return obj;
+}
+
 export interface StringRules {
   readonly min?: number;
   readonly max?: number;

@@ -107,7 +107,8 @@ export interface StateView {
 export interface JoinMessage {
   readonly t: 'join';
   readonly gameId: string;
-  readonly userId: string;
+  /** Access token; required for players, optional for anonymous spectators. */
+  readonly token?: string;
 }
 
 export interface MoveMessage {
@@ -173,6 +174,13 @@ export interface MoveBroadcast {
   readonly fenHash: string;
   readonly clock: ClockView;
   readonly serverTs: number;
+  /**
+   * Legal destinations for the side to move in the **resulting** position
+   * (after this move has been applied). Empty (`{}`) when the move ended the
+   * game. This is the push-based refresh mechanism: every broadcast carries
+   * the authoritative legal-move map so clients never starve after a live move.
+   */
+  readonly legalMoves: LegalMoves;
 }
 
 export interface EndedBroadcast {
@@ -206,7 +214,8 @@ export type RejectCode =
   | 'stale_seq'
   | 'unknown_game'
   | 'not_joined'
-  | 'invalid_command';
+  | 'invalid_command'
+  | 'unauthorized';
 
 export interface RejectMessage {
   readonly t: 'reject';
