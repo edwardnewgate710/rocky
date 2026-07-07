@@ -1,12 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Accessibility (a11y) tests for the Gambit web frontend.
  *
  * These tests validate the ARIA structure, keyboard navigation support,
- * and semantic HTML in the index.html template. They parse the static
- * HTML to verify accessibility attributes are present and correct.
+ * and semantic HTML in the real index.html — not a hand-maintained copy.
+ * The HTML is read from the source file so that any regression in
+ * index.html is caught immediately.
  *
  * Limitation (m2): these tests check the static markup only — they
  * cannot see the rendered board/lobby/profile states after JavaScript
@@ -17,56 +21,14 @@ import assert from 'node:assert/strict';
  * Both are part of the M6 acceptance gate and run against the served app.
  */
 
-const HTML_TEMPLATE = `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#161512" />
-    <title>Gambit</title>
-    <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="stylesheet" href="/src/style.css" />
-  </head>
-  <body>
-    <a class="skip-link" href="#board">Skip to board</a>
-    <header class="topbar">
-      <h1><a href="/">Gambit</a></h1>
-      <nav class="nav">
-        <a href="/">Lobby</a>
-        <a href="/profile">Profile</a>
-      </nav>
-      <span id="auth-status" role="status" aria-live="polite">Not signed in</span>
-      <button id="auth-logout" type="button" aria-label="Sign out" hidden>Sign out</button>
-      <button id="theme-toggle" type="button" aria-label="Toggle light/dark theme">🌙</button>
-      <button id="flip" type="button" aria-label="Flip board">Flip</button>
-    </header>
-    <main class="game">
-      <section id="board" aria-label="Chess board"></section>
-      <aside class="sidebar" aria-label="Game info">
-        <p id="status" role="status" aria-live="polite">Your move.</p>
-      </aside>
-    </main>
-    <section id="auth" aria-label="Sign in">
-      <form id="auth-form" onsubmit="return false">
-        <label for="auth-handle">Handle</label>
-        <input id="auth-handle" type="text" autocomplete="username" required />
-        <label for="auth-password">Password</label>
-        <input id="auth-password" type="password" autocomplete="current-password" required />
-        <button id="auth-submit" type="button">Sign in</button>
-      </form>
-      <p id="auth-error" class="error" role="alert"></p>
-    </section>
-    <section id="lobby" aria-label="Lobby" hidden>
-      <div id="seek-list" role="list"></div>
-      <button id="create-seek" type="button" disabled title="Sign in to create a seek">Create seek</button>
-      <p id="lobby-error" class="error" role="alert"></p>
-    </section>
-    <section id="profile" aria-label="Profile" hidden>
-      <h2 id="profile-handle">Profile</h2>
-      <p id="profile-error" class="error" role="alert"></p>
-    </section>
-  </body>
-</html>`;
+// Resolve the package root from this test file's URL.
+// Tests compile to dist-test/test/a11y.test.js, so we need to go up
+// to the package root and then read index.html from there.
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+// From dist-test/test/ → package root is ../../
+const PACKAGE_ROOT = resolve(__dirname, '..', '..');
+const HTML_TEMPLATE = readFileSync(resolve(PACKAGE_ROOT, 'index.html'), 'utf8');
 
 test('html has lang attribute', () => {
   assert.ok(HTML_TEMPLATE.includes('<html lang="en">'));
@@ -102,8 +64,8 @@ test('buttons have aria-label or text content', () => {
 });
 
 test('nav links are present for lobby and profile', () => {
-  assert.ok(HTML_TEMPLATE.includes('href="/">Lobby</a>'));
-  assert.ok(HTML_TEMPLATE.includes('href="/profile">Profile</a>'));
+  assert.ok(HTML_TEMPLATE.includes('href="/" data-route="lobby">Lobby</a>'));
+  assert.ok(HTML_TEMPLATE.includes('href="/profile" data-route="profile">Profile</a>'));
 });
 
 test('viewport meta tag is present for mobile', () => {

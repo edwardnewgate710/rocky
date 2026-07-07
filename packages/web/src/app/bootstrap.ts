@@ -259,7 +259,9 @@ export function bootstrap(
           if (seekListEl) renderSeeks(seekListEl, seeks);
         },
         onCreatePending: (pending) => {
-          if (createBtn) (createBtn as HTMLButtonElement).disabled = pending;
+          if (createBtn instanceof HTMLButtonElement) {
+            createBtn.disabled = pending || !auth.isAuthenticated();
+          }
         },
         onError: (msg) => {
           if (errorEl) errorEl.textContent = msg;
