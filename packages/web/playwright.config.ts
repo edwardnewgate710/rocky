@@ -13,6 +13,9 @@
  *   1. The e2e harness (API + WS gateway + bot) on ports 4174/4175
  *   2. The vite preview server on port 4173 (with proxy to the harness)
  *
+ * The build runs first so dist/serve.js exists before the harness starts.
+ * Playwright polls the `url` until it returns 200 — no fixed sleep.
+ *
  * Prerequisites for full acceptance:
  *   - npm run build (all packages, including e2e-harness)
  *   - GAMBIT_E2E_BACKEND=1 environment variable set
@@ -33,11 +36,11 @@ const config: PlaywrightTestConfig = {
   },
   webServer: isBackend
     ? {
-        // Start both the e2e harness and the vite preview server.
-        // The harness runs in the background; vite preview proxies to it.
+        // Build first (so dist/serve.js exists), then start the harness in the
+        // background, then start vite preview. Playwright polls `url` until 200.
         command:
-          'node ../e2e-harness/dist/serve.js & sleep 2 && npm run build && npm run preview -- --port 4173',
-        port: 4173,
+          'npm run build && (node ../e2e-harness/dist/serve.js &) && npm run preview -- --port 4173',
+        url: 'http://127.0.0.1:4173',
         reuseExistingServer: true,
         timeout: 120_000,
       }

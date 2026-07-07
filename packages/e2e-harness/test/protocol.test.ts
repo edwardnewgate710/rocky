@@ -16,7 +16,7 @@ import { strictEqual, ok } from 'node:assert';
 import { request as httpRequest } from 'node:http';
 import { createServer as createNetServer, type Server as NetServer } from 'node:net';
 import { createHarness, type Harness } from '../src/index.js';
-import { decode, type ServerMessage } from '@chess-platform/realtime-gateway';
+import type { ServerMessage } from '@chess-platform/realtime-gateway';
 import WebSocket from 'ws';
 
 /** Find a free TCP port by listening on port 0 and closing immediately. */
@@ -67,7 +67,13 @@ function httpReq(
   });
 }
 
-/** Collect server messages from a WebSocket until a predicate returns true. */
+/**
+ * Collect server messages from a WebSocket until a predicate returns true.
+ *
+ * Server frames are parsed with JSON.parse (not decode() — decode is the
+ * client-message decoder and returns null for every server message type).
+ * The test is the boundary that legitimately raw-parses server frames.
+ */
 function collectMessages(
   ws: WebSocket,
   predicate: (msg: ServerMessage) => boolean,
@@ -80,7 +86,12 @@ function collectMessages(
     }, timeoutMs);
 
     ws.on('message', (data: Buffer) => {
-      const msg = decode(data.toString()) as ServerMessage | null;
+      let msg: ServerMessage | null = null;
+      try {
+        msg = JSON.parse(data.toString()) as ServerMessage;
+      } catch {
+        return; // ignore malformed frames
+      }
       if (msg) {
         collected.push(msg);
         if (predicate(msg)) {
