@@ -85,3 +85,91 @@ jobs:
 
       - name: Test persistence against Postgres
         run: npm test --workspace @chess-platform/persistence
+
+  # M6 acceptance gate: Playwright e2e (full game vs bot + vs human) +
+  # Lighthouse a11y audit (score must be >= 95). Runs the e2e harness
+  # (in-memory API + gateway + bot) alongside vite preview so the specs
+  # exercise real HTTP + WebSocket flows. Reports are uploaded as artifacts.
+  m6-acceptance:
+    name: M6 acceptance (Playwright e2e + Lighthouse a11y)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: npm
+
+      - name: Install dependencies (reproducible)
+        run: npm ci
+
+      - name: Build (dependency order, includes e2e-harness)
+        run: npm run build
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: packages/web
+
+      - name: Run Playwright e2e (GAMBIT_E2E_BACKEND=1)
+        run: npm run e2e
+        working-directory: packages/web
+        env:
+          GAMBIT_E2E_BACKEND: '1'
+
+      - name: Upload Playwright HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: packages/web/playwright-report/
+          retention-days: 30
+
+      - name: Upload Playwright test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-test-results
+          path: packages/web/test-results/
+          retention-days: 30
+
+      - name: Install Lighthouse CLI
+        run: npm install -g @lhci/cli@0.13.0
+
+      - name: Start vite preview for Lighthouse
+        run: |
+          npm run build
+          npx vite preview --port 4173 &
+          # Wait for the server to be ready
+          for i in $(seq 1 30); do
+            if curl -s http://127.0.0.1:4173 | grep -q '.'; then
+              echo "Server is ready"
+              break
+            fi
+            sleep 1
+          done
+        working-directory: packages/web
+
+      - name: Run Lighthouse a11y audit
+        run: |
+          lhci collect --url http://127.0.0.1:4173 --numberOfRuns=1 --settings.preset=desktop
+          # Extract the a11y score from the Lighthouse JSON report
+          A11Y_SCORE=$(jq '.categories.accessibility.score' $(find .lighthouseci -name 'lhr-*.json' | head -1))
+          echo "Lighthouse a11y score: $A11Y_SCORE"
+          # Fail if below 95
+          if (( $(echo "$A11Y_SCORE < 0.95" | bc -l) )); then
+            echo "::error::Lighthouse a11y score ($A11Y_SCORE) is below 0.95"
+            exit 1
+          fi
+          echo "A11Y_SCORE=$A11Y_SCORE" >> "$GITHUB_ENV"
+        working-directory: packages/web
+
+      - name: Upload Lighthouse report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-report
+          path: packages/web/.lighthouseci/
+          retention-days: 30
