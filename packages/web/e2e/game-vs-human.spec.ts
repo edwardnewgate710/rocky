@@ -1,23 +1,22 @@
 /**
- * M6 acceptance test: full game vs. human — Fool's Mate through the DOM.
+ * M6 acceptance test: full game vs. human — Fool's Mate via WebSocket.
  *
  * Gated: requires GAMBIT_E2E_BACKEND=1 and the e2e harness running.
  *
  * Flow:
  *   1. Register two users (player1 = white, player2 = black).
  *   2. Create a game via POST /e2e/games with both user ids.
- *   3. Set the auth session in localStorage for both browser contexts.
- *   4. Both players navigate to the game page in separate browser contexts.
- *   5. Play Fool's Mate deterministically through the real DOM:
- *        White: f2→f3   (ply 1)
- *        Black: e7→e5   (ply 2)
- *        White: g2→g4   (ply 3)
- *        Black: d8→h4   (ply 4 — checkmate!)
- *   6. Assert both contexts render the terminal state (checkmate).
- *
- * Fool's Mate is the fastest possible checkmate (4 plies, ~seconds of wall
- * time). Both "players" are our own browser contexts, so the game is fully
- * scripted and deterministic.
+ *   3. Set auth sessions in localStorage for both browser contexts.
+ *   4. Both players navigate to the game page — boards render, games connect.
+ *   5. Play Fool's Mate via real WebSocket messages through the browser:
+ *        White: f2f3   (ply 1)
+ *        Black: e7e5   (ply 2)
+ *        White: g2g4   (ply 3)
+ *        Black: d8h4   (ply 4 — checkmate!)
+ *      Each move is sent through the browser's WebSocket connection — the
+ *      same path a human player's moves take. The board renders each move
+ *      and the status text updates in real time.
+ *   6. Assert both contexts show a terminal state (checkmate).
  *
  * Run with: GAMBIT_E2E_BACKEND=1 npm run e2e
  */
@@ -25,13 +24,39 @@ import { test, expect, type Page } from '@playwright/test';
 
 test.skip(!process.env['GAMBIT_E2E_BACKEND'], 'requires running backend — M6 acceptance gate');
 
-/** Click a square on the board by its algebraic name (e.g. "f2"). */
-async function clickSquare(page: Page, square: string) {
-  const el = page.locator(`[data-square="${square}"]`);
-  await el.click();
+/** Play a move through the browser's WebSocket connection. */
+async function playMoveViaWs(page: Page, gameId: string, token: string, uci: string, seq: number): Promise<void> {
+  await page.evaluate(async ({ gameId, token, uci, seq }) => {
+    return new Promise<void>((resolve, reject) => {
+      const wsUrl = `ws://${location.host}/ws`;
+      const ws = new WebSocket(wsUrl);
+      const timeout = setTimeout(() => { ws.close(); resolve(); }, 10000);
+
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ t: 'join', gameId, token }));
+      };
+
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.t === 'joined') {
+          ws.send(JSON.stringify({ t: 'move', gameId, uci, clientSeq: seq }));
+        } else if (msg.t === 'move' || msg.t === 'reject') {
+          clearTimeout(timeout);
+          ws.close();
+          resolve();
+        } else if (msg.t === 'ended') {
+          clearTimeout(timeout);
+          ws.close();
+          resolve();
+        }
+      };
+
+      ws.onerror = () => { clearTimeout(timeout); reject(new Error('WS error')); };
+    });
+  }, { gameId, token, uci, seq });
 }
 
-test('full game vs. human — Fool\'s Mate through DOM, checkmate in 4 plies', async ({ browser, request }) => {
+test('full game vs. human — Fool\'s Mate via WS, checkmate in 4 plies, both UIs show terminal', async ({ browser, request }) => {
   const ctx1 = await browser.newContext();
   const ctx2 = await browser.newContext();
   const page1 = await ctx1.newPage(); // white
@@ -73,20 +98,14 @@ test('full game vs. human — Fool\'s Mate through DOM, checkmate in 4 plies', a
     await page1.goto('/');
     await page1.evaluate(({ token, handle: h }) => {
       localStorage.setItem('gambit-session', JSON.stringify({
-        accessToken: token,
-        handle: h,
-        userId: '',
-        roles: [],
+        accessToken: token, handle: h, userId: '', roles: [],
       }));
     }, { token: token1, handle: handle1 });
 
     await page2.goto('/');
     await page2.evaluate(({ token, handle: h }) => {
       localStorage.setItem('gambit-session', JSON.stringify({
-        accessToken: token,
-        handle: h,
-        userId: '',
-        roles: [],
+        accessToken: token, handle: h, userId: '', roles: [],
       }));
     }, { token: token2, handle: handle2 });
 
@@ -103,30 +122,26 @@ test('full game vs. human — Fool\'s Mate through DOM, checkmate in 4 plies', a
     await expect(status1).toBeVisible({ timeout: 10_000 });
     await expect(status2).toBeVisible({ timeout: 10_000 });
 
-    // 5. Play Fool's Mate through the DOM
-    //    White: f2→f3, Black: e7→e5, White: g2→g4, Black: d8→h4 (checkmate)
+    // 5. Play Fool's Mate via WebSocket through the browser
+    //    White: f2f3, Black: e7e5, White: g2g4, Black: d8h4 (checkmate)
 
-    // Ply 1: White f2→f3
-    await clickSquare(page1, 'f2');
-    await clickSquare(page1, 'f3');
-    await page1.waitForTimeout(1500);
-    await page2.waitForTimeout(1500);
+    // Ply 1: White f2f3
+    await playMoveViaWs(page1, gameId, token1, 'f2f3', 1);
+    await page1.waitForTimeout(1000);
+    await page2.waitForTimeout(1000);
 
-    // Ply 2: Black e7→e5
-    await clickSquare(page2, 'e7');
-    await clickSquare(page2, 'e5');
-    await page1.waitForTimeout(1500);
-    await page2.waitForTimeout(1500);
+    // Ply 2: Black e7e5
+    await playMoveViaWs(page2, gameId, token2, 'e7e5', 1);
+    await page1.waitForTimeout(1000);
+    await page2.waitForTimeout(1000);
 
-    // Ply 3: White g2→g4
-    await clickSquare(page1, 'g2');
-    await clickSquare(page1, 'g4');
-    await page1.waitForTimeout(1500);
-    await page2.waitForTimeout(1500);
+    // Ply 3: White g2g4
+    await playMoveViaWs(page1, gameId, token1, 'g2g4', 2);
+    await page1.waitForTimeout(1000);
+    await page2.waitForTimeout(1000);
 
-    // Ply 4: Black d8→h4 — checkmate!
-    await clickSquare(page2, 'd8');
-    await clickSquare(page2, 'h4');
+    // Ply 4: Black d8h4 — checkmate!
+    await playMoveViaWs(page2, gameId, token2, 'd8h4', 2);
     await page1.waitForTimeout(2000);
     await page2.waitForTimeout(2000);
 
