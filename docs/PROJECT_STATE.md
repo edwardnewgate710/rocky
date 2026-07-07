@@ -64,12 +64,12 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 |---|---|---|---|
 | **M1** ✅ | `@chess-platform/core` | Variant-aware, perft-verified rules engine (0x88, immutable `Position`, FEN/UCI/SAN, 8 variants, terminal detection) | 16/16 |
 | **M2** ✅ | `@chess-platform/game` | Event-sourced `Game` aggregate + deterministic clocks; exact reconstruction via `Game.fromEvents` (~1.17ms/game) | 18/18 |
-| **M3** ✅ | `@chess-platform/realtime-gateway` | Server-authoritative WS protocol, `GameAuthority`, rooms/presence/fanout, resume, latency comp; `PubSub`/`Transport` seams; token-based auth (`TokenVerifier` port, ADR-0004) | 31/31 |
+| **M3** ✅ | `@chess-platform/realtime-gateway` | Server-authoritative WS protocol, `GameAuthority`, rooms/presence/fanout, resume, latency comp; `PubSub`/`Transport` seams; token-based auth (`TokenVerifier` port, ADR-0004) | 37/37 |
 | **M4a** ✅ | `@chess-platform/persistence` | Durable append-only event store (in-memory + Postgres), migrations, repositories, Glicko-2, UUIDv7 | 14/14 (+2 DB-gated) |
-| **M4b** ✅ | `@chess-platform/api` | Stateless REST + identity (scrypt/`PasswordHasher`, HMAC access tokens, rotating refresh tokens, RBAC), seeks/ratings/games, published OpenAPI 3.1 | 45/45 |
+| **M4b** ✅ | `@chess-platform/api` | Stateless REST + identity (scrypt/`PasswordHasher`, HMAC access tokens, rotating refresh tokens, RBAC), seeks/ratings/games, published OpenAPI 3.1 | 48/48 |
 | **M5** ✅ | `@chess-platform/engine` | Provider-agnostic UCI engine bridge: `AnalysisProvider`/`EngineManager`/`EnginePool`/`EngineInstance`/`EnginePlugin`/`AnalysisCache`/`EngineTransport`; capability discovery, priority scheduler, watchdog/cancellation, crash→hot-replacement, circuit breaker, graceful drain, health | 51/51 |
 
-**Whole-repo total: 334 tests pass (2 Postgres-gated skips).** Strict TS, zero errors, lint clean.
+**Whole-repo total: 343 tests pass (2 Postgres-gated skips).** Strict TS, zero errors, lint clean.
 
 ## 3. Architecture summary (as-built)
 
@@ -292,3 +292,4 @@ npm test                    # runs all package test suites (node --test)
 npm run openapi -w @chess-platform/api   # regenerate packages/api/openapi.json
 ```
 Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
+
