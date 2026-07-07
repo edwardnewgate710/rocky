@@ -243,3 +243,5 @@ secrets management, 100k-user load + chaos validation.
    systems engineer, a performance engineer, a security engineer, and a chess-
    server maintainer; merge and apply feedback.
 4. Advance only when no critical issue remains.
+
+<!-- M6 acceptance CI job added -->
