@@ -7,23 +7,22 @@
  *   1. Register a user via the API.
  *   2. Create a game via POST /e2e/games with botResignsAfterPlies: 3.
  *   3. Set the auth session in localStorage and navigate to the game page.
- *   4. Verify the board renders and the game connects (status text changes
- *      from the initial "Your move." to something indicating a live game).
- *   5. Play moves as white via the WebSocket gateway (real WS messages),
- *      the bot replies via the harness, then resigns after ply 4.
+ *   4. Verify the board renders and the game connects.
+ *   5. Play moves as white via the frontend's own GameSync (exposed as
+ *      window.__gameController for e2e testing). The bot replies via the
+ *      harness, then resigns after ply 3.
  *   6. Assert the UI shows a terminal state (resignation).
  *
- * Moves are played via real WebSocket messages through the browser's
- * WebSocket connection — the same path a human player's moves take.
- * The board renders the position and the status text reflects the game state.
+ * Moves go through the real WebSocket connection (GameSync → WsClient →
+ * gateway → authority) — the same path a human player's moves take.
  *
  * Run with: GAMBIT_E2E_BACKEND=1 npm run e2e
  */
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 
 test.skip(!process.env['GAMBIT_E2E_BACKEND'], 'requires running backend — M6 acceptance gate');
 
-test('full game vs. bot — real WS moves, bot resigns, terminal state shown in UI', async ({ page, request }) => {
+test('full game vs. bot — real WS moves via GameSync, bot resigns, terminal state shown', async ({ page, request }) => {
   // 1. Register a user
   const handle = `e2e-bot-${Date.now()}`;
   const regResp = await request.post('/v1/auth/register', {
@@ -35,6 +34,7 @@ test('full game vs. bot — real WS moves, bot resigns, terminal state shown in 
   const userId = auth.user.id;
 
   // 2. Create a game via the bridge route with botResignsAfterPlies: 3
+  //    Bot resigns on its turn after ply 3 (after 2 white moves + 1 bot reply).
   const gameResp = await request.post('/e2e/games', {
     data: { whiteId: userId, blackId: 'bot', botResignsAfterPlies: 3 },
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -48,10 +48,7 @@ test('full game vs. bot — real WS moves, bot resigns, terminal state shown in 
   await page.goto('/');
   await page.evaluate(({ token, handle: h }) => {
     localStorage.setItem('gambit-session', JSON.stringify({
-      accessToken: token,
-      handle: h,
-      userId: '',
-      roles: [],
+      accessToken: token, handle: h, userId: '', roles: [],
     }));
   }, { token: accessToken, handle });
 
@@ -64,69 +61,20 @@ test('full game vs. bot — real WS moves, bot resigns, terminal state shown in 
   const status = page.locator('#status');
   await expect(status).toBeVisible({ timeout: 10_000 });
 
-  // 5. Play moves as white via WebSocket through the browser
-  //    The frontend's GameSync connects to the WS gateway and joins the game.
-  //    We play moves by dispatching them through the browser's WS connection.
-  //    The bot replies via the harness, then resigns after ply 4.
-  //
-  //    We use page.evaluate to access the browser's WebSocket and send moves.
-  //    But actually, the frontend's GameSync handles WS internally.
-  //    Instead, let's use the API directly to play moves via the harness's
-  //    authority, and verify the UI updates.
-  //
-  //    Actually, the simplest approach: use Playwright's request context
-  //    to play moves via a direct WS connection from the test, while the
-  //    browser shows the game state updating in real time.
-  //
-  //    But we can't easily do WS from Playwright's request context.
-  //    Let's use page.evaluate to create a WS connection and play moves.
+  // Wait for the GameSync to connect and join
+  await page.waitForFunction(() => !!(globalThis as any).__gameController, null, { timeout: 10_000 });
+  await page.waitForTimeout(2000); // Give WS time to connect and join
 
-  // Play moves through the browser's WebSocket
-  await page.evaluate(async ({ gameId, token }) => {
-    return new Promise<void>((resolve, reject) => {
-      const wsUrl = `ws://${location.host}/ws`;
-      const ws = new WebSocket(wsUrl);
-      let moveCount = 0;
-      const moves = ['e2e4', 'd2d3']; // 2 white moves
-      const timeout = setTimeout(() => { ws.close(); resolve(); }, 15000);
+  // 5. Play moves as white via the frontend's GameSync
+  //    Move 1: e2→e4
+  await page.evaluate(() => (globalThis as any).__gameController.submitMove('e2e4'));
+  await page.waitForTimeout(2000); // Wait for bot reply
 
-      ws.onopen = () => {
-        // Join the game
-        ws.send(JSON.stringify({ t: 'join', gameId, token }));
-      };
-
-      ws.onmessage = (event) => {
-        const msg = JSON.parse(event.data);
-        if (msg.t === 'joined') {
-          // Play first move as white
-          ws.send(JSON.stringify({ t: 'move', gameId, uci: moves[0], clientSeq: 1 }));
-          moveCount++;
-        } else if (msg.t === 'move') {
-          // A move was played (could be ours or bot's)
-          if (moveCount < moves.length) {
-            // Wait a bit then play next white move
-            setTimeout(() => {
-              ws.send(JSON.stringify({ t: 'move', gameId, uci: moves[moveCount], clientSeq: moveCount + 1 }));
-              moveCount++;
-            }, 500);
-          }
-        } else if (msg.t === 'ended') {
-          clearTimeout(timeout);
-          ws.close();
-          resolve();
-        } else if (msg.t === 'reject') {
-          // Move rejected — try with promotion suffix
-          // (shouldn't happen for e2e4/d2d3, but handle it)
-        }
-      };
-
-      ws.onerror = () => { clearTimeout(timeout); reject(new Error('WS error')); };
-    });
-  }, { gameId, token: accessToken });
+  //    Move 2: d2→d3
+  await page.evaluate(() => (globalThis as any).__gameController.submitMove('d2d3'));
+  await page.waitForTimeout(3000); // Wait for bot to be triggered and resign
 
   // 6. Assert the UI shows a terminal state
-  await page.waitForTimeout(2000); // Give UI time to update
-
   let gameOver = false;
   for (let i = 0; i < 30; i++) {
     const statusText = await status.textContent();
