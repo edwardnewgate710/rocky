@@ -69,7 +69,7 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 | **M4b** ✅ | `@chess-platform/api` | Stateless REST + identity (scrypt/`PasswordHasher`, HMAC access tokens, rotating refresh tokens, RBAC), seeks/ratings/games, published OpenAPI 3.1 | 48/48 |
 | **M5** ✅ | `@chess-platform/engine` | Provider-agnostic UCI engine bridge: `AnalysisProvider`/`EngineManager`/`EnginePool`/`EngineInstance`/`EnginePlugin`/`AnalysisCache`/`EngineTransport`; capability discovery, priority scheduler, watchdog/cancellation, crash→hot-replacement, circuit breaker, graceful drain, health | 50/50 |
 
-**Whole-repo total: 425 tests (422 passed, 3 skipped: 2 Postgres-gated + 1 threefold specification).** Strict TS, zero errors, lint clean.
+**Whole-repo total: 427 tests (424 passed, 3 skipped: 2 Postgres-gated + 1 threefold specification).** Strict TS, zero errors, lint clean.
 
 ## 3. Architecture summary (as-built)
 
