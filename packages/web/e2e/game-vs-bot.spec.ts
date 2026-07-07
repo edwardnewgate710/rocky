@@ -69,14 +69,8 @@ test('full game vs. bot — real WS moves, bot resigns, terminal state shown', a
   const gameId = game.gameId;
   expect(gameId).toBeTruthy();
 
-  // 3. Set the auth session in localStorage and navigate to the game page
-  await page.goto('/');
-  await page.evaluate(({ token, handle: h }) => {
-    localStorage.setItem('gambit-session', JSON.stringify({
-      accessToken: token, handle: h, userId: '', roles: [],
-    }));
-  }, { token: accessToken, handle });
-
+  // 3. Navigate to the game page (frontend joins as spectator — no localStorage)
+  //    The evaluate WS plays moves as the authenticated white player.
   await page.goto(`/game/${gameId}`);
 
   // 4. Verify the board renders
