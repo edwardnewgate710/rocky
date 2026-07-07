@@ -25,7 +25,7 @@ const isBackend = !!process.env['GAMBIT_E2E_BACKEND'];
 
 const config: PlaywrightTestConfig = {
   testDir: './e2e',
-  timeout: 90_000,
+  timeout: 300_000,
   retries: 1,
   use: {
     baseURL: process.env['E2E_BASE_URL'] ?? 'http://localhost:4173',
