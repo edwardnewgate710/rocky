@@ -48,10 +48,13 @@ test(`fanout stays under ${P99_BUDGET_MS}ms p99 with ${IDLE} idle + ${ACTIVE} ac
   const pubsub = new InMemoryPubSub();
   const authority = new GameAuthority(pubsub, now);
   const verifier = new FakeTokenVerifier();
-  // Register tokens for all users used in the load test
+  // Register tokens for all users used in the load test.
+  // Every idle game (25,000) needs its pair of tokens registered, plus
+  // the live-game players and spectators.
   verifier.allow('tok-w', 'w').allow('tok-b', 'b');
   for (let i = 0; i < 200; i++) verifier.allow(`tok-spec-${i}`, `spec-${i}`);
-  for (let g = 0; g < 50; g++) { verifier.allow(`tok-iw${g}`, `iw${g}`).allow(`tok-ib${g}`, `ib${g}`); }
+  const idleGames = IDLE / 2;
+  for (let g = 0; g < idleGames; g++) { verifier.allow(`tok-iw${g}`, `iw${g}`).allow(`tok-ib${g}`, `ib${g}`); }
   const gateway = new RealtimeGateway(authority, pubsub, verifier, now);
 
   // Broadcast game with two players.
@@ -76,7 +79,6 @@ test(`fanout stays under ${P99_BUDGET_MS}ms p99 with ${IDLE} idle + ${ACTIVE} ac
   }
 
   // 50k idle connections spread over many idle games (2 players each).
-  const idleGames = IDLE / 2;
   for (let g = 0; g < idleGames; g++) {
     authority.createGame({
       gameId: `idle-${g}`,
