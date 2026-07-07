@@ -156,27 +156,18 @@ jobs:
           # Install lighthouse and run it directly
           npm install -g lighthouse@11.4.0
 
-          # Run Lighthouse and save the JSON report
+          # Run Lighthouse once with both JSON and HTML output
           lighthouse http://127.0.0.1:4173 \
-            --output=json \
-            --output-path=./lighthouse-report.json \
+            --output=json --output=html \
+            --output-path=./lighthouse-report \
             --chrome-flags="--no-sandbox --headless=new --disable-gpu --disable-dev-shm-usage" \
             --only-categories=accessibility \
             --preset=desktop \
             --quiet
 
-          # Extract the a11y score
-          A11Y_SCORE=$(jq '.categories.accessibility.score' ./lighthouse-report.json)
+          # Extract the a11y score from the JSON report
+          A11Y_SCORE=$(jq '.categories.accessibility.score' ./lighthouse-report.report.json)
           echo "Lighthouse a11y score: $A11Y_SCORE"
-
-          # Also generate HTML report
-          lighthouse http://127.0.0.1:4173 \
-            --output=html \
-            --output-path=./lighthouse-report.html \
-            --chrome-flags="--no-sandbox --headless=new --disable-gpu --disable-dev-shm-usage" \
-            --only-categories=accessibility \
-            --preset=desktop \
-            --quiet || true
 
           # Clean up
           kill $VITE_PID 2>/dev/null || true
@@ -195,6 +186,6 @@ jobs:
         with:
           name: lighthouse-report
           path: |
-            packages/web/lighthouse-report.json
-            packages/web/lighthouse-report.html
+            packages/web/lighthouse-report.report.json
+            packages/web/lighthouse-report.report.html
           retention-days: 30
