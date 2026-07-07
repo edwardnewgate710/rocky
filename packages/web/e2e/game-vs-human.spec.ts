@@ -87,7 +87,7 @@ test('full game vs. human plays to completion', async ({ browser, request }) => 
         gameOver = true;
         break;
       }
-      await page1.waitForTimeout(1000);
+      await page1.waitForTimeout(500);
     }
 
     // 5. Verify both players connected and the game reached a terminal state
