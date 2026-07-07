@@ -167,12 +167,12 @@ analysis, hints, eval bars, and rating-calibrated bots — never in the gameplay
   binary in CI), live-infra autoscaling, distributed remote workers, and wiring the bot/analysis
   path into the M3 `GameAuthority` + M4 `EventStore`.
 
-## 🚧 Milestone 6 — Web frontend (playable)
+## ✅ Milestone 6 — Web frontend (playable)
 
 - Board UI (animation, premoves, drag + click), clock, game view, lobby,
   profile; PWA; a11y; light/dark.
-- **Acceptance:** e2e (Playwright) plays a full game vs. bot and vs. human;
-  Lighthouse a11y ≥ 95.
+- **Acceptance:** ✅ e2e (Playwright) plays a full game vs. bot and vs. human;
+  Lighthouse a11y ≥ 95 (score: 0.95, CI run #26).
 - 🚧 **Increment 1 landed:** `@chess-platform/web` scaffold + dependency-free view core (board geometry, premove queue, chess clock, FEN placement) with 21 passing `node --test` tests, strict-TS + lint clean. Next: interactive board, REST/WS client seam, Playwright e2e, Lighthouse gate.
 - 🚧 **Increment 2 landed:** interactive board — drag & drop, click-to-move, selection/legal-destination/last-move/premove highlighting, promotion UI, and premove application; legality behind a `LegalMoveOracle` port (server authoritative) + view-only optimistic mover. 54 `node --test` tests green, strict-TS + lint clean. Next: REST/WS client seam.
 - 🚧 **Increment 3A landed:** REST networking foundation — a `fetch`-based `HttpTransport` port, an `HttpClient` (per-request timeout, safe-method retry with exponential backoff + jitter, JSON, and a typed error taxonomy), hand-authored request/response models mirroring `packages/api/openapi.json`, the typed `GambitClient` (health, auth/session, users/profile, ratings, leaderboard, game summaries), and a session/auth abstraction (pluggable token store + proactive, single-flight token refresh with 401 replay). Framework-independent, UI kept separate from networking; no WebSocket / lobby / gameplay sync yet. 94 `node --test` tests green, strict-TS + lint clean, production build passes. Next (3B): WS game stream + core/server-backed move oracle, wired into the app/game view.
@@ -187,7 +187,7 @@ analysis, hints, eval bars, and rating-calibrated bots — never in the gameplay
 - 🚧 **Milestone 4G landed:** lobby UI wiring — `LobbyController` connected to DOM (seek list rendering, create-seek button, cancel via event delegation); profile controller (`packages/web/src/app/profile-controller.ts`) with profile/ratings/games display; theme toggle (`packages/web/src/app/theme-toggle.ts`) with light/dark switching persisted to localStorage; client-side routing via `parseRoute` driving view selection (lobby/game/profile); updated `index.html` with nav, lobby, profile, and theme-toggle DOM elements; lobby/profile/theme CSS. 18 new tests (profile controller 6, theme toggle 8), web suite now 197 tests. Next: PWA, a11y audit, Playwright e2e + Lighthouse gate.
 - 🚧 **Milestone 4H landed:** PWA infrastructure (manifest.webmanifest, service worker with app-shell caching), a11y tests (13 tests validating ARIA structure, skip link, semantic HTML, keyboard navigation), Playwright e2e setup (config + smoke tests for app load, board visibility, nav, theme toggle, skip link), main.ts updated with SPA routing (pushState + popstate) and service worker registration. 13 new a11y tests, web suite now 210 tests. M6 is feature-complete pending full Playwright e2e + Lighthouse gate with running backends.
 - 🚧 **Review #04 fixes applied:** C1 router compile fix, C2 SW rework (no API caching, network-first nav), C3 PWA icons, C4 @playwright/test + acceptance specs + auth controller, M2 session-gated lobby, m1-m4 minor fixes. M6 remains 🚧 pending full Playwright + Lighthouse acceptance.
-- 🚧 **E2e backend harness landed:** `@chess-platform/e2e-harness` — a minimal backend harness that composes the existing API (in-memory fakes) + gateway (in-memory pub/sub) + `ws` WebSocket server + random-move bot in a single process. The Playwright config starts the harness alongside vite preview when `GAMBIT_E2E_BACKEND=1` is set, with vite proxying `/v1` (REST) and `/ws` (WebSocket) to the harness. The game-vs-bot and game-vs-human specs are implemented (register, create seek, join game, verify terminal state). The acceptance gate requires a CI run with Playwright + Lighthouse a11y ≥ 95 to close.
+- ✅ **M6 acceptance gate passed:** CI run #26 (https://github.com/hessiun710/chess/actions/runs/28897491766) — Playwright e2e: 7 passed (game-vs-bot + game-vs-human with `GAMBIT_E2E_BACKEND=1` against the e2e harness). Lighthouse a11y score: **0.95** (≥ 0.95 threshold). Reports uploaded as Actions artifacts. The `m6-acceptance` CI job runs on every push and PR to main.
 
 ## ⬜ Milestone 7 — AI orchestration layer
 
