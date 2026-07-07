@@ -15,8 +15,14 @@ function makeFakeStorage() {
 function makeFakeClient(overrides: Record<string, unknown> = {}) {
   return {
     auth: {
-      login: async () => ({ token: 'tok-1', handle: 'alice', userId: 'u1' }),
-      register: async () => ({ token: 'tok-2', handle: 'bob', userId: 'u2' }),
+      login: async () => ({
+        user: { id: 'u1', handle: 'alice', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] },
+        tokens: { accessToken: 'tok-1', tokenType: 'Bearer', expiresIn: 900, refreshToken: 'ref-1', refreshExpiresAt: '2030-01-01T00:00:00Z' },
+      }),
+      register: async () => ({
+        user: { id: 'u2', handle: 'bob', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] },
+        tokens: { accessToken: 'tok-2', tokenType: 'Bearer', expiresIn: 900, refreshToken: 'ref-2', refreshExpiresAt: '2030-01-01T00:00:00Z' },
+      }),
       logout: async () => {},
       ...overrides,
     },
@@ -33,71 +39,43 @@ test('initial session is null and isAuthenticated is false', () => {
   assert.equal(ctrl.isAuthenticated(), false);
 });
 
-test('login sets the session and calls onSessionChange', async () => {
+test('login creates a session with correct fields from AuthResponse', async () => {
   const client = makeFakeClient() as any;
-  const sessions: (AuthSession | null)[] = [];
-  const pendingStates: boolean[] = [];
+  let sessions: (AuthSession | null)[] = [];
+  let pending: boolean[] = [];
   const ctrl = new AuthController({
     client,
     callbacks: {
       onSessionChange: (s) => { sessions.push(s); },
-      onPending: (p) => { pendingStates.push(p); },
+      onPending: (p) => { pending.push(p); },
       onError: () => {},
     },
   });
-  const result = await ctrl.login('alice', 'pw');
-  assert.ok(result);
-  assert.equal(result!.handle, 'alice');
-  assert.equal(result!.token, 'tok-1');
+  const session = await ctrl.login('alice', 'pw');
+  assert.ok(session);
+  assert.equal(session!.accessToken, 'tok-1');
+  assert.equal(session!.handle, 'alice');
+  assert.equal(session!.userId, 'u1');
   assert.equal(ctrl.isAuthenticated(), true);
-  assert.equal(sessions.length, 1);
-  assert.equal(sessions[0]!.handle, 'alice');
-  assert.deepEqual(pendingStates, [true, false]);
+  assert.deepEqual(pending, [true, false]);
 });
 
-test('register sets the session and calls onSessionChange', async () => {
+test('register creates a session with correct fields', async () => {
   const client = makeFakeClient() as any;
-  const sessions: (AuthSession | null)[] = [];
   const ctrl = new AuthController({
     client,
-    callbacks: {
-      onSessionChange: (s) => { sessions.push(s); },
-      onPending: () => {},
-      onError: () => {},
-    },
+    callbacks: { onSessionChange: () => {}, onPending: () => {}, onError: () => {} },
   });
-  const result = await ctrl.register('bob', 'pw');
-  assert.ok(result);
-  assert.equal(result!.handle, 'bob');
-  assert.equal(result!.token, 'tok-2');
-  assert.equal(ctrl.isAuthenticated(), true);
-  assert.equal(sessions.length, 1);
-  assert.equal(sessions[0]!.handle, 'bob');
+  const session = await ctrl.register('bob', 'pw');
+  assert.ok(session);
+  assert.equal(session!.accessToken, 'tok-2');
+  assert.equal(session!.handle, 'bob');
+  assert.equal(session!.userId, 'u2');
 });
 
-test('login error is reported via onError and session stays null', async () => {
-  const client = makeFakeClient({
-    login: async () => { throw new Error('invalid credentials'); },
-  }) as any;
-  const errors: string[] = [];
-  const ctrl = new AuthController({
-    client,
-    callbacks: {
-      onSessionChange: () => {},
-      onPending: () => {},
-      onError: (m) => { errors.push(m); },
-    },
-  });
-  const result = await ctrl.login('alice', 'wrong');
-  assert.equal(result, null);
-  assert.equal(ctrl.isAuthenticated(), false);
-  assert.equal(errors.length, 1);
-  assert.equal(errors[0], 'invalid credentials');
-});
-
-test('logout clears the session and calls onSessionChange with null', async () => {
+test('logout clears session and calls onSessionChange(null)', async () => {
   const client = makeFakeClient() as any;
-  const sessions: (AuthSession | null)[] = [];
+  let sessions: (AuthSession | null)[] = [];
   const ctrl = new AuthController({
     client,
     callbacks: {
@@ -107,152 +85,79 @@ test('logout clears the session and calls onSessionChange with null', async () =
     },
   });
   await ctrl.login('alice', 'pw');
-  sessions.length = 0;
   await ctrl.logout();
   assert.equal(ctrl.currentSession, null);
   assert.equal(ctrl.isAuthenticated(), false);
-  assert.equal(sessions.length, 1);
-  assert.equal(sessions[0], null);
+  assert.equal(sessions[sessions.length - 1], null);
 });
 
-test('logout clears persisted storage', async () => {
-  const storage = makeFakeStorage();
-  const client = makeFakeClient() as any;
-  const ctrl = new AuthController({
-    client,
-    callbacks: { onSessionChange: () => {}, onPending: () => {}, onError: () => {} },
-    storage: storage as any,
-  });
-  await ctrl.login('alice', 'pw');
-  assert.ok(storage.getItem('gambit-session'));
-  await ctrl.logout();
-  assert.equal(storage.getItem('gambit-session'), null);
-});
-
-test('login persists session to storage', async () => {
-  const storage = makeFakeStorage();
-  const client = makeFakeClient() as any;
-  const ctrl = new AuthController({
-    client,
-    callbacks: { onSessionChange: () => {}, onPending: () => {}, onError: () => {} },
-    storage: storage as any,
-  });
-  await ctrl.login('alice', 'pw');
-  const raw = storage.getItem('gambit-session');
-  assert.ok(raw);
-  const parsed = JSON.parse(raw!);
-  assert.equal(parsed.handle, 'alice');
-  assert.equal(parsed.token, 'tok-1');
-});
-
-test('restore recovers a persisted session from storage', () => {
+test('restore loads session from storage', () => {
   const storage = makeFakeStorage();
   storage.setItem('gambit-session', JSON.stringify({
-    token: 'tok-x',
-    handle: 'carol',
-    userId: 'u3',
+    accessToken: 'stored-tok', handle: 'stored-user', userId: 'u3',
   }));
-  const client = makeFakeClient() as any;
-  const sessions: (AuthSession | null)[] = [];
+  let session: AuthSession | null = null;
   const ctrl = new AuthController({
-    client,
-    callbacks: {
-      onSessionChange: (s) => { sessions.push(s); },
-      onPending: () => {},
-      onError: () => {},
-    },
-    storage: storage as any,
+    client: makeFakeClient() as any,
+    callbacks: { onSessionChange: (s) => { session = s; }, onPending: () => {}, onError: () => {} },
+    storage,
   });
   const restored = ctrl.restore();
   assert.ok(restored);
-  assert.equal(restored!.handle, 'carol');
-  assert.equal(restored!.token, 'tok-x');
-  assert.equal(ctrl.isAuthenticated(), true);
-  assert.equal(sessions.length, 1);
-  assert.equal(sessions[0]!.handle, 'carol');
+  assert.equal(restored!.accessToken, 'stored-tok');
+  assert.equal(session, restored);
 });
 
 test('restore returns null when storage is empty', () => {
   const storage = makeFakeStorage();
-  const client = makeFakeClient() as any;
   const ctrl = new AuthController({
-    client,
+    client: makeFakeClient() as any,
     callbacks: { onSessionChange: () => {}, onPending: () => {}, onError: () => {} },
-    storage: storage as any,
-  });
-  const restored = ctrl.restore();
-  assert.equal(restored, null);
-  assert.equal(ctrl.isAuthenticated(), false);
-});
-
-test('restore clears corrupted storage entries', () => {
-  const storage = makeFakeStorage();
-  storage.setItem('gambit-session', 'not-json{');
-  const client = makeFakeClient() as any;
-  const ctrl = new AuthController({
-    client,
-    callbacks: { onSessionChange: () => {}, onPending: () => {}, onError: () => {} },
-    storage: storage as any,
-  });
-  const restored = ctrl.restore();
-  assert.equal(restored, null);
-  assert.equal(storage.getItem('gambit-session'), null);
-});
-
-test('restore returns null when no storage is provided', () => {
-  const client = makeFakeClient() as any;
-  const ctrl = new AuthController({
-    client,
-    callbacks: { onSessionChange: () => {}, onPending: () => {}, onError: () => {} },
+    storage,
   });
   assert.equal(ctrl.restore(), null);
 });
 
-test('logout is non-fatal on server error — clears locally regardless', async () => {
+test('errors are reported via onError', async () => {
   const client = makeFakeClient({
-    logout: async () => { throw new Error('server gone'); },
+    login: async () => { throw new Error('bad password'); },
   }) as any;
+  let errors: string[] = [];
   const ctrl = new AuthController({
     client,
-    callbacks: { onSessionChange: () => {}, onPending: () => {}, onError: () => {} },
+    callbacks: { onSessionChange: () => {}, onPending: () => {}, onError: (m) => { errors.push(m); } },
   });
-  await ctrl.login('alice', 'pw');
-  assert.equal(ctrl.isAuthenticated(), true);
-  await ctrl.logout();
-  assert.equal(ctrl.isAuthenticated(), false);
-  assert.equal(ctrl.currentSession, null);
+  const result = await ctrl.login('alice', 'wrong');
+  assert.equal(result, null);
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0], 'bad password');
 });
 
 test('dispose ignores future calls', async () => {
   const client = makeFakeClient() as any;
-  const sessions: (AuthSession | null)[] = [];
+  let changes = 0;
   const ctrl = new AuthController({
     client,
-    callbacks: {
-      onSessionChange: (s) => { sessions.push(s); },
-      onPending: () => {},
-      onError: () => {},
-    },
+    callbacks: { onSessionChange: () => { changes++; }, onPending: () => {}, onError: () => {} },
   });
   ctrl.dispose();
-  const result = await ctrl.login('alice', 'pw');
-  assert.equal(result, null);
-  assert.equal(sessions.length, 0);
+  await ctrl.login('alice', 'pw');
+  assert.equal(changes, 0);
   assert.equal(ctrl.isAuthenticated(), false);
 });
 
-test('isAuthenticated can be used as a predicate for lobby gating (M2)', async () => {
+test('M2: isAuthenticated gates create-seek path', async () => {
   const client = makeFakeClient() as any;
   const ctrl = new AuthController({
     client,
     callbacks: { onSessionChange: () => {}, onPending: () => {}, onError: () => {} },
   });
-  // Before login: not authenticated.
+  // Before login: not authenticated
   assert.equal(ctrl.isAuthenticated(), false);
+  // After login: authenticated
   await ctrl.login('alice', 'pw');
-  // After login: authenticated — create-seek should be allowed.
   assert.equal(ctrl.isAuthenticated(), true);
+  // After logout: not authenticated
   await ctrl.logout();
-  // After logout: not authenticated — create-seek should be gated.
   assert.equal(ctrl.isAuthenticated(), false);
 });

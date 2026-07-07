@@ -1,28 +1,33 @@
 /**
  * Gambit service worker — app-shell caching for PWA installability.
  *
- * Strategy:
- * - Precache: a build-injected asset list (APP_SHELL) is cached on install.
- *   In production, the build step replaces the dev placeholder with actual
- *   hashed asset URLs from dist/.
- * - Navigations: network-first (always try the network, fall back to cached
- *   index.html for offline support).
- * - Static assets (hashed): cache-first (immutable, safe to serve from cache).
+ * Strategy (option b — runtime caching, no build-time precache injection):
+ * - Precache: only the manifest and index.html are precached on install.
+ *   Hashed production assets (JS/CSS in dist/assets/) are NOT precached
+ *   because the build does not inject them into this file. Instead, they
+ *   are cached on first visit via the runtime cache-first handler below.
+ *   This means offline support requires at least one online visit.
+ * - Navigations: network-first (always try the network, fall back to
+ *   cached index.html for offline support).
+ * - Static assets (same-origin GET): cache-first (immutable hashed assets
+ *   are safe to serve from cache after first fetch).
  * - API (/v1/) and WebSocket: NEVER cached — always go to network.
  *
  * The cache is versioned by CACHE_VERSION so deploys invalidate old caches.
+ *
+ * To implement build-time precache injection (option a), a postbuild script
+ * would rewrite APP_SHELL in dist/sw.js from the actual dist/assets/* listing.
+ * That is deferred to a future increment; option (b) is honest and acceptable
+ * for M6.
  */
 
-// Build-time injection point: the build replaces this array with the actual
-// list of production asset URLs (hashed JS/CSS from dist/assets/).
-// In dev, only the manifest and index.html are precached.
 const APP_SHELL = [
   '/',
   '/index.html',
   '/manifest.webmanifest',
 ];
 
-const CACHE_VERSION = 'gambit-v2';
+const CACHE_VERSION = 'gambit-v3';
 const CACHE_NAME = CACHE_VERSION;
 
 self.addEventListener('install', (event) => {
@@ -57,7 +62,6 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(req)
         .then((response) => {
-          // Cache the latest index.html for offline use.
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put('/index.html', clone)).catch(() => {});
           return response;

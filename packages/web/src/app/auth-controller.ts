@@ -30,7 +30,7 @@ export interface AuthCallbacks {
 /** Session data persisted across reloads. */
 export interface AuthSession {
   /** The access token used for bearer auth. */
-  readonly token: string;
+  readonly accessToken: string;
   /** The authenticated user's handle. */
   readonly handle: string;
   /** The authenticated user's ID. */
@@ -88,7 +88,7 @@ export class AuthController {
       const raw = this.storage.getItem(this.storageKey);
       if (!raw) return null;
       const parsed = JSON.parse(raw) as AuthSession;
-      if (parsed && typeof parsed.token === 'string' && typeof parsed.handle === 'string') {
+      if (parsed && typeof parsed.accessToken === 'string' && typeof parsed.handle === 'string') {
         this.session = parsed;
         this.callbacks.onSessionChange(this.session);
         return this.session;
@@ -111,9 +111,9 @@ export class AuthController {
     try {
       const result = await this.client.auth.login({ handle, password });
       this.session = {
-        token: result.token,
-        handle: result.handle,
-        userId: result.userId,
+        accessToken: result.tokens.accessToken,
+        handle: result.user.handle,
+        userId: result.user.id,
       };
       this.persist();
       this.callbacks.onSessionChange(this.session);
@@ -133,9 +133,9 @@ export class AuthController {
     try {
       const result = await this.client.auth.register({ handle, password });
       this.session = {
-        token: result.token,
-        handle: result.handle,
-        userId: result.userId,
+        accessToken: result.tokens.accessToken,
+        handle: result.user.handle,
+        userId: result.user.id,
       };
       this.persist();
       this.callbacks.onSessionChange(this.session);
@@ -153,9 +153,7 @@ export class AuthController {
     if (this.disposed) return;
     this.callbacks.onPending(true);
     try {
-      if (this.session) {
-        await this.client.auth.logout(this.session.token);
-      }
+      await this.client.auth.logout();
     } catch {
       // Server-side logout failure is non-fatal — clear locally regardless.
     } finally {

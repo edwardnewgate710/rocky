@@ -34,6 +34,8 @@ const HTML_TEMPLATE = `<!doctype html>
         <a href="/">Lobby</a>
         <a href="/profile">Profile</a>
       </nav>
+      <span id="auth-status" role="status" aria-live="polite">Not signed in</span>
+      <button id="auth-logout" type="button" aria-label="Sign out" hidden>Sign out</button>
       <button id="theme-toggle" type="button" aria-label="Toggle light/dark theme">🌙</button>
       <button id="flip" type="button" aria-label="Flip board">Flip</button>
     </header>
@@ -43,9 +45,19 @@ const HTML_TEMPLATE = `<!doctype html>
         <p id="status" role="status" aria-live="polite">Your move.</p>
       </aside>
     </main>
+    <section id="auth" aria-label="Sign in">
+      <form id="auth-form" onsubmit="return false">
+        <label for="auth-handle">Handle</label>
+        <input id="auth-handle" type="text" autocomplete="username" required />
+        <label for="auth-password">Password</label>
+        <input id="auth-password" type="password" autocomplete="current-password" required />
+        <button id="auth-submit" type="button">Sign in</button>
+      </form>
+      <p id="auth-error" class="error" role="alert"></p>
+    </section>
     <section id="lobby" aria-label="Lobby" hidden>
       <div id="seek-list" role="list"></div>
-      <button id="create-seek" type="button">Create seek</button>
+      <button id="create-seek" type="button" disabled title="Sign in to create a seek">Create seek</button>
       <p id="lobby-error" class="error" role="alert"></p>
     </section>
     <section id="profile" aria-label="Profile" hidden>
@@ -75,7 +87,7 @@ test('status has role=status and aria-live=polite', () => {
 
 test('error regions have role=alert', () => {
   const alerts = (HTML_TEMPLATE.match(/role="alert"/g) || []).length;
-  assert.ok(alerts >= 2, 'expected at least 2 role=alert regions');
+  assert.ok(alerts >= 3, 'expected at least 3 role=alert regions (auth, lobby, profile)');
 });
 
 test('seek list has role=list', () => {
@@ -85,6 +97,7 @@ test('seek list has role=list', () => {
 test('buttons have aria-label or text content', () => {
   assert.ok(HTML_TEMPLATE.includes('aria-label="Toggle light/dark theme"'));
   assert.ok(HTML_TEMPLATE.includes('aria-label="Flip board"'));
+  assert.ok(HTML_TEMPLATE.includes('aria-label="Sign out"'));
 });
 
 test('nav links are present for lobby and profile', () => {
@@ -111,4 +124,27 @@ test('hidden sections use hidden attribute (not display:none)', () => {
 
 test('all interactive elements are buttons or links (no div onclick)', () => {
   assert.ok(!HTML_TEMPLATE.includes('onclick='));
+});
+
+// Auth form a11y checks (R5#2)
+test('auth section has aria-label', () => {
+  assert.ok(HTML_TEMPLATE.includes('aria-label="Sign in"'));
+});
+
+test('auth form inputs have associated labels', () => {
+  assert.ok(HTML_TEMPLATE.includes('label for="auth-handle"'));
+  assert.ok(HTML_TEMPLATE.includes('label for="auth-password"'));
+});
+
+test('auth inputs have autocomplete attributes', () => {
+  assert.ok(HTML_TEMPLATE.includes('autocomplete="username"'));
+  assert.ok(HTML_TEMPLATE.includes('autocomplete="current-password"'));
+});
+
+test('auth status has role=status', () => {
+  assert.ok(HTML_TEMPLATE.includes('id="auth-status" role="status"'));
+});
+
+test('create-seek button is disabled by default with title hint', () => {
+  assert.ok(HTML_TEMPLATE.includes('disabled title="Sign in to create a seek"'));
 });
