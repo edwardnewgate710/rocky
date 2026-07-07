@@ -110,7 +110,7 @@ jobs:
         run: npm run build
 
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
         working-directory: packages/web
 
       - name: Run Playwright e2e (GAMBIT_E2E_BACKEND=1)
