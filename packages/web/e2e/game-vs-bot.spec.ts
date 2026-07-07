@@ -68,7 +68,7 @@ test('full game vs. bot — real moves via HTTP bridge, bot resigns, terminal st
     data: { uci: 'e2e4', userId },
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  expect(move1Resp.ok()).toBeTruthy();
+  expect(move1Resp.ok()).toBeTruthy(`Move 1 failed: ${move1Resp.status()} ${JSON.stringify(await move1Resp.body())}`);
   await page.waitForTimeout(2000); // Wait for bot reply
 
   // Move 2: d2→d3
