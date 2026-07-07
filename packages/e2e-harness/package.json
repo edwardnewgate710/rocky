@@ -1,0 +1,36 @@
+{
+  "name": "@chess-platform/e2e-harness",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal backend harness for M6 e2e acceptance tests: composes API (in-memory) + gateway (in-memory pub/sub) + WebSocket server + random-move bot.",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "./dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/serve.js",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@chess-platform/api": "file:../api",
+    "@chess-platform/core": "file:../chess-core",
+    "@chess-platform/game": "file:../game",
+    "@chess-platform/realtime-gateway": "file:../realtime-gateway",
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.5.0"
+  }
+}
