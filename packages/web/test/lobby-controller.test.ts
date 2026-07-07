@@ -51,7 +51,7 @@ test('refresh fetches seeks and calls onSeeks', async () => {
     },
   });
   await ctrl.refresh();
-  assert.deepEqual(received?.map(s => s.id), ['s1', 's2']);
+  assert.deepEqual((received ?? []).map((s: SeekView) => s.id), ['s1', 's2']);
   assert.equal(errors.length, 0);
 });
 

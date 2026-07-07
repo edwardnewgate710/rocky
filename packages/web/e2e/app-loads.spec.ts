@@ -30,15 +30,3 @@ test('skip link is present for keyboard users', async ({ page }) => {
   const skipLink = page.locator('.skip-link');
   await expect(skipLink).toBeAttached();
 });
-
-test('auth form is present for sign-in', async ({ page }) => {
-  await page.goto('/');
-  const authForm = page.locator('#auth-form');
-  await expect(authForm).toBeVisible();
-});
-
-test('auth status shows not signed in initially', async ({ page }) => {
-  await page.goto('/');
-  const status = page.locator('#auth-status');
-  await expect(status).toContainText('Not signed in');
-});

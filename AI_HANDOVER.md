@@ -83,4 +83,5 @@ permissions to execute CreateCommitOnBranch`. The workflow file remains staged a
 `docs/ci/ci.yml` and needs the `workflow` scope to activate. Committed lockfiles are
 inconsistent across packages. See `docs/PROJECT_STATE.md` §6.
 
+
 M6 acceptance (Playwright full-game + Lighthouse a11y ≥ 95) is pending — requires running backend services.

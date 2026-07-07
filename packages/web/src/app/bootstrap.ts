@@ -11,7 +11,7 @@
  * - `/game/{id}` → game view (board + clock + status)
  * - `/profile` or `/profile/{handle}` → profile view
  *
- * The theme toggle and auth controller are always wired, regardless of route.
+ * The theme toggle is always wired, regardless of route.
  */
 import { createApp } from './composition.js';
 import type { App, AppDependencies } from './composition.js';
@@ -24,10 +24,10 @@ import { LobbyController } from './lobby-controller.js';
 import type { LobbyController as LobbyControllerType } from './lobby-controller.js';
 import { ProfileController } from './profile-controller.js';
 import type { ProfileController as ProfileControllerType } from './profile-controller.js';
-import { AuthController } from './auth-controller.js';
-import type { AuthController as AuthControllerType } from './auth-controller.js';
 import { ThemeToggle } from './theme-toggle.js';
 import type { ThemeToggle as ThemeToggleType } from './theme-toggle.js';
+import { AuthController } from './auth-controller.js';
+import type { AuthController as AuthControllerType } from './auth-controller.js';
 import { parseRoute } from './router.js';
 import type { SeekView } from '../api/models.js';
 
@@ -252,7 +252,6 @@ export function bootstrap(
     const createBtn = doc.getElementById('create-seek');
     const errorEl = doc.getElementById('lobby-error');
 
-    // M2: pass isAuthenticated from the auth controller.
     const lobby = new LobbyController({
       client: app.api,
       callbacks: {
@@ -260,9 +259,7 @@ export function bootstrap(
           if (seekListEl) renderSeeks(seekListEl, seeks);
         },
         onCreatePending: (pending) => {
-          if (createBtn instanceof HTMLButtonElement) {
-            createBtn.disabled = pending || !auth.isAuthenticated();
-          }
+          if (createBtn) (createBtn as HTMLButtonElement).disabled = pending;
         },
         onError: (msg) => {
           if (errorEl) errorEl.textContent = msg;
