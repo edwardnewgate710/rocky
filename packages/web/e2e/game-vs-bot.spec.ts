@@ -69,8 +69,14 @@ test('full game vs. bot — real WS moves, bot resigns, terminal state shown', a
   const gameId = game.gameId;
   expect(gameId).toBeTruthy();
 
-  // 3. Navigate to the game page (frontend joins as spectator — no localStorage)
-  //    The evaluate WS plays moves as the authenticated white player.
+  // 3. Set the auth session in localStorage and navigate to the game page
+  await page.goto('/');
+  await page.evaluate(({ token, handle: h }) => {
+    localStorage.setItem('gambit-session', JSON.stringify({
+      accessToken: token, handle: h, userId: '', roles: [],
+    }));
+  }, { token: accessToken, handle });
+
   await page.goto(`/game/${gameId}`);
 
   // 4. Verify the board renders
@@ -93,6 +99,7 @@ test('full game vs. bot — real WS moves, bot resigns, terminal state shown', a
   let gameOver = false;
   for (let i = 0; i < 30; i++) {
     const statusText = await status.textContent();
+    if (i < 5 || i % 10 === 0) console.log(`[vs-bot] Status: ${statusText}`);
     if (statusText && (
       statusText.includes('Checkmate') ||
       statusText.includes('Stalemate') ||
