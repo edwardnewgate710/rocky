@@ -244,4 +244,3 @@ secrets management, 100k-user load + chaos validation.
    server maintainer; merge and apply feedback.
 4. Advance only when no critical issue remains.
 
-<!-- M6 acceptance CI job added -->
