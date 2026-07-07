@@ -154,11 +154,16 @@ jobs:
 
       - name: Run Lighthouse a11y audit
         run: |
-          lhci collect --url http://127.0.0.1:4173 --numberOfRuns=1 --settings.preset=desktop
+          # Run Lighthouse with Chrome flags for CI (no-sandbox)
+          lhci collect \
+            --url http://127.0.0.1:4173 \
+            --numberOfRuns=1 \
+            --settings.preset=desktop \
+            --settings.chromeFlags="--no-sandbox --headless=new --disable-gpu"
           # Extract the a11y score from the Lighthouse JSON report
           A11Y_SCORE=$(jq '.categories.accessibility.score' $(find .lighthouseci -name 'lhr-*.json' | head -1))
           echo "Lighthouse a11y score: $A11Y_SCORE"
-          # Fail if below 95
+          # Fail if below 0.95
           if (( $(echo "$A11Y_SCORE < 0.95" | bc -l) )); then
             echo "::error::Lighthouse a11y score ($A11Y_SCORE) is below 0.95"
             exit 1
