@@ -70,7 +70,7 @@ test('full game vs. bot — real moves via HTTP bridge, bot resigns, terminal st
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ uci: 'e2e4', userId }),
     });
-    return { ok: resp.ok, status: resp.status, body: await resp.text() };
+    return { ok: resp.status === 200, status: resp.status, body: await resp.text() };
   }, { gameId, userId });
   expect(move1Result.ok).toBeTruthy();
   await page.waitForTimeout(2000); // Wait for bot reply
@@ -82,7 +82,7 @@ test('full game vs. bot — real moves via HTTP bridge, bot resigns, terminal st
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ uci: 'd2d3', userId }),
     });
-    return { ok: resp.ok, status: resp.status, body: await resp.text() };
+    return { ok: resp.status === 200, status: resp.status, body: await resp.text() };
   }, { gameId, userId });
   expect(move2Result.ok).toBeTruthy();
   await page.waitForTimeout(3000); // Wait for bot to resign
