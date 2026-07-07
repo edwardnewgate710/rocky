@@ -72,7 +72,7 @@ test('full game vs. bot — real moves via HTTP bridge, bot resigns, terminal st
     });
     return { ok: resp.ok, status: resp.status, body: await resp.text() };
   }, { gameId, userId });
-  expect(move1Result.ok).toBeTruthy(`Move 1 failed: ${move1Result.status} ${move1Result.body}`);
+  expect(move1Result.ok).toBeTruthy();
   await page.waitForTimeout(2000); // Wait for bot reply
 
   // Move 2: d2→d3
@@ -84,7 +84,7 @@ test('full game vs. bot — real moves via HTTP bridge, bot resigns, terminal st
     });
     return { ok: resp.ok, status: resp.status, body: await resp.text() };
   }, { gameId, userId });
-  expect(move2Result.ok).toBeTruthy(`Move 2 failed: ${move2Result.status} ${move2Result.body}`);
+  expect(move2Result.ok).toBeTruthy();
   await page.waitForTimeout(3000); // Wait for bot to resign
 
   // 6. Assert the UI shows a terminal state
