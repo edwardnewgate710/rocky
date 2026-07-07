@@ -135,35 +135,53 @@ jobs:
           path: packages/web/test-results/
           retention-days: 30
 
-      - name: Install Lighthouse CLI
-        run: npm install -g @lhci/cli@0.13.0
-
-      - name: Start vite preview for Lighthouse
+      - name: Run Lighthouse a11y audit
         run: |
-          npm run build
-          npx vite preview --port 4173 &
+          # Start vite preview in the background
+          npx vite preview --port 4173 --host 127.0.0.1 &
+          VITE_PID=$!
+
           # Wait for the server to be ready
           for i in $(seq 1 30); do
-            if curl -s http://127.0.0.1:4173 | grep -q '.'; then
-              echo "Server is ready"
+            if curl -s http://127.0.0.1:4173 > /dev/null 2>&1; then
+              echo "Vite preview is ready"
               break
             fi
             sleep 1
           done
-        working-directory: packages/web
 
-      - name: Run Lighthouse a11y audit
-        run: |
-          # Run Lighthouse with Chrome flags for CI (no-sandbox)
-          lhci collect \
-            --url http://127.0.0.1:4173 \
-            --numberOfRuns=1 \
-            --settings.preset=desktop \
-            --settings.chromeFlags="--no-sandbox --headless=new --disable-gpu"
-          # Extract the a11y score from the Lighthouse JSON report
-          A11Y_SCORE=$(jq '.categories.accessibility.score' $(find .lighthouseci -name 'lhr-*.json' | head -1))
+          # Verify server is responding
+          curl -s http://127.0.0.1:4173 | head -5
+
+          # Install lighthouse and run it directly
+          npm install -g lighthouse@11.4.0
+
+          # Run Lighthouse and save the JSON report
+          lighthouse http://127.0.0.1:4173 \
+            --output=json \
+            --output-path=./lighthouse-report.json \
+            --chrome-flags="--no-sandbox --headless=new --disable-gpu --disable-dev-shm-usage" \
+            --only-categories=accessibility \
+            --preset=desktop \
+            --quiet
+
+          # Extract the a11y score
+          A11Y_SCORE=$(jq '.categories.accessibility.score' ./lighthouse-report.json)
           echo "Lighthouse a11y score: $A11Y_SCORE"
-          # Fail if below 0.95
+
+          # Also generate HTML report
+          lighthouse http://127.0.0.1:4173 \
+            --output=html \
+            --output-path=./lighthouse-report.html \
+            --chrome-flags="--no-sandbox --headless=new --disable-gpu --disable-dev-shm-usage" \
+            --only-categories=accessibility \
+            --preset=desktop \
+            --quiet || true
+
+          # Clean up
+          kill $VITE_PID 2>/dev/null || true
+
+          # Fail if below 95
           if (( $(echo "$A11Y_SCORE < 0.95" | bc -l) )); then
             echo "::error::Lighthouse a11y score ($A11Y_SCORE) is below 0.95"
             exit 1
