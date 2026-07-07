@@ -16,8 +16,8 @@
  * - A bot that auto-joins games and plays random legal moves.
  *
  * Usage:
- *   node dist/serve.js                 # defaults
- *   API_PORT=4180 WS_PORT=4181 node dist/serve.js
+ *   node dist/main.js                 # defaults
+ *   API_PORT=4180 WS_PORT=4181 node dist/main.js
  */
 export { createHarness, type Harness, type HarnessOptions } from './harness.js';
 export { serveHarness } from './serve.js';
