@@ -6,21 +6,18 @@
  * Flow:
  *   1. Register two users (player1 = white, player2 = black).
  *   2. Create a game via POST /e2e/games with both user ids.
- *   3. Both players navigate to the game page in separate browser contexts.
- *   4. Play Fool's Mate deterministically through the real DOM:
+ *   3. Set the auth session in localStorage for both browser contexts.
+ *   4. Both players navigate to the game page in separate browser contexts.
+ *   5. Play Fool's Mate deterministically through the real DOM:
  *        White: f2→f3   (ply 1)
  *        Black: e7→e5   (ply 2)
  *        White: g2→g4   (ply 3)
  *        Black: d8→h4   (ply 4 — checkmate!)
- *   5. Assert each move appears in both UIs.
  *   6. Assert both contexts render the terminal state (checkmate).
  *
  * Fool's Mate is the fastest possible checkmate (4 plies, ~seconds of wall
  * time). Both "players" are our own browser contexts, so the game is fully
  * scripted and deterministic.
- *
- * The bridge route is test infrastructure inside the harness — it is NOT part
- * of the product API. Actual matchmaking is M7 and is not faked here.
  *
  * Run with: GAMBIT_E2E_BACKEND=1 npm run e2e
  */
@@ -72,7 +69,28 @@ test('full game vs. human — Fool\'s Mate through DOM, checkmate in 4 plies', a
     const gameId = game.gameId;
     expect(gameId).toBeTruthy();
 
-    // 3. Both players navigate to the game page
+    // 3. Set auth sessions in localStorage for both contexts
+    await page1.goto('/');
+    await page1.evaluate(({ token, handle: h }) => {
+      localStorage.setItem('gambit-session', JSON.stringify({
+        accessToken: token,
+        handle: h,
+        userId: '',
+        roles: [],
+      }));
+    }, { token: token1, handle: handle1 });
+
+    await page2.goto('/');
+    await page2.evaluate(({ token, handle: h }) => {
+      localStorage.setItem('gambit-session', JSON.stringify({
+        accessToken: token,
+        handle: h,
+        userId: '',
+        roles: [],
+      }));
+    }, { token: token2, handle: handle2 });
+
+    // 4. Both players navigate to the game page
     await page1.goto(`/game/${gameId}`);
     await page2.goto(`/game/${gameId}`);
 
@@ -85,26 +103,26 @@ test('full game vs. human — Fool\'s Mate through DOM, checkmate in 4 plies', a
     await expect(status1).toBeVisible({ timeout: 10_000 });
     await expect(status2).toBeVisible({ timeout: 10_000 });
 
-    // 4. Play Fool's Mate through the DOM
+    // 5. Play Fool's Mate through the DOM
     //    White: f2→f3, Black: e7→e5, White: g2→g4, Black: d8→h4 (checkmate)
 
     // Ply 1: White f2→f3
     await clickSquare(page1, 'f2');
     await clickSquare(page1, 'f3');
-    await page1.waitForTimeout(1000);
-    await page2.waitForTimeout(1000);
+    await page1.waitForTimeout(1500);
+    await page2.waitForTimeout(1500);
 
     // Ply 2: Black e7→e5
     await clickSquare(page2, 'e7');
     await clickSquare(page2, 'e5');
-    await page1.waitForTimeout(1000);
-    await page2.waitForTimeout(1000);
+    await page1.waitForTimeout(1500);
+    await page2.waitForTimeout(1500);
 
     // Ply 3: White g2→g4
     await clickSquare(page1, 'g2');
     await clickSquare(page1, 'g4');
-    await page1.waitForTimeout(1000);
-    await page2.waitForTimeout(1000);
+    await page1.waitForTimeout(1500);
+    await page2.waitForTimeout(1500);
 
     // Ply 4: Black d8→h4 — checkmate!
     await clickSquare(page2, 'd8');
@@ -112,7 +130,7 @@ test('full game vs. human — Fool\'s Mate through DOM, checkmate in 4 plies', a
     await page1.waitForTimeout(2000);
     await page2.waitForTimeout(2000);
 
-    // 5. Assert both contexts show a terminal state
+    // 6. Assert both contexts show a terminal state
     let p1Terminal = false;
     let p2Terminal = false;
     for (let i = 0; i < 30; i++) {
@@ -120,7 +138,7 @@ test('full game vs. human — Fool\'s Mate through DOM, checkmate in 4 plies', a
       const s2 = await status2.textContent();
       const isTerminal = (s: string | null) => s && (
         s.includes('Checkmate') || s.includes('Stalemate') ||
-        s.includes('Draw') || s.includes('resign') || s.includes('Resign') ||
+        s.includes('resignation') || s.includes('Draw') ||
         s.includes('timeout') || s.includes('abort') ||
         s.includes('1-0') || s.includes('0-1') || s.includes('1/2')
       );
