@@ -29,9 +29,9 @@ dependency-free domain packages** tested with the built-in `node --test` runner.
 | M4a | `@chess-platform/persistence` | ✅ durable event store + repositories | 14 (+2 gated) |
 | M4b | `@chess-platform/api` | ✅ stateless REST + identity | 48 |
 | M5 | `@chess-platform/engine` | ✅ engine bridge | 50 |
-| **M6** | `@chess-platform/web` | 🚧 **in progress — view core, interactive board, REST + WS networking, gameplay sync, composition root, legal-move oracle, game controller, live game view wiring** | 159 |
+| **M6** | `@chess-platform/web` | 🚧 **in progress — view core, interactive board, REST + WS networking, gameplay sync, composition root, legal-move oracle, game controller, live game view wiring, lobby controller + router + seeks API** | 179 |
 
-**Whole repo: 364 total tests** (361 passed, 3 skipped: 2 Postgres-gated + 1 threefold specification). Strict TS, lint clean.
+**Whole repo: 384 total tests** (361 passed, 3 skipped: 2 Postgres-gated + 1 threefold specification). Strict TS, lint clean.
 
 M5 design/decisions: [`docs/ENGINE_BRIDGE.md`](docs/ENGINE_BRIDGE.md) +
 [`docs/adr/0002-engine-bridge.md`](docs/adr/0002-engine-bridge.md) (Accepted).
