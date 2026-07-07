@@ -29,7 +29,7 @@ dependency-free domain packages** tested with the built-in `node --test` runner.
 | M4a | `@chess-platform/persistence` | ✅ durable event store + repositories | 14 (+2 gated) |
 | M4b | `@chess-platform/api` | ✅ stateless REST + identity | 48 |
 | M5 | `@chess-platform/engine` | ✅ engine bridge | 50 |
-| **M6** | `@chess-platform/web` | 🚧 **in progress — view core, interactive board, REST + WS networking, gameplay sync, composition root, legal-move oracle, game controller, live game view wiring, lobby controller + router + seeks API, lobby UI + profile + theme toggle, PWA + a11y + Playwright e2e (acceptance pending)** | 239 |
+| **M6** | `@chess-platform/web` + `@chess-platform/e2e-harness` | 🚧 **in progress — view core, interactive board, REST + WS networking, gameplay sync, composition root, legal-move oracle, game controller, live game view wiring, lobby controller + router + seeks API, lobby UI + profile + theme toggle, PWA + a11y + Playwright e2e + e2e backend harness (acceptance specs implemented, gate pending CI run)** | 239 |
 
 **Whole repo: 425 total tests** (422 passed, 3 skipped: 2 Postgres-gated + 1 threefold specification). Strict TS, lint clean.
 
@@ -84,4 +84,4 @@ permissions to execute CreateCommitOnBranch`. The workflow file remains staged a
 inconsistent across packages. See `docs/PROJECT_STATE.md` §6.
 
 
-M6 acceptance (Playwright full-game + Lighthouse a11y ≥ 95) is pending — requires running backend services.
+M6 acceptance (Playwright full-game + Lighthouse a11y ≥ 95) — the e2e backend harness (`@chess-platform/e2e-harness`) is now implemented: it composes the API (in-memory fakes) + gateway (in-memory pub/sub) + WebSocket server + random-move bot in a single process. The Playwright specs for game-vs-bot and game-vs-human are implemented and gated behind `GAMBIT_E2E_BACKEND=1`. The acceptance gate requires a CI run with Playwright + Lighthouse to close.
