@@ -24,14 +24,14 @@ dependency-free domain packages** tested with the built-in `node --test` runner.
 | Milestone | Package | Status | Tests |
 |---|---|---|---|
 | M1 | `@chess-platform/core` | ✅ rules engine (perft-verified) | 16 |
-| M2 | `@chess-platform/game` | ✅ event-sourced game authority | 18 |
+| M2 | `@chess-platform/game` | ✅ event-sourced game authority | 18 (+1 spec skip) |
 | M3 | `@chess-platform/realtime-gateway` | ✅ realtime WS edge + token-based auth (C4) | 37 |
 | M4a | `@chess-platform/persistence` | ✅ durable event store + repositories | 14 (+2 gated) |
 | M4b | `@chess-platform/api` | ✅ stateless REST + identity | 48 |
-| M5 | `@chess-platform/engine` | ✅ engine bridge | 51 |
+| M5 | `@chess-platform/engine` | ✅ engine bridge | 50 |
 | **M6** | `@chess-platform/web` | 🚧 **in progress — view core, interactive board, REST + WS networking, gameplay sync, composition root, legal-move oracle, game controller, live game view wiring** | 159 |
 
-**Whole repo: 343 tests green** (2 Postgres-gated skips). Strict TS, lint clean.
+**Whole repo: 364 total tests** (361 passed, 3 skipped: 2 Postgres-gated + 1 threefold specification). Strict TS, lint clean.
 
 M5 design/decisions: [`docs/ENGINE_BRIDGE.md`](docs/ENGINE_BRIDGE.md) +
 [`docs/adr/0002-engine-bridge.md`](docs/adr/0002-engine-bridge.md) (Accepted).
