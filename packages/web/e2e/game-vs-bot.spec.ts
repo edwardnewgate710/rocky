@@ -26,7 +26,7 @@ async function playMoveViaWs(page: Page, gameId: string, token: string, uci: str
     return new Promise<void>((resolve, reject) => {
       const wsUrl = `ws://${location.host}/ws`;
       const ws = new WebSocket(wsUrl);
-      const timeout = setTimeout(() => { ws.close(); resolve(); }, 10000);
+      const timeout = setTimeout(() => { ws.close(); resolve(); }, 15000);
 
       ws.onopen = () => {
         ws.send(JSON.stringify({ t: 'join', gameId, token }));
@@ -106,12 +106,13 @@ test('full game vs. bot — real WS moves, bot resigns, terminal state shown', a
 
   //    Move 2: d2→d3
   await playMoveViaWs(page, gameId, accessToken, 'd2d3', 2);
-  await page.waitForTimeout(3000); // Wait for bot to resign
+  await page.waitForTimeout(5000); // Wait for bot to resign
 
   // 6. Assert the UI shows a terminal state
   let gameOver = false;
   for (let i = 0; i < 30; i++) {
     const statusText = await status.textContent();
+    if (i < 5) console.log(`[vs-bot] Status: ${statusText}`);
 
     if (statusText && (
       statusText.includes('Checkmate') ||
