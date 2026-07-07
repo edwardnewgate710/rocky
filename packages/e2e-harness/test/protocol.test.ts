@@ -13,15 +13,16 @@
  */
 import { describe, it, before, after } from 'node:test';
 import { strictEqual, ok } from 'node:assert';
+import { request as httpRequest } from 'node:http';
+import { createServer as createNetServer, type Server as NetServer } from 'node:net';
 import { createHarness, type Harness } from '../src/index.js';
-import { encode, decode, type ServerMessage, type ClientMessage } from '@chess-platform/realtime-gateway';
+import { decode, type ServerMessage } from '@chess-platform/realtime-gateway';
 import WebSocket from 'ws';
 
 /** Find a free TCP port by listening on port 0 and closing immediately. */
-async function freePort(): Promise<number> {
-  const { createServer } = await import('node:net');
+function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
-    const srv = createServer();
+    const srv: NetServer = createNetServer();
     srv.listen(0, '127.0.0.1', () => {
       const addr = srv.address();
       if (addr && typeof addr === 'object') {
@@ -36,7 +37,7 @@ async function freePort(): Promise<number> {
 }
 
 /** Make an HTTP request and return { status, body }. */
-async function httpReq(
+function httpReq(
   port: number,
   method: string,
   path: string,
@@ -49,14 +50,14 @@ async function httpReq(
   if (payload) headers['Content-Length'] = String(Buffer.byteLength(payload));
 
   return new Promise((resolve, reject) => {
-    const req = require('node:http').request(
+    const req = httpRequest(
       { hostname: '127.0.0.1', port, method, path, headers },
-      (res: any) => {
+      (res) => {
         let data = '';
         res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
         res.on('end', () => {
-          try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
-          catch { resolve({ status: res.statusCode, body: data }); }
+          try { resolve({ status: res.statusCode ?? 0, body: JSON.parse(data) }); }
+          catch { resolve({ status: res.statusCode ?? 0, body: data }); }
         });
       },
     );
@@ -138,9 +139,8 @@ describe('e2e harness protocol test', () => {
       ws.on('error', reject);
     });
 
-    // Send join message
-    const joinMsg: ClientMessage = { t: 'join', gameId, token: accessToken };
-    ws.send(encode(joinMsg as any));
+    // Send join message — use JSON.stringify for client messages (encode is for server messages)
+    ws.send(JSON.stringify({ t: 'join', gameId, token: accessToken }));
 
     // 4. Wait for the 'joined' message
     const joinedMessages = await collectMessages(
@@ -155,7 +155,6 @@ describe('e2e harness protocol test', () => {
 
     // 5. Play moves until the game ends.
     // The human (white) plays random legal moves; the bot (black) auto-responds.
-    // We collect messages and play moves until we see an 'ended' broadcast.
     let ended = false;
     let moveCount = 0;
     const maxMoves = 300; // safety valve
@@ -173,7 +172,6 @@ describe('e2e harness protocol test', () => {
       if (state.turn === 'w') {
         const origins = Object.keys(state.legalMoves);
         if (origins.length === 0) {
-          // No legal moves — game should be over (stalemate/checkmate)
           ended = true;
           break;
         }
@@ -182,17 +180,10 @@ describe('e2e harness protocol test', () => {
         const dest = dests[Math.floor(Math.random() * dests.length)];
         const uci = `${origin}${dest}`;
 
-        const moveMsg: ClientMessage = {
-          t: 'move',
-          gameId,
-          uci,
-          clientSeq: moveCount + 1,
-        };
-        ws.send(encode(moveMsg as any));
+        ws.send(JSON.stringify({ t: 'move', gameId, uci, clientSeq: moveCount + 1 }));
         moveCount++;
 
         // Wait for the bot to respond (or for the game to end)
-        // We wait for either a 'move' broadcast from the bot or an 'ended'
         const response = await collectMessages(
           ws,
           (msg) => msg.t === 'move' || msg.t === 'ended' || msg.t === 'reject',
@@ -202,15 +193,9 @@ describe('e2e harness protocol test', () => {
         if (last.t === 'ended') {
           ended = true;
         } else if (last.t === 'reject') {
-          // Our move was rejected — try again with promotion suffix
+          // Our move was rejected — try again with promotion suffix 'q'
           const promoUci = `${uci}q`;
-          const promoMsg: ClientMessage = {
-            t: 'move',
-            gameId,
-            uci: promoUci,
-            clientSeq: moveCount + 1,
-          };
-          ws.send(encode(promoMsg as any));
+          ws.send(JSON.stringify({ t: 'move', gameId, uci: promoUci, clientSeq: moveCount + 1 }));
           moveCount++;
 
           const retryResponse = await collectMessages(
@@ -224,9 +209,7 @@ describe('e2e harness protocol test', () => {
           }
         }
       } else {
-        // It's the bot's turn — wait for the bot to move
-        // The bot plays via authority.apply directly, so we should see a
-        // 'move' broadcast via pub/sub → gateway → ws
+        // It's the bot's turn — wait for the bot to move via pub/sub → gateway → ws
         const botResponse = await collectMessages(
           ws,
           (msg) => msg.t === 'move' || msg.t === 'ended',
@@ -256,7 +239,6 @@ describe('e2e harness protocol test', () => {
 
   it('bridge route POST /e2e/games returns 404 for GET', async () => {
     const resp = await httpReq(apiPort, 'GET', '/e2e/games');
-    // The API handler will return 404 for unknown routes
     ok(resp.status === 404 || resp.status === 405, `expected 404 or 405, got ${resp.status}`);
   });
 });
