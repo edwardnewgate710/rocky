@@ -9,4 +9,6 @@ export * from './board.js';
 export * from './bootstrap.js';
 export * from './game-controller.js';
 export * from './lobby-controller.js';
+export * from './profile-controller.js';
 export * from './router.js';
+export * from './theme-toggle.js';

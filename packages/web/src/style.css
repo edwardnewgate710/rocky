@@ -189,3 +189,100 @@ button {
   cursor: pointer;
 }
 button:focus-visible { outline: 3px solid var(--sel); }
+
+
+/* --- Navigation --- */
+.nav {
+  display: flex;
+  gap: 12px;
+}
+.nav a {
+  color: var(--fg);
+  text-decoration: none;
+  opacity: 0.8;
+}
+.nav a:hover { opacity: 1; }
+
+/* --- Theme toggle button --- */
+#theme-toggle {
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 4px 8px;
+}
+
+/* --- Lobby --- */
+.lobby {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 16px;
+}
+.lobby h2 {
+  margin: 0 0 12px;
+}
+.seek-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.seek-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.seek-info {
+  font-size: 0.9rem;
+}
+.seek-cancel {
+  font-size: 0.8rem;
+  padding: 2px 10px;
+}
+
+/* --- Profile --- */
+.profile {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 16px;
+}
+.profile h2 {
+  margin: 0 0 12px;
+}
+.profile h3 {
+  margin: 16px 0 8px;
+  font-size: 1rem;
+}
+.ratings {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rating-row {
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 0.9rem;
+}
+.game-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.game-row {
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 0.85rem;
+}
+
+/* --- Error display --- */
+.error {
+  color: var(--sel);
+  font-size: 0.85rem;
+  min-height: 1.2em;
+}
+
+/* --- Route visibility --- */
+[hidden] { display: none !important; }
