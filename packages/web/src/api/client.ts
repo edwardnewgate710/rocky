@@ -24,6 +24,7 @@ import { DEFAULT_RETRY_POLICY } from '../net/retry.js';
 import type { RetryPolicy } from '../net/retry.js';
 import type {
   AuthResponse,
+  CreateSeekRequest,
   GameSummary,
   Health,
   LeaderboardEntry,
@@ -31,6 +32,7 @@ import type {
   RatingView,
   RefreshRequest,
   RegisterRequest,
+  SeekView,
   SelfUser,
   SessionView,
   UserProfile,
@@ -61,6 +63,7 @@ export class GambitClient {
   readonly auth: AuthApi;
   readonly users: UsersApi;
   readonly games: GamesApi;
+  readonly seeks: SeeksApi;
   private readonly http: HttpClient;
 
   constructor(options: GambitClientOptions) {
@@ -88,6 +91,7 @@ export class GambitClient {
     this.auth = new AuthApi(this.execute, this.session);
     this.users = new UsersApi(this.execute);
     this.games = new GamesApi(this.execute);
+    this.seeks = new SeeksApi(this.execute);
   }
 
   health(): Promise<Health> {
@@ -224,5 +228,24 @@ export class GamesApi {
 
   byId(id: string): Promise<GameSummary> {
     return this.execute<GameSummary>({ method: 'GET', path: `/v1/games/${encodeURIComponent(id)}` });
+  }
+}
+
+export class SeeksApi {
+  private readonly execute: Execute;
+  constructor(execute: Execute) {
+    this.execute = execute;
+  }
+
+  list(): Promise<SeekView[]> {
+    return this.execute<SeekView[]>({ method: 'GET', path: '/v1/seeks' });
+  }
+
+  create(body: CreateSeekRequest): Promise<SeekView> {
+    return this.execute<SeekView>({ method: 'POST', path: '/v1/seeks', body, auth: true });
+  }
+
+  cancel(id: string): Promise<void> {
+    return this.execute<void>({ method: 'DELETE', path: `/v1/seeks/${encodeURIComponent(id)}`, auth: true });
   }
 }

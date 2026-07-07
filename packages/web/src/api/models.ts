@@ -130,6 +130,35 @@ export interface Health {
   readonly version: string;
 }
 
+/** A seek (open game offer) in the lobby. */
+export interface SeekView {
+  readonly id: string;
+  readonly creatorId: string;
+  readonly variant: Variant;
+  readonly speed: string;
+  readonly timeControl: TimeControl;
+  readonly rated: boolean;
+  readonly minRating: number | null;
+  readonly maxRating: number | null;
+  readonly createdAt: string;
+}
+
+export interface CreateSeekRequest {
+  readonly variant: Variant;
+  readonly timeControl: TimeControl;
+  readonly rated?: boolean;
+  readonly minRating?: number | null;
+  readonly maxRating?: number | null;
+}
+
+/** Time control shape (mirrors the server's TimeControl schema). */
+export interface TimeControl {
+  readonly initialMs: number;
+  readonly incrementMs: number;
+  readonly delayMs: number;
+  readonly kind: 'increment' | 'delay' | 'sudden_death' | 'unlimited';
+}
+
 /**
  * The wire shape of a server error body. Every non-2xx response the API returns
  * carries this envelope; the client parses it into a typed `HttpError`.

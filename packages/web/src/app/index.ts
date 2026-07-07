@@ -8,3 +8,5 @@ export * from './composition.js';
 export * from './board.js';
 export * from './bootstrap.js';
 export * from './game-controller.js';
+export * from './lobby-controller.js';
+export * from './router.js';
