@@ -68,16 +68,19 @@ test('full game vs. bot — real WS moves via GameSync, bot resigns, terminal st
   // 5. Play moves as white via the frontend's GameSync
   //    Move 1: e2→e4
   await page.evaluate(() => (globalThis as any).__gameController.submitMove('e2e4'));
+  console.log('[vs-bot] Sent e2e4');
   await page.waitForTimeout(2000); // Wait for bot reply
 
   //    Move 2: d2→d3
   await page.evaluate(() => (globalThis as any).__gameController.submitMove('d2d3'));
+  console.log('[vs-bot] Sent d2d3');
   await page.waitForTimeout(3000); // Wait for bot to be triggered and resign
 
   // 6. Assert the UI shows a terminal state
   let gameOver = false;
   for (let i = 0; i < 30; i++) {
     const statusText = await status.textContent();
+    console.log(`[vs-bot] Status: ${statusText}`);
     if (statusText && (
       statusText.includes('Checkmate') ||
       statusText.includes('Stalemate') ||
