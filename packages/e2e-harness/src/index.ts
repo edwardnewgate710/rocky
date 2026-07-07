@@ -9,6 +9,9 @@
  *
  * The harness exposes:
  * - HTTP API on `apiPort` (default 4174) — register, login, seeks, games.
+ * - Bridge route `POST /e2e/games` — test-only game creation (stand-in for M7
+ *   matchmaking). Calls `authority.createGame(...)` + `bot.registerGame(...)`.
+ *   Do NOT add this to the product API.
  * - WebSocket gateway on `wsPort` (default 4175) — join, move, state, resume.
  * - A bot that auto-joins games and plays random legal moves.
  *

@@ -9,6 +9,13 @@
  * The bot is co-located in the same process as the authority — it calls
  * `authority.apply` directly (no WebSocket). This is the minimal integration;
  * the M14 deployable service would use the engine bridge for bot moves.
+ *
+ * Promotion handling: `legalMovesOf` collapses promotions to their shared
+ * destination square, so the bot emits a 4-char UCI (`origin + dest`). When
+ * the position requires a promotion piece, `authority.apply` rejects the
+ * 4-char move. On that rejection, the bot retries once with `'q'` (queen
+ * promotion) appended — sufficient for a random-move bot that does not need
+ * chess knowledge.
  */
 import type { GameAuthority } from '@chess-platform/realtime-gateway';
 import type { PubSub, Broadcast, StateView } from '@chess-platform/realtime-gateway';
@@ -96,11 +103,18 @@ export class BotPlayer {
     const dest = destinations[Math.floor(Math.random() * destinations.length)];
     const uci = `${origin}${dest}`;
 
-    // Submit the move via the authority (co-located, no WebSocket needed)
+    // Submit the move via the authority (co-located, no WebSocket needed).
+    // If the 4-char UCI is rejected (promotion required), retry with 'q' appended.
     void this.authority
       .apply(gameId, this.botUserId, { kind: 'move', uci })
       .catch(() => {
-        // Illegal move or not our turn — ignore
+        // Retry with queen promotion suffix
+        const promoUci = `${uci}q`;
+        void this.authority
+          .apply(gameId, this.botUserId, { kind: 'move', uci: promoUci })
+          .catch(() => {
+            // Still rejected — not a promotion or illegal; ignore
+          });
       });
   }
 }
