@@ -52,11 +52,10 @@ export interface HistoryLike {
 }
 
 /** Navigate to a route by updating the URL. */
-export function navigate(route: Route, history?: HistoryLike): void {
+export function navigate(route: Route, hist?: HistoryLike): void {
   const path = routeToPath(route);
-  if (history !== undefined) {
-    history.pushState(null, '', path);
-  } else if (typeof history !== 'undefined') {
-    history.pushState(null, '', path);
-  }
+  const h = hist ?? (typeof globalThis !== 'undefined' && typeof globalThis.history !== 'undefined'
+    ? (globalThis.history as unknown as HistoryLike)
+    : undefined);
+  h?.pushState(null, '', path);
 }

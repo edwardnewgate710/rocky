@@ -46,7 +46,10 @@ if (typeof document !== 'undefined') {
   // Register the service worker for PWA installability.
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      void navigator.serviceWorker.register('/sw.js').catch(() => undefined);
+      navigator.serviceWorker.register('/sw.js').catch((err) => {
+        // Log registration failures so SW breakage is visible (m1).
+        console.warn('[Gambit] Service worker registration failed:', err);
+      });
     });
   }
 }
