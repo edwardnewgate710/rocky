@@ -69,7 +69,7 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 | **M4b** ✅ | `@chess-platform/api` | Stateless REST + identity (scrypt/`PasswordHasher`, HMAC access tokens, rotating refresh tokens, RBAC), seeks/ratings/games, published OpenAPI 3.1 | 48/48 |
 | **M5** ✅ | `@chess-platform/engine` | Provider-agnostic UCI engine bridge: `AnalysisProvider`/`EngineManager`/`EnginePool`/`EngineInstance`/`EnginePlugin`/`AnalysisCache`/`EngineTransport`; capability discovery, priority scheduler, watchdog/cancellation, crash→hot-replacement, circuit breaker, graceful drain, health | 50/50 |
 
-**Whole-repo total: 425 tests (422 passed, 3 skipped: 2 Postgres-gated + 1 threefold specification).** Strict TS, zero errors, lint clean.
+**Whole-repo total: 427 tests (424 passed, 3 skipped: 2 Postgres-gated + 1 threefold specification).** Strict TS, zero errors, lint clean.
 
 ## 3. Architecture summary (as-built)
 
@@ -282,7 +282,9 @@ Milestone 4H landed: PWA + a11y + Playwright e2e setup — PWA infrastructure (m
 priority): (1) the M4 identity-hardening pass — WebAuthn/passkeys (§5); or (2) begin the M14 wiring
 of `@chess-platform/engine` into a deployable analysis/bot service
 
-**Review #04 status:** M6 is 🚧 (not feature-complete). The Playwright acceptance specs (full game vs bot + vs human) and Lighthouse a11y ≥ 95 gate require running backend services. The service worker has been reworked (C2), PWA icons added (C3), @playwright/test declared as a devDependency (C4), and an auth controller + session-gated lobby are in place (C4/M2). The SW uses option (b) — runtime caching after first visit, no build-time precache injection; offline support requires at least one online visit (see `sw.js` header). (bind `ChildProcessTransport` to a
+**Review #04 status:** M6 is 🚧 (not feature-complete). The Playwright acceptance specs (full game vs bot + vs human) and Lighthouse a11y ≥ 95 gate require running backend services. The service worker has been reworked (C2), PWA icons added (C3), @playwright/test declared as a devDependency (C4), and an auth controller + session-gated lobby are in place (C4/M2). The SW uses option (b) — runtime caching after first visit, no build-time precache injection; offline support requires at least one online visit (see `sw.js` header).
+
+**E2e backend harness status:** `@chess-platform/e2e-harness` is now implemented — a minimal backend harness composing the API (in-memory fakes from `@chess-platform/api/fakes`) + gateway (in-memory pub/sub) + `ws` WebSocket server + random-move bot in a single process. The harness starts HTTP on port 4174 and WS on port 4175. The Playwright config starts the harness alongside vite preview when `GAMBIT_E2E_BACKEND=1` is set; vite proxies `/v1` and `/ws` to the harness. The game-vs-bot and game-vs-human e2e specs are implemented (register, create seek, join game, verify terminal state). The acceptance gate requires a CI run with Playwright + Lighthouse a11y ≥ 95 to close. (bind `ChildProcessTransport` to a
 pinned engine binary via `createEngineManager`, add the env-gated real-engine golden test, and connect
 bots to the `GameAuthority`). Read `docs/AI_HANDOVER.md` for the quickstart and guardrails.
 
