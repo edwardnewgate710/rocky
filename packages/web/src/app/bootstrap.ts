@@ -242,8 +242,6 @@ export function bootstrap(
     controller.start();
     gameSync.start();
 
-    // Expose controller for e2e testing
-    (globalThis as any).__gameController = controller;
     return { app, board, controller, lobby: null, profile: null, auth, theme };
   }
 
