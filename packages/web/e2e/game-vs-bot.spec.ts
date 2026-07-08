@@ -41,8 +41,9 @@ test('full game vs. bot — real moves via HTTP bridge, bot resigns, terminal st
   const gameId = game.gameId;
   expect(gameId).toBeTruthy();
 
-  // 3. Set the auth session in localStorage and navigate to the game page
+  // 3. Clear any stale session and set the auth session in localStorage
   await page.goto('/');
+  await page.evaluate(() => localStorage.clear());
   await page.evaluate(({ token, handle: h }) => {
     localStorage.setItem('gambit-session', JSON.stringify({
       accessToken: token, handle: h, userId: '', roles: [],
@@ -73,7 +74,6 @@ test('full game vs. bot — real moves via HTTP bridge, bot resigns, terminal st
     const body = await resp.text();
     return { status: resp.status, body };
   }, { gameId, userId });
-  console.log(`[vs-bot] Move 1: status=${move1Result.status} body=${move1Result.body}`);
   expect(move1Result.status).toBe(200);
   await page.waitForTimeout(2000); // Wait for bot reply
 
