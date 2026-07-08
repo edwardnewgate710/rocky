@@ -74,8 +74,13 @@ test('full game vs. bot — real moves via HTTP bridge, bot resigns, terminal st
     const body = await resp.text();
     return { status: resp.status, body };
   }, { gameId, userId });
-  expect(move1Result.status, `Move 1 failed: ${move1Result.body}`).toBe(200);
-  await page.waitForTimeout(2000); // Wait for bot reply
+  expect(move1Result.status).toBe(200);
+  // Wait for the bot to reply (status should change to "White to move")
+  for (let i = 0; i < 15; i++) {
+    const text = await status.textContent();
+    if (text && text.includes('White to move')) break;
+    await page.waitForTimeout(1000);
+  }
 
   // Move 2: d2→d3
   const move2Result = await page.evaluate(async ({ gameId, userId }) => {
@@ -87,7 +92,7 @@ test('full game vs. bot — real moves via HTTP bridge, bot resigns, terminal st
     const body = await resp.text();
     return { status: resp.status, body };
   }, { gameId, userId });
-  expect(move2Result.status).toBe(200);
+  expect(move2Result.status, `Move 2 failed: ${move2Result.body}`).toBe(200);
   await page.waitForTimeout(3000); // Wait for bot to resign
 
   // 6. Assert the UI shows a terminal state
