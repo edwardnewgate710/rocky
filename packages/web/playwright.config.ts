@@ -31,7 +31,7 @@ const config: PlaywrightTestConfig = {
     baseURL: process.env['E2E_BASE_URL'] ?? 'http://localhost:4173',
     headless: true,
     screenshot: 'only-on-failure',
-    trace: 'on-first-retry',
+    trace: 'retain-on-failure',
   },
   webServer: isBackend
     ? {
