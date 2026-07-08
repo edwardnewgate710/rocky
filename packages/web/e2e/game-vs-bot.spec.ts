@@ -76,23 +76,27 @@ test('full game vs. bot — real moves via HTTP bridge, bot resigns, terminal st
   }, { gameId, userId });
   expect(move1Result.status).toBe(200);
   // Wait for the bot to reply (status should change to "White to move")
-  for (let i = 0; i < 15; i++) {
-    const text = await status.textContent();
-    if (text && text.includes('White to move')) break;
-    await page.waitForTimeout(1000);
-  }
+  await page.waitForTimeout(3000); // Wait for bot reply
 
-  // Move 2: d2→d3
-  const move2Result = await page.evaluate(async ({ gameId, userId }) => {
-    const resp = await fetch(`/e2e/games/${gameId}/moves`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uci: 'd2d3', userId }),
-    });
-    const body = await resp.text();
-    return { status: resp.status, body };
-  }, { gameId, userId });
-  expect(move2Result.status, `Move 2 failed: ${move2Result.body}`).toBe(200);
+  // Move 2: d2→d3 (retry until it's white's turn)
+  let move2Success = false;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const result = await page.evaluate(async ({ gameId, userId }) => {
+      const resp = await fetch(`/e2e/games/${gameId}/moves`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uci: 'd2d3', userId }),
+      });
+      const body = await resp.text();
+      return { status: resp.status, body };
+    }, { gameId, userId });
+    if (result.status === 200) {
+      move2Success = true;
+      break;
+    }
+    await page.waitForTimeout(2000); // Wait for bot to reply
+  }
+  expect(move2Success).toBe(true);
   await page.waitForTimeout(3000); // Wait for bot to resign
 
   // 6. Assert the UI shows a terminal state
