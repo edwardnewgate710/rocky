@@ -33,7 +33,7 @@ test('full game vs. bot — real moves via HTTP bridge, bot resigns, terminal st
 
   // 2. Create a game via the bridge route with botResignsAfterPlies: 3
   const gameResp = await request.post('/e2e/games', {
-    data: { whiteId: userId, blackId: 'bot', botResignsAfterPlies: 3 },
+    data: { whiteId: userId, botResignsAfterPlies: 3 },
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   expect(gameResp.ok()).toBeTruthy();
