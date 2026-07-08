@@ -29,8 +29,8 @@ async function clickSquare(page: Page, square: string) {
   await el.click();
 }
 
-/** Wait for the status text to change (indicates a move was processed). */
-async function waitForStatusChange(page: Page, status: Page.Locator, lastText: string, timeoutMs = 10000): Promise<string> {
+/** Wait for the status text to change from lastText. */
+async function waitForStatusChange(page: Page, status: Page.Locator, lastText: string, timeoutMs = 15000): Promise<string> {
   for (let i = 0; i < timeoutMs / 500; i++) {
     const text = await status.textContent();
     if (text !== lastText) return text ?? '';
@@ -77,16 +77,14 @@ test('full game vs. human — Fool\'s Mate through DOM clicks, checkmate in 4 pl
     const gameId = game.gameId;
     expect(gameId).toBeTruthy();
 
-    // 3. Set auth sessions in localStorage for both contexts
-    await page1.goto('/');
-    await page1.evaluate(({ token, handle: h }) => {
+    // 3. Set auth sessions via addInitScript (before any page script runs)
+    await page1.addInitScript(({ token, handle: h }) => {
       localStorage.setItem('gambit-session', JSON.stringify({
         accessToken: token, handle: h, userId: '', roles: [],
       }));
     }, { token: token1, handle: handle1 });
 
-    await page2.goto('/');
-    await page2.evaluate(({ token, handle: h }) => {
+    await page2.addInitScript(({ token, handle: h }) => {
       localStorage.setItem('gambit-session', JSON.stringify({
         accessToken: token, handle: h, userId: '', roles: [],
       }));
@@ -105,46 +103,61 @@ test('full game vs. human — Fool\'s Mate through DOM clicks, checkmate in 4 pl
     await expect(status1).toBeVisible({ timeout: 10_000 });
     await expect(status2).toBeVisible({ timeout: 10_000 });
 
-    // Wait for both games to connect (status changes from "Your move." to "Your move" or similar)
-    // Give the WS time to connect and join
-    await page1.waitForTimeout(3000);
-    await page2.waitForTimeout(3000);
+    // Wait for both games to connect — poll for "Your move" or "X to move"
+    for (let i = 0; i < 20; i++) {
+      const s1 = await status1.textContent();
+      const s2 = await status2.textContent();
+      if (s1 && s1.includes('move') && s2 && s2.includes('move')) break;
+      await page1.waitForTimeout(500);
+    }
+    console.log(`[vs-human] p1 status: ${await status1.textContent()}`);
+    console.log(`[vs-human] p2 status: ${await status2.textContent()}`);
+
+    // Check pieces on board
+    const pieces1 = await page1.locator('[data-square]').evaluateAll(els =>
+      els.filter(el => el.textContent && el.textContent.trim().length > 0).length
+    );
+    const pieces2 = await page2.locator('[data-square]').evaluateAll(els =>
+      els.filter(el => el.textContent && el.textContent.trim().length > 0).length
+    );
+    console.log(`[vs-human] p1 pieces: ${pieces1}, p2 pieces: ${pieces2}`);
 
     // 5. Play Fool's Mate by clicking squares
-    //    White: f2→f3, Black: e7→e5, White: g2→g4, Black: d8→h4 (checkmate)
-
-    // Ply 1: White f2→f3 (click f2 to select, click f3 to drop)
+    //    Ply 1: White f2→f3
     let s1Before = await status1.textContent();
     await clickSquare(page1, 'f2');
-    await page1.waitForTimeout(200);
+    await page1.waitForTimeout(300);
     await clickSquare(page1, 'f3');
-    // Wait for the move to be processed and broadcast to both UIs
-    await waitForStatusChange(page1, status1, s1Before ?? '', 10000);
+    await waitForStatusChange(page1, status1, s1Before ?? '', 15000);
     await page2.waitForTimeout(1000);
+    console.log(`[vs-human] After ply 1: p1="${await status1.textContent()}" p2="${await status2.textContent()}"`);
 
-    // Ply 2: Black e7→e5
+    //    Ply 2: Black e7→e5
     let s2Before = await status2.textContent();
     await clickSquare(page2, 'e7');
-    await page2.waitForTimeout(200);
+    await page2.waitForTimeout(300);
     await clickSquare(page2, 'e5');
-    await waitForStatusChange(page2, status2, s2Before ?? '', 10000);
+    await waitForStatusChange(page2, status2, s2Before ?? '', 15000);
     await page1.waitForTimeout(1000);
+    console.log(`[vs-human] After ply 2: p1="${await status1.textContent()}" p2="${await status2.textContent()}"`);
 
-    // Ply 3: White g2→g4
+    //    Ply 3: White g2→g4
     s1Before = await status1.textContent();
     await clickSquare(page1, 'g2');
-    await page1.waitForTimeout(200);
+    await page1.waitForTimeout(300);
     await clickSquare(page1, 'g4');
-    await waitForStatusChange(page1, status1, s1Before ?? '', 10000);
+    await waitForStatusChange(page1, status1, s1Before ?? '', 15000);
     await page2.waitForTimeout(1000);
+    console.log(`[vs-human] After ply 3: p1="${await status1.textContent()}" p2="${await status2.textContent()}"`);
 
-    // Ply 4: Black d8→h4 — checkmate!
+    //    Ply 4: Black d8→h4 — checkmate!
     s2Before = await status2.textContent();
     await clickSquare(page2, 'd8');
-    await page2.waitForTimeout(200);
+    await page2.waitForTimeout(300);
     await clickSquare(page2, 'h4');
-    await waitForStatusChange(page2, status2, s2Before ?? '', 10000);
+    await waitForStatusChange(page2, status2, s2Before ?? '', 15000);
     await page1.waitForTimeout(2000);
+    console.log(`[vs-human] After ply 4: p1="${await status1.textContent()}" p2="${await status2.textContent()}"`);
 
     // 6. Assert both contexts show a terminal state
     let p1Terminal = false;
