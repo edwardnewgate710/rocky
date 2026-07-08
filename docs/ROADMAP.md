@@ -187,7 +187,7 @@ analysis, hints, eval bars, and rating-calibrated bots — never in the gameplay
 - 🚧 **Milestone 4G landed:** lobby UI wiring — `LobbyController` connected to DOM (seek list rendering, create-seek button, cancel via event delegation); profile controller (`packages/web/src/app/profile-controller.ts`) with profile/ratings/games display; theme toggle (`packages/web/src/app/theme-toggle.ts`) with light/dark switching persisted to localStorage; client-side routing via `parseRoute` driving view selection (lobby/game/profile); updated `index.html` with nav, lobby, profile, and theme-toggle DOM elements; lobby/profile/theme CSS. 18 new tests (profile controller 6, theme toggle 8), web suite now 197 tests. Next: PWA, a11y audit, Playwright e2e + Lighthouse gate.
 - 🚧 **Milestone 4H landed:** PWA infrastructure (manifest.webmanifest, service worker with app-shell caching), a11y tests (13 tests validating ARIA structure, skip link, semantic HTML, keyboard navigation), Playwright e2e setup (config + smoke tests for app load, board visibility, nav, theme toggle, skip link), main.ts updated with SPA routing (pushState + popstate) and service worker registration. 13 new a11y tests, web suite now 210 tests. M6 is feature-complete pending full Playwright e2e + Lighthouse gate with running backends.
 - 🚧 **Review #04 fixes applied:** C1 router compile fix, C2 SW rework (no API caching, network-first nav), C3 PWA icons, C4 @playwright/test + acceptance specs + auth controller, M2 session-gated lobby, m1-m4 minor fixes. M6 remains 🚧 pending full Playwright + Lighthouse acceptance.
-- 🚧 **E2e backend harness landed:** `@chess-platform/e2e-harness` — a minimal backend harness that composes the existing API (in-memory fakes) + gateway (in-memory pub/sub) + `ws` WebSocket server + random-move bot in a single process. The Playwright config starts the harness alongside vite preview when `GAMBIT_E2E_BACKEND=1` is set, with vite proxying `/v1` (REST) and `/ws` (WebSocket) to the harness. The game-vs-bot and game-vs-human specs are implemented (register, create seek, join game, verify terminal state). The acceptance gate requires a CI run with Playwright + Lighthouse a11y ≥ 95 to close.
+- 🚧 **M6 acceptance gate pending:** CI run #56 passed with injected moves (HTTP bridge + raw WS), but Review #12 required moves through real DOM clicks. The gate re-opens until UI-driven specs are green in CI. Lighthouse a11y: 0.95 (infrastructure proven).
 
 ## ⬜ Milestone 7 — AI orchestration layer
 
@@ -243,3 +243,4 @@ secrets management, 100k-user load + chaos validation.
    systems engineer, a performance engineer, a security engineer, and a chess-
    server maintainer; merge and apply feedback.
 4. Advance only when no critical issue remains.
+

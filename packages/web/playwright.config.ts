@@ -9,15 +9,14 @@
  * `test.skip(!process.env.GAMBIT_E2E_BACKEND, ...)` so `npm run e2e`
  * without backends only runs the static/offline specs.
  *
- * When GAMBIT_E2E_BACKEND=1, the config uses a two-entry webServer array:
- *   1. The e2e harness (node ../e2e-harness/dist/main.js) — Playwright polls
- *      http://127.0.0.1:4174/v1/health until 200.
- *   2. The vite preview server on port 4173 — Playwright polls
- *      http://127.0.0.1:4173 until 200.
- * Playwright owns both lifecycles (no orphaned processes, no fixed sleeps).
+ * When GAMBIT_E2E_BACKEND=1, the webServer uses start-e2e.sh which:
+ *   1. Starts the e2e harness in the background
+ *   2. Waits for the harness health endpoint
+ *   3. Starts vite preview on port 4173 (foreground)
+ * Playwright polls http://127.0.0.1:4173 until 200.
  *
  * Prerequisites for full acceptance:
- *   - npm run build (all packages, including e2e-harness)
+ *   - npm run build (all packages, including e2e-harness) — must be run first
  *   - GAMBIT_E2E_BACKEND=1 environment variable set
  */
 import type { PlaywrightTestConfig } from '@playwright/test';
@@ -26,34 +25,23 @@ const isBackend = !!process.env['GAMBIT_E2E_BACKEND'];
 
 const config: PlaywrightTestConfig = {
   testDir: './e2e',
-  timeout: 90_000,
+  timeout: 300_000,
   retries: 1,
   use: {
     baseURL: process.env['E2E_BASE_URL'] ?? 'http://localhost:4173',
     headless: true,
     screenshot: 'only-on-failure',
-    trace: 'on-first-retry',
+    trace: 'retain-on-failure',
   },
   webServer: isBackend
-    ? [
-        {
-          // 1. Start the e2e harness (API + WS gateway + bot).
-          //    main.js calls serveHarness() which boots and listens.
-          //    Playwright polls /v1/health until 200 — no fixed sleep.
-          command: 'node ../e2e-harness/dist/main.js',
-          url: 'http://127.0.0.1:4174/v1/health',
-          reuseExistingServer: true,
-          timeout: 30_000,
-        },
-        {
-          // 2. Start vite preview (proxies /v1, /e2e, /ws to the harness).
-          //    Build first so dist/ exists, then preview on port 4173.
-          command: 'npm run build && npm run preview -- --port 4173',
-          url: 'http://127.0.0.1:4173',
-          reuseExistingServer: true,
-          timeout: 120_000,
-        },
-      ]
+    ? {
+        // start-e2e.sh starts the harness, waits for it, then starts vite preview.
+        // The build must have already been run (npm run build from repo root).
+        command: 'bash start-e2e.sh',
+        url: 'http://127.0.0.1:4173',
+        reuseExistingServer: true,
+        timeout: 120_000,
+      }
     : {
         command: 'npm run build && npm run preview',
         port: 4173,

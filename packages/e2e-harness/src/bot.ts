@@ -16,6 +16,11 @@
  * 4-char move. On that rejection, the bot retries once with `'q'` (queen
  * promotion) appended — sufficient for a random-move bot that does not need
  * chess knowledge.
+ *
+ * Determinism lever: if `resignAfterPlies` is set (via the bridge route's
+ * `botResignsAfterPlies` body field), the bot resigns on its turn once the
+ * game's ply count reaches that threshold. This gives e2e specs a
+ * deterministic terminal state without unbounded random play.
  */
 import type { GameAuthority } from '@chess-platform/realtime-gateway';
 import type { PubSub, Broadcast, StateView } from '@chess-platform/realtime-gateway';
@@ -24,7 +29,11 @@ import type { PubSub, Broadcast, StateView } from '@chess-platform/realtime-gate
 export class BotPlayer {
   private running = false;
   private readonly botUserId: string;
-  private readonly games = new Map<string, { white: string; black: string }>();
+  private readonly games = new Map<string, {
+    white: string;
+    black: string;
+    resignAfterPlies: number | null;
+  }>();
 
   constructor(
     private readonly authority: GameAuthority,
@@ -52,21 +61,27 @@ export class BotPlayer {
   /**
    * Register a game so the bot monitors it. Called when a game is created
    * with the bot as a player. Subscribes to the game's pub/sub channel.
+   *
+   * @param resignAfterPlies If set, the bot resigns on its turn once the
+   *   game's ply count reaches this value. Used by e2e specs for
+   *   deterministic termination.
    */
-  registerGame(gameId: string, whiteUserId: string, blackUserId: string): void {
-    this.games.set(gameId, { white: whiteUserId, black: blackUserId });
-
+  registerGame(
+    gameId: string,
+    whiteUserId: string,
+    blackUserId: string,
+    resignAfterPlies: number | null = null,
+  ): void {
+    this.games.set(gameId, { white: whiteUserId, black: blackUserId, resignAfterPlies });
     this.pubsub.subscribe(`game:${gameId}`, (msg: Broadcast) => {
       void this.onBroadcast(gameId, msg);
     });
-
     // Also try to play immediately (in case it's the bot's turn first)
     this.tryPlay(gameId);
   }
 
   private async onBroadcast(gameId: string, _msg: Broadcast): Promise<void> {
     if (!this.running) return;
-    // After any move or ended broadcast, check if it's our turn
     this.tryPlay(gameId);
   }
 
@@ -80,7 +95,7 @@ export class BotPlayer {
     try {
       state = this.authority.getState(gameId);
     } catch {
-      return; // game doesn't exist yet
+      return;
     }
 
     if (state.status.over) return;
@@ -90,6 +105,14 @@ export class BotPlayer {
 
     if (state.turn === 'w' && !botIsWhite) return;
     if (state.turn === 'b' && !botIsBlack) return;
+
+    // Determinism lever: resign after the configured ply count
+    if (gameInfo.resignAfterPlies !== null && state.ply >= gameInfo.resignAfterPlies) {
+      void this.authority
+        .apply(gameId, this.botUserId, { kind: 'resign' })
+        .catch(() => {});
+      return;
+    }
 
     // Pick a random legal move
     const legalMoves = state.legalMoves;
@@ -103,18 +126,13 @@ export class BotPlayer {
     const dest = destinations[Math.floor(Math.random() * destinations.length)];
     const uci = `${origin}${dest}`;
 
-    // Submit the move via the authority (co-located, no WebSocket needed).
-    // If the 4-char UCI is rejected (promotion required), retry with 'q' appended.
     void this.authority
       .apply(gameId, this.botUserId, { kind: 'move', uci })
       .catch(() => {
-        // Retry with queen promotion suffix
         const promoUci = `${uci}q`;
         void this.authority
           .apply(gameId, this.botUserId, { kind: 'move', uci: promoUci })
-          .catch(() => {
-            // Still rejected — not a promotion or illegal; ignore
-          });
+          .catch(() => {});
       });
   }
 }
