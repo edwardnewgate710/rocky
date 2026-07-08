@@ -70,10 +70,11 @@ test('full game vs. bot — real moves via HTTP bridge, bot resigns, terminal st
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ uci: 'e2e4', userId }),
     });
-    return { ok: resp.status === 200, status: resp.status, body: await resp.text() };
+    const body = await resp.text();
+    return { status: resp.status, body };
   }, { gameId, userId });
   console.log(`[vs-bot] Move 1: status=${move1Result.status} body=${move1Result.body}`);
-  expect(move1Result.ok).toBeTruthy();
+  expect(move1Result.status).toBe(200);
   await page.waitForTimeout(2000); // Wait for bot reply
 
   // Move 2: d2→d3
@@ -83,9 +84,10 @@ test('full game vs. bot — real moves via HTTP bridge, bot resigns, terminal st
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ uci: 'd2d3', userId }),
     });
-    return { ok: resp.status === 200, status: resp.status, body: await resp.text() };
+    const body = await resp.text();
+    return { status: resp.status, body };
   }, { gameId, userId });
-  expect(move2Result.ok).toBeTruthy();
+  expect(move2Result.status).toBe(200);
   await page.waitForTimeout(3000); // Wait for bot to resign
 
   // 6. Assert the UI shows a terminal state
