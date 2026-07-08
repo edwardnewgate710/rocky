@@ -19,7 +19,7 @@
  *
  * Run with: GAMBIT_E2E_BACKEND=1 npm run e2e
  */
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type Locator } from '@playwright/test';
 
 test.skip(!process.env['GAMBIT_E2E_BACKEND'], 'requires running backend — M6 acceptance gate');
 
@@ -29,14 +29,47 @@ async function clickSquare(page: Page, square: string) {
   await el.click();
 }
 
-/** Wait for the status text to change from lastText. */
-async function waitForStatusChange(page: Page, status: Page.Locator, lastText: string, timeoutMs = 15000): Promise<string> {
+/**
+ * Poll a status locator until its text content changes from `lastText`.
+ * Returns the new text (or the original if the timeout expires).
+ * This replaces fixed `waitForTimeout` sleeps with event-driven polling.
+ */
+async function waitForStatusChange(
+  page: Page,
+  status: Locator,
+  lastText: string,
+  timeoutMs = 15_000,
+): Promise<string> {
   for (let i = 0; i < timeoutMs / 500; i++) {
     const text = await status.textContent();
     if (text !== lastText) return text ?? '';
     await page.waitForTimeout(500);
   }
   return lastText;
+}
+
+/**
+ * Poll a status locator until it shows a terminal state string.
+ * Returns true if a terminal state was detected, false on timeout.
+ */
+async function waitForTerminalState(
+  page: Page,
+  status: Locator,
+  timeoutMs = 30_000,
+): Promise<boolean> {
+  const isTerminal = (s: string | null) => !!s && (
+    s.includes('Checkmate') || s.includes('Stalemate') ||
+    s.includes('resignation') || s.includes('Resign') ||
+    s.includes('Draw') || s.includes('timeout') ||
+    s.includes('abort') || s.includes('1-0') ||
+    s.includes('0-1') || s.includes('1/2')
+  );
+  for (let i = 0; i < timeoutMs / 500; i++) {
+    const text = await status.textContent();
+    if (isTerminal(text)) return true;
+    await page.waitForTimeout(500);
+  }
+  return false;
 }
 
 test('full game vs. human — Fool\'s Mate through DOM clicks, checkmate in 4 plies', async ({ browser, request }) => {
@@ -124,58 +157,51 @@ test('full game vs. human — Fool\'s Mate through DOM clicks, checkmate in 4 pl
 
     // 5. Play Fool's Mate by clicking squares
     //    Ply 1: White f2→f3
-    let s1Before = await status1.textContent();
+    const s1BeforePly1 = await status1.textContent();
     await clickSquare(page1, 'f2');
-    await page1.waitForTimeout(300);
+    await page1.waitForTimeout(300); // brief settle for select-then-drop UI
     await clickSquare(page1, 'f3');
-    await waitForStatusChange(page1, status1, s1Before ?? '', 15000);
-    await page2.waitForTimeout(1000);
+    // Wait for white's own status to confirm the move was processed
+    await waitForStatusChange(page1, status1, s1BeforePly1 ?? '', 15_000);
+    // Poll black's status until it reflects the move (no fixed sleep)
+    const s2BeforePly1 = await status2.textContent();
+    await waitForStatusChange(page2, status2, s2BeforePly1 ?? '', 15_000);
     console.log(`[vs-human] After ply 1: p1="${await status1.textContent()}" p2="${await status2.textContent()}"`);
 
     //    Ply 2: Black e7→e5
-    let s2Before = await status2.textContent();
+    const s2BeforePly2 = await status2.textContent();
     await clickSquare(page2, 'e7');
     await page2.waitForTimeout(300);
     await clickSquare(page2, 'e5');
-    await waitForStatusChange(page2, status2, s2Before ?? '', 15000);
-    await page1.waitForTimeout(1000);
+    // Wait for black's own status to confirm
+    await waitForStatusChange(page2, status2, s2BeforePly2 ?? '', 15_000);
+    // Poll white's status until it reflects the move
+    const s1BeforePly2 = await status1.textContent();
+    await waitForStatusChange(page1, status1, s1BeforePly2 ?? '', 15_000);
     console.log(`[vs-human] After ply 2: p1="${await status1.textContent()}" p2="${await status2.textContent()}"`);
 
     //    Ply 3: White g2→g4
-    s1Before = await status1.textContent();
+    const s1BeforePly3 = await status1.textContent();
     await clickSquare(page1, 'g2');
     await page1.waitForTimeout(300);
     await clickSquare(page1, 'g4');
-    await waitForStatusChange(page1, status1, s1Before ?? '', 15000);
-    await page2.waitForTimeout(1000);
+    await waitForStatusChange(page1, status1, s1BeforePly3 ?? '', 15_000);
+    const s2BeforePly3 = await status2.textContent();
+    await waitForStatusChange(page2, status2, s2BeforePly3 ?? '', 15_000);
     console.log(`[vs-human] After ply 3: p1="${await status1.textContent()}" p2="${await status2.textContent()}"`);
 
     //    Ply 4: Black d8→h4 — checkmate!
-    s2Before = await status2.textContent();
+    const s2BeforePly4 = await status2.textContent();
     await clickSquare(page2, 'd8');
     await page2.waitForTimeout(300);
     await clickSquare(page2, 'h4');
-    await waitForStatusChange(page2, status2, s2Before ?? '', 15000);
-    await page1.waitForTimeout(2000);
+    // Wait for black's own status to confirm the move
+    await waitForStatusChange(page2, status2, s2BeforePly4 ?? '', 15_000);
     console.log(`[vs-human] After ply 4: p1="${await status1.textContent()}" p2="${await status2.textContent()}"`);
 
-    // 6. Assert both contexts show a terminal state
-    let p1Terminal = false;
-    let p2Terminal = false;
-    for (let i = 0; i < 30; i++) {
-      const s1 = await status1.textContent();
-      const s2 = await status2.textContent();
-      const isTerminal = (s: string | null) => s && (
-        s.includes('Checkmate') || s.includes('Stalemate') ||
-        s.includes('resignation') || s.includes('Draw') ||
-        s.includes('timeout') || s.includes('abort') ||
-        s.includes('1-0') || s.includes('0-1') || s.includes('1/2')
-      );
-      if (isTerminal(s1)) p1Terminal = true;
-      if (isTerminal(s2)) p2Terminal = true;
-      if (p1Terminal && p2Terminal) break;
-      await page1.waitForTimeout(1000);
-    }
+    // 6. Assert both contexts show a terminal state — poll instead of fixed sleep
+    const p1Terminal = await waitForTerminalState(page1, status1, 30_000);
+    const p2Terminal = await waitForTerminalState(page2, status2, 30_000);
 
     expect(p1Terminal).toBe(true);
     expect(p2Terminal).toBe(true);

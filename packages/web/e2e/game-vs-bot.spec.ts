@@ -19,7 +19,7 @@
  *
  * Run with: GAMBIT_E2E_BACKEND=1 npm run e2e
  */
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type Locator } from '@playwright/test';
 
 test.skip(!process.env['GAMBIT_E2E_BACKEND'], 'requires running backend — M6 acceptance gate');
 
@@ -27,6 +27,49 @@ test.skip(!process.env['GAMBIT_E2E_BACKEND'], 'requires running backend — M6 a
 async function clickSquare(page: Page, square: string) {
   const el = page.locator(`[data-square="${square}"]`);
   await el.click();
+}
+
+/**
+ * Poll a status locator until its text content changes from `lastText`.
+ * Returns the new text (or the original if the timeout expires).
+ * This replaces fixed `waitForTimeout` sleeps with event-driven polling.
+ */
+async function waitForStatusChange(
+  page: Page,
+  status: Locator,
+  lastText: string,
+  timeoutMs = 15_000,
+): Promise<string> {
+  for (let i = 0; i < timeoutMs / 500; i++) {
+    const text = await status.textContent();
+    if (text !== lastText) return text ?? '';
+    await page.waitForTimeout(500);
+  }
+  return lastText;
+}
+
+/**
+ * Poll a status locator until it shows a terminal state string.
+ * Returns true if a terminal state was detected, false on timeout.
+ */
+async function waitForTerminalState(
+  page: Page,
+  status: Locator,
+  timeoutMs = 30_000,
+): Promise<boolean> {
+  const isTerminal = (s: string | null) => !!s && (
+    s.includes('Checkmate') || s.includes('Stalemate') ||
+    s.includes('resignation') || s.includes('Resign') ||
+    s.includes('Draw') || s.includes('timeout') ||
+    s.includes('abort') || s.includes('1-0') ||
+    s.includes('0-1') || s.includes('1/2')
+  );
+  for (let i = 0; i < timeoutMs / 500; i++) {
+    const text = await status.textContent();
+    if (isTerminal(text)) return true;
+    await page.waitForTimeout(500);
+  }
+  return false;
 }
 
 test('full game vs. bot — DOM clicks, bot resigns, terminal state shown', async ({ page, request }) => {
@@ -91,33 +134,17 @@ test('full game vs. bot — DOM clicks, bot resigns, terminal state shown', asyn
   //    Move 1: e2→e4
   console.log('[vs-bot] Clicking e2...');
   await clickSquare(page, 'e2');
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(300); // brief settle for select-then-drop UI
   console.log('[vs-bot] Clicking e4...');
   await clickSquare(page, 'e4');
-  
+
   // Wait for the status to change (move processed + bot reply)
-  let statusAfter = await status.textContent();
-  for (let i = 0; i < 20; i++) {
-    const text = await status.textContent();
-    if (text !== statusAfter) {
-      statusAfter = text;
-      break;
-    }
-    await page.waitForTimeout(500);
-  }
-  console.log(`[vs-bot] After move 1: status="${statusAfter}"`);
+  const statusAfterMove1 = await waitForStatusChange(page, status, await status.textContent() ?? '', 15_000);
+  console.log(`[vs-bot] After move 1: status="${statusAfterMove1}"`);
 
   // Wait for bot to reply (status should change again)
-  let statusAfterBot = statusAfter;
-  for (let i = 0; i < 20; i++) {
-    const text = await status.textContent();
-    if (text !== statusAfterBot) {
-      statusAfterBot = text;
-      break;
-    }
-    await page.waitForTimeout(500);
-  }
-  console.log(`[vs-bot] After bot reply: status="${statusAfterBot}"`);
+  const statusAfterBot1 = await waitForStatusChange(page, status, statusAfterMove1, 15_000);
+  console.log(`[vs-bot] After bot reply: status="${statusAfterBot1}"`);
 
   //    Move 2: d2→d3
   console.log('[vs-bot] Clicking d2...');
@@ -126,37 +153,12 @@ test('full game vs. bot — DOM clicks, bot resigns, terminal state shown', asyn
   console.log('[vs-bot] Clicking d3...');
   await clickSquare(page, 'd3');
 
-  // Wait for the bot to resign
-  for (let i = 0; i < 20; i++) {
-    const text = await status.textContent();
-    if (text !== statusAfterBot) {
-      statusAfterBot = text;
-      break;
-    }
-    await page.waitForTimeout(500);
-  }
-  console.log(`[vs-bot] After move 2: status="${statusAfterBot}"`);
+  // Wait for the status to change (move processed, bot should resign)
+  const statusAfterMove2 = await waitForStatusChange(page, status, statusAfterBot1, 15_000);
+  console.log(`[vs-bot] After move 2: status="${statusAfterMove2}"`);
 
-  // 6. Assert the UI shows a terminal state
-  let gameOver = false;
-  for (let i = 0; i < 30; i++) {
-    const statusText = await status.textContent();
-    if (statusText && (
-      statusText.includes('Checkmate') ||
-      statusText.includes('Stalemate') ||
-      statusText.includes('resignation') ||
-      statusText.includes('Resign') ||
-      statusText.includes('timeout') ||
-      statusText.includes('abort') ||
-      statusText.includes('1-0') ||
-      statusText.includes('0-1') ||
-      statusText.includes('1/2')
-    )) {
-      gameOver = true;
-      break;
-    }
-    await page.waitForTimeout(1000);
-  }
+  // 6. Assert the UI shows a terminal state — poll instead of fixed sleep
+  const gameOver = await waitForTerminalState(page, status, 30_000);
 
   expect(gameOver).toBe(true);
 });
