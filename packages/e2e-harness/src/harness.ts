@@ -181,32 +181,6 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
       return;
     }
 
-    // Handle POST /e2e/games/:gameId/moves — play a move via the authority
-    if (req.method === 'POST' && req.url?.startsWith('/e2e/games/') && req.url.endsWith('/moves')) {
-      const gameId = req.url.split('/')[3];
-      let body = '';
-      req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-      req.on('end', () => {
-        try {
-          const parsed = JSON.parse(body) as { uci: string; userId: string };
-          void authority
-            .apply(gameId, parsed.userId, { kind: 'move', uci: parsed.uci })
-            .then(() => {
-              res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ ok: true }));
-            })
-            .catch((err) => {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ code: 'error', message: (err as Error).message }));
-            });
-        } catch (err) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ code: 'bad_request', message: (err as Error).message }));
-        }
-      });
-      return;
-    }
-
     apiServer.handler(req, res);
   };
 
