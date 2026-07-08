@@ -167,12 +167,12 @@ analysis, hints, eval bars, and rating-calibrated bots — never in the gameplay
   binary in CI), live-infra autoscaling, distributed remote workers, and wiring the bot/analysis
   path into the M3 `GameAuthority` + M4 `EventStore`.
 
-## 🚧 Milestone 6 — Web frontend (playable)
+## ✅ Milestone 6 — Web frontend (playable)
 
 - Board UI (animation, premoves, drag + click), clock, game view, lobby,
   profile; PWA; a11y; light/dark.
-- **Acceptance:** e2e (Playwright) plays a full game vs. bot and vs. human;
-  Lighthouse a11y ≥ 95.
+- **Acceptance:** ✅ e2e (Playwright) plays a full game vs. bot and vs. human;
+  Lighthouse a11y ≥ 95 (score: 0.95, CI run #56).
 - 🚧 **Increment 1 landed:** `@chess-platform/web` scaffold + dependency-free view core (board geometry, premove queue, chess clock, FEN placement) with 21 passing `node --test` tests, strict-TS + lint clean. Next: interactive board, REST/WS client seam, Playwright e2e, Lighthouse gate.
 - 🚧 **Increment 2 landed:** interactive board — drag & drop, click-to-move, selection/legal-destination/last-move/premove highlighting, promotion UI, and premove application; legality behind a `LegalMoveOracle` port (server authoritative) + view-only optimistic mover. 54 `node --test` tests green, strict-TS + lint clean. Next: REST/WS client seam.
 - 🚧 **Increment 3A landed:** REST networking foundation — a `fetch`-based `HttpTransport` port, an `HttpClient` (per-request timeout, safe-method retry with exponential backoff + jitter, JSON, and a typed error taxonomy), hand-authored request/response models mirroring `packages/api/openapi.json`, the typed `GambitClient` (health, auth/session, users/profile, ratings, leaderboard, game summaries), and a session/auth abstraction (pluggable token store + proactive, single-flight token refresh with 401 replay). Framework-independent, UI kept separate from networking; no WebSocket / lobby / gameplay sync yet. 94 `node --test` tests green, strict-TS + lint clean, production build passes. Next (3B): WS game stream + core/server-backed move oracle, wired into the app/game view.
@@ -187,7 +187,7 @@ analysis, hints, eval bars, and rating-calibrated bots — never in the gameplay
 - 🚧 **Milestone 4G landed:** lobby UI wiring — `LobbyController` connected to DOM (seek list rendering, create-seek button, cancel via event delegation); profile controller (`packages/web/src/app/profile-controller.ts`) with profile/ratings/games display; theme toggle (`packages/web/src/app/theme-toggle.ts`) with light/dark switching persisted to localStorage; client-side routing via `parseRoute` driving view selection (lobby/game/profile); updated `index.html` with nav, lobby, profile, and theme-toggle DOM elements; lobby/profile/theme CSS. 18 new tests (profile controller 6, theme toggle 8), web suite now 197 tests. Next: PWA, a11y audit, Playwright e2e + Lighthouse gate.
 - 🚧 **Milestone 4H landed:** PWA infrastructure (manifest.webmanifest, service worker with app-shell caching), a11y tests (13 tests validating ARIA structure, skip link, semantic HTML, keyboard navigation), Playwright e2e setup (config + smoke tests for app load, board visibility, nav, theme toggle, skip link), main.ts updated with SPA routing (pushState + popstate) and service worker registration. 13 new a11y tests, web suite now 210 tests. M6 is feature-complete pending full Playwright e2e + Lighthouse gate with running backends.
 - 🚧 **Review #04 fixes applied:** C1 router compile fix, C2 SW rework (no API caching, network-first nav), C3 PWA icons, C4 @playwright/test + acceptance specs + auth controller, M2 session-gated lobby, m1-m4 minor fixes. M6 remains 🚧 pending full Playwright + Lighthouse acceptance.
-- 🚧 **M6 acceptance gate pending:** CI run #26 passed infrastructure (Lighthouse a11y: 0.95, Playwright 7 passed) but the acceptance specs were hollowed out — they verified connection, not full games. Review #11 required restoring real game play (Fool's Mate for vs-human, bot resignation for vs-bot). The gate may be re-declared ✅ only after the restored specs are green in CI.
+- ✅ **M6 acceptance gate passed:** CI run #56 (https://github.com/hessiun710/chess/actions/runs/28908136511) — Playwright e2e: 7 passed. game-vs-human plays Fool's Mate via WebSocket (checkmate in 4 plies, both UIs show terminal). game-vs-bot plays real moves via HTTP bridge, bot resigns (deterministic termination). Lighthouse a11y score: **0.95** (≥ 0.95 threshold). Reports uploaded as Actions artifacts.
 
 ## ⬜ Milestone 7 — AI orchestration layer
 
