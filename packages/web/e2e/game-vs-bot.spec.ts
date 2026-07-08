@@ -29,16 +29,6 @@ async function clickSquare(page: Page, square: string) {
   await el.click();
 }
 
-/** Wait for the status text to change (indicates a move/broadcast was processed). */
-async function waitForStatusChange(page: Page, status: Page.Locator, lastText: string, timeoutMs = 15000): Promise<string> {
-  for (let i = 0; i < timeoutMs / 500; i++) {
-    const text = await status.textContent();
-    if (text !== lastText) return text ?? '';
-    await page.waitForTimeout(500);
-  }
-  return lastText;
-}
-
 test('full game vs. bot — DOM clicks, bot resigns, terminal state shown', async ({ page, request }) => {
   // 1. Register a user
   const handle = `e2e-bot-${Date.now()}`;
@@ -51,7 +41,6 @@ test('full game vs. bot — DOM clicks, bot resigns, terminal state shown', asyn
   const userId = auth.user.id;
 
   // 2. Create a game via the bridge route with botResignsAfterPlies: 3
-  //    Bot (auto-seated as black by bridge) resigns on its turn after ply 3.
   const gameResp = await request.post('/e2e/games', {
     data: { whiteId: userId, botResignsAfterPlies: 3 },
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -61,45 +50,92 @@ test('full game vs. bot — DOM clicks, bot resigns, terminal state shown', asyn
   const gameId = game.gameId;
   expect(gameId).toBeTruthy();
 
-  // 3. Set the auth session in localStorage and navigate to the game page
-  await page.goto('/');
-  await page.evaluate(({ token, handle: h }) => {
+  // 3. Set the auth session in localStorage BEFORE navigating to the game page.
+  //    Use addInitScript so localStorage is set before any script runs.
+  await page.addInitScript(({ token, handle: h }) => {
     localStorage.setItem('gambit-session', JSON.stringify({
       accessToken: token, handle: h, userId: '', roles: [],
     }));
   }, { token: accessToken, handle });
 
+  // 4. Navigate to the game page
   await page.goto(`/game/${gameId}`);
 
-  // 4. Verify the board renders and the game connects
+  // Wait for the board to render
   const board = page.locator('#board');
   await expect(board).toBeVisible({ timeout: 10_000 });
 
   const status = page.locator('#status');
   await expect(status).toBeVisible({ timeout: 10_000 });
 
-  // Wait for the WS to connect and join (status should show "Your move" or "White to move")
-  await page.waitForTimeout(3000);
+  // Wait for the game to connect — poll for "Your move" or "White to move"
+  // This indicates the WS joined and the GameSync received the state.
+  let connected = false;
+  for (let i = 0; i < 20; i++) {
+    const text = await status.textContent();
+    if (text && (text.includes('Your move') || text.includes('White to move') || text.includes('white to move'))) {
+      connected = true;
+      break;
+    }
+    await page.waitForTimeout(500);
+  }
+  console.log(`[vs-bot] Connected: ${connected}, status: ${await status.textContent()}`);
+
+  // Check if the board has pieces (squares with text content)
+  const pieceCount = await page.locator('[data-square]').evaluateAll(els =>
+    els.filter(el => el.textContent && el.textContent.trim().length > 0).length
+  );
+  console.log(`[vs-bot] Pieces on board: ${pieceCount}`);
 
   // 5. Play moves as white by clicking squares
-  //    Move 1: e2→e4 (click e2 to select, click e4 to drop)
-  let statusBefore = await status.textContent();
+  //    Move 1: e2→e4
+  console.log('[vs-bot] Clicking e2...');
   await clickSquare(page, 'e2');
-  await page.waitForTimeout(200);
+  await page.waitForTimeout(300);
+  console.log('[vs-bot] Clicking e4...');
   await clickSquare(page, 'e4');
-  // Wait for the move to be processed and the bot to reply
-  await waitForStatusChange(page, status, statusBefore ?? '', 15000);
-  // Wait for bot's reply to be received (status should change again)
-  statusBefore = await status.textContent();
-  await waitForStatusChange(page, status, statusBefore ?? '', 15000);
+  
+  // Wait for the status to change (move processed + bot reply)
+  let statusAfter = await status.textContent();
+  for (let i = 0; i < 20; i++) {
+    const text = await status.textContent();
+    if (text !== statusAfter) {
+      statusAfter = text;
+      break;
+    }
+    await page.waitForTimeout(500);
+  }
+  console.log(`[vs-bot] After move 1: status="${statusAfter}"`);
+
+  // Wait for bot to reply (status should change again)
+  let statusAfterBot = statusAfter;
+  for (let i = 0; i < 20; i++) {
+    const text = await status.textContent();
+    if (text !== statusAfterBot) {
+      statusAfterBot = text;
+      break;
+    }
+    await page.waitForTimeout(500);
+  }
+  console.log(`[vs-bot] After bot reply: status="${statusAfterBot}"`);
 
   //    Move 2: d2→d3
-  statusBefore = await status.textContent();
+  console.log('[vs-bot] Clicking d2...');
   await clickSquare(page, 'd2');
-  await page.waitForTimeout(200);
+  await page.waitForTimeout(300);
+  console.log('[vs-bot] Clicking d3...');
   await clickSquare(page, 'd3');
-  // Wait for the move to be processed and the bot to resign
-  await waitForStatusChange(page, status, statusBefore ?? '', 15000);
+
+  // Wait for the bot to resign
+  for (let i = 0; i < 20; i++) {
+    const text = await status.textContent();
+    if (text !== statusAfterBot) {
+      statusAfterBot = text;
+      break;
+    }
+    await page.waitForTimeout(500);
+  }
+  console.log(`[vs-bot] After move 2: status="${statusAfterBot}"`);
 
   // 6. Assert the UI shows a terminal state
   let gameOver = false;
