@@ -72,6 +72,7 @@ test('full game vs. bot — real moves via HTTP bridge, bot resigns, terminal st
     });
     return { ok: resp.status === 200, status: resp.status, body: await resp.text() };
   }, { gameId, userId });
+  console.log(`[vs-bot] Move 1: status=${move1Result.status} body=${move1Result.body}`);
   expect(move1Result.ok).toBeTruthy();
   await page.waitForTimeout(2000); // Wait for bot reply
 
