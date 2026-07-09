@@ -11,6 +11,8 @@
  * feature follows.
  *
  * M8 increment 2: **Puzzle Generator** — engine-verified tactical puzzles.
+ *
+ * M8 increment 3: **Mistake Predictor** — engine-measured move quality.
  */
 
 // Types
@@ -37,3 +39,12 @@ export type {
   PuzzleRejection,
   PuzzleDifficulty,
 } from './puzzle-types.js';
+
+// Mistake Predictor (M8 increment 3)
+export { MistakePredictor, negateEval, evalToCpLoss, classify, DEFAULT_INACCURACY_THRESHOLD, DEFAULT_MISTAKE_THRESHOLD, DEFAULT_BLUNDER_THRESHOLD } from './mistake-predictor.js';
+export type { MistakePredictorOptions } from './mistake-predictor.js';
+export type {
+  PredictRequest,
+  MistakeVerdict,
+  MistakeClassification,
+} from './mistake-types.js';

@@ -277,12 +277,40 @@ mate and the second-best is not. The LLM never decides whether a puzzle is real.
   - Clean-tree verification: `rm -rf node_modules packages/*/dist packages/*/dist-test && npm ci && npm run build && npm test && npm run lint` — all green.
   - ROADMAP updated; ADR-0006 unchanged (follows the established template).
 
+### Increment 3: Mistake Predictor ✅
+
+`MistakePredictor` — given a position (FEN) and a candidate move the player is
+considering, determines whether that move is a mistake and how severe. Mistake
+severity is an engine-measured delta, not an LLM judgment: the predictor
+analyses the original position (`evalBefore`), applies the candidate move with
+`@chess-platform/core`'s `Position.play()`, analyses the resulting position
+(`evalAfter`), normalises the eval to the mover's perspective (negating the
+sign since it is now the opponent's turn), and computes
+`centipawnLoss = evalBefore − evalAfterMoverPerspective`. Classification uses
+standard thresholds (inaccuracy ≥ 50 cp, mistake ≥ 100 cp, blunder ≥ 300 cp,
+configurable). A move that walks into a forced mate is always a blunder.
+
+- Follows the established template (ADR-0006): ports injected, engine-verified
+  structured fields, hermetic tests with fakes.
+- The verdict's correctness fields (evalBefore, evalAfter, cp loss, better
+  move) come entirely from the engine. The AI provider's role is only the
+  human-facing coaching text — additive, never load-bearing. If no AI provider
+  is supplied, the predictor returns a fully valid verdict.
+- **Acceptance criteria (met):**
+  - Hermetic `node --test` suite: clear blunder → `blunder` with correct cp
+    loss and better move; good move → `ok`; inaccuracy and mistake at threshold
+    boundaries; sign-correctness test proving the perspective flip; move into
+    mate → `blunder`; AI omitted → valid verdict with engine fields and no LLM
+    text.
+  - One env-gated integration test (skips without API key).
+  - Clean-tree verification: `rm -rf node_modules packages/*/dist packages/*/dist-test && npm ci && npm run build && npm test && npm run lint` — all green.
+  - ROADMAP updated; ADR-0006 unchanged (follows the established template).
+
 ### Remaining increments (planned)
 
 - Coach, Opening/Endgame Trainer, Tournament Commentator, Voice Coach, Study
-  Partner, Opening Explorer, Mistake Predictor — each following the same
-  inject → engine → ground → AI → structured-output pattern established by
-  Move Explanation.
+  Partner, Opening Explorer — each following the same inject → engine → ground
+  → AI → structured-output pattern established by Move Explanation.
 
 ## ⬜ Milestone 9 — Tournaments & broadcast
 

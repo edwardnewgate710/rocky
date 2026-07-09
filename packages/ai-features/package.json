@@ -30,7 +30,9 @@
     "move-explanation",
     "coach",
     "engine",
-    "llm"
+    "llm",
+    "mistake-predictor",
+    "blunder-detection"
   ],
   "engines": {
     "node": ">=22"
@@ -41,6 +43,7 @@
   },
   "dependencies": {
     "@chess-platform/engine": "*",
-    "@chess-platform/ai-orchestrator": "*"
+    "@chess-platform/ai-orchestrator": "*",
+    "@chess-platform/core": "*"
   }
 }
