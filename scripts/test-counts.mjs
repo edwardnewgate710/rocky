@@ -13,7 +13,7 @@
 import { execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 
-const pkgs = ['core', 'game', 'realtime-gateway', 'persistence', 'api', 'engine', 'web'];
+const pkgs = ['core', 'game', 'realtime-gateway', 'persistence', 'api', 'engine', 'web', 'ai-orchestrator', 'ai-features'];
 let total = 0;
 let hadError = false;
 

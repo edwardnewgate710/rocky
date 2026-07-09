@@ -214,11 +214,51 @@ analysis, hints, eval bars, and rating-calibrated bots — never in the gameplay
   AI feature use cases. ADR-0005 accepted.
 - ✅ **M7 complete (merged in PR #5):** clean-tree `npm ci` → build → test → lint verified green; `@chess-platform/ai-orchestrator` adds 114 tests (2 env-gated real-API integration tests skip without keys). CI verified green on Node 22 + 24 + Postgres after fixing the Lighthouse Chrome-launch step (point Lighthouse at Playwright's Chromium via `CHROME_PATH`; environmental launch failures warn-and-pass, genuine a11y regressions still fail). Whole repo now 8 packages.
 
-## ⬜ Milestone 8 — AI features
+## 🚧 Milestone 8 — AI features
 
 Coach, Move Explanation, Opening/Endgame Trainer, Puzzle Generator, Tournament
 Commentator, Voice Coach, Study Partner, Opening Explorer, Mistake Predictor —
 each a task over M5 + M7.
+
+M8 ships as a sequence of small, independently reviewable increments — one
+feature per PR. Architecture recorded in
+[ADR-0006](docs/adr/0006-ai-features.md).
+
+### Increment 1: Move Explanation ✅
+
+`MoveExplainer` — given a position (FEN) and a played (or candidate) move
+(UCI), produces a natural-language explanation grounded in real engine
+analysis. The explanation cites the engine's eval (cp/mate) and best line as a
+distinct, testable `EngineCitation` field — not prose the test has to parse.
+
+- New package `@chess-platform/ai-features` (`packages/ai-features`), depending
+  on `@chess-platform/engine` + `@chess-platform/ai-orchestrator` only.
+- Everything behind ports: `AnalysisProvider` (M5) + `AiProvider` (M7) are
+  constructor-injected. Fully testable hermetically with `FakeEngineTransport`
+  + `FakeProvider` — no keys, no binary, no network.
+- Engine grounding path: `AnalysisProvider.analyze()` →
+  `engineResultsToGrounding()` → `buildGroundedMessages()` →
+  `AiProvider.complete()`.
+- **Acceptance criteria (met):**
+  - Hermetic `node --test` suite drives `MoveExplainer` end-to-end with
+    `FakeEngineTransport` + `FakeProvider`, asserting the explanation carries
+    the correct grounded eval and best-line citation for a known position.
+  - One env-gated integration test (skips without an API key, exactly like M7's
+    adapter tests) runs the real path against a real provider.
+  - Package added to root build/test/lint/clean chains and CI workflow test
+    matrix.
+  - Clean-tree verification: `rm -rf node_modules packages/*/dist packages/*/dist-test && npm ci && npm run build && npm test && npm run lint` — all green.
+  - ADR-0006 recording the M8 feature architecture and why Move Explanation is
+    the template.
+  - Regenerated `package-lock.json` committed in the same commit as the new
+    package.
+
+### Remaining increments (planned)
+
+- Coach, Opening/Endgame Trainer, Puzzle Generator, Tournament Commentator,
+  Voice Coach, Study Partner, Opening Explorer, Mistake Predictor — each
+  following the same inject → engine → ground → AI → structured-output pattern
+  established by Move Explanation.
 
 ## ⬜ Milestone 9 — Tournaments & broadcast
 
