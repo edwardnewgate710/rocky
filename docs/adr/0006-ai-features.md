@@ -93,8 +93,36 @@ workflow's test matrix runs it automatically via the root scripts. The
 - The `EngineCitation` type is shared across features that cite engine
   analysis, ensuring consistent citation structure.
 - The package is dependency-free in the domain (only depends on
-  `@chess-platform/engine` and `@chess-platform/ai-orchestrator`).
+  `@chess-platform/engine`, `@chess-platform/ai-orchestrator`, and
+  `@chess-platform/core`).
 - All features are testable hermetically with fakes — no keys, no
   binary, no network.
 - The feature layer never imports concrete provider or engine
   implementations; everything flows through injected ports.
+
+### Non-Engine Data Sources (M8 Increment 4: Opening Explorer)
+
+The Opening Explorer (increment 4) introduces the first non-engine data
+source in M8: an `OpeningDatabase` port backed by a small, curated,
+original bundled dataset. This generalises the established pattern:
+
+- **New port type:** `OpeningDatabase` — given a move sequence, returns
+  the deepest matching opening entry (ECO code, name, continuations,
+  optional stats). The default implementation (`BundledOpeningDatabase`)
+  ships a compact original dataset covering common openings.
+- **Bundled dataset decision:** the dataset is authored from common
+  chess knowledge (ECO codes and opening names are public-domain chess
+  terminology), not scraped or embedded from a third-party licensed
+  database. It is intentionally compact and extensible — a larger or
+  live adapter can implement the same port later (M14-era
+  infrastructure) without touching the feature.
+- **Pattern generalisation:** the established pattern (verifiable
+  structured facts from a trusted source, LLM text additive only) now
+  applies to any data source, not just engine evals. Future data-backed
+  features (endgame tablebase, game archive search, etc.) follow the
+  same approach: define a port, ship a default adapter, inject it.
+- **Optional engine enrichment:** the Opening Explorer can optionally
+  enrich its result with engine eval (M5 `AnalysisProvider`), but the
+  primary facts come from the `OpeningDatabase` port. This demonstrates
+  that a feature can combine multiple data sources — each behind its
+  own port — without coupling.

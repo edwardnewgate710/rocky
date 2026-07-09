@@ -13,6 +13,9 @@
  * M8 increment 2: **Puzzle Generator** — engine-verified tactical puzzles.
  *
  * M8 increment 3: **Mistake Predictor** — engine-measured move quality.
+ *
+ * M8 increment 4: **Opening Explorer** — opening identification from a
+ * database port (first non-engine data source in M8).
  */
 
 // Types
@@ -48,3 +51,10 @@ export type {
   MistakeVerdict,
   MistakeClassification,
 } from './mistake-types.js';
+
+// Opening Explorer (M8 increment 4)
+export { OpeningExplorer } from './opening-explorer.js';
+export type { OpeningExplorerOptions } from './opening-explorer.js';
+export type { ExploreRequest, ExplorationResult } from './opening-types.js';
+export { BundledOpeningDatabase } from './bundled-opening-database.js';
+export type { OpeningDatabase, OpeningEntry, OpeningContinuation, OpeningStats, OpeningLookupResult } from './opening-database.js';

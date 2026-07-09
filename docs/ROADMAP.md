@@ -306,11 +306,42 @@ configurable). A move that walks into a forced mate is always a blunder.
   - Clean-tree verification: `rm -rf node_modules packages/*/dist packages/*/dist-test && npm ci && npm run build && npm test && npm run lint` — all green.
   - ROADMAP updated; ADR-0006 unchanged (follows the established template).
 
+### Increment 4: Opening Explorer ✅
+
+`OpeningExplorer` — given a game's move sequence (from the start), identifies
+the opening and explains the position. This is the first M8 feature whose
+primary facts are not engine evals: opening identification comes from an
+`OpeningDatabase` port backed by a small, curated, original bundled dataset
+(Ruy Lopez, Sicilian Najdorf, Queen's Gambit, etc.). The explorer finds the
+deepest matching opening (longest known line), returns ECO code, name,
+continuations, and optional stats. A non-book sequence returns a clean "no
+known opening" result — never a fabricated one.
+
+- Introduces a **new port type** (`OpeningDatabase`) — the first non-engine
+  data source in M8. Sets the pattern for future data-backed features
+  (endgame tablebase, etc.). ADR-0006 updated to record this.
+- Optionally enriches with the engine (M5): if an `AnalysisProvider` is
+  supplied, evaluates the current position. Optional — the explorer returns a
+  valid result from the opening DB alone.
+- The AI provider's role is only the human-facing narrative — additive, never
+  load-bearing. If no AI provider is supplied, the result is fully valid.
+- **Acceptance criteria (met):**
+  - Hermetic `node --test` suite: known opening → correct ECO/name/continuations;
+    prefix-then-diverge → deepest match with `outOfBook: true`; non-book
+    sequence → clean "no known opening"; engine omitted → DB fields only;
+    AI omitted → valid result with no LLM text.
+  - Bundled dataset is original, compact, documented, and unit-tested for
+    internal consistency (every entry's move sequence is legal).
+  - One env-gated integration test (skips without API key).
+  - Clean-tree verification: `rm -rf node_modules packages/*/dist packages/*/dist-test && npm ci && npm run build && npm test && npm run lint` — all green.
+  - ADR-0006 updated with the new port type and bundled-dataset decision.
+  - ROADMAP updated; M8 remains 🚧.
+
 ### Remaining increments (planned)
 
 - Coach, Opening/Endgame Trainer, Tournament Commentator, Voice Coach, Study
-  Partner, Opening Explorer — each following the same inject → engine → ground
-  → AI → structured-output pattern established by Move Explanation.
+  Partner — each following the same inject → engine → ground → AI →
+  structured-output pattern established by Move Explanation.
 
 ## ⬜ Milestone 9 — Tournaments & broadcast
 
