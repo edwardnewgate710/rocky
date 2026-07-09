@@ -147,3 +147,31 @@ Mistake Predictor):
   bundled-dataset port pattern generalises beyond openings to any
   curated data source, and that the perspective-flip logic is reusable
   across features that compare evals across a move boundary.
+
+### Composition / Orchestration (M8 Increment 6: Coach)
+
+The Coach (increment 6) introduces the **composition pattern**: a
+feature built from features, not from raw engine/AI calls.
+
+- **Thin composition layer:** the Coach depends on the five existing
+  feature classes (`MoveExplainer`, `MistakePredictor`,
+  `PuzzleGenerator`, `OpeningExplorer`, `EndgameTrainer`) and calls
+  them. It does NOT re-implement their engine/analysis logic. The
+  constructor accepts either pre-built feature instances (for testing
+  with spies) or shared engine + AI ports (constructing the features
+  internally).
+- **Graceful degradation:** the Coach decides which features are
+  relevant to a request and omits sections for features that report
+  "not applicable." It never fabricates a lesson — a quiet, unremarkable
+  position correctly produces a response with no opening, no puzzle, no
+  endgame, and no invented advice.
+- **Fact traceability:** every fact in the `CoachingResponse` is
+  traceable to a feature's engine-verified output. The Coach's
+  synthesized narrative (if an AI provider is supplied) only produces a
+  natural-language summary over facts the features already computed —
+  it never invents a chess assessment.
+- **Stateless:** the Coach has no session or memory. Study Partner
+  (increment 8) will add stateful conversation on top of this pattern.
+- **Pattern for future orchestrators:** Tournament Commentator and Study
+  Partner will follow the same composition shape — thin layers that
+  call existing features and aggregate their results.

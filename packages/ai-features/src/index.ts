@@ -19,6 +19,9 @@
  *
  * M8 increment 5: **Endgame Trainer** — engine-verified endgame training
  * with a bundled endgame dataset port.
+ *
+ * M8 increment 6: **Coach** — composition layer that orchestrates the five
+ * existing features into a unified coaching response.
  */
 
 // Types
@@ -68,3 +71,8 @@ export type { EndgameTrainerOptions } from './endgame-trainer.js';
 export type { NextPositionRequest, TrainingPosition, EngineSolution, EvaluateAttemptRequest, AttemptEvaluation, AttemptClassification } from './endgame-types.js';
 export { BundledEndgameDatabase } from './bundled-endgame-database.js';
 export type { EndgameDatabase, EndgameEntry, EndgameGoal, EndgameType, EndgameDifficulty } from './endgame-database.js';
+
+// Coach (M8 increment 6)
+export { Coach } from './coach.js';
+export type { CoachOptions, CoachFeatures } from './coach.js';
+export type { CoachRequest, CoachingResponse } from './coach-types.js';

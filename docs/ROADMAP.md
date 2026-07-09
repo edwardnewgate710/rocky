@@ -368,9 +368,39 @@ Mistake Predictor, increment 3) for the solution and move evaluation.
     flip), short note added.
   - ROADMAP updated; M8 remains 🚧.
 
+### Increment 6: Coach ✅
+
+`Coach` — a composition layer that orchestrates the five existing feature
+classes (`MoveExplainer`, `MistakePredictor`, `PuzzleGenerator`,
+`OpeningExplorer`, `EndgameTrainer`) into a unified coaching response. Given a
+position (FEN) and optionally a move, the Coach decides which features are
+relevant, calls them, and aggregates their structured outputs.
+
+- Introduces the **composition/orchestration pattern**: a feature built from
+  features. The Coach calls the underlying features; it does NOT re-implement
+  their logic. Study Partner and Tournament Commentator will follow the same
+  shape. ADR-0006 updated to record this.
+- Every fact in the response is traceable to a feature's engine-verified
+  output. The Coach's synthesized narrative is additive; if no AI provider is
+  supplied, the Coach returns all structured feature results with no narrative.
+- Degrades gracefully: if a feature reports "not applicable" (no opening match,
+  not a puzzle, not an endgame, move is fine), the Coach omits that section —
+  it never fabricates a lesson.
+- Stateless — no session, no conversation memory (Study Partner will add that).
+- **Acceptance criteria (met):**
+  - Hermetic `node --test` suite: blunder → MistakePredictor + MoveExplainer;
+    in-book → OpeningExplorer; sharp → puzzle; endgame → guidance; quiet
+    non-book non-tactical non-endgame → NO fabricated lessons; AI omitted →
+    structured results, no narrative; spy test proving the Coach calls the
+    underlying features.
+  - One env-gated integration test (skips without API key).
+  - Clean-tree verification: all green.
+  - ADR-0006 updated with the composition/orchestration pattern.
+  - ROADMAP updated; M8 remains 🚧.
+
 ### Remaining increments (planned)
 
-- Coach, Tournament Commentator, Voice Coach, Study Partner — each following
+- Tournament Commentator, Voice Coach, Study Partner — each following
   the same inject → engine → ground → AI → structured-output pattern
   established by Move Explanation.
 
