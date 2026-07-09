@@ -253,12 +253,36 @@ distinct, testable `EngineCitation` field — not prose the test has to parse.
   - Regenerated `package-lock.json` committed in the same commit as the new
     package.
 
+### Increment 2: Puzzle Generator ✅
+
+`PuzzleGenerator` — given a position (FEN), determines whether it contains a
+sharp tactical puzzle and, if so, produces a structured puzzle. Puzzle validity
+is an objective, testable engine fact: the generator runs the engine with
+`multiPv: N` and a position qualifies when the best line's eval exceeds the
+second-best by a configurable threshold (default 200 cp) or the best line is
+mate and the second-best is not. The LLM never decides whether a puzzle is real.
+
+- Follows the established template (ADR-0006): ports injected, engine-verified
+  structured fields, hermetic tests with fakes.
+- The puzzle's correctness fields (solution move, eval gap, best line) come
+  entirely from the engine. The AI provider's role is only the human-facing
+  flavour (theme/hint) — additive, never load-bearing. If no AI provider is
+  supplied, the generator still returns a fully valid puzzle.
+- **Acceptance criteria (met):**
+  - Hermetic `node --test` suite: sharp position → `Puzzle` with correct
+    engine-derived solution/gap/best-line; quiet position → `PuzzleRejection`
+    with measured gap; mate-vs-non-mate → qualifies; AI omitted → valid puzzle
+    with engine fields and no LLM text.
+  - One env-gated integration test (skips without API key).
+  - Clean-tree verification: `rm -rf node_modules packages/*/dist packages/*/dist-test && npm ci && npm run build && npm test && npm run lint` — all green.
+  - ROADMAP updated; ADR-0006 unchanged (follows the established template).
+
 ### Remaining increments (planned)
 
-- Coach, Opening/Endgame Trainer, Puzzle Generator, Tournament Commentator,
-  Voice Coach, Study Partner, Opening Explorer, Mistake Predictor — each
-  following the same inject → engine → ground → AI → structured-output pattern
-  established by Move Explanation.
+- Coach, Opening/Endgame Trainer, Tournament Commentator, Voice Coach, Study
+  Partner, Opening Explorer, Mistake Predictor — each following the same
+  inject → engine → ground → AI → structured-output pattern established by
+  Move Explanation.
 
 ## ⬜ Milestone 9 — Tournaments & broadcast
 

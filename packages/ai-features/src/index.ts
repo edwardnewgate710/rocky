@@ -8,7 +8,9 @@
  * returns a structured response with a verifiable engine citation.
  *
  * M8 increment 1: **Move Explanation** — the template every later
- * feature (Coach, Puzzle Generator, Commentator, etc.) will follow.
+ * feature follows.
+ *
+ * M8 increment 2: **Puzzle Generator** — engine-verified tactical puzzles.
  */
 
 // Types
@@ -24,3 +26,14 @@ export type { TokenUsage } from '@chess-platform/ai-orchestrator';
 // Move Explainer (M8 increment 1)
 export { MoveExplainer } from './move-explainer.js';
 export type { MoveExplainerOptions } from './move-explainer.js';
+
+// Puzzle Generator (M8 increment 2)
+export { PuzzleGenerator, evalGapCp, deriveDifficulty, DEFAULT_SHARPNESS_THRESHOLD, DEFAULT_MULTI_PV } from './puzzle-generator.js';
+export type { PuzzleGeneratorOptions } from './puzzle-generator.js';
+export type {
+  GeneratePuzzleRequest,
+  PuzzleResult,
+  Puzzle,
+  PuzzleRejection,
+  PuzzleDifficulty,
+} from './puzzle-types.js';
