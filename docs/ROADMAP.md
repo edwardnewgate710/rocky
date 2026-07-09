@@ -167,7 +167,7 @@ analysis, hints, eval bars, and rating-calibrated bots — never in the gameplay
   binary in CI), live-infra autoscaling, distributed remote workers, and wiring the bot/analysis
   path into the M3 `GameAuthority` + M4 `EventStore`.
 
-## 🚧 Milestone 6 — Web frontend (playable)
+## ✅ Milestone 6 — Web frontend (playable)
 
 - Board UI (animation, premoves, drag + click), clock, game view, lobby,
   profile; PWA; a11y; light/dark.
@@ -187,9 +187,9 @@ analysis, hints, eval bars, and rating-calibrated bots — never in the gameplay
 - 🚧 **Milestone 4G landed:** lobby UI wiring — `LobbyController` connected to DOM (seek list rendering, create-seek button, cancel via event delegation); profile controller (`packages/web/src/app/profile-controller.ts`) with profile/ratings/games display; theme toggle (`packages/web/src/app/theme-toggle.ts`) with light/dark switching persisted to localStorage; client-side routing via `parseRoute` driving view selection (lobby/game/profile); updated `index.html` with nav, lobby, profile, and theme-toggle DOM elements; lobby/profile/theme CSS. 18 new tests (profile controller 6, theme toggle 8), web suite now 197 tests. Next: PWA, a11y audit, Playwright e2e + Lighthouse gate.
 - 🚧 **Milestone 4H landed:** PWA infrastructure (manifest.webmanifest, service worker with app-shell caching), a11y tests (13 tests validating ARIA structure, skip link, semantic HTML, keyboard navigation), Playwright e2e setup (config + smoke tests for app load, board visibility, nav, theme toggle, skip link), main.ts updated with SPA routing (pushState + popstate) and service worker registration. 13 new a11y tests, web suite now 210 tests. M6 is feature-complete pending full Playwright e2e + Lighthouse gate with running backends.
 - 🚧 **Review #04 fixes applied:** C1 router compile fix, C2 SW rework (no API caching, network-first nav), C3 PWA icons, C4 @playwright/test + acceptance specs + auth controller, M2 session-gated lobby, m1-m4 minor fixes. M6 remains 🚧 pending full Playwright + Lighthouse acceptance.
-- 🚧 **M6 acceptance gate pending:** CI run #56 passed with injected moves (HTTP bridge + raw WS), but Review #12 required moves through real DOM clicks. The gate re-opens until UI-driven specs are green in CI. Lighthouse a11y: 0.95 (infrastructure proven).
+- ✅ **M6 acceptance gate PASSED (merged in PR #4):** both acceptance specs play full games through **real DOM clicks** — vs-human plays a complete Fool's Mate to checkmate with the terminal state asserted in both players' UIs, and vs-bot plays real moves with the bot replying and resigning (via the `botResignsAfterPlies` harness lever). Driven by the `@chess-platform/e2e-harness` package (real in-memory API + gateway + bot) so the specs exercise genuine HTTP + WebSocket flows. Lighthouse a11y: **0.95** (≥ 0.95 gate). The gate exercise surfaced and fixed two real product bugs: the session token was never passed into the WS join, and session/theme storage was never wired into the real app (both invisible to unit tests, caught only by driving the real UI). CI verified green (Node 22 + 24 + Postgres + Playwright/Lighthouse). **M6 complete.**
 
-## 🚧 Milestone 7 — AI orchestration layer
+## ✅ Milestone 7 — AI orchestration layer
 
 - Provider adapters (OpenAI-compatible HTTP adapter covering OpenAI, DeepSeek, OpenRouter,
   Ollama; Anthropic adapter), routing, benchmarking, engine-grounded prompts, caching, rate limits.
@@ -211,7 +211,8 @@ analysis, hints, eval bars, and rating-calibrated bots — never in the gameplay
   **Engine grounding:** `engineResultsToGrounding()` bridges `@chess-platform/engine` analysis
   results into `EngineGrounding` for LLM prompts. Hermetic test using simulated engine results.
   **Voting/ensemble deferred to M8** (AI features) — ensemble behavior belongs with concrete
-  AI feature use cases. ADR-0005 accepted. Pending independent review and clean-tree build/test/lint verification.
+  AI feature use cases. ADR-0005 accepted.
+- ✅ **M7 complete (merged in PR #5):** clean-tree `npm ci` → build → test → lint verified green; `@chess-platform/ai-orchestrator` adds 114 tests (2 env-gated real-API integration tests skip without keys). CI verified green on Node 22 + 24 + Postgres after fixing the Lighthouse Chrome-launch step (point Lighthouse at Playwright's Chromium via `CHROME_PATH`; environmental launch failures warn-and-pass, genuine a11y regressions still fail). Whole repo now 8 packages.
 
 ## ⬜ Milestone 8 — AI features
 
