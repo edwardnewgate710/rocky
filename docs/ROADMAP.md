@@ -189,12 +189,29 @@ analysis, hints, eval bars, and rating-calibrated bots — never in the gameplay
 - 🚧 **Review #04 fixes applied:** C1 router compile fix, C2 SW rework (no API caching, network-first nav), C3 PWA icons, C4 @playwright/test + acceptance specs + auth controller, M2 session-gated lobby, m1-m4 minor fixes. M6 remains 🚧 pending full Playwright + Lighthouse acceptance.
 - 🚧 **M6 acceptance gate pending:** CI run #56 passed with injected moves (HTTP bridge + raw WS), but Review #12 required moves through real DOM clicks. The gate re-opens until UI-driven specs are green in CI. Lighthouse a11y: 0.95 (infrastructure proven).
 
-## ⬜ Milestone 7 — AI orchestration layer
+## 🚧 Milestone 7 — AI orchestration layer
 
-- Provider adapters (OpenAI, Anthropic, Google, DeepSeek, OpenRouter, Ollama),
-  routing, benchmarking, voting, engine-grounded prompts, caching, rate limits.
+- Provider adapters (OpenAI-compatible HTTP adapter covering OpenAI, DeepSeek, OpenRouter,
+  Ollama; Anthropic adapter), routing, benchmarking, engine-grounded prompts, caching, rate limits.
+- **Voting/ensemble deferred to M8** (AI features) — ensemble behavior belongs with concrete
+  AI feature use cases, not the orchestration framework.
 - **Acceptance:** failover test (kill a provider mid-request); benchmark report;
   grounded move-explanation cited against engine eval.
+- 🚧 **Implementation in progress:** `@chess-platform/ai-orchestrator` — provider-agnostic
+  AI orchestration layer with `AiProvider` interface (complete/stream/embed),
+  `AiOrchestrator` (routing + failover + cache + rate limit + health), `ProviderRegistry`
+  (plugin-oriented, capability-based), `RoutingStrategy` (priority/weighted/round-robin),
+  `ResponseCache` port (InMemoryLruCache), `RateLimiter` (per-user + global), `HealthTracker`
+  (rolling window + circuit breaker with explicit half-open transition), `BenchmarkRunner`
+  (curated chess tasks → report), engine-grounded prompting (`EngineGrounding` → provider-agnostic
+  system messages), `FakeProvider` for deterministic testing.
+  **HTTP adapters:** `OpenAiCompatibleAdapter` (covers OpenAI, DeepSeek, OpenRouter, Ollama via
+  configurable baseUrl) and `AnthropicAdapter` (Anthropic Messages API). Both use global `fetch`
+  (no SDK dependencies). Env-gated integration tests skip without API keys.
+  **Engine grounding:** `engineResultsToGrounding()` bridges `@chess-platform/engine` analysis
+  results into `EngineGrounding` for LLM prompts. Hermetic test using simulated engine results.
+  **Voting/ensemble deferred to M8** (AI features) — ensemble behavior belongs with concrete
+  AI feature use cases. ADR-0005 accepted. Pending independent review and clean-tree build/test/lint verification.
 
 ## ⬜ Milestone 8 — AI features
 
