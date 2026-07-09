@@ -126,3 +126,24 @@ original bundled dataset. This generalises the established pattern:
   primary facts come from the `OpeningDatabase` port. This demonstrates
   that a feature can combine multiple data sources — each behind its
   own port — without coupling.
+
+### Endgame Trainer (M8 Increment 5)
+
+The Endgame Trainer reuses both the bundled-dataset port pattern (from
+the Opening Explorer) and the perspective-flip eval logic (from the
+Mistake Predictor):
+
+- **New port:** `EndgameDatabase` — provides curated training positions
+  keyed by endgame type (material configuration), not by move sequence.
+  The default `BundledEndgameDatabase` ships ~20 classic instructive
+  endgames.
+- **Engine as judge:** the dataset supplies the position and goal; the
+  engine (M5 `AnalysisProvider`) provides the solution and evaluates the
+  learner's move. The `evaluateAttempt` method reuses the exact
+  `negateEval` / `evalToCpLoss` functions from the Mistake Predictor,
+  applying the same perspective flip (opponent → mover) to correctly
+  classify whether the learner's move preserves the goal.
+- **Pattern confirmation:** this increment confirms that the
+  bundled-dataset port pattern generalises beyond openings to any
+  curated data source, and that the perspective-flip logic is reusable
+  across features that compare evals across a move boundary.

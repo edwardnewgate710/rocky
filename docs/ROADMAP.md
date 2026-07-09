@@ -337,11 +337,42 @@ known opening" result — never a fabricated one.
   - ADR-0006 updated with the new port type and bundled-dataset decision.
   - ROADMAP updated; M8 remains 🚧.
 
+### Increment 5: Endgame Trainer ✅
+
+`EndgameTrainer` — serves a training endgame and, given a learner's attempted
+move, evaluates it against the engine's solution and coaches. Pairs naturally
+with Opening Explorer (increment 4) and reuses two established patterns: a
+bundled-dataset port (`EndgameDatabase` / `BundledEndgameDatabase`) for the
+training positions, and engine analysis with perspective-flip logic (from
+Mistake Predictor, increment 3) for the solution and move evaluation.
+
+- Two entry points: `nextPosition(request)` selects a training position and
+  returns it with the engine-verified solution; `evaluateAttempt(request)`
+  judges the learner's move (optimal / acceptable / throws_result) and whether
+  the goal (mate / win / draw) is preserved.
+- The dataset supplies the position and goal; the engine judges; the LLM
+  provides only the teaching narrative. All correctness fields come from the
+  engine — the LLM never decides whether a move is correct.
+- Bundled dataset: ~20 classic instructive endgames (K+Q vs K, K+R vs K,
+  K+P vs K, Lucena, Philidor, opposition, K+BB vs K, K+BN vs K, etc.).
+  Original, compact, documented, unit-tested for internal consistency.
+- **Acceptance criteria (met):**
+  - Hermetic `node --test` suite: `nextPosition` returns goal + engine solution;
+    optimal move → `optimal`, goal preserved; move that throws away the win →
+    `throws_result`, goal lost; sign/perspective test proving the flip;
+    mate distance surfaced correctly; AI omitted → valid results, no LLM text.
+  - Bundled dataset original, compact, documented, unit-tested.
+  - One env-gated integration test (skips without API key).
+  - Clean-tree verification: all green.
+  - ADR-0006: follows established patterns (bundled-dataset port + perspective
+    flip), short note added.
+  - ROADMAP updated; M8 remains 🚧.
+
 ### Remaining increments (planned)
 
-- Coach, Opening/Endgame Trainer, Tournament Commentator, Voice Coach, Study
-  Partner — each following the same inject → engine → ground → AI →
-  structured-output pattern established by Move Explanation.
+- Coach, Tournament Commentator, Voice Coach, Study Partner — each following
+  the same inject → engine → ground → AI → structured-output pattern
+  established by Move Explanation.
 
 ## ⬜ Milestone 9 — Tournaments & broadcast
 

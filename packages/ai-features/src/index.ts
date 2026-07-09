@@ -16,6 +16,9 @@
  *
  * M8 increment 4: **Opening Explorer** — opening identification from a
  * database port (first non-engine data source in M8).
+ *
+ * M8 increment 5: **Endgame Trainer** — engine-verified endgame training
+ * with a bundled endgame dataset port.
  */
 
 // Types
@@ -58,3 +61,10 @@ export type { OpeningExplorerOptions } from './opening-explorer.js';
 export type { ExploreRequest, ExplorationResult } from './opening-types.js';
 export { BundledOpeningDatabase } from './bundled-opening-database.js';
 export type { OpeningDatabase, OpeningEntry, OpeningContinuation, OpeningStats, OpeningLookupResult } from './opening-database.js';
+
+// Endgame Trainer (M8 increment 5)
+export { EndgameTrainer, classifyAttempt } from './endgame-trainer.js';
+export type { EndgameTrainerOptions } from './endgame-trainer.js';
+export type { NextPositionRequest, TrainingPosition, EngineSolution, EvaluateAttemptRequest, AttemptEvaluation, AttemptClassification } from './endgame-types.js';
+export { BundledEndgameDatabase } from './bundled-endgame-database.js';
+export type { EndgameDatabase, EndgameEntry, EndgameGoal, EndgameType, EndgameDifficulty } from './endgame-database.js';
