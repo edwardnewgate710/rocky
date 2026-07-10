@@ -214,7 +214,7 @@ analysis, hints, eval bars, and rating-calibrated bots — never in the gameplay
   AI feature use cases. ADR-0005 accepted.
 - ✅ **M7 complete (merged in PR #5):** clean-tree `npm ci` → build → test → lint verified green; `@chess-platform/ai-orchestrator` adds 114 tests (2 env-gated real-API integration tests skip without keys). CI verified green on Node 22 + 24 + Postgres after fixing the Lighthouse Chrome-launch step (point Lighthouse at Playwright's Chromium via `CHROME_PATH`; environmental launch failures warn-and-pass, genuine a11y regressions still fail). Whole repo now 8 packages.
 
-## 🚧 Milestone 8 — AI features
+## ✅ Milestone 8 — AI features
 
 Coach, Move Explanation, Opening/Endgame Trainer, Puzzle Generator, Tournament
 Commentator, Voice Coach, Study Partner, Opening Explorer, Mistake Predictor —
@@ -429,11 +429,71 @@ with session state.
   - ADR-0006 updated with the stateful-session pattern.
   - ROADMAP updated; M8 remains 🚧.
 
-### Remaining increments (planned)
+### Increment 8: Voice Coach ✅
 
-- Tournament Commentator, Voice Coach — each following the same inject →
-  engine → ground → AI → structured-output pattern established by Move
-  Explanation.
+`VoiceCoach` — turns coaching output into speech-ready text. The Voice
+Coach composes the `Coach` (it does not re-implement analysis); its real,
+tested contribution is the **verbalization logic**: converting a
+`CoachingResponse` and chess moves into natural spoken English.
+
+- Introduces the **speech-ports pattern** — the pattern for any future
+  device/IO-bound feature. Voice is split into **logic** (built now,
+  hermetic) and **delivery** (deferred to the deployment layer via ports).
+  `SpeechSynthesizer` (text → audio) and `SpeechRecognizer` (audio →
+  text/command) ports are defined with fake/text-based default adapters
+  for hermetic testing. A real TTS/STT adapter implements these same
+  ports in the deployment layer (M13/M14) without touching this feature.
+  ADR-0006 updated to record this decision.
+- The core engineering idea: **chess notation is not speakable**, and that
+  transformation is pure, deterministic, and exhaustively unit-testable.
+  `Nxe5` → "Knight takes e five"; `O-O` → "castles kingside"; `e8=Q` →
+  "e eight, promotes to queen"; `+` → "check"; `#` → "checkmate";
+  `Qd1` → "Queen to d one". Coordinates spoken as "e five", not "e5".
+  Uses `@chess-platform/core`'s `Position.toSan` to get standard notation,
+  then transforms it to the spoken form via `verbalizeSan` / `verbalizeUci`.
+- All chess facts still come from the Coach/features (engine-verified).
+  The Voice Coach only reshapes text for speech; it invents no
+  assessments. If no AI provider is supplied, it still verbalizes the
+  structured engine facts — the move-to-speech transform needs no LLM;
+  the LLM, if present, only smooths the connective narrative.
+- Returns a structured `SpokenCoaching`: an ordered list of `SpokenSegment`
+  objects (each a short natural-language string with a `kind` tag for
+  optional prosody), plus the underlying `CoachingResponse` for
+  traceability. Sentences are kept short and clearly segmented so a
+  synthesizer can pace them.
+- **Acceptance criteria (met):**
+  - Hermetic `node --test` suite:
+    - **Exhaustive move-to-speech table test**: piece moves, captures
+      (`Nxe5` → "Knight takes e five"), both castlings, promotion
+      (`e8=Q`), check (`+`), checkmate (`#`), pawn moves, pawn captures,
+      disambiguated moves (`Nbd7`, `R1e2`, `Qh4e1`) — assert each spoken
+      form. A verbalizer that reads `Nxe5` literally as "N-x-e-5" is
+      broken.
+    - Full `verbalize(coachingResponse)` producing an ordered segment
+      list from a coaching response with a blunder + better move → assert
+      the segments say the right things in speakable form.
+    - The Coach is actually called (spy/fake), not re-implemented.
+    - AI provider omitted → valid spoken segments from engine facts, no
+      LLM narrative.
+    - The fake `SpeechSynthesizer`/`SpeechRecognizer` ports are exercised,
+      proving the seam works.
+  - One env-gated integration test (skips without `OPENAI_API_KEY` /
+    `ANTHROPIC_API_KEY`) for the narrative-smoothing path.
+  - Clean-tree verification: `rm -rf node_modules packages/*/dist
+    packages/*/dist-test && npm ci && npm run build && npm test && npm
+    run lint` — all green.
+  - ADR-0006 updated with the speech-ports + deferred-delivery decision.
+  - ROADMAP updated; **M8 ✅ complete**.
+
+### M8 completion
+
+**M8 is complete.** 8 features delivered: Move Explanation, Puzzle
+Generator, Mistake Predictor, Opening Explorer, Endgame Trainer, Coach,
+Study Partner, Voice Coach. 1 feature explicitly deferred: **Tournament
+Commentator** is deferred to M9 because it requires live-tournament
+infrastructure (tournament state, game feeds, broadcast integration) that
+does not exist yet. The deferral is honest and explicit — 8 features
+delivered, 1 deferred with a reason.
 
 ## ⬜ Milestone 9 — Tournaments & broadcast
 

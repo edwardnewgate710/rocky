@@ -204,3 +204,61 @@ pattern** — the first M8 feature with state that persists across calls:
 - **Pattern for future stateful features:** Tournament Commentator (M9)
   may reuse this pattern for tracking a live tournament's commentary
   state across moves.
+
+### Speech Ports + Deferred Delivery (M8 Increment 8: Voice Coach)
+
+The Voice Coach (increment 8) introduces the **speech-ports pattern** —
+the pattern for any future device/IO-bound feature:
+
+- **Logic vs delivery split:** voice is split into logic (built now,
+  hermetic) and delivery (deferred to the deployment layer via ports).
+  A real TTS/STT service needs external services, API keys, allow-listed
+  domains, and a UI to hear/speak — all of which belong to M13/M14, and
+  none of which can be exercised or tested now. What *is* real,
+  objective, and testable now is turning coaching output into
+  speech-ready text, and defining the speech ports a real adapter will
+  implement later.
+- **New ports:** `SpeechSynthesizer` (text → audio) and
+  `SpeechRecognizer` (audio → text/command). Both are interfaces with
+  fake/text-based default adapters (`FakeSpeechSynthesizer`,
+  `FakeSpeechRecognizer`) for hermetic testing. A real TTS/STT adapter
+  (OpenAI TTS, Azure Speech, browser SpeechSynthesis/SpeechRecognition)
+  implements these same ports in the deployment layer (M13/M14) without
+  touching the Voice Coach feature.
+- **Verbalization is the real contribution:** the Voice Coach's tested
+  contribution is the verbalization logic — converting `CoachingResponse`
+  fields and chess moves into natural spoken English. Chess notation
+  read literally is gibberish aloud (`Nxe5` → "N-x-e-5" is broken); the
+  `verbalizeSan` / `verbalizeUci` transforms produce speakable forms
+  (`Nxe5` → "Knight takes e five", `O-O` → "castles kingside",
+  `e8=Q` → "e eight, promotes to queen"). This transform is pure,
+  deterministic, and exhaustively unit-testable — it is the heart of
+  the feature.
+- **Composition, not re-implementation:** the Voice Coach composes the
+  `Coach` (it calls `Coach.coach()`, then verbalizes the result). It
+  does not re-implement analysis. All chess facts still come from the
+  Coach/features (engine-verified). If no AI provider is supplied, the
+  Voice Coach still verbalizes the structured engine facts — the
+  move-to-speech transform needs no LLM; the LLM, if present, only
+  smooths the connective narrative.
+- **Structured spoken output:** the result is a `SpokenCoaching` — an
+  ordered list of `SpokenSegment` objects (each a short natural-language
+  string with a `kind` tag for optional prosody), plus the underlying
+  `CoachingResponse` for traceability. Sentences are kept short and
+  clearly segmented so a synthesizer can pace them.
+- **Pattern for future IO-bound features:** any feature that needs
+  external hardware or services (audio, video, haptics, push
+  notifications) should follow this split: define the port, ship a fake
+  adapter, build and test the logic now, defer the real adapter to the
+  deployment layer. This is the consistent approach across all M8
+  features — the logic is real and testable; the delivery is a seam.
+
+### M8 Completion
+
+M8 delivers 8 features (Move Explanation, Puzzle Generator, Mistake
+Predictor, Opening Explorer, Endgame Trainer, Coach, Study Partner,
+Voice Coach) with 1 explicitly deferred: **Tournament Commentator** is
+deferred to M9 because it requires live-tournament infrastructure
+(tournament state, game feeds, broadcast integration) that does not
+exist yet. The deferral is honest and explicit — 8 features delivered,
+1 deferred with a reason.

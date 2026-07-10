@@ -25,6 +25,9 @@
  *
  * M8 increment 7: **Study Partner** — stateful multi-step learning sessions
  * with a session store port.
+ *
+ * M8 increment 8: **Voice Coach** — turns coaching output into speech-ready
+ * text with speech I/O ports for deferred TTS/STT delivery.
  */
 
 // Types
@@ -86,3 +89,19 @@ export type { StudyPartnerOptions } from './study-partner.js';
 export type { StartSessionRequest, StartSessionResponse, SubmitTurnRequest, SubmitTurnResponse, EndSessionRequest, EndSessionResponse, SessionSummary } from './study-types.js';
 export { InMemoryStudySessionStore } from './study-session-store.js';
 export type { StudySessionStore, StudySession, StudyTurn, SessionProgress, SessionStatus } from './study-session-store.js';
+
+// Voice Coach (M8 increment 8)
+export { VoiceCoach } from './voice-coach.js';
+export type { VoiceCoachOptions } from './voice-coach-types.js';
+export type { SpokenCoaching, SpokenSegment, SpokenSegmentKind, CoachAloudRequest } from './voice-coach-types.js';
+export { verbalizeSan, verbalizeUci, speakSquare, speakClassification } from './verbalizer.js';
+export { FakeSpeechSynthesizer, FakeSpeechRecognizer } from './speech-ports.js';
+export type {
+  SpeechSynthesizer,
+  SpeechRecognizer,
+  SynthesizeRequest,
+  SynthesizeResult,
+  RecognizeRequest,
+  RecognizeResult,
+  VoiceCommand,
+} from './speech-ports.js';
