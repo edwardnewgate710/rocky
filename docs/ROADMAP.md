@@ -519,10 +519,58 @@ Engine-correlation scoring, bot detection, fraud/DDoS, audit, pen-test pass.
 
 OpenTelemetry, Prometheus, Grafana, alerting, SLOs, runbooks, chaos tests.
 
-## ⬜ Milestone 14 — Deployment & scale
+## 🚧 Milestone 14 — Deployment & scale
 
 Docker, Kubernetes, Terraform, GitHub Actions, blue/green + canary, rollback,
 secrets management, 100k-user load + chaos validation.
+
+### Increment 1: Local runnable stack 🚧
+
+`docker compose up` brings the entire platform live on a developer's machine
+with real Postgres, API, WebSocket gateway, and web frontend — the first time
+the services run together as an integrated system.
+
+- **Postgres 16** (compose) with schema auto-migrated on API startup via the
+  existing `@chess-platform/persistence` migration runner.
+- **API service** — multi-stage Dockerfile building and running the API
+  against Postgres via `api/src/bootstrap.ts` (the real, non-fake composition
+  root). Config via env vars (`DATABASE_URL`, `ACCESS_TOKEN_SECRET`, `PORT`).
+- **Gateway service** — multi-stage Dockerfile running a WebSocket server
+  wrapping `RealtimeGateway`, with shared-secret token verification (the
+  `TokenVerifier` port from ADR-0004) using the same `ACCESS_TOKEN_SECRET`
+  as the API. In-memory pub/sub for single-node; Redis pub/sub is a later
+  increment. ADR-0007 records this decision.
+- **Web service** — multi-stage Dockerfile building the SPA with `vite build`
+  and serving via nginx, with proxies for `/v1` → API and `/ws` → gateway.
+- **`docker-compose.yml`** at the repo root with health-gated startup
+  (`depends_on` + healthchecks: Postgres → API → gateway → web).
+- **12-factor config:** everything via env vars, `.env.example` documents them,
+  no secrets committed.
+- **Smoke test** (`scripts/smoke-test.mjs`): waits for health, registers a
+  user over the real API, creates a seek, opens a WS connection with the auth
+  token, and confirms the token is verified — proving the stack actually
+  serves end-to-end.
+- **`docs/RUNNING.md`** documents the one-command flow and env vars.
+- **Acceptance criteria:**
+  - `docker compose up` from a clean checkout brings the full stack live;
+    `docs/RUNNING.md` documents the flow.
+  - Smoke test proves the stack serves: health, register, seek, WS auth.
+  - Existing 8-package test suite passes unchanged (clean-tree verification).
+  - No secrets in the repo; `.env.example` only.
+  - ADR-0007 records the shared-secret token verification and single-node
+    pub/sub decisions.
+  - ROADMAP updated; M14 marked 🚧.
+
+### Deferred (later M14 increments)
+
+- Kubernetes manifests + Helm charts
+- Terraform IaC for cloud provisioning
+- Redis pub/sub for multi-node gateway scaling
+- Blue/green + canary deployment strategy
+- GitHub Actions CI/CD pipeline with deploy gates
+- 100k-user load testing + chaos validation
+- Secrets management (Vault, AWS Secrets Manager)
+- Sharded game authority with durable state
 
 ---
 

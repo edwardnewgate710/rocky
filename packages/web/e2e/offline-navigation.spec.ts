@@ -10,7 +10,7 @@ import { test, expect } from '@playwright/test';
 test('offline navigation falls back to cached shell', async ({ page, context }) => {
   // Load the app online so the SW caches the shell.
   await page.goto('/');
-  await expect(page.locator('#board')).toBeVisible();
+  await expect(page.locator('#lobby')).toBeVisible();
 
   // Go offline.
   await context.setOffline(true);

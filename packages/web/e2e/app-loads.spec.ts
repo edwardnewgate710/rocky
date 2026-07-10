@@ -1,5 +1,8 @@
 /**
- * Static e2e smoke test: the Gambit app loads and the board is visible.
+ * Static e2e smoke test: the Gambit app loads and the lobby is visible.
+ *
+ * `/` routes to the lobby view (see `bootstrap.ts`); the board only mounts
+ * for `/game/{id}` routes, which is covered by the vs-bot/vs-human specs.
  *
  * This spec runs without backends (only needs vite preview).
  *
@@ -7,10 +10,10 @@
  */
 import { test, expect } from '@playwright/test';
 
-test('app loads and board is visible', async ({ page }) => {
+test('app loads and lobby is visible', async ({ page }) => {
   await page.goto('/');
-  const board = page.locator('#board');
-  await expect(board).toBeVisible();
+  const lobby = page.locator('#lobby');
+  await expect(lobby).toBeVisible();
 });
 
 test('lobby is accessible via nav', async ({ page }) => {

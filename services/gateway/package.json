@@ -1,0 +1,29 @@
+{
+  "name": "@chess-platform/gateway-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Deployable realtime gateway service: WebSocket server wrapping RealtimeGateway with shared-secret token verification.",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/serve.js",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@chess-platform/api": "file:../../packages/api",
+    "@chess-platform/core": "file:../../packages/chess-core",
+    "@chess-platform/game": "file:../../packages/game",
+    "@chess-platform/realtime-gateway": "file:../../packages/realtime-gateway",
+    "ws": "^8.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/ws": "^8.11.0",
+    "typescript": "^5.5.0"
+  }
+}

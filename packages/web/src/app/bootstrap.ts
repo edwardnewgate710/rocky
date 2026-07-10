@@ -132,6 +132,7 @@ export function bootstrap(
   const authHandleEl = doc.getElementById('auth-handle') as HTMLInputElement | null;
   const authPasswordEl = doc.getElementById('auth-password') as HTMLInputElement | null;
   const authSubmitEl = doc.getElementById('auth-submit');
+  const authRegisterEl = doc.getElementById('auth-register');
   const authLogoutEl = doc.getElementById('auth-logout');
   const authStatusEl = doc.getElementById('auth-status');
 
@@ -156,6 +157,9 @@ export function bootstrap(
         if (authSubmitEl instanceof HTMLButtonElement) {
           authSubmitEl.disabled = pending;
         }
+        if (authRegisterEl instanceof HTMLButtonElement) {
+          authRegisterEl.disabled = pending;
+        }
       },
       onError: (msg) => {
         if (authErrorEl) authErrorEl.textContent = msg;
@@ -164,13 +168,29 @@ export function bootstrap(
     ...(deps?.storage !== undefined ? { storage: deps.storage } : typeof localStorage !== 'undefined' ? { storage: localStorage } : {}),
   });
 
-  // Wire auth form submit.
+  // Wire auth form submit (sign in).
   if (authSubmitEl instanceof HTMLButtonElement) {
     authSubmitEl.addEventListener('click', () => {
       const handle = authHandleEl?.value ?? '';
       const password = authPasswordEl?.value ?? '';
       if (handle && password) {
         void auth.login(handle, password);
+      }
+    });
+  }
+
+  // Wire register button (create a new account). Both buttons are
+  // type="button" (they share one form with two submit actions), so native
+  // `required` validation never fires on click — trigger it explicitly.
+  if (authRegisterEl instanceof HTMLButtonElement) {
+    authRegisterEl.addEventListener('click', () => {
+      if (authFormEl instanceof HTMLFormElement && !authFormEl.reportValidity()) {
+        return;
+      }
+      const handle = authHandleEl?.value ?? '';
+      const password = authPasswordEl?.value ?? '';
+      if (handle && password) {
+        void auth.register(handle, password);
       }
     });
   }
@@ -190,6 +210,19 @@ export function bootstrap(
   const route = parseRoute(pathname);
   const gameId = deps?.gameId ?? (route.name === 'game' ? route.gameId : null);
   const token = deps?.token ?? auth.currentSession?.accessToken;
+
+  // --- Toggle top-level section visibility for the active route ---
+  // index.html ships lobby/profile hidden; the game <main> is always present.
+  // Show exactly the section that matches the current route.
+  const mainEl = doc.getElementById('game-main');
+  const lobbySectionEl = doc.getElementById('lobby');
+  const profileSectionEl = doc.getElementById('profile');
+  const showGame = route.name === 'game';
+  const showLobby = route.name === 'lobby';
+  const showProfile = route.name === 'profile';
+  if (mainEl) mainEl.hidden = !showGame;
+  if (lobbySectionEl) lobbySectionEl.hidden = !showLobby;
+  if (profileSectionEl) profileSectionEl.hidden = !showProfile;
 
   // --- Game view ---
   const boardEl = doc.getElementById('board');

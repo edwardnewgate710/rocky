@@ -1,0 +1,38 @@
+# --- Build stage ---
+FROM node:22-slim AS builder
+
+WORKDIR /app
+
+# Copy workspace root and all packages needed for the build
+COPY package.json package-lock.json ./
+COPY packages/ ./packages/
+
+# Install all dependencies (including dev deps for build)
+RUN npm ci
+
+# Build all packages in dependency order
+RUN npm run build --workspace @chess-platform/core && \
+    npm run build --workspace @chess-platform/game && \
+    npm run build --workspace @chess-platform/persistence && \
+    npm run build --workspace @chess-platform/api
+
+# --- Runtime stage ---
+FROM node:22-slim AS runtime
+
+WORKDIR /app
+
+# Copy built packages and their node_modules, owned by the non-root `node`
+# user (built into the official Node image) so the runtime never runs as root.
+COPY --from=builder --chown=node:node /app/package.json /app/package-lock.json ./
+COPY --from=builder --chown=node:node /app/packages/ ./packages/
+COPY --from=builder --chown=node:node /app/node_modules/ ./node_modules/
+
+ENV NODE_ENV=production
+ENV PORT=8080
+
+EXPOSE 8080
+
+USER node
+
+# Run migrations then start the API
+CMD ["sh", "-c", "npm run migrate --workspace @chess-platform/persistence && node packages/api/dist/scripts/serve.js"]

@@ -21,7 +21,7 @@
       <button id="theme-toggle" type="button" aria-label="Toggle light/dark theme">🌙</button>
       <button id="flip" type="button" aria-label="Flip board">Flip</button>
     </header>
-    <main class="game">
+    <main class="game" id="game-main">
       <section id="board" aria-label="Chess board"></section>
       <aside class="sidebar" aria-label="Game info">
         <p id="status" role="status" aria-live="polite">Your move.</p>
@@ -44,6 +44,7 @@
         <label for="auth-password">Password</label>
         <input id="auth-password" type="password" autocomplete="current-password" required />
         <button id="auth-submit" type="button">Sign in</button>
+        <button id="auth-register" type="button">Register</button>
       </form>
       <p id="auth-error" class="error" role="alert"></p>
     </section>
