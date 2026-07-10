@@ -22,6 +22,9 @@
  *
  * M8 increment 6: **Coach** — composition layer that orchestrates the five
  * existing features into a unified coaching response.
+ *
+ * M8 increment 7: **Study Partner** — stateful multi-step learning sessions
+ * with a session store port.
  */
 
 // Types
@@ -76,3 +79,10 @@ export type { EndgameDatabase, EndgameEntry, EndgameGoal, EndgameType, EndgameDi
 export { Coach } from './coach.js';
 export type { CoachOptions, CoachFeatures } from './coach.js';
 export type { CoachRequest, CoachingResponse } from './coach-types.js';
+
+// Study Partner (M8 increment 7)
+export { StudyPartner, computeProgress, emptyProgress } from './study-partner.js';
+export type { StudyPartnerOptions } from './study-partner.js';
+export type { StartSessionRequest, StartSessionResponse, SubmitTurnRequest, SubmitTurnResponse, EndSessionRequest, EndSessionResponse, SessionSummary } from './study-types.js';
+export { InMemoryStudySessionStore } from './study-session-store.js';
+export type { StudySessionStore, StudySession, StudyTurn, SessionProgress, SessionStatus } from './study-session-store.js';

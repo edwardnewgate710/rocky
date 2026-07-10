@@ -398,11 +398,42 @@ relevant, calls them, and aggregates their structured outputs.
   - ADR-0006 updated with the composition/orchestration pattern.
   - ROADMAP updated; M8 remains 🚧.
 
+### Increment 7: Study Partner ✅
+
+`StudyPartner` — a stateful multi-step learning session that tracks the
+learner's progress across several positions/moves. This is the first M8 feature
+with session state.
+
+- Introduces the **stateful-session pattern**: a `StudySessionStore` port
+  (create / load / save / end) with an `InMemoryStudySessionStore` default
+  adapter. Session state is explicit and serializable (plain data object: id,
+  topic, turns, progress metrics). No hidden mutable state on the class
+  instance. ADR-0006 updated to record this.
+- The Study Partner orchestrates the Coach; it does not re-implement analysis.
+  Each turn, it uses the `Coach` to analyze, records the outcome, and advances
+  the learning plan. Verified chess facts still originate from the engine via
+  the features.
+- Three entry points: `startSession` (create + first step), `submitTurn` (run
+  Coach + append + update progress), `endSession` (mark complete + summary).
+- Progress metrics are computed by a pure function (`computeProgress`) from the
+  recorded turns — making accounting testable without running the full session.
+- **Acceptance criteria (met):**
+  - Hermetic `node --test` suite: startSession creates + persists; submitTurn
+    runs Coach + appends + updates progress (assert metrics = exactly what
+    turns imply); session isolation (two sessions don't corrupt each other);
+    endSession summary consistent; non-existent session → clean error; AI
+    omitted → valid sessions with no narrative; spy test proving the Study
+    Partner calls the Coach.
+  - One env-gated integration test (skips without API key).
+  - Clean-tree verification: all green.
+  - ADR-0006 updated with the stateful-session pattern.
+  - ROADMAP updated; M8 remains 🚧.
+
 ### Remaining increments (planned)
 
-- Tournament Commentator, Voice Coach, Study Partner — each following
-  the same inject → engine → ground → AI → structured-output pattern
-  established by Move Explanation.
+- Tournament Commentator, Voice Coach — each following the same inject →
+  engine → ground → AI → structured-output pattern established by Move
+  Explanation.
 
 ## ⬜ Milestone 9 — Tournaments & broadcast
 

@@ -175,3 +175,32 @@ feature built from features, not from raw engine/AI calls.
 - **Pattern for future orchestrators:** Tournament Commentator and Study
   Partner will follow the same composition shape — thin layers that
   call existing features and aggregate their results.
+
+### Stateful Sessions (M8 Increment 7: Study Partner)
+
+The Study Partner (increment 7) introduces the **stateful-session
+pattern** — the first M8 feature with state that persists across calls:
+
+- **Session store port:** `StudySessionStore` (create / load / save /
+  delete) with an `InMemoryStudySessionStore` default adapter. This
+  mirrors the persistence layer's pattern (`InMemoryEventStore`,
+  repository interfaces). A durable adapter can implement the same port
+  later without touching the feature.
+- **Explicit serializable state:** a session is a plain data object
+  (id, topic, turns, progress metrics, status, timestamps) that the
+  store persists. No hidden mutable state on the class instance — each
+  method loads the session, operates on a copy, and saves it back.
+- **Progress accounting:** progress metrics are computed by a pure
+  function (`computeProgress`) from the recorded turns, making the
+  accounting testable without running the full session.
+- **Session isolation:** because state is passed through the store
+  (not held on the class), two concurrent sessions are naturally
+  isolated — they have different ids and different stored state.
+- **Composition:** the Study Partner orchestrates the Coach (and thus
+  the five features underneath). It does not re-implement analysis.
+  Its own contribution is session management + progress tracking + a
+  synthesized "what to work on next" narrative over facts the Coach
+  already produced.
+- **Pattern for future stateful features:** Tournament Commentator (M9)
+  may reuse this pattern for tracking a live tournament's commentary
+  state across moves.
