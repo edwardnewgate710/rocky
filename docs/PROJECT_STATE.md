@@ -175,20 +175,15 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 ## 6. Technical debt (status)
 
 1. **`LICENSE` — ✅ DONE** (AGPL-3.0, commit `d295ad2`).
-2. **CI — ⚠️ ACTIVATION ATTEMPTED, REJECTED.** The workflow file was already
-   written at `docs/ci/ci.yml` with `npm ci` for reproducible installs and a
-   `npm run lint` (typecheck) step. Attempting to push it to
-   `.github/workflows/ci.yml` in this PR produced the exact rejection:
-   > `hessiun710 does not have the correct permissions to execute CreateCommitOnBranch`
-
-   The GitHub integration token lacks the `workflow` scope required to commit
-   files under `.github/workflows/`. **Maintainer action:** run
-   `git mv docs/ci/ci.yml .github/workflows/ci.yml` locally and push with a
-   token that has the `workflow` scope, or activate via the GitHub web UI.
-   The workflow itself is ready — it runs build + lint + test on Node 22.x/24.x
-   plus a Postgres-integration job.
-3. **No committed lockfiles.** Builds use `npm install`. Add a root
-   `package-lock.json` and switch CI to `npm ci` for reproducible installs.
+2. **CI — ✅ ACTIVE.** `.github/workflows/ci.yml` runs five jobs on every push/PR
+   to `main`: build + typecheck + test on Node 22.x/24.x, the Postgres
+   integration job (persistence against a real database), the M6 acceptance
+   gate (Playwright full-game e2e + Lighthouse a11y ≥ 0.95), and the M14 Helm
+   job (`helm lint` + `helm template | kubeconform` for both the bundled and
+   external-datastore renders). The formerly staged copies (`docs/ci/ci.yml`,
+   `deploy/helm/ci.yml`) have been merged into the live workflow and deleted.
+3. **Lockfile — ✅ DONE.** The root `package-lock.json` is committed and CI
+   installs with `npm ci` for reproducible builds.
 
 ## 7. Milestone 4 — status & next steps
 
@@ -216,10 +211,11 @@ needs no database — it runs against in-memory fakes.
 - `packages/persistence/migrations/000X_*.sql` + a `WebAuthnRepository`
   (passkeys), and pg impls, when identity hardening starts.
 - `packages/api/src/routes.ts` / `src/openapi/schemas.ts` when new endpoints land.
-- `packages/realtime-gateway/src/authority.ts` when wiring the durable EventStore
-  (M14).
-- `.github/workflows/ci.yml` (from `docs/ci/ci.yml`) + root `package-lock.json`
-  when CI is activated.
+- `packages/realtime-gateway/src/gateway.ts` + `services/gateway` when sticky
+  per-game routing / sharded authority lands (unlocks gateway replicas > 1).
+- `deploy/helm/gambit/*` + `.github/workflows/ci.yml` as later M14 increments
+  (Terraform, CI/CD deploy gates, secrets management) arrive.
+  (The durable EventStore wiring and CI activation are done — see §6.)
 
 ### Open technical decisions
 - **Passkey library vs. hand-rolled WebAuthn.** Minimal-dependency philosophy vs.

@@ -17,71 +17,79 @@ dependency-free domain packages** tested with the built-in `node --test` runner.
 - `docs/PROJECT_STATE.md` — the **living handover**: what's done, how it's built, decisions,
   deferrals, and the exact next step. Update it after every milestone.
 - `docs/DATABASE.md` + `docs/adr/*` — the approved data contract and Architecture Decision Records.
-- `packages/*` — the code. Each package has its own `README.md`, `tsconfig.json`, and tests.
+- `docs/RUNNING.md` — the one-command local stack (`docker compose up`).
+- `docs/DEPLOYING.md` — the Kubernetes/Helm deployment flow (`deploy/helm/gambit`).
+- `packages/*` — the domain/service packages. `services/gateway` — the deployable realtime
+  gateway binary (infra adapters: Postgres event log, Redis pub/sub, `ws`).
 
-## Current status (2026-07-07)
+## Current status (2026-07-12)
 
-| Milestone | Package | Status | Tests |
+| Milestone | Package(s) | Status | Tests |
 |---|---|---|---|
 | M1 | `@chess-platform/core` | ✅ rules engine (perft-verified) | 16 |
-| M2 | `@chess-platform/game` | ✅ event-sourced game authority | 18 (+1 spec skip) |
-| M3 | `@chess-platform/realtime-gateway` | ✅ realtime WS edge + token-based auth (C4) | 37 |
-| M4a | `@chess-platform/persistence` | ✅ durable event store + repositories | 14 (+2 gated) |
-| M4b | `@chess-platform/api` | ✅ stateless REST + identity | 48 |
-| M5 | `@chess-platform/engine` | ✅ engine bridge | 50 |
-| **M6** | `@chess-platform/web` + `@chess-platform/e2e-harness` | 🚧 **in progress — view core, interactive board, REST + WS networking, gameplay sync, composition root, legal-move oracle, game controller, live game view wiring, lobby controller + router + seeks API, lobby UI + profile + theme toggle, PWA + a11y + Playwright e2e + e2e backend harness (acceptance specs implemented, gate pending CI run)** | 239 |
+| M2 | `@chess-platform/game` | ✅ event-sourced game aggregate + clocks | 19 (1 spec skip) |
+| M3 | `@chess-platform/realtime-gateway` | ✅ realtime WS edge + token auth + durable `EventLog` port + `PubSub` (in-memory & Redis) | 56 |
+| M4a | `@chess-platform/persistence` | ✅ durable event store + repositories + Glicko-2 | 16 (2 DB-gated) |
+| M4b | `@chess-platform/api` | ✅ stateless REST + identity (scrypt, rotating refresh, RBAC) | 48 |
+| M5 | `@chess-platform/engine` | ✅ provider-agnostic UCI engine bridge | 50 |
+| M6 | `@chess-platform/web` + `@chess-platform/e2e-harness` | ✅ playable frontend; Playwright full-game e2e + Lighthouse a11y ≥ 0.95 in CI | 239 + 2 |
+| M7 | `@chess-platform/ai-orchestrator` | ✅ AI routing/failover/caching + engine-grounded prompts | 114 (2 key-gated) |
+| M8 | `@chess-platform/ai-features` | ✅ 8 features (Move Explanation → Voice Coach); Tournament Commentator deferred to M9 | 137 (16 key-gated) |
+| **M14** | compose + `services/gateway` + `deploy/helm` | 🚧 **increments 1–4 done:** local compose stack · durable game authority (write-through `EventLog` → Postgres, evict/rehydrate) · Redis pub/sub multi-node fanout (ADR-0008) · Helm chart + kubeconform CI gate (ADR-0009) | — |
 
-**Whole repo: 427 total tests** (424 passed, 3 skipped: 2 Postgres-gated + 1 threefold specification). Strict TS, lint clean.
+**Whole repo: 697 total tests, 0 failures** (skips: 1 threefold spec + 2 Postgres-gated + 18
+API-key-gated). Strict TS, lint clean. **CI is active** (`.github/workflows/ci.yml`, 5 jobs:
+build+typecheck+test on Node 22/24, Postgres integration, M6 Playwright+Lighthouse acceptance,
+helm lint+kubeconform).
 
-M5 design/decisions: [`docs/ENGINE_BRIDGE.md`](docs/ENGINE_BRIDGE.md) +
-[`docs/adr/0002-engine-bridge.md`](docs/adr/0002-engine-bridge.md) (Accepted).
-
-### Wire protocol changes (this PR — review-fixes branch)
-
-The realtime wire contract changed twice in this PR:
-
-1. **`MoveBroadcast`** now carries a `legalMoves` map (origin square → legal destinations),
-   computed server-side by the core engine in the gateway `GameAuthority` and mirrored in
-   `web`'s `ws-protocol.ts`. This is step 1 of the server-backed `LegalMoveOracle`
-   (ADR-0003, Option 2).
-2. **`JoinMessage`** now uses a `token` field instead of `userId` for authentication
-   (C4 token-based auth). The gateway validates the token on join and rejects unauthenticated
-   connections.
+M9–M13 (tournaments, social/learning + GraphQL, search, security/anti-cheat, observability)
+are ⬜ planned — see the ROADMAP.
 
 ## Build & test
 
 ```bash
-npm install
-npm run build   # core → game → realtime-gateway → persistence → api → engine → web
+npm ci          # reproducible install (root package-lock.json is committed)
+npm run build   # dependency order: core → game → realtime-gateway → persistence → api → engine → web → e2e-harness → ai-*
 npm test        # all package suites via node --test
 npm run lint    # strict typecheck across packages
 ```
-Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
-Postgres-gated tests need `DATABASE_URL`; everything else (incl. the engine suite) is hermetic.
+Run **build before lint/test** on a fresh clone — downstream packages resolve upstream types
+from built `dist/`. Postgres-gated tests need `DATABASE_URL`; AI-adapter integration tests need
+provider API keys; everything else is hermetic. Local full stack: `docker compose up --build`
+(see RUNNING.md). Helm chart checks: `helm lint deploy/helm/gambit`,
+`helm template deploy/helm/gambit | kubeconform -strict -summary`,
+`bash scripts/helm-snapshot-test.sh`.
 
 ## Working method (do not skip)
 
 Every milestone: **build to explicit acceptance criteria with tests → self-critique loop →
 multi-perspective review (distributed-systems, performance, security, chess-server maintainer)
-→ refactor → document → commit → push.** Advance only when clean. Architectural decisions that
-introduce a durable/shared contract get a **gate** (a design doc + ADR, approved before code) —
-see the M4 `DATABASE.md` and M5 `ENGINE_BRIDGE.md` precedents.
+→ refactor → document → commit → push.** Advance only when clean — run the full
+`npm ci && npm run build && npm test && npm run lint` gate before reporting done.
+Architectural decisions that introduce a durable/shared contract get a **gate** (a design doc +
+ADR, approved before code) — see `DATABASE.md` (M4), `ENGINE_BRIDGE.md` (M5), ADR-0008/0009 (M14).
 
 ## Guardrails
 
-- **Milestone 6 is IN PROGRESS** (`@chess-platform/web` increment 3B: tested view core + interactive board + REST networking foundation + **WebSocket foundation + gameplay synchronization** — `WebSocketConnection` port, `WsClient` (reconnect/heartbeat), typed wire protocol, `GameSync` (join/resume, optimistic moves, ply-gap resync); UI kept separate from networking; 115 web tests). Increment **3C-1** then landed: the web **application composition root** (`packages/web/src/app/`) wiring `GambitClient` + `WsClient` + a `GameSync` factory via dependency injection, with `main.ts` reduced to a thin DOM entry (wiring only — no connection, gameplay sync, or server-backed oracle; 121 web tests). Increment **3C-2A** then landed: the authoritative realtime `StateView` gained a typed `legalMoves` map (origin square → legal destinations), computed server-side by the core engine in the gateway `GameAuthority` and mirrored in `web`'s `ws-protocol.ts` — step 1 of the server-backed `LegalMoveOracle` (ADR-0003, Option 2; do not import `@chess-platform/core` into `web`). Increment **3C-2B** then landed: `legalMoves` is now surfaced through `GameSync` state (populated from each authoritative snapshot, stale after a live move broadcast, empty once the game ends) and a new `AuthoritativeMoveOracle` adapter implements the existing `LegalMoveOracle` port, fed by the `GameSync` state's `legalMoves` map (no chess rules in the client; 131 web tests). Increment **3C-2C** then landed: the `AuthoritativeMoveOracle` is now wired into the composition root — `createApp` exposes `createGameOracle(gameSync)` which builds an `AuthoritativeMoveOracle` reading the live `legalMoves` from `GameSync` state, and `mountBoard` accepts an optional `LegalMoveOracle` (defaulting to `NullMoveOracle`) so the board's legal-move highlights reflect the server's authoritative state; the offline `StaticMoveOracle` placeholder is removed (133 web tests). Increment **3D** then landed: a pure, DOM-free `GameController` (`packages/web/src/app/game-controller.ts`) bridges `GameSync` state to the board UI — it subscribes to state changes, projects the current FEN from the snapshot + move ledger via the view-only mover, exposes callbacks for position/turn/clock/status/last-move updates, and forwards move submissions to `GameSync`; 9 tests covering snapshot projection, move replay, game-over status, spectator mode, and unsubscribe (142 web tests). Increment **3E** then landed: the full live game view wiring — `bootstrap.ts` now assembles the complete game view graph (GameSync + GameController + AuthoritativeMoveOracle + mountBoard with oracle and onMove callback), connecting the controller's callbacks to the DOM BoardView (position, last-move highlight, turn, clock display, status text) and forwarding user moves through the controller to GameSync; `mountBoard` exposes `setPosition`/`setLastMove`/`setTurn` on the `MountedBoard` handle and accepts an `onMove` callback for server-authoritative mode; `extractGameId` parses the game ID from the URL path; `formatClock` formats ms as M:SS; clock display CSS added; 17 new tests (159 web tests). The **C4 token-based auth** change (this PR) replaced `userId` with a `token` field in `JoinMessage`; the gateway now validates tokens on join and rejects unauthenticated connections, and 5 new gateway tests cover the token auth path. M5 is complete; for the broader track after M6 pick from
-  `docs/PROJECT_STATE.md` §"Exact next step" (M4 WebAuthn hardening, or M14 engine wiring).
-- Keep domain packages **dependency-free**; native/infra code stays behind documented seams.
+- **Gateway horizontal scaling is NOT safe yet.** Redis fans broadcasts across nodes, but
+  game-command *ownership* is not coordinated across gateway replicas — the Helm chart pins
+  `gateway.replicas: 1` and must stay that way until sticky per-game routing or sharded
+  authority lands (a later M14 increment). Do not scale the gateway or imply that it scales.
+- Keep domain packages **dependency-free**; native/infra code (pg, ioredis, ws) enters only via
+  documented ports (`EventLog`, `PubSub`/`RedisLike`, `TokenVerifier`, `EngineTransport`) wired
+  in `services/gateway` or package `/pg`-style subpaths — never in domain code.
 - No placeholders, TODO-implementations, or temporary hacks — production quality only.
-- Keep GitHub authoritative: after each checkpoint update README/ROADMAP/PROJECT_STATE/this file,
-  then commit and push, so the next agent needs no conversation history.
+- Keep GitHub authoritative: after each checkpoint update README/ROADMAP/PROJECT_STATE/this
+  file, then commit and push, so the next agent needs no conversation history.
 
-## Known tech debt (tracked, updated 2026-07-07)
+## Known tech debt (tracked, updated 2026-07-12)
 
-CI workflow activation was attempted but rejected: `hessiun710 does not have the correct
-permissions to execute CreateCommitOnBranch`. The workflow file remains staged at
-`docs/ci/ci.yml` and needs the `workflow` scope to activate. Committed lockfiles are
-inconsistent across packages. See `docs/PROJECT_STATE.md` §6.
+- **Threefold repetition** — spec'd, `test.skip` in `packages/game/test/game.test.ts`;
+  implement position-hash history in the `Game` aggregate and unskip.
+- **Identity hardening (M4 follow-up)** — WebAuthn/passkeys (table exists, flow doesn't),
+  password reset + email verification, per-account login rate limiting.
+- **Client refresh-token storage** — currently `localStorage`; move to httpOnly cookie in M12.
+- **Gateway multi-replica ownership** — see the first guardrail; next M14 increments also
+  include Terraform, CI/CD deploy gates (blue/green), load/chaos testing, secrets management.
 
-
-M6 acceptance (Playwright full-game + Lighthouse a11y ≥ 95) — the e2e backend harness (`@chess-platform/e2e-harness`) is now implemented: it composes the API (in-memory fakes) + gateway (in-memory pub/sub) + WebSocket server + random-move bot in a single process. The Playwright specs for game-vs-bot and game-vs-human are implemented and gated behind `GAMBIT_E2E_BACKEND=1`. The acceptance gate requires a CI run with Playwright + Lighthouse to close.
+Full details and the exact next step: `docs/PROJECT_STATE.md`.

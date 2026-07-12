@@ -1,59 +1,41 @@
-# Enabling CI (GitHub Actions)
+# CI (GitHub Actions) — active
 
-The CI workflow is **written and ready** but could not be committed to its final
-location automatically: the credential used to push to this repo does not have the
-GitHub **`workflow`** permission/scope, so GitHub rejects commits that create or
-modify files under `.github/workflows/` (error: *"does not have the correct
-permissions to execute `CreateCommitOnBranch`"*). Regular files (LICENSE, docs,
-source) commit fine — only workflow files are blocked.
+> Historical note: this document originally described how to manually activate
+> the CI workflow, because the automation credential lacked the GitHub
+> `workflow` scope needed to write under `.github/workflows/`. That activation
+> has since been completed by a maintainer — the staged copies
+> (`docs/ci/ci.yml`, later `deploy/helm/ci.yml`) were merged into the live
+> workflow and deleted. This file now just documents what CI runs.
 
-The finished workflow is stored here for review:
+The workflow lives at [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)
+and runs on every push and pull request targeting `main`, with a concurrency
+group that cancels superseded runs on the same ref.
 
-- [`docs/ci/ci.yml`](ci/ci.yml)  ← ready-to-use, verbatim contents for the workflow
+## Jobs
 
-## What the workflow does
+1. **build + typecheck + test (Node 22.x and 24.x)** — `npm ci`, then
+   `npm run build` → `npm run lint` → `npm test`. Build runs first because
+   downstream packages resolve upstream types from built `dist/` (the
+   `types`/`main` fields point at `dist/`); lint/test on an unbuilt tree would
+   fail to resolve those imports.
+2. **postgres integration (persistence)** — runs the `DATABASE_URL`-gated
+   persistence tests (event store + repositories) against a real Postgres 16
+   service container.
+3. **M6 acceptance (Playwright e2e + Lighthouse a11y)** — plays full games
+   (vs bot and vs human) through the real UI against the in-process e2e
+   harness, and enforces a Lighthouse accessibility score ≥ 0.95. Reports are
+   uploaded as artifacts. A missing Lighthouse report (environmental
+   Chrome-launch failure on the runner) warns instead of failing; only a
+   genuine sub-threshold a11y score fails the job.
+4. **helm lint + kubeconform (M14)** — lints `deploy/helm/gambit` and
+   validates the rendered manifests against Kubernetes schemas with
+   `kubeconform -strict`, for both the default (bundled postgres/redis) values
+   and the external-datastore override.
 
-On every push and PR to `main`, across Node 20 and 22:
+## Notes
 
-1. `npm install` (workspaces)
-2. `npm run build` — builds `core → game → realtime-gateway` in dependency order
-3. `npm run lint` — `tsc --noEmit` typecheck of every package
-4. `npm test` — `node --test` suites for every package
-
-**Why build before lint/test:** `@chess-platform/game` and
-`@chess-platform/realtime-gateway` resolve `@chess-platform/core`'s types from its
-built `dist/` (the `types`/`main` fields point at `dist/`). If lint or test ran
-first, those type imports would not resolve. The root `build`/`lint`/`test`
-scripts already fan out to the packages in the correct order.
-
-## How to enable it (one of the following)
-
-**Option A — move the file with a `workflow`-scoped credential (recommended):**
-
-```bash
-git pull
-mkdir -p .github/workflows
-git mv docs/ci/ci.yml .github/workflows/ci.yml
-git commit -m "CI: activate build + typecheck + test workflow"
-git push
-```
-
-This requires either:
-- pushing as a user/PAT with the **`workflow`** scope, **or**
-- if pushing via a GitHub App / OAuth token, granting that app the
-  **"Workflows" write** permission (Repo settings → the app's permissions),
-  **or** simply doing the `git mv` + push from a local clone authenticated with
-  your own account (which normally has `workflow`).
-
-**Option B — create it in the GitHub UI:** open *Actions → New workflow → set up a
-workflow yourself*, paste the contents of `docs/ci/ci.yml`, name it `ci.yml`, and
-commit. The web UI commits with your account's `workflow` permission.
-
-Once `.github/workflows/ci.yml` exists, delete `docs/ci/ci.yml` (it's only a
-staging copy) — or keep it; it is inert outside `.github/workflows/`.
-
-## Follow-up
-
-- Add a root `package-lock.json` and switch the install step from `npm install`
-  to `npm ci` for reproducible CI installs.
-- Once CI is live, add a status badge to `README.md`.
+- Installs use `npm ci` against the committed root `package-lock.json` for
+  reproducible builds.
+- The deeper chart-wiring checks (env-var ordering, gateway `replicas: 1`,
+  secret sourcing) live in `scripts/helm-snapshot-test.sh` and can be run
+  locally alongside the helm job's commands — see `docs/DEPLOYING.md`.
