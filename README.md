@@ -5,16 +5,18 @@ Lichess and Chess.com, plus a first-class AI layer. This repository is built
 **milestone by milestone**, and every milestone ships real, tested, typed code —
 no skeletons, no placeholders.
 
-> **Status:** Milestones 1–5 complete, M6 in progress — a perft-verified,
-> variant-aware chess rules engine (`@chess-platform/core`), an event-sourced
-> game authority with clocks (`@chess-platform/game`), a real-time gateway with
-> authoritative move fanout, presence, and reconnect/resume
-> (`@chess-platform/realtime-gateway`), a durable Postgres data layer with an
-> append-only event store, migrations, Glicko-2 and UUIDv7
+> **Status:** Milestones 1–8 complete, M14 (deployment & scale) in progress —
+> a perft-verified, variant-aware chess rules engine (`@chess-platform/core`),
+> an event-sourced game authority with clocks (`@chess-platform/game`), a
+> real-time gateway with authoritative fanout, durable event log, and Redis
+> pub/sub (`@chess-platform/realtime-gateway`), a durable Postgres data layer
 > (`@chess-platform/persistence`), a stateless REST + identity service with a
-> published OpenAPI spec (`@chess-platform/api`), a Stockfish-backed analysis
-> engine (`@chess-platform/engine`), and a web frontend in progress
-> (`@chess-platform/web`).
+> published OpenAPI spec (`@chess-platform/api`), a provider-agnostic engine
+> bridge (`@chess-platform/engine`), a playable web frontend with Playwright
+> full-game e2e + Lighthouse a11y gates (`@chess-platform/web`), an AI
+> orchestration layer (`@chess-platform/ai-orchestrator`), eight AI features
+> (`@chess-platform/ai-features`), and a deployable stack: one-command
+> `docker compose up` plus a Helm chart validated in CI.
 > See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what is built vs. planned.
 
 ## Why "milestone by milestone" and not "all at once"
@@ -36,7 +38,10 @@ chess-platform/
 │   ├── persistence/        # ✅ Durable data: event store, migrations, repositories, Glicko-2
 │   ├── api/                # ✅ Stateless REST + identity service, published OpenAPI 3.1
 │   ├── engine/             # ✅ Stockfish-backed analysis engine: eval, best lines, UCI bridge
-│   └── web/                # ✅ Web frontend (in progress): lobby, board UI, game play
+│   ├── web/                # ✅ Web frontend: lobby, board UI, live game play, PWA, a11y
+│   ├── e2e-harness/        # ✅ In-process backend harness for Playwright acceptance
+│   ├── ai-orchestrator/    # ✅ AI provider routing, failover, caching, grounding
+│   └── ai-features/        # ✅ Coach, puzzles, explanations, trainers (8 features)
 ├── docs/
 │   ├── ARCHITECTURE.md     # Full system design (services, data, real-time, AI, security)
 │   ├── DATABASE.md         # Approved database architecture (M4 gate)
