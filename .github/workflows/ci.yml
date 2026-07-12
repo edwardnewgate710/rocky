@@ -216,3 +216,44 @@ jobs:
             packages/web/lighthouse-report.report.json
             packages/web/lighthouse-report.report.html
           retention-days: 30
+
+  # M14 increment 4: Helm chart validation.
+  # Lints the chart and validates rendered manifests against Kubernetes
+  # schemas with kubeconform, for both default values and an external-
+  # datastore override.
+  helm:
+    name: helm lint + kubeconform
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        run: |
+          curl -fsSL https://get.helm.sh/helm-v3.16.3-linux-amd64.tar.gz -o /tmp/helm.tar.gz
+          tar xzf /tmp/helm.tar.gz -C /tmp
+          sudo mv /tmp/linux-amd64/helm /usr/local/bin/helm
+          helm version
+
+      - name: Install kubeconform
+        run: |
+          curl -fsSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz -o /tmp/kubeconform.tar.gz
+          tar xzf /tmp/kubeconform.tar.gz -C /tmp
+          sudo mv /tmp/kubeconform /usr/local/bin/kubeconform
+          kubeconform -v
+
+      - name: Helm lint
+        run: helm lint deploy/helm/gambit
+
+      - name: Helm template (default values) + kubeconform
+        run: |
+          helm template deploy/helm/gambit | kubeconform -strict -summary
+
+      - name: Helm template (external datastores) + kubeconform
+        run: |
+          helm template deploy/helm/gambit \
+            --set postgres.enabled=false \
+            --set redis.enabled=false \
+            --set externalDatabaseUrl=postgres://user:pass@db.example.com:5432/gambit \
+            --set externalRedisUrl=redis://redis.example.com:6379 \
+            | kubeconform -strict -summary
