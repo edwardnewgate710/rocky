@@ -1,0 +1,145 @@
+{{/*
+Gateway Deployment + Service.
+
+CRITICAL: replicas MUST be 1. Game-command ownership is NOT coordinated across
+gateway replicas. See values.yaml comments and docs/adr/0009-kubernetes-helm.md.
+
+- Exposes the WS port (4175) and the health port (4176 = PORT+1).
+- Shares DATABASE_URL with the API (same Secret/ConfigMap source).
+- Gets REDIS_URL from values (bundled or external).
+- NODE_ID is the pod name via the Kubernetes downward API.
+- Liveness/readiness probes hit GET :{PORT+1}/health.
+- Health-gated ordering: an init container waits for the API Service to be
+  Ready (k8s has no compose-style depends_on; this ensures the schema exists
+  before the gateway starts, mirroring compose's depends_on: api: service_healthy).
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "gambit.fullname" . }}-gateway
+  labels:
+    {{- include "gambit.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  type: ClusterIP
+  ports:
+    - name: ws
+      port: {{ .Values.gateway.port }}
+      targetPort: ws
+      protocol: TCP
+    - name: health
+      port: {{ .Values.gateway.healthPort }}
+      targetPort: health
+      protocol: TCP
+  selector:
+    {{- include "gambit.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gambit.fullname" . }}-gateway
+  labels:
+    {{- include "gambit.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  replicas: {{ .Values.gateway.replicas }}
+  selector:
+    matchLabels:
+      {{- include "gambit.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: gateway
+  template:
+    metadata:
+      labels:
+        {{- include "gambit.labels" . | nindent 8 }}
+        app.kubernetes.io/component: gateway
+    spec:
+      initContainers:
+        {{- /*
+          Wait for the API to be Ready before starting the gateway.
+          This mirrors compose's depends_on: api: condition: service_healthy.
+          The API runs migrations in its init container, so the schema exists
+          by the time the API is Ready.
+        */}}
+        - name: wait-for-api
+          image: "{{ .Values.images.api.repository }}:{{ .Values.images.api.tag }}"
+          imagePullPolicy: {{ .Values.images.api.pullPolicy | quote }}
+          command:
+            - sh
+            - -c
+            - 'until node -e "fetch(''http://{{ include "gambit.fullname" . }}-api:{{ .Values.api.port }}/v1/health'').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; do echo "Waiting for API health..."; sleep 2; done'
+      containers:
+        - name: gateway
+          image: "{{ .Values.images.gateway.repository }}:{{ .Values.images.gateway.tag }}"
+          imagePullPolicy: {{ .Values.images.gateway.pullPolicy | quote }}
+          ports:
+            - name: ws
+              containerPort: {{ .Values.gateway.port }}
+              protocol: TCP
+            - name: health
+              containerPort: {{ .Values.gateway.healthPort }}
+              protocol: TCP
+          env:
+            {{- if .Values.postgres.enabled }}
+            # POSTGRES_PASSWORD MUST appear before DATABASE_URL so $(POSTGRES_PASSWORD)
+            # expands correctly — Kubernetes only resolves $(VAR) for vars defined
+            # earlier in the same env list.
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "gambit.secretName" . }}
+                  key: POSTGRES_PASSWORD
+            {{- end }}
+            - name: DATABASE_URL
+              value: {{ include "gambit.databaseUrl" . | quote }}
+            - name: ACCESS_TOKEN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "gambit.secretName" . }}
+                  key: ACCESS_TOKEN_SECRET
+            - name: ACCESS_TOKEN_TTL_SEC
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "gambit.configMapName" . }}
+                  key: ACCESS_TOKEN_TTL_SEC
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "gambit.configMapName" . }}
+                  key: GATEWAY_PORT
+            - name: HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "gambit.configMapName" . }}
+                  key: GATEWAY_HOST
+            - name: NODE_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "gambit.configMapName" . }}
+                  key: NODE_ENV
+            - name: REDIS_URL
+              value: {{ include "gambit.redisUrl" . | quote }}
+            {{- /*
+              NODE_ID from the pod name via the Kubernetes downward API.
+              Mirrors compose's NODE_ID: gateway-${HOSTNAME}.
+            */}}
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.gateway.resources | nindent 12 }}

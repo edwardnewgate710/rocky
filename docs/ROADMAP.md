@@ -594,15 +594,63 @@ Redis pub/sub for cross-node broadcast fanout. Key design:
   payload safety.
 - ADR-0008 records the decision.
 
+### Increment 4: Kubernetes manifests + Helm chart 🚧
+
+Package the existing stack (postgres, redis, api, gateway, web) as a Helm chart
+so it deploys to a Kubernetes cluster — the next step after docker-compose. This
+is infrastructure/packaging: no application source changes.
+
+- **`deploy/helm/gambit/`** Helm chart with `Chart.yaml`, `values.yaml`, and
+  templates for api (Deployment + Service + migration init container), gateway
+  (Deployment replicas=1 + Service, WS port + health port), web (Deployment +
+  Service + Ingress), and bundled postgres + redis as StatefulSets with PVCs.
+- **Bundled vs. external datastores:** postgres + redis are gated behind
+  `postgres.enabled` / `redis.enabled` (default true for self-contained install
+  / kind). When disabled, `DATABASE_URL` / `REDIS_URL` come from
+  `externalDatabaseUrl` / `externalRedisUrl` values.
+- **Config split:** ConfigMap for non-secret env (PORT, HOST, NODE_ENV, ports),
+  Secret for `ACCESS_TOKEN_SECRET` + `POSTGRES_PASSWORD`. No real secrets
+  committed — placeholder defaults with `helm --set` / external-secrets note.
+- **Gateway replica constraint:** the gateway Deployment defaults to
+  `replicas: 1` and MUST NOT be scaled beyond 1 without sticky per-game routing
+  or sharded authority (a later M14 increment). Game-command ownership is not
+  coordinated across gateway replicas today. The api and web are stateless and
+  default to 2 replicas.
+- **NODE_ID via downward API:** the gateway's `NODE_ID` is the pod name via
+  `fieldRef: metadata.name`, mirroring compose's `NODE_ID: gateway-${HOSTNAME}`.
+- **Migrations as init container:** the API runs
+  `npm run migrate --workspace @chess-platform/persistence` in an init container
+  before starting. The gateway's init container waits for the API health endpoint.
+- **Liveness/readiness probes** hitting existing health endpoints (api
+  `GET /v1/health`, gateway `GET :{PORT+1}/health`, web `GET /`).
+- **CI job** added to `.github/workflows/ci.yml`: `helm lint` +
+  `helm template | kubeconform` for both default and external-datastore values.
+- **Snapshot test** (`scripts/helm-snapshot-test.sh`): verifies gateway
+  replicas == 1, api+gateway share the same DATABASE_URL source, gateway gets
+  REDIS_URL + NODE_ID from pod name, secrets come from the Secret.
+- **Docs:** `docs/DEPLOYING.md` (Helm install flow, values, single-gateway-
+  replica constraint), `docs/adr/0009-kubernetes-helm.md` (topology decisions).
+- **Acceptance criteria:**
+  - `helm lint deploy/helm/gambit` passes.
+  - `helm template deploy/helm/gambit` renders for both default and
+    external-datastore override.
+  - Every rendered manifest validates with `kubeconform -strict` (zero invalid).
+  - Snapshot test proves key wiring (gateway replicas, shared DATABASE_URL,
+    REDIS_URL + NODE_ID, secrets from Secret).
+  - CI job added; existing jobs intact.
+  - Existing app gate stays green (no source changes).
+  - ADR-0009 records the topology decisions.
+  - ROADMAP + PROJECT_STATE updated.
+
 ### Deferred (later M14 increments)
 
-- Kubernetes manifests + Helm charts
 - Terraform IaC for cloud provisioning
 - Blue/green + canary deployment strategy
 - GitHub Actions CI/CD pipeline with deploy gates
 - 100k-user load testing + chaos validation
-- Secrets management (Vault, AWS Secrets Manager)
+- Secrets management (Vault, AWS Secrets Manager, external-secrets)
 - Sharded game authority with durable state
+- Sticky per-game routing for horizontal gateway scaling
 
 ---
 

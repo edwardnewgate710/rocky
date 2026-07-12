@@ -4,7 +4,7 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-11 — M14 increment 3 (Redis pub/sub). **M7, M8, M14 inc 1–3 complete.** Prior: Review #03 fixes applied:
+_Last updated: 2026-07-12 — M14 increment 4 (Kubernetes Helm chart). **M7, M8, M14 inc 1–4 complete.** Prior: Review #03 fixes applied:
 the authoritative `legalMoves` map from the server snapshot is now surfaced through `GameSync`
 state (populated from each `StateView`, stale after a live move broadcast, empty once the game ends)
 and a new `AuthoritativeMoveOracle` adapter implements the existing `LegalMoveOracle` port, fed by
@@ -71,7 +71,7 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 | **M6** ✅ | `@chess-platform/web` | Playable web frontend: interactive board (drag/click, premoves, promotion), REST + WS client, GameSync, lobby, profile, theme, PWA, a11y; Playwright e2e + Lighthouse gate passed | 210+ |
 | **M7** ✅ | `@chess-platform/ai-orchestrator` | Provider-agnostic AI orchestration: `AiProvider`/`AiOrchestrator`/`ProviderRegistry`/`RoutingStrategy`/`ResponseCache`/`RateLimiter`/`HealthTracker`/`BenchmarkRunner`; OpenAI + Anthropic adapters; engine grounding | 114 |
 | **M8** ✅ | `@chess-platform/ai-features` | 8 AI features: Move Explainer, Puzzle Generator, Mistake Predictor, Opening Explorer, Endgame Trainer, Coach, Study Partner, Voice Coach; Tournament Commentator deferred to M9 | 100+ |
-| **M14** 🚧 | Deployable services | Docker Compose local stack (inc 1), durable EventLog + Postgres (inc 2), Redis pub/sub multi-node fanout (inc 3); K8s/Terraform/blue-green/load-test deferred | — |
+| **M14** 🚧 | Deployable services | Docker Compose local stack (inc 1), durable EventLog + Postgres (inc 2), Redis pub/sub multi-node fanout (inc 3), Kubernetes Helm chart (inc 4); Terraform/blue-green/load-test deferred | — |
 
 **Whole-repo total: ~600 tests across 10 packages + 2 services.** Strict TS, zero errors, lint clean. CI active (Node 22/24, Postgres integration, M6 Playwright + Lighthouse acceptance).
 
@@ -282,18 +282,21 @@ analysis cache remains a future **ADR-0003** (would amend `DATABASE.md`).
 
 ### Exact next step for the next agent
 
-**Milestones M1–M8 complete; M14 increments 1–3 landed.** The platform has:
+**Milestones M1–M8 complete; M14 increments 1–4 landed.** The platform has:
 - 10 packages (core, game, realtime-gateway, persistence, api, engine, web, e2e-harness, ai-orchestrator, ai-features) + 3 deployable services (api, gateway, web).
 - ~600 tests, 0 failures; strict TS + lint clean; CI active.
 - Docker Compose local stack with Postgres, Redis, API, gateway, and web.
 - Durable game authority (EventLog port + Postgres wiring).
 - Redis pub/sub for multi-node gateway fanout (RedisPubSub adapter, origin tagging, ref-counted subscribe).
+- Kubernetes Helm chart (`deploy/helm/gambit/`) with bundled/external datastores, migration init container, single gateway replica (ownership not coordinated across replicas — sticky routing or sharded authority is a later increment), ConfigMap/Secret split, health probes, and CI validation (helm lint + kubeconform).
+
+**Gateway replica constraint (M14 inc 4):** The gateway Deployment defaults to `replicas: 1`. Game-command ownership is NOT coordinated across gateway replicas. Scaling beyond 1 requires sticky per-game routing or sharded authority — a later M14 increment. See `docs/adr/0009-kubernetes-helm.md`.
 
 **Next priorities (in order):**
 1. **M4 identity hardening:** WebAuthn/passkeys (table exists), password reset + email verification, login rate limiting/lockout.
 2. **Small deferred correctness:** threefold repetition (unskip test in game.test.ts, implement position-hash history), PGN parser, per-variant timeout rules.
 3. **M9 Tournaments & broadcast:** Arena + Swiss + round-robin, pairings, tiebreaks, live broadcast.
-4. **Remaining M14:** Kubernetes, Terraform, blue/green, CI/CD pipeline, 100k-user load testing.
+4. **Remaining M14:** Terraform, blue/green, CI/CD pipeline, 100k-user load testing, secrets management (external-secrets), sticky per-game routing / sharded authority for horizontal gateway scaling.
 
 Read `docs/AI_HANDOVER.md` for the quickstart and guardrails.
 

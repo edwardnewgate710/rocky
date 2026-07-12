@@ -1,0 +1,16 @@
+{{/*
+ConfigMap for non-secret environment variables shared across services.
+Secrets (ACCESS_TOKEN_SECRET, POSTGRES_PASSWORD) live in the Secret, not here.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gambit.configMapName" . }}
+  labels:
+    {{- include "gambit.labels" . | nindent 4 }}
+data:
+  NODE_ENV: {{ .Values.config.nodeEnv | quote }}
+  PORT: {{ .Values.config.apiPort | quote }}
+  GATEWAY_PORT: {{ .Values.config.gatewayPort | quote }}
+  GATEWAY_HOST: {{ .Values.config.gatewayHost | quote }}
+  ACCESS_TOKEN_TTL_SEC: {{ .Values.config.accessTokenTtlSec | quote }}

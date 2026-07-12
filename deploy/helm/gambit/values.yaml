@@ -1,0 +1,163 @@
+# ===========================================================================
+# Gambit Helm Chart — values.yaml
+# ===========================================================================
+# M14 Increment 4: Kubernetes manifests + Helm chart.
+#
+# This chart packages the existing docker-compose stack (postgres, redis, api,
+# gateway, web) for Kubernetes. It mirrors the compose wiring:
+#   - api + gateway share the same DATABASE_URL (Postgres event store)
+#   - gateway gets REDIS_URL + NODE_ID (pod name via downward API)
+#   - web proxies /v1 -> api and /ws -> gateway (nginx, inside the image)
+#
+# CRITICAL CONSTRAINT — Gateway replicas:
+# ----------------------------------------
+# The gateway MUST default to replicas: 1. Game-command OWNERSHIP is NOT
+# coordinated across gateway replicas today. If two players in the same game
+# land on different gateway replicas, the non-owning replica's in-memory
+# authority goes stale and its optimistic event-store append fails, so that
+# player's moves are spuriously rejected.
+#
+# Scaling the gateway beyond 1 replica requires sticky per-game routing (all
+# connections for a game routed to one replica) or sharded authority — a LATER
+# M14 increment. Do NOT set gateway.replicas > 1 until that work is done.
+# See docs/adr/0009-kubernetes-helm.md for the full rationale.
+#
+# The api and web are stateless and MAY default to 2 replicas.
+# ===========================================================================
+
+# --- Image references (parameterized; reuse existing Dockerfiles) ---
+images:
+  api:
+    repository: ghcr.io/hessiun710/gambit-api
+    tag: latest
+    pullPolicy: IfNotPresent
+  gateway:
+    repository: ghcr.io/hessiun710/gambit-gateway
+    tag: latest
+    pullPolicy: IfNotPresent
+  web:
+    repository: ghcr.io/hessiun710/gambit-web
+    tag: latest
+    pullPolicy: IfNotPresent
+
+# --- API service ---
+api:
+  replicas: 2
+  port: 8080
+  # Run migrations as an init container before the API starts.
+  # Uses the same `npm run migrate --workspace @chess-platform/persistence`
+  # that the compose api runs.
+  migrate:
+    enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# --- Gateway service ---
+# CRITICAL: replicas MUST be 1. See the constraint note at the top of this file
+# and docs/adr/0009-kubernetes-helm.md. Do NOT increase without sticky per-game
+# routing or sharded authority (a later M14 increment).
+gateway:
+  replicas: 1  # DO NOT increase beyond 1 — see constraint above
+  port: 4175
+  healthPort: 4176  # port+1, same as compose
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# --- Web service ---
+web:
+  replicas: 2
+  port: 8080
+  ingress:
+    enabled: true
+    className: nginx
+    host: gambit.local
+    # TLS is optional; set enabled: true and provide a secret name.
+    tls:
+      enabled: false
+      secretName: gambit-web-tls
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# --- Postgres (bundled StatefulSet, gated) ---
+# Set enabled: false to use an external managed Postgres. When disabled,
+# provide externalDatabaseUrl (or set it via --set / a Secret).
+postgres:
+  enabled: true
+  image: postgres:16-alpine
+  user: gambit
+  # POSTGRES_PASSWORD is sourced from the Secret (gambit-secret), not hardcoded.
+  # The placeholder default below is for local dev/kind only.
+  # In production: helm --set postgres.password=<secret> or use external-secrets.
+  password: ""  # empty → falls back to Secret placeholder
+  database: gambit
+  port: 5432
+  storage: 5Gi
+  storageClassName: ""  # empty → cluster default
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+# --- Redis (bundled StatefulSet, gated) ---
+# Set enabled: false to use an external managed Redis. When disabled,
+# provide externalRedisUrl (or set it via --set / a Secret).
+redis:
+  enabled: true
+  image: redis:7-alpine
+  port: 6379
+  storage: 1Gi
+  storageClassName: ""  # empty → cluster default
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# --- External datastore URLs (used when postgres.enabled=false / redis.enabled=false) ---
+# Set via --set externalDatabaseUrl=postgres://user:pass@host:5432/db
+# or --set externalRedisUrl=redis://host:6379
+# These can also be provided via a Secret (see secrets section below).
+externalDatabaseUrl: ""
+externalRedisUrl: ""
+
+# --- Secrets ---
+# ACCESS_TOKEN_SECRET and POSTGRES_PASSWORD are templated from these values
+# with empty/placeholder defaults. Do NOT commit real secret values.
+# In production, provide via:
+#   helm --set secrets.accessTokenSecret=<your-secret> \
+#        --set secrets.postgresPassword=<your-password>
+# Or use external-secrets / a secrets manager (full integration is a later
+# M14 increment — see docs/adr/0009-kubernetes-helm.md).
+secrets:
+  # HMAC secret shared between API and gateway (must be >= 32 bytes).
+  # Placeholder default for local dev/kind only.
+  accessTokenSecret: ""  # empty → placeholder in Secret
+  postgresPassword: ""   # empty → placeholder in Secret
+
+# --- Config (non-secret env, shared via ConfigMap) ---
+config:
+  nodeEnv: production
+  apiPort: "8080"
+  gatewayPort: "4175"
+  gatewayHost: "0.0.0.0"
+  accessTokenTtlSec: "900"

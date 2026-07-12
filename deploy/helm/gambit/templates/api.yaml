@@ -1,0 +1,127 @@
+{{/*
+API Deployment + Service.
+- Runs persistence migrations via an init container before the API starts
+  (same `npm run migrate --workspace @chess-platform/persistence` as compose).
+- Shares DATABASE_URL with the gateway (both source from the same Secret/ConfigMap).
+- Liveness/readiness probes hit GET /v1/health.
+- Health-gated ordering via probes: the API won't be Ready until migrations
+  complete and the health endpoint responds. The gateway depends on the API
+  Service being Ready (via its own readiness probe + init container wait).
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "gambit.fullname" . }}-api
+  labels:
+    {{- include "gambit.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.api.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "gambit.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gambit.fullname" . }}-api
+  labels:
+    {{- include "gambit.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.api.replicas }}
+  selector:
+    matchLabels:
+      {{- include "gambit.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        {{- include "gambit.labels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+    spec:
+      {{- if .Values.api.migrate.enabled }}
+      initContainers:
+        - name: migrate
+          image: "{{ .Values.images.api.repository }}:{{ .Values.images.api.tag }}"
+          imagePullPolicy: {{ .Values.images.api.pullPolicy | quote }}
+          command:
+            - sh
+            - -c
+            - "npm run migrate --workspace @chess-platform/persistence"
+          env:
+            {{- if .Values.postgres.enabled }}
+            # POSTGRES_PASSWORD MUST appear before DATABASE_URL so $(POSTGRES_PASSWORD)
+            # expands correctly — Kubernetes only resolves $(VAR) for vars defined
+            # earlier in the same env list.
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "gambit.secretName" . }}
+                  key: POSTGRES_PASSWORD
+            {{- end }}
+            - name: DATABASE_URL
+              value: {{ include "gambit.databaseUrl" . | quote }}
+            - name: NODE_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "gambit.configMapName" . }}
+                  key: NODE_ENV
+      {{- end }}
+      containers:
+        - name: api
+          image: "{{ .Values.images.api.repository }}:{{ .Values.images.api.tag }}"
+          imagePullPolicy: {{ .Values.images.api.pullPolicy | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.api.port }}
+              protocol: TCP
+          env:
+            {{- if .Values.postgres.enabled }}
+            # POSTGRES_PASSWORD MUST appear before DATABASE_URL so $(POSTGRES_PASSWORD)
+            # expands correctly — Kubernetes only resolves $(VAR) for vars defined
+            # earlier in the same env list.
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "gambit.secretName" . }}
+                  key: POSTGRES_PASSWORD
+            {{- end }}
+            - name: DATABASE_URL
+              value: {{ include "gambit.databaseUrl" . | quote }}
+            - name: ACCESS_TOKEN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "gambit.secretName" . }}
+                  key: ACCESS_TOKEN_SECRET
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "gambit.configMapName" . }}
+                  key: PORT
+            - name: NODE_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "gambit.configMapName" . }}
+                  key: NODE_ENV
+          livenessProbe:
+            httpGet:
+              path: /v1/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /v1/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
