@@ -7,13 +7,13 @@ import type { Broadcast } from '../src/protocol';
 
 const TC: TimeControl = { initialMs: 300_000, incrementMs: 3_000, delayMs: 0, kind: 'increment' };
 
-function setup() {
+async function setup() {
   let clock = 1_000;
   const now = () => clock;
   const advance = (ms: number) => (clock += ms);
   const pubsub = new InMemoryPubSub();
   const authority = new GameAuthority(pubsub, now);
-  authority.createGame({
+  await authority.createGame({
     gameId: 'g1',
     timeControl: TC,
     players: { white: 'alice', black: 'bob' },
@@ -22,8 +22,8 @@ function setup() {
   return { authority, pubsub, advance, now };
 }
 
-test('createGame registers a game and exposes authoritative state', () => {
-  const { authority } = setup();
+test('createGame registers a game and exposes authoritative state', async () => {
+  const { authority } = await setup();
   assert.equal(authority.has('g1'), true);
   const s = authority.getState('g1');
   assert.equal(s.ply, 0);
@@ -33,8 +33,8 @@ test('createGame registers a game and exposes authoritative state', () => {
   assert.deepEqual(s.players, { white: 'alice', black: 'bob' });
 });
 
-test('state exposes authoritative legal destinations for the side to move', () => {
-  const { authority } = setup();
+test('state exposes authoritative legal destinations for the side to move', async () => {
+  const { authority } = await setup();
   const s = authority.getState('g1');
   const total = Object.values(s.legalMoves).reduce((n, d) => n + d.length, 0);
   assert.equal(total, 20, 'the opening position has 20 legal moves');
@@ -44,7 +44,7 @@ test('state exposes authoritative legal destinations for the side to move', () =
 });
 
 test('legal destinations follow the authoritative turn after a move', async () => {
-  const { authority } = setup();
+  const { authority } = await setup();
   await authority.apply('g1', 'alice', { kind: 'move', uci: 'e2e4' });
   const s = authority.getState('g1');
   assert.equal(s.turn, 'b');
@@ -53,7 +53,7 @@ test('legal destinations follow the authoritative turn after a move', async () =
 });
 
 test('legal destinations are empty once the game is over (checkmate)', async () => {
-  const { authority } = setup();
+  const { authority } = await setup();
   await authority.apply('g1', 'alice', { kind: 'move', uci: 'f2f3' });
   await authority.apply('g1', 'bob', { kind: 'move', uci: 'e7e5' });
   await authority.apply('g1', 'alice', { kind: 'move', uci: 'g2g4' });
@@ -63,22 +63,21 @@ test('legal destinations are empty once the game is over (checkmate)', async () 
   assert.deepEqual(s.legalMoves, {});
 });
 
-test('duplicate game id is refused', () => {
-  const { authority } = setup();
-  assert.throws(
-    () =>
-      authority.createGame({
-        gameId: 'g1',
-        timeControl: TC,
-        players: { white: 'x', black: 'y' },
-        rated: false,
-      }),
+test('duplicate game id is refused', async () => {
+  const { authority } = await setup();
+  await assert.rejects(
+    authority.createGame({
+      gameId: 'g1',
+      timeControl: TC,
+      players: { white: 'x', black: 'y' },
+      rated: false,
+    }),
     (e) => e instanceof AuthorityError && e.code === 'invalid_command',
   );
 });
 
 test('a legal move is applied and published as an authoritative broadcast', async () => {
-  const { authority, pubsub } = setup();
+  const { authority, pubsub } = await setup();
   const got: Broadcast[] = [];
   pubsub.subscribe(gameChannel('g1'), (m) => got.push(m));
 
@@ -97,7 +96,7 @@ test('a legal move is applied and published as an authoritative broadcast', asyn
 });
 
 test('moving out of turn is rejected with not_your_turn', async () => {
-  const { authority } = setup();
+  const { authority } = await setup();
   await assert.rejects(
     authority.apply('g1', 'bob', { kind: 'move', uci: 'e7e5' }),
     (e) => e instanceof AuthorityError && e.code === 'not_your_turn',
@@ -105,7 +104,7 @@ test('moving out of turn is rejected with not_your_turn', async () => {
 });
 
 test('an illegal move is rejected with illegal_move and does not change state', async () => {
-  const { authority } = setup();
+  const { authority } = await setup();
   await assert.rejects(
     authority.apply('g1', 'alice', { kind: 'move', uci: 'e2e5' }),
     (e) => e instanceof AuthorityError && e.code === 'illegal_move',
@@ -114,7 +113,7 @@ test('an illegal move is rejected with illegal_move and does not change state', 
 });
 
 test('a spectator (non-player) cannot issue commands', async () => {
-  const { authority } = setup();
+  const { authority } = await setup();
   await assert.rejects(
     authority.apply('g1', 'eve', { kind: 'move', uci: 'e2e4' }),
     (e) => e instanceof AuthorityError && e.code === 'not_a_player',
@@ -122,7 +121,7 @@ test('a spectator (non-player) cannot issue commands', async () => {
 });
 
 test('commands are serialized per game (submission order, no interleaving)', async () => {
-  const { authority } = setup();
+  const { authority } = await setup();
   // Fire White's and Black's first moves concurrently. The per-game lock must
   // apply them strictly in submission order — White's e4 first (legal), then
   // Black's e5 (now legal because it is Black's turn) — never interleaving into
@@ -140,7 +139,7 @@ test('commands are serialized per game (submission order, no interleaving)', asy
 });
 
 test('an out-of-turn move loses the race and is rejected', async () => {
-  const { authority } = setup();
+  const { authority } = await setup();
   // If Black tries to move first (submitted first), it is rejected because it
   // is White's turn; a subsequent White move still succeeds.
   const [black, whiteLate] = await Promise.allSettled([
@@ -153,7 +152,7 @@ test('an out-of-turn move loses the race and is rejected', async () => {
 });
 
 test('resignation ends the game and broadcasts a terminal event', async () => {
-  const { authority, pubsub } = setup();
+  const { authority, pubsub } = await setup();
   const got: Broadcast[] = [];
   pubsub.subscribe(gameChannel('g1'), (m) => got.push(m));
   const res = await authority.apply('g1', 'bob', { kind: 'resign' });
@@ -169,7 +168,7 @@ test('resignation ends the game and broadcasts a terminal event', async () => {
 });
 
 test('getMissedSince returns only broadcasts after the given ply', async () => {
-  const { authority } = setup();
+  const { authority } = await setup();
   for (const uci of ['e2e4', 'e7e5', 'g1f3']) {
     await authority.apply('g1', uci[1] === '2' || uci[1] === '1' ? 'alice' : 'bob', { kind: 'move', uci });
   }
@@ -180,8 +179,8 @@ test('getMissedSince returns only broadcasts after the given ply', async () => {
   assert.equal(authority.getMissedSince('g1', 3).length, 0);
 });
 
-test('unknown game raises unknown_game', () => {
-  const { authority } = setup();
+test('unknown game raises unknown_game', async () => {
+  const { authority } = await setup();
   assert.throws(
     () => authority.getState('nope'),
     (e) => e instanceof AuthorityError && e.code === 'unknown_game',
@@ -191,7 +190,7 @@ test('unknown game raises unknown_game', () => {
 // ── C1: MoveBroadcast carries legalMoves for the resulting position ────────
 
 test('C1: a move broadcast carries legal destinations for the new side to move', async () => {
-  const { authority, pubsub } = setup();
+  const { authority, pubsub } = await setup();
   const got: Broadcast[] = [];
   pubsub.subscribe(gameChannel('g1'), (m) => got.push(m));
 
@@ -209,7 +208,7 @@ test('C1: a move broadcast carries legal destinations for the new side to move',
 });
 
 test('C1: the mating move broadcast carries empty legalMoves', async () => {
-  const { authority, pubsub } = setup();
+  const { authority, pubsub } = await setup();
   const got: Broadcast[] = [];
   pubsub.subscribe(gameChannel('g1'), (m) => got.push(m));
 
@@ -237,7 +236,7 @@ test('C1: the mating move broadcast carries empty legalMoves', async () => {
 // ── M1: getState returns empty legalMoves for non-checkmate endings ────────
 
 test('M1: after resignation, getState legalMoves is {} while the position has moves', async () => {
-  const { authority } = setup();
+  const { authority } = await setup();
   // Play one move so the position is not the startpos (which also has moves).
   await authority.apply('g1', 'alice', { kind: 'move', uci: 'e2e4' });
   // Resign — the position still has legal moves, but the game is over.

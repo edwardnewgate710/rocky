@@ -47,12 +47,12 @@ const TC = { initialMs: 300_000, incrementMs: 3_000, delayMs: 0, kind: 'incremen
  * Broadcasts are encoded to JSON and then decoded by the GameSync's wire
  * mirror, so the full codec path is exercised.
  */
-function createAuthority() {
+async function createAuthority() {
   const pubsub = new InMemoryPubSub();
   let clock = 1_000;
   const now = () => (clock += 10);
   const authority = new GameAuthority(pubsub, now);
-  authority.createGame({
+  await authority.createGame({
     gameId: 'g1',
     timeControl: TC,
     players: { white: 'alice', black: 'bob' },
@@ -81,7 +81,7 @@ function setupClient(token: string) {
 const flush = () => new Promise((r) => setImmediate(r));
 
 test('R2#4 e2e: two-move live loop driven by real GameAuthority', async () => {
-  const { authority, pubsub } = createAuthority();
+  const { authority, pubsub } = await createAuthority();
   const { factory, sync } = setupClient('token-alice');
 
   // Wire up the full client stack.
@@ -183,7 +183,7 @@ test('R2#4 e2e: two-move live loop driven by real GameAuthority', async () => {
 });
 
 test('R2#4 e2e: resume after disconnect with real GameAuthority', async () => {
-  const { authority, pubsub } = createAuthority();
+  const { authority, pubsub } = await createAuthority();
   const { factory, sync } = setupClient('token-alice');
   const oracle = new AuthoritativeMoveOracle({
     getLegalMoves: () => sync.getState().legalMoves,

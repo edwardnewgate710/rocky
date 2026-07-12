@@ -1,0 +1,52 @@
+/**
+ * Redis-backed {@link PubSub} adapter for the deployable gateway service.
+ *
+ * Uses `ioredis` (a single dependency) with two separate connections:
+ * one for SUBSCRIBE (blocked by Redis protocol) and one for PUBLISH.
+ *
+ * The {@link RedisPubSub} class in `@chess-platform/realtime-gateway` implements
+ * the domain logic (origin tagging, self-delivery skip, ref-counted subscribe).
+ * This file is the **infrastructure binding** — it creates the `ioredis`
+ * connections and wires them into the domain adapter. This mirrors the
+ * EventLog/Postgres pattern from M14 increment 2: the adapter lives in the
+ * service, not in the dependency-free domain package.
+ *
+ * See ADR-0008 for the decision record.
+ */
+
+import { Redis } from 'ioredis';
+import { RedisPubSub, type PubSub } from '@chess-platform/realtime-gateway';
+
+export interface RedisPubSubOptions {
+  /** Redis URL (e.g. `redis://localhost:6379`). */
+  url: string;
+  /** Unique identifier for this gateway node. */
+  nodeId: string;
+  /** Optional Redis connection options (e.g. TLS, retry strategy). */
+  redisOptions?: Record<string, unknown>;
+}
+
+/**
+ * Create a {@link PubSub} backed by Redis pub/sub.
+ *
+ * Returns the {@link RedisPubSub} instance (which implements {@link PubSub})
+ * along with a `close` function that gracefully shuts down both Redis
+ * connections. The caller is responsible for calling `close` on shutdown.
+ */
+export function createRedisPubSub(opts: RedisPubSubOptions): {
+  pubsub: PubSub;
+  close: () => Promise<void>;
+} {
+  const baseOpts = { ...opts.redisOptions, lazyConnect: false };
+
+  // Two connections: one for SUBSCRIBE (blocked), one for PUBLISH.
+  const pub = new Redis(opts.url, baseOpts);
+  const sub = new Redis(opts.url, baseOpts);
+
+  const pubsub = new RedisPubSub(pub, sub, opts.nodeId);
+
+  return {
+    pubsub,
+    close: () => pubsub.close(),
+  };
+}

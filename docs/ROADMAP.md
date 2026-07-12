@@ -561,11 +561,43 @@ the services run together as an integrated system.
     pub/sub decisions.
   - ROADMAP updated; M14 marked 🚧.
 
+### Increment 2: Durable game authority (EventLog port + Postgres) ✅
+
+The game authority persists and rehydrates game state exactly from its event
+log via a durable `EventLog` port, with a Postgres adapter in the service layer
+— mirroring the `EventStore`/`persistence` pattern. The domain package stays
+dependency-free; the Postgres binding lives in the deployable service.
+
+### Increment 3: Redis pub/sub for multi-node fanout ✅
+
+`RedisPubSub` adapter implements the existing `PubSub` interface, backed by
+Redis pub/sub for cross-node broadcast fanout. Key design:
+
+- **Two Redis connections**: one for SUBSCRIBE (blocked), one for PUBLISH
+  (Redis protocol requirement).
+- **Origin node-id tagging + self-delivery skip**: each published message
+  carries the publishing node's id; nodes skip their own messages to prevent
+  double-fanout.
+- **Ref-counted subscribe/unsubscribe**: one Redis SUBSCRIBE per channel per
+  node, regardless of how many local subscribers the node has.
+- **`RedisLike` interface in the domain package**: the `realtime-gateway`
+  package depends only on a minimal `RedisLike` abstraction — the concrete
+  `ioredis` binding lives in `services/gateway/src/redis-pubsub.ts` (the
+  infrastructure seam, not the dependency-free domain package).
+- **`REDIS_URL` env gate**: when set, the gateway uses `RedisPubSub`; when
+  absent, falls back to `InMemoryPubSub` (single-node). Zero-config local dev
+  preserved.
+- **Docker Compose**: Redis 7 service with healthcheck and AOF persistence.
+- **9 hermetic tests** using a `FakeRedis` bus: cross-node delivery,
+  self-delivery skip, ref-counted subscribe/unsubscribe, multi-channel
+  independence, subscriberCount, close cleanup, three-node fanout, malformed
+  payload safety.
+- ADR-0008 records the decision.
+
 ### Deferred (later M14 increments)
 
 - Kubernetes manifests + Helm charts
 - Terraform IaC for cloud provisioning
-- Redis pub/sub for multi-node gateway scaling
 - Blue/green + canary deployment strategy
 - GitHub Actions CI/CD pipeline with deploy gates
 - 100k-user load testing + chaos validation

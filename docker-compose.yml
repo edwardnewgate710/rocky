@@ -15,6 +15,19 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    command: ["redis-server", "--appendonly", "yes"]
+
   api:
     build:
       context: .
@@ -41,14 +54,26 @@ services:
       context: .
       dockerfile: Dockerfile.gateway
     depends_on:
+      postgres:
+        condition: service_healthy
       api:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
+      # Shared durable event log: the gateway persists game events to (and
+      # rehydrates them from) the same Postgres store the API writes. The API
+      # runs migrations on startup, so the schema exists before the gateway
+      # starts (it waits on api being healthy).
+      DATABASE_URL: postgres://gambit:${POSTGRES_PASSWORD:-gambit_dev}@postgres:5432/gambit
       ACCESS_TOKEN_SECRET: ${ACCESS_TOKEN_SECRET:-dev-secret-change-me-in-production-at-least-32-bytes!!}
       ACCESS_TOKEN_TTL_SEC: "900"
       PORT: "4175"
       HOST: "0.0.0.0"
       NODE_ENV: production
+      # Redis pub/sub for multi-node fanout (M14 inc 3, ADR-0008).
+      REDIS_URL: redis://redis:6379
+      NODE_ID: gateway-${HOSTNAME}
     ports:
       - "${GATEWAY_PORT:-4175}:4175"
     healthcheck:
@@ -77,3 +102,4 @@ services:
 
 volumes:
   pgdata:
+  redisdata:

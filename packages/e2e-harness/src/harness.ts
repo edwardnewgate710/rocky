@@ -136,6 +136,7 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
       let body = '';
       req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
       req.on('end', () => {
+        void (async () => {
         try {
           const parsed = JSON.parse(body) as BridgeGameBody;
           const whiteId = parsed.whiteId;
@@ -149,7 +150,9 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
 
           const gameId = ids.next();
 
-          authority.createGame({
+          // Await creation (now durable/write-through) before seating the bot
+          // or responding, so a join cannot race ahead of the persisted game.
+          await authority.createGame({
             gameId,
             variant: 'standard',
             timeControl: {
@@ -177,6 +180,7 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ code: 'internal_error', message: (err as Error).message }));
         }
+        })();
       });
       return;
     }

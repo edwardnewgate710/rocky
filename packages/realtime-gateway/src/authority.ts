@@ -20,6 +20,7 @@ import { createHash } from 'node:crypto';
 import { Game, type GameEvent } from '@chess-platform/game';
 import type { Color, Position } from '@chess-platform/core';
 import type { CreateGameParams } from '@chess-platform/game';
+import { InMemoryEventLog, type EventLog } from './event-log';
 import type { Broadcast, LegalMoves, StateView } from './protocol';
 import { gameChannel, type PubSub } from './pubsub';
 
@@ -62,6 +63,8 @@ interface GameRecord {
   /** Serialization tail: commands await the previous command's completion. */
   lock: Promise<void>;
   broadcastSeq: number;
+  /** Durable-log head seq already persisted (`events.length - 1`). */
+  persistedSeq: number;
 }
 
 /** Short, stable hash of a FEN string for cheap desync detection. */
@@ -109,32 +112,116 @@ export class GameAuthority {
     private readonly pubsub: PubSub,
     /** Injectable clock so tests are deterministic; defaults to wall time. */
     private readonly now: () => number = () => Date.now(),
+    /**
+     * Durable event log. Every event is persisted before its broadcast fans
+     * out, so a game survives eviction/restart and rehydrates exactly. Defaults
+     * to a process-local in-memory log; the deployable service injects the
+     * Postgres store (`@chess-platform/persistence`).
+     */
+    private readonly store: EventLog = new InMemoryEventLog(),
   ) {}
 
-  /** Whether a live game exists. */
+  /** Whether a live game is currently held in the hot cache. */
   has(gameId: string): boolean {
     return this.games.has(gameId);
   }
 
   /**
-   * Create and register a new game. Throws if the id is already in use.
-   * `at` defaults to the authority's clock. The `GameCreated` event is logged;
-   * creation is not a broadcast (joiners receive the full state instead).
+   * Whether a game exists at all — in the hot cache or the durable log.
+   * Unlike {@link has} this consults the store, so an evicted/cold game counts.
    */
-  createGame(params: Omit<CreateGameParams, 'at'> & { at?: number }): StateView {
+  async knows(gameId: string): Promise<boolean> {
+    return this.games.has(gameId) || this.store.exists(gameId);
+  }
+
+  /**
+   * Create and register a new game. Throws if the id is already in use (in the
+   * hot cache or the durable log). `at` defaults to the authority's clock. The
+   * `GameCreated` event is persisted before the game is registered; creation is
+   * not a broadcast (joiners receive the full state instead).
+   */
+  async createGame(params: Omit<CreateGameParams, 'at'> & { at?: number }): Promise<StateView> {
     if (this.games.has(params.gameId)) {
       throw new AuthorityError('invalid_command', `game ${params.gameId} already exists`);
     }
     const at = params.at ?? this.now();
     const { game, events } = Game.create({ ...params, at });
+    // Persist first: an append against a fresh id fails if the game already
+    // exists in the durable log, so the store is the single source of truth for
+    // uniqueness across restarts.
+    let persistedSeq: number;
+    try {
+      persistedSeq = await this.store.append(params.gameId, -1, events);
+    } catch (err) {
+      throw new AuthorityError('invalid_command', `cannot create game ${params.gameId}: ${(err as Error).message}`);
+    }
     this.games.set(params.gameId, {
       game,
       events: [...events],
       broadcasts: [],
       lock: Promise.resolve(),
       broadcastSeq: 0,
+      persistedSeq,
     });
     return this.viewOf(game);
+  }
+
+  /**
+   * Ensure a game is resident in the hot cache, hydrating it from the durable
+   * log if it was evicted or the process restarted. Returns `false` if no such
+   * game exists anywhere. Safe to call repeatedly; a cache hit is a no-op.
+   */
+  async ensureLoaded(gameId: string): Promise<boolean> {
+    if (this.games.has(gameId)) return true;
+    const logged = await this.store.load(gameId);
+    if (logged.length === 0) return false;
+    this.games.set(gameId, this.rebuildRecord(gameId, logged));
+    return true;
+  }
+
+  /**
+   * Drop a game from the hot cache. Durable state is untouched, so the next
+   * access rehydrates it from the log. Intended for finished/idle games to
+   * bound memory; a no-op for an unknown id.
+   */
+  evict(gameId: string): void {
+    this.games.delete(gameId);
+  }
+
+  /**
+   * Rebuild a full {@link GameRecord} from a durable event log: the folded
+   * {@link Game}, plus the broadcast history replayed exactly as the live path
+   * produced it, so resume/catch-up ({@link getMissedSince}) works after a
+   * restart.
+   */
+  private rebuildRecord(gameId: string, logged: readonly { readonly event: GameEvent }[]): GameRecord {
+    const events = logged.map((e) => e.event);
+    const game = Game.fromEvents(events);
+    const broadcasts: BroadcastLogEntry[] = [];
+    let broadcastSeq = 0;
+    // Replay incrementally: a MovePlayed/GameEnded broadcast carries the
+    // fenHash + legalMoves of the position *after* that event, exactly as the
+    // live path computes them.
+    for (let i = 0; i < events.length; i++) {
+      const ev = events[i]!;
+      if (ev.type !== 'MovePlayed' && ev.type !== 'GameEnded') continue;
+      const upto = Game.fromEvents(events.slice(0, i + 1));
+      const snap = upto.snapshot();
+      const fh = fenHash(upto.fen);
+      const legal: LegalMoves = snap.status.over ? {} : legalMovesOf(snap.position);
+      const msg = this.toBroadcast(gameId, ev, fh, legal);
+      if (!msg) continue;
+      const seq = ++broadcastSeq;
+      broadcasts.push({ seq, ply: msg.t === 'move' ? msg.ply : null, msg });
+    }
+    return {
+      game,
+      events,
+      broadcasts,
+      lock: Promise.resolve(),
+      broadcastSeq,
+      persistedSeq: events.length - 1,
+    };
   }
 
   /** Current authoritative state view. Throws if the game is unknown. */
@@ -180,7 +267,7 @@ export class GameAuthority {
     return run;
   }
 
-  private applyNow(gameId: string, rec: GameRecord, userId: string, cmd: Command): ApplyResult {
+  private async applyNow(gameId: string, rec: GameRecord, userId: string, cmd: Command): Promise<ApplyResult> {
     const color = this.colorOf(gameId, userId);
     if (color === null) {
       throw new AuthorityError('not_a_player', 'only players may issue commands');
@@ -224,28 +311,41 @@ export class GameAuthority {
       }
     }
 
-    rec.game = result.game;
-    rec.events.push(...result.events);
-
     // Compute the resulting position's legal moves once per command.
     // For MovePlayed broadcasts this is the post-move position's side-to-move
     // legal moves (empty if the move ended the game). For GameEnded broadcasts
     // the game is over so legal moves are always {}.
-    const resultingSnap = rec.game.snapshot();
+    const resultingSnap = result.game.snapshot();
     const resultingLegalMoves: LegalMoves =
       resultingSnap.status.over ? {} : legalMovesOf(resultingSnap.position);
+    const resultingFenHash = fenHash(result.game.fen);
 
-    const resultingFenHash = fenHash(rec.game.fen);
-    const broadcasts: Broadcast[] = [];
+    const pending: BroadcastLogEntry[] = [];
+    let nextSeq = rec.broadcastSeq;
     for (const ev of result.events) {
       const msg = this.toBroadcast(gameId, ev, resultingFenHash, resultingLegalMoves);
       if (!msg) continue;
-      const seq = ++rec.broadcastSeq;
-      rec.broadcasts.push({ seq, ply: msg.t === 'move' ? msg.ply : null, msg });
-      broadcasts.push(msg);
+      pending.push({ seq: ++nextSeq, ply: msg.t === 'move' ? msg.ply : null, msg });
     }
-    // Publish only after state is committed, so a subscriber can never observe
-    // a broadcast for a state the authority has not yet recorded.
+
+    // Persist the emitted events *before* mutating the hot record or publishing,
+    // so a durable-log failure leaves the in-memory game and the store in lock
+    // step (nothing committed, nothing broadcast) rather than ahead of disk.
+    try {
+      rec.persistedSeq = await this.store.append(gameId, rec.persistedSeq, result.events);
+    } catch (err) {
+      throw new AuthorityError('invalid_command', `failed to persist events for ${gameId}: ${(err as Error).message}`);
+    }
+
+    // Commit to the hot record only after the durable append succeeded.
+    rec.game = result.game;
+    rec.events.push(...result.events);
+    rec.broadcasts.push(...pending);
+    rec.broadcastSeq = nextSeq;
+
+    // Publish only after state is durably committed, so a subscriber can never
+    // observe a broadcast for a state the authority has not persisted.
+    const broadcasts = pending.map((e) => e.msg);
     for (const msg of broadcasts) this.pubsub.publish(gameChannel(gameId), msg);
 
     return { events: result.events, broadcasts, state: this.viewOf(rec.game) };

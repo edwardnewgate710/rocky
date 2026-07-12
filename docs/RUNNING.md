@@ -66,9 +66,11 @@ server wrapping the `RealtimeGateway`. Token verification uses the same
 `AccessTokenService` to verify tokens locally (stateless HMAC, no API
 round-trip). This is the `TokenVerifier` port from ADR-0004.
 
-Pub/sub is in-memory (`InMemoryPubSub`) for single-node operation. Horizontal
-scale (Redis pub/sub, multi-node gateway) is a later M14 increment — documented
-in ADR-0007.
+The gateway persists game events to the shared Postgres event store, so games
+survive gateway restarts and rehydrate exactly. With `REDIS_URL` set (the Compose
+default), Redis pub/sub fans authoritative broadcasts across gateway nodes;
+without it, the gateway falls back to `InMemoryPubSub` for single-node use.
+See ADR-0007 (local stack/durability) and ADR-0008 (Redis fanout).
 
 Health check: `GET :4176/health` returns `{ status: "ok" }` (health runs on
 port+1, separate from the WebSocket port).
@@ -125,12 +127,11 @@ docker compose down -v       # stop + delete the Postgres data volume
 
 ## Architecture notes
 
-- **Single-node, local/development only:** This stack runs one instance of
-  each service. The gateway uses in-memory pub/sub, so all in-flight game
-  state is lost if the gateway container restarts — this is fine for local
-  development but not durable enough for production. Multi-node scaling
-  (Redis pub/sub, horizontal gateway replicas, sharded game authority with
-  durable state) is a later M14 increment.
+- **Durable authority + multi-node fanout:** The gateway persists the
+  authoritative game event log in Postgres, so game state survives gateway
+  restarts and rehydrates on demand. Redis pub/sub, enabled via `REDIS_URL`,
+  fans broadcasts across gateway replicas; omitting `REDIS_URL` selects the
+  in-memory single-node fallback. Sharded authority remains a later M14 step.
 - **No secrets in the repo:** All secrets come from environment variables.
   The `.env.example` has development-only defaults.
 - **Multi-stage Dockerfiles:** Each Dockerfile builds in a full Node image and

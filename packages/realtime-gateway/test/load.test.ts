@@ -58,7 +58,7 @@ test(`fanout stays under ${P99_BUDGET_MS}ms p99 with ${IDLE} idle + ${ACTIVE} ac
   const gateway = new RealtimeGateway(authority, pubsub, verifier, now);
 
   // Broadcast game with two players.
-  authority.createGame({
+  await authority.createGame({
     gameId: 'live',
     timeControl: TC,
     players: { white: 'w', black: 'b' },
@@ -80,7 +80,7 @@ test(`fanout stays under ${P99_BUDGET_MS}ms p99 with ${IDLE} idle + ${ACTIVE} ac
 
   // 50k idle connections spread over many idle games (2 players each).
   for (let g = 0; g < idleGames; g++) {
-    authority.createGame({
+    await authority.createGame({
       gameId: `idle-${g}`,
       timeControl: TC,
       players: { white: `iw${g}`, black: `ib${g}` },

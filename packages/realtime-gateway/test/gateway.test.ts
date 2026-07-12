@@ -12,7 +12,7 @@ const TC: TimeControl = { initialMs: 300_000, incrementMs: 3_000, delayMs: 0, ki
 /** Drain pending micro/macro tasks so async command application completes. */
 const flush = () => new Promise((r) => setImmediate(r));
 
-function harness() {
+async function harness() {
   let clock = 1_000;
   const now = () => (clock += 10);
   const pubsub = new InMemoryPubSub();
@@ -21,7 +21,7 @@ function harness() {
     .allow('token-alice', 'alice')
     .allow('token-bob', 'bob');
   const gateway = new RealtimeGateway(authority, pubsub, verifier, now);
-  authority.createGame({
+  await authority.createGame({
     gameId: 'g1',
     timeControl: TC,
     players: { white: 'alice', black: 'bob' },
@@ -35,8 +35,8 @@ function harness() {
   return { authority, pubsub, gateway, verifier, connect };
 }
 
-test('join assigns the correct role and returns current state', () => {
-  const { connect } = harness();
+test('join assigns the correct role and returns current state', async () => {
+  const { connect } = await harness();
   const alice = connect('a');
   alice.deliver({ t: 'join', gameId: 'g1', token: 'token-alice' });
   const joined = alice.last('joined');
@@ -49,8 +49,8 @@ test('join assigns the correct role and returns current state', () => {
   assert.equal(sam.last('joined')!.role, 'spectator');
 });
 
-test('presence reflects seats and spectator count', () => {
-  const { connect } = harness();
+test('presence reflects seats and spectator count', async () => {
+  const { connect } = await harness();
   const alice = connect('a');
   const bob = connect('b');
   const sam = connect('s');
@@ -64,7 +64,7 @@ test('presence reflects seats and spectator count', () => {
 });
 
 test('a legal move is broadcast to players and spectators', async () => {
-  const { connect } = harness();
+  const { connect } = await harness();
   const alice = connect('a');
   const bob = connect('b');
   const sam = connect('s');
@@ -86,7 +86,7 @@ test('a legal move is broadcast to players and spectators', async () => {
 });
 
 test('an illegal move is rejected referencing its clientSeq (rollback signal)', async () => {
-  const { connect } = harness();
+  const { connect } = await harness();
   const alice = connect('a');
   alice.deliver({ t: 'join', gameId: 'g1', token: 'token-alice' });
   alice.deliver({ t: 'move', gameId: 'g1', uci: 'e2e5', clientSeq: 7 });
@@ -97,7 +97,7 @@ test('an illegal move is rejected referencing its clientSeq (rollback signal)', 
 });
 
 test('stale or duplicate clientSeq is rejected', async () => {
-  const { connect } = harness();
+  const { connect } = await harness();
   const alice = connect('a');
   alice.deliver({ t: 'join', gameId: 'g1', token: 'token-alice' });
   alice.deliver({ t: 'move', gameId: 'g1', uci: 'e2e4', clientSeq: 1 });
@@ -109,7 +109,7 @@ test('stale or duplicate clientSeq is rejected', async () => {
 });
 
 test('a spectator cannot move; an unjoined connection cannot move', async () => {
-  const { connect } = harness();
+  const { connect } = await harness();
   const sam = connect('s');
   sam.deliver({ t: 'join', gameId: 'g1' }); // no token → anonymous spectator
   sam.deliver({ t: 'move', gameId: 'g1', uci: 'e2e4', clientSeq: 1 });
@@ -123,7 +123,7 @@ test('a spectator cannot move; an unjoined connection cannot move', async () => 
 });
 
 test('reconnect: rejoin restores seat + state, resume replays missed moves', async () => {
-  const { connect } = harness();
+  const { connect } = await harness();
   const alice = connect('a');
   const bob = connect('b');
   alice.deliver({ t: 'join', gameId: 'g1', token: 'token-alice' });
@@ -158,7 +158,7 @@ test('reconnect: rejoin restores seat + state, resume replays missed moves', asy
 });
 
 test('draw offer pushes state; acceptance ends the game as a draw', async () => {
-  const { connect } = harness();
+  const { connect } = await harness();
   const alice = connect('a');
   const bob = connect('b');
   alice.deliver({ t: 'join', gameId: 'g1', token: 'token-alice' });
@@ -176,15 +176,19 @@ test('draw offer pushes state; acceptance ends the game as a draw', async () => 
   assert.equal(ended.termination, 'agreement');
 });
 
-test('join to an unknown game is rejected', () => {
-  const { connect } = harness();
+test('join to an unknown game is rejected', async () => {
+  const { connect } = await harness();
   const c = connect('c');
   c.deliver({ t: 'join', gameId: 'ghost', token: 'token-alice' });
+  // A game absent from the hot cache might still exist in the durable log, so
+  // rejecting an unknown game consults the store — the reject lands on the next
+  // microtask, after the store confirms the game truly does not exist.
+  await new Promise((r) => setImmediate(r));
   assert.equal(c.last('reject')!.code, 'unknown_game');
 });
 
-test('ping is answered with a pong carrying a server timestamp', () => {
-  const { connect } = harness();
+test('ping is answered with a pong carrying a server timestamp', async () => {
+  const { connect } = await harness();
   const c = connect('c');
   c.deliver({ t: 'ping', ts: 42 });
   const pong = c.last('pong')!;
@@ -193,7 +197,7 @@ test('ping is answered with a pong carrying a server timestamp', () => {
 });
 
 test('closing the last connection frees the room', async () => {
-  const { connect, gateway } = harness();
+  const { connect, gateway } = await harness();
   const alice = connect('a');
   alice.deliver({ t: 'join', gameId: 'g1', token: 'token-alice' });
   assert.equal(gateway.roomCount, 1);
@@ -203,8 +207,8 @@ test('closing the last connection frees the room', async () => {
 
 // ── C4: Token-authenticated join ───────────────────────────────────────────
 
-test('C4: join with a valid token seats the token user, not a client-asserted id', () => {
-  const { connect } = harness();
+test('C4: join with a valid token seats the token user, not a client-asserted id', async () => {
+  const { connect } = await harness();
   const alice = connect('a');
   // The token determines identity — there is no userId field to assert.
   alice.deliver({ t: 'join', gameId: 'g1', token: 'token-alice' });
@@ -212,8 +216,8 @@ test('C4: join with a valid token seats the token user, not a client-asserted id
   assert.equal(joined.role, 'white', 'token-alice maps to alice who is white');
 });
 
-test('C4: join with an invalid token is rejected with unauthorized', () => {
-  const { connect } = harness();
+test('C4: join with an invalid token is rejected with unauthorized', async () => {
+  const { connect } = await harness();
   const c = connect('evil');
   c.deliver({ t: 'join', gameId: 'g1', token: 'forged-token' });
   const rej = c.last('reject')!;
@@ -223,8 +227,8 @@ test('C4: join with an invalid token is rejected with unauthorized', () => {
   assert.equal(c.last('presence'), undefined);
 });
 
-test('C4: join without a token is seated as an anonymous spectator', () => {
-  const { connect } = harness();
+test('C4: join without a token is seated as an anonymous spectator', async () => {
+  const { connect } = await harness();
   const sam = connect('s');
   sam.deliver({ t: 'join', gameId: 'g1' });
   const joined = sam.last('joined')!;
@@ -232,7 +236,7 @@ test('C4: join without a token is seated as an anonymous spectator', () => {
 });
 
 test('C4: a spectator (no token) cannot move', async () => {
-  const { connect } = harness();
+  const { connect } = await harness();
   const sam = connect('s');
   sam.deliver({ t: 'join', gameId: 'g1' });
   sam.deliver({ t: 'move', gameId: 'g1', uci: 'e2e4', clientSeq: 1 });
@@ -240,8 +244,8 @@ test('C4: a spectator (no token) cannot move', async () => {
   assert.equal(sam.last('reject')!.code, 'not_a_player');
 });
 
-test('C4: identity comes from the token, not from any client claim', () => {
-  const { connect, verifier } = harness();
+test('C4: identity comes from the token, not from any client claim', async () => {
+  const { connect, verifier } = await harness();
   // Register a token for 'bob' but try to join as alice's seat — the gateway
   // should seat bob (black), not alice (white), because identity is from the token.
   verifier.allow('token-bob-2', 'bob');

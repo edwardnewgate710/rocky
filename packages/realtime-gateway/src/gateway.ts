@@ -121,11 +121,25 @@ export class RealtimeGateway {
    * join is rejected with `unauthorized`.
    */
   private onJoin(session: Session, gameId: string, token: string | undefined): void {
-    if (!this.authority.has(gameId)) {
-      this.reject(session, gameId, null, 'unknown_game', `no such game ${gameId}`);
+    // Hot path: a resident game joins synchronously (no microtask deferral), so
+    // the `joined` frame is emitted in the same turn the client's message
+    // arrives. Only a game evicted from the cache (or lost to a restart) takes
+    // the async hydration path below.
+    if (this.authority.has(gameId)) {
+      this.completeJoin(session, gameId, token);
       return;
     }
+    void this.authority.ensureLoaded(gameId).then((loaded) => {
+      if (!loaded) {
+        this.reject(session, gameId, null, 'unknown_game', `no such game ${gameId}`);
+        return;
+      }
+      this.completeJoin(session, gameId, token);
+    });
+  }
 
+  /** Finish a join once the game is known to be resident in the authority. */
+  private completeJoin(session: Session, gameId: string, token: string | undefined): void {
     // Derive identity from the token. No token → anonymous spectator.
     let userId: string;
     if (token !== undefined) {

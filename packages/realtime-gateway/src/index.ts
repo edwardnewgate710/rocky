@@ -22,6 +22,8 @@ export { GameAuthority, AuthorityError, fenHash } from './authority';
 export type { Command, AuthorityErrorCode, ApplyResult } from './authority';
 export { InMemoryPubSub, gameChannel } from './pubsub';
 export type { PubSub, Unsubscribe } from './pubsub';
+export { InMemoryEventLog, EventLogConcurrencyError } from './event-log';
+export type { EventLog, LoggedEvent } from './event-log';
 export { InMemoryConnection } from './transport';
 export type { Connection } from './transport';
 export { Room } from './room';
