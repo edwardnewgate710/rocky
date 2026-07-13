@@ -35,7 +35,7 @@ dependency-free domain packages** tested with the built-in `node --test` runner.
 | M6 | `@chess-platform/web` + `@chess-platform/e2e-harness` | ✅ playable frontend; Playwright full-game e2e + Lighthouse a11y ≥ 0.95 in CI | 239 + 2 |
 | M7 | `@chess-platform/ai-orchestrator` | ✅ AI routing/failover/caching + engine-grounded prompts | 114 (2 key-gated) |
 | M8 | `@chess-platform/ai-features` | ✅ 8 features (Move Explanation → Voice Coach); Tournament Commentator deferred to M9 | 137 (16 key-gated) |
-| **M14** | compose + `services/gateway` + `deploy/helm` | 🚧 **increments 1–4 done:** local compose stack · durable game authority (write-through `EventLog` → Postgres, evict/rehydrate) · Redis pub/sub multi-node fanout (ADR-0008) · Helm chart + kubeconform CI gate (ADR-0009) | — |
+| **M14** | compose + `services/gateway` + `deploy/helm` | 🚧 **increments 1–4 complete:** local compose stack · durable game authority (write-through `EventLog` → Postgres, evict/rehydrate) · Redis pub/sub multi-node fanout (ADR-0008) · Helm chart + kubeconform CI gate (ADR-0009) · threefold-repetition fix (en-passant legality in repetition key) | — |
 
 **Whole repo: 701 total tests, 0 failures** (skips: 2 Postgres-gated + 18
 API-key-gated). Strict TS, lint clean. **CI is active** (`.github/workflows/ci.yml`, 5 jobs:
