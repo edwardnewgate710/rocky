@@ -24,9 +24,9 @@ services:
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
-      timeout: 3s
+      timeout: 30s
       retries: 10
-    command: ["redis-server", "--appendonly", "yes"]
+      command: ["redis-server", "--appendonly", "yes"]
 
   api:
     build:
@@ -73,7 +73,6 @@ services:
       NODE_ENV: production
       # Redis pub/sub for multi-node fanout (M14 inc 3, ADR-0008).
       REDIS_URL: redis://redis:6379
-      NODE_ID: gateway-${HOSTNAME}
     ports:
       - "${GATEWAY_PORT:-4175}:4175"
     healthcheck:

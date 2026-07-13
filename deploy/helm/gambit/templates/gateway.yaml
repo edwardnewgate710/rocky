@@ -121,7 +121,8 @@ spec:
               value: {{ include "gambit.redisUrl" . | quote }}
             {{- /*
               NODE_ID from the pod name via the Kubernetes downward API.
-              Mirrors compose's NODE_ID: gateway-${HOSTNAME}.
+              In Compose, NODE_ID is intentionally omitted so the gateway
+              falls back to its random UUID (`gw-${randomUUID()}`).
             */}}
             - name: NODE_ID
               valueFrom:

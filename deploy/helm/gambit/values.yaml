@@ -6,7 +6,7 @@
 # This chart packages the existing docker-compose stack (postgres, redis, api,
 # gateway, web) for Kubernetes. It mirrors the compose wiring:
 #   - api + gateway share the same DATABASE_URL (Postgres event store)
-#   - gateway gets REDIS_URL + NODE_ID (pod name via downward API)
+#   - gateway gets REDIS_URL + NODE_ID (pod name via downward API; in Compose, NODE_ID is omitted and the gateway uses a random UUID fallback)
 #   - web proxies /v1 -> api and /ws -> gateway (nginx, inside the image)
 #
 # CRITICAL CONSTRAINT — Gateway replicas:
