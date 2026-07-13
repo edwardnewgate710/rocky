@@ -63,17 +63,17 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 | M | Package | Result | Tests |
 |---|---|---|---|
 | **M1** ✅ | `@chess-platform/core` | Variant-aware, perft-verified rules engine (0x88, immutable `Position`, FEN/UCI/SAN, 8 variants, terminal detection) | 16/16 |
-| **M2** ✅ | `@chess-platform/game` | Event-sourced `Game` aggregate + deterministic clocks; exact reconstruction via `Game.fromEvents` (~1.17ms/game) | 18/18 (+1 spec skip) |
-| **M3** ✅ | `@chess-platform/realtime-gateway` | Server-authoritative WS protocol, `GameAuthority`, rooms/presence/fanout, resume, latency comp; `PubSub`/`Transport` seams; token-based auth (`TokenVerifier` port, ADR-0004) | 37/37 |
+| **M2** ✅ | `@chess-platform/game` | Event-sourced `Game` aggregate + deterministic clocks; threefold repetition; exact reconstruction via `Game.fromEvents` (~1.17ms/game) | 23/23 |
+| **M3** ✅ | `@chess-platform/realtime-gateway` | Server-authoritative WS protocol, `GameAuthority`, rooms/presence/fanout, resume, latency comp; `PubSub`/`Transport` seams; token-based auth (`TokenVerifier` port, ADR-0004); durable `EventLog` port + Redis `PubSub` (M14) | 56/56 |
 | **M4a** ✅ | `@chess-platform/persistence` | Durable append-only event store (in-memory + Postgres), migrations, repositories, Glicko-2, UUIDv7 | 14/14 (+2 DB-gated) |
 | **M4b** ✅ | `@chess-platform/api` | Stateless REST + identity (scrypt/`PasswordHasher`, HMAC access tokens, rotating refresh tokens, RBAC), seeks/ratings/games, published OpenAPI 3.1 | 48/48 |
 | **M5** ✅ | `@chess-platform/engine` | Provider-agnostic UCI engine bridge: `AnalysisProvider`/`EngineManager`/`EnginePool`/`EngineInstance`/`EnginePlugin`/`AnalysisCache`/`EngineTransport`; capability discovery, priority scheduler, watchdog/cancellation, crash→hot-replacement, circuit breaker, graceful drain, health | 50/50 |
-| **M6** ✅ | `@chess-platform/web` | Playable web frontend: interactive board (drag/click, premoves, promotion), REST + WS client, GameSync, lobby, profile, theme, PWA, a11y; Playwright e2e + Lighthouse gate passed | 210+ |
+| **M6** ✅ | `@chess-platform/web` | Playable web frontend: interactive board (drag/click, premoves, promotion), REST + WS client, GameSync, lobby, profile, theme, PWA, a11y; Playwright e2e + Lighthouse gate passed | 239 |
 | **M7** ✅ | `@chess-platform/ai-orchestrator` | Provider-agnostic AI orchestration: `AiProvider`/`AiOrchestrator`/`ProviderRegistry`/`RoutingStrategy`/`ResponseCache`/`RateLimiter`/`HealthTracker`/`BenchmarkRunner`; OpenAI + Anthropic adapters; engine grounding | 114 |
-| **M8** ✅ | `@chess-platform/ai-features` | 8 AI features: Move Explainer, Puzzle Generator, Mistake Predictor, Opening Explorer, Endgame Trainer, Coach, Study Partner, Voice Coach; Tournament Commentator deferred to M9 | 100+ |
+| **M8** ✅ | `@chess-platform/ai-features` | 8 AI features: Move Explainer, Puzzle Generator, Mistake Predictor, Opening Explorer, Endgame Trainer, Coach, Study Partner, Voice Coach; Tournament Commentator deferred to M9 | 137 (16 key-gated) |
 | **M14** 🚧 | Deployable services | Docker Compose local stack (inc 1), durable EventLog + Postgres (inc 2), Redis pub/sub multi-node fanout (inc 3), Kubernetes Helm chart (inc 4); Terraform/blue-green/load-test deferred | — |
 
-**Whole-repo total: ~600 tests across 10 packages + 2 services.** Strict TS, zero errors, lint clean. CI active (Node 22/24, Postgres integration, M6 Playwright + Lighthouse acceptance).
+**Whole-repo total: 701 tests, 0 failures, across 10 packages + the gateway service** (skips: 2 Postgres-gated + 18 API-key-gated). Strict TS, zero errors, lint clean. CI active — 5 jobs: build+typecheck+test on Node 22/24, Postgres integration, M6 Playwright + Lighthouse acceptance, helm lint + kubeconform.
 
 ## 3. Architecture summary (as-built)
 
@@ -159,9 +159,8 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 - **Authority ↔ EventStore wiring:** connect `GameAuthority` to the durable
   `EventStore` — **deferred to the deployable service in M14** per DATABASE.md §3.3;
   the seam is ready.
-- **Core (M1):** per-variant perft suites; threefold repetition via position-hash
-  history; Chess960 castling-by-file; PGN parser.
-- **Game (M2):** threefold-repetition in the aggregate; per-variant timeout rules.
+- **Core (M1):** per-variant perft suites; Chess960 castling-by-file; PGN parser.
+- **Game (M2):** per-variant timeout rules.
 - **Realtime (M3):** ship `ws` + Redis production adapters (M14); MessagePack
   frames; per-user connection quotas / backpressure (M12).
 - **Token-storage tradeoff (web):** Refresh tokens currently persist in
@@ -280,7 +279,7 @@ analysis cache remains a future **ADR-0003** (would amend `DATABASE.md`).
 
 **Milestones M1–M8 complete; M14 increments 1–4 landed.** The platform has:
 - 10 packages (core, game, realtime-gateway, persistence, api, engine, web, e2e-harness, ai-orchestrator, ai-features) + 3 deployable services (api, gateway, web).
-- ~600 tests, 0 failures; strict TS + lint clean; CI active.
+- 701 tests, 0 failures (see §2 for the per-package breakdown); strict TS + lint clean; CI active.
 - Docker Compose local stack with Postgres, Redis, API, gateway, and web.
 - Durable game authority (EventLog port + Postgres wiring).
 - Redis pub/sub for multi-node gateway fanout (RedisPubSub adapter, origin tagging, ref-counted subscribe).
@@ -290,7 +289,7 @@ analysis cache remains a future **ADR-0003** (would amend `DATABASE.md`).
 
 **Next priorities (in order):**
 1. **M4 identity hardening:** WebAuthn/passkeys (table exists), password reset + email verification, login rate limiting/lockout.
-2. **Small deferred correctness:** threefold repetition (unskip test in game.test.ts, implement position-hash history), PGN parser, per-variant timeout rules.
+2. **Small deferred correctness:** PGN parser, per-variant timeout rules.
 3. **M9 Tournaments & broadcast:** Arena + Swiss + round-robin, pairings, tiebreaks, live broadcast.
 4. **Remaining M14:** Terraform, blue/green, CI/CD pipeline, 100k-user load testing, secrets management (external-secrets), sticky per-game routing / sharded authority for horizontal gateway scaling.
 

@@ -23,8 +23,9 @@ The correctness-critical foundation everything else depends on.
   positions (startpos d4=197,281; Kiwipete d3=97,862; +3 edge cases). 14/14 tests
   pass; strict TypeScript with zero errors.
 
-**Known follow-ups (tracked):** perft suites for each variant; threefold
-repetition via position-hash history; Chess960 castling-by-file; PGN parser.
+**Known follow-ups (tracked):** perft suites for each variant; Chess960
+castling-by-file; PGN parser. (Threefold repetition: ✅ implemented in the
+M2 `Game` aggregate — see Milestone 2.)
 
 ---
 
@@ -47,17 +48,16 @@ repetition via position-hash history; Chess960 castling-by-file; PGN parser.
 
 **Follow-ups (tracked):** per-variant timeout material rules.
 
-**Scheduled — threefold repetition (M3 from Review #01, updated in Review #02):**
-Position-hash history in the `Game` aggregate (the aggregate owns history;
-`core` stays stateless), emitting `GameEnded('threefold')` on the third
-occurrence. Acceptance criteria:
-- The Nf3/Ng1 shuffle (1.Nf3 Nf6 2.Ng1 Ng8 3.Nf3 Nf6 4.Ng1 Ng8) ends the
-  game as a draw by threefold repetition at the third occurrence of the
-  starting position.
-- En-passant and castling-rights differences do **not** count as repeats.
-- The acceptance test is in `packages/game/test/game.test.ts` (currently
-  `test.skip` — remove the `.skip` when the implementation lands).
-Target: next increment after Review #02 fixes.
+**✅ Threefold repetition (implemented):** Position-hash history in the `Game`
+aggregate (the aggregate owns history; `core` stays stateless), emitting
+`GameEnded('threefold')` on the third occurrence. The repetition key uses the
+first four FEN fields (piece placement, side to move, castling rights, en-passant
+square) — halfmove/fullmove counters are excluded. The history is part of
+`GameState` and survives `Game.fromEvents` replay. Automatic termination on the
+3rd occurrence is the accepted scope (a claim-based flow like FIDE OTB is out of
+scope). 23/23 tests pass (0 skips); the formerly skipped acceptance test now
+passes. En-passant and castling-rights differences correctly do **not** count as
+repeats.
 
 ## ✅ Milestone 3 — Realtime Gateway (`@chess-platform/realtime-gateway`)
 

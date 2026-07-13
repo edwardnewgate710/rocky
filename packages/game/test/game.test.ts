@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { Game } from '../src/game';
+import { Game, repetitionKey } from '../src/game';
 import type { GameEvent } from '../src/events';
 import type { TimeControl } from '../src/clock';
 
@@ -154,22 +154,9 @@ test('scale: reconstruct many games from their logs quickly', () => {
   assert.ok(ms < 20_000);
 });
 
-// ── M3: Threefold repetition acceptance test ───────────────────────────────
-// This is the acceptance test the review requires. It defines the expected
-// behavior: when the same position occurs three times (with the same side to
-// move, castling rights, and en-passant possibilities), the game ends as a
-// draw by threefold repetition. The implementation may land as its own
-// increment, but this test enters the suite now as the specification.
-//
-// The test plays the classic Nf3/Ng1 shuffle: 1.Nf3 Nf6 2.Ng1 Ng8 3.Nf3 Nf6
-// 4.Ng1 Ng8 — after Black's 4...Ng8 the starting position has appeared three
-// times (initial, after 2...Ng8, after 4...Ng8) with White to move.
-//
-// SKIPPED until threefold detection is implemented in the Game aggregate.
-// See ROADMAP §Milestone 2 "Scheduled — threefold repetition" for acceptance
-// criteria. Remove the .skip when the implementation lands.
+// ── Threefold repetition ───────────────────────────────────────────────────
 
-test.skip('M3 (acceptance): threefold repetition ends the game as a draw', () => {
+test('M3 (acceptance): threefold repetition ends the game as a draw', () => {
   let { game } = newGame();
   let t = 1_000;
   // 1.Nf3 Nf6 2.Ng1 Ng8 3.Nf3 Nf6 4.Ng1 Ng8
@@ -185,4 +172,69 @@ test.skip('M3 (acceptance): threefold repetition ends the game as a draw', () =>
     assert.equal(game.status.result, '1/2-1/2');
     assert.equal(game.status.winner, null);
   }
+});
+
+test('threefold: en-passant difference is NOT a repeat', () => {
+  // The repetition key includes the en-passant square (FEN field 4).
+  // After 1.e4 the position has EP square e3; after 1.e3 there is no EP square.
+  // These produce different keys even though the piece placement is almost the same.
+  const fenAfterE4 = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1';
+  const fenAfterE3 = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
+  assert.notEqual(
+    repetitionKey(fenAfterE4),
+    repetitionKey(fenAfterE3),
+    'positions with different EP squares must have different repetition keys',
+  );
+});
+
+test('threefold: castling-rights difference is NOT a repeat', () => {
+  // If White plays Ra1-a2-a1, the Q-side castling right is lost.
+  // The piece placement returns to the original, but castling rights differ.
+  // Demonstrate via FENs: same placement, different castling.
+  const fenWithCastling = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+  const fenWithoutQCastling = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w Kkq - 0 1';
+  assert.notEqual(
+    repetitionKey(fenWithCastling),
+    repetitionKey(fenWithoutQCastling),
+    'positions with different castling rights must have different repetition keys',
+  );
+});
+
+test('threefold: event-sourcing invariant — fromEvents reconstructs the same draw', () => {
+  let { game, events } = newGame();
+  const log: GameEvent[] = [...events];
+  let t = 1_000;
+  const moves = ['g1f3', 'g8f6', 'f3g1', 'f6g8', 'g1f3', 'g8f6', 'f3g1', 'f6g8'];
+  for (const uci of moves) {
+    const res = game.playMove(uci, (t += 2_000));
+    game = res.game;
+    log.push(...res.events);
+  }
+  const rebuilt = Game.fromEvents(log);
+  // The rebuilt game must have the same status (byte-identical object).
+  assert.deepEqual(rebuilt.status, game.status);
+  assert.equal(rebuilt.status.over, true);
+  if (rebuilt.status.over) {
+    assert.equal(rebuilt.status.termination, 'threefold');
+    assert.equal(rebuilt.status.result, '1/2-1/2');
+    assert.equal(rebuilt.status.winner, null);
+  }
+  // Repetition history must also match.
+  assert.deepEqual(rebuilt.snapshot().repetition, game.snapshot().repetition);
+});
+
+test('threefold: a game that ends by threefold rejects further commands', () => {
+  let { game } = newGame();
+  let t = 1_000;
+  const moves = ['g1f3', 'g8f6', 'f3g1', 'f6g8', 'g1f3', 'g8f6', 'f3g1', 'f6g8'];
+  for (const uci of moves) {
+    ({ game } = game.playMove(uci, (t += 2_000)));
+  }
+  assert.equal(game.status.over, true);
+  // Further moves are rejected.
+  assert.throws(() => game.playMove('g1f3', (t += 2_000)), /already over/);
+  // Resignation is rejected.
+  assert.throws(() => game.resign('w', (t += 1_000)), /already over/);
+  // Draw offer is rejected.
+  assert.throws(() => game.offerDraw('w', (t += 1_000)), /already over/);
 });

@@ -43,6 +43,12 @@ export type GameStatus =
       readonly winner: Color | null;
     };
 
+/**
+ * Map from repetition key → occurrence count. Part of {@link GameState} so it
+ * survives `Game.fromEvents` replay (the reducer builds it, not a side channel).
+ */
+export type RepetitionHistory = ReadonlyMap<string, number>;
+
 /** Immutable snapshot of a game's derived state. */
 export interface GameState {
   readonly gameId: string;
@@ -57,6 +63,8 @@ export interface GameState {
   readonly moves: readonly MovePlayedEvent[];
   readonly status: GameStatus;
   readonly drawOffer: Color | null;
+  /** Position-key → occurrence count, for threefold-repetition detection. */
+  readonly repetition: RepetitionHistory;
 }
 
 /** Parameters to create a new game. */
@@ -71,6 +79,18 @@ export interface CreateGameParams {
 }
 
 const ONGOING: GameStatus = { over: false };
+
+/**
+ * Derive a repetition key from a FEN string. Uses only the first four fields
+ * (piece placement, side to move, castling rights, en-passant square) — the
+ * halfmove and fullmove counters are excluded so that positions that differ
+ * only in move counters still count as repeats. Positions that differ in
+ * castling rights or en-passant availability are NOT repeats.
+ */
+export function repetitionKey(fen: string): string {
+  const fields = fen.split(' ');
+  return `${fields[0]} ${fields[1]} ${fields[2]} ${fields[3]}`;
+}
 
 export class Game {
   private constructor(private readonly state: GameState) {}
@@ -162,6 +182,19 @@ export class Game {
     const posStatus = nextPos.status();
     if (posStatus.over) {
       events.push(this.terminalEventFor(posStatus, at));
+    } else {
+      // Check threefold repetition: if the new position's key has occurred
+      // 3 times (including this one), the game ends as a draw.
+      const key = repetitionKey(nextPos.fen());
+      if ((s.repetition.get(key) ?? 0) + 1 >= 3) {
+        events.push({
+          type: 'GameEnded',
+          result: '1/2-1/2',
+          termination: 'threefold',
+          winner: null,
+          at,
+        });
+      }
     }
 
     return { game: Game.applyAll(this, events), events };
@@ -314,6 +347,9 @@ export class Game {
     switch (event.type) {
       case 'GameCreated': {
         const position = Position.fromFen(event.initialFen, event.variant);
+        // Seed the repetition history with the initial position (count = 1).
+        const rep = new Map<string, number>();
+        rep.set(repetitionKey(position.fen()), 1);
         return {
           gameId: event.gameId,
           variant: event.variant,
@@ -327,12 +363,17 @@ export class Game {
           moves: [],
           status: ONGOING,
           drawOffer: null,
+          repetition: rep,
         };
       }
       case 'MovePlayed': {
         if (state === null) throw new GameError('MovePlayed before GameCreated');
         const position = state.position.play(event.uci);
         const charged = charge(state.clock, event.by, event.at, state.timeControl, event.moveTimeMs);
+        // Update repetition history: increment the count for the new position's key.
+        const key = repetitionKey(position.fen());
+        const rep = new Map(state.repetition);
+        rep.set(key, (rep.get(key) ?? 0) + 1);
         return {
           ...state,
           position,
@@ -340,6 +381,7 @@ export class Game {
           ply: event.ply,
           moves: [...state.moves, event],
           drawOffer: null,
+          repetition: rep,
         };
       }
       case 'DrawOffered': {

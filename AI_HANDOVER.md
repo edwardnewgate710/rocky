@@ -27,7 +27,7 @@ dependency-free domain packages** tested with the built-in `node --test` runner.
 | Milestone | Package(s) | Status | Tests |
 |---|---|---|---|
 | M1 | `@chess-platform/core` | ✅ rules engine (perft-verified) | 16 |
-| M2 | `@chess-platform/game` | ✅ event-sourced game aggregate + clocks | 19 (1 spec skip) |
+| M2 | `@chess-platform/game` | ✅ event-sourced game aggregate + clocks + threefold repetition | 23 |
 | M3 | `@chess-platform/realtime-gateway` | ✅ realtime WS edge + token auth + durable `EventLog` port + `PubSub` (in-memory & Redis) | 56 |
 | M4a | `@chess-platform/persistence` | ✅ durable event store + repositories + Glicko-2 | 16 (2 DB-gated) |
 | M4b | `@chess-platform/api` | ✅ stateless REST + identity (scrypt, rotating refresh, RBAC) | 48 |
@@ -37,7 +37,7 @@ dependency-free domain packages** tested with the built-in `node --test` runner.
 | M8 | `@chess-platform/ai-features` | ✅ 8 features (Move Explanation → Voice Coach); Tournament Commentator deferred to M9 | 137 (16 key-gated) |
 | **M14** | compose + `services/gateway` + `deploy/helm` | 🚧 **increments 1–4 done:** local compose stack · durable game authority (write-through `EventLog` → Postgres, evict/rehydrate) · Redis pub/sub multi-node fanout (ADR-0008) · Helm chart + kubeconform CI gate (ADR-0009) | — |
 
-**Whole repo: 697 total tests, 0 failures** (skips: 1 threefold spec + 2 Postgres-gated + 18
+**Whole repo: 701 total tests, 0 failures** (skips: 2 Postgres-gated + 18
 API-key-gated). Strict TS, lint clean. **CI is active** (`.github/workflows/ci.yml`, 5 jobs:
 build+typecheck+test on Node 22/24, Postgres integration, M6 Playwright+Lighthouse acceptance,
 helm lint+kubeconform).
@@ -84,8 +84,6 @@ ADR, approved before code) — see `DATABASE.md` (M4), `ENGINE_BRIDGE.md` (M5), 
 
 ## Known tech debt (tracked, updated 2026-07-12)
 
-- **Threefold repetition** — spec'd, `test.skip` in `packages/game/test/game.test.ts`;
-  implement position-hash history in the `Game` aggregate and unskip.
 - **Identity hardening (M4 follow-up)** — WebAuthn/passkeys (table exists, flow doesn't),
   password reset + email verification, per-account login rate limiting.
 - **Client refresh-token storage** — currently `localStorage`; move to httpOnly cookie in M12.
