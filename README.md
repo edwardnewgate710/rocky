@@ -263,9 +263,9 @@ The web frontend for the platform — lobby, board UI, game play, and
 analysis views. Built with a typed component layer and the realtime gateway
 client.
 
-- **In progress (M6):** lobby and game views, board rendering, realtime
+- **Complete (M6):** lobby and game views, board rendering, realtime
   connection management.
-- 159 tests pass (unit + component); strict TS, zero errors.
+- 239 tests pass (unit + component); strict TS, zero errors.
 
 ```bash
 cd packages/web && npm install && npm run build && npm test
