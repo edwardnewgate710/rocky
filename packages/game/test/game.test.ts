@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Game, repetitionKey } from '../src/game';
+import { Position } from '@chess-platform/core';
 import type { GameEvent } from '../src/events';
 import type { TimeControl } from '../src/clock';
 
@@ -174,30 +175,71 @@ test('M3 (acceptance): threefold repetition ends the game as a draw', () => {
   }
 });
 
-test('threefold: en-passant difference is NOT a repeat', () => {
-  // The repetition key includes the en-passant square (FEN field 4).
-  // After 1.e4 the position has EP square e3; after 1.e3 there is no EP square.
-  // These produce different keys even though the piece placement is almost the same.
-  const fenAfterE4 = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1';
-  const fenAfterE3 = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
+test('threefold: fake en-passant square normalises to dash', () => {
+  // After 1.e4, the FEN carries ep square e3, but no black pawn is adjacent
+  // to the e4 pawn, so no legal en-passant capture exists. The position must
+  // be equivalent to the same position with ep "-".
+  const fenWithFakeEp = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1';
+  const fenNoEp = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
+  const posWithFakeEp = Position.fromFen(fenWithFakeEp);
+  const posNoEp = Position.fromFen(fenNoEp);
+  assert.equal(
+    repetitionKey(posWithFakeEp.snapshot()),
+    repetitionKey(posNoEp.snapshot()),
+    'positions with a non-legal ep square must normalise to "-"',
+  );
+});
+
+test('threefold: genuine legal en-passant makes positions different', () => {
+  // After 1.e4 d5 2.e5 f5, White's e5 pawn can capture f6 en-passant.
+  // The FEN has ep square f6, and the en-passant capture IS legal.
+  const fenWithLegalEp = 'rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 3';
+  const fenNoEp = 'rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 3';
+  const posWithEp = Position.fromFen(fenWithLegalEp);
+  const posNoEp = Position.fromFen(fenNoEp);
   assert.notEqual(
-    repetitionKey(fenAfterE4),
-    repetitionKey(fenAfterE3),
-    'positions with different EP squares must have different repetition keys',
+    repetitionKey(posWithEp.snapshot()),
+    repetitionKey(posNoEp.snapshot()),
+    'positions with a genuinely legal en-passant must have different repetition keys',
   );
 });
 
 test('threefold: castling-rights difference is NOT a repeat', () => {
   // If White plays Ra1-a2-a1, the Q-side castling right is lost.
   // The piece placement returns to the original, but castling rights differ.
-  // Demonstrate via FENs: same placement, different castling.
   const fenWithCastling = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
   const fenWithoutQCastling = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w Kkq - 0 1';
+  const posWithCastling = Position.fromFen(fenWithCastling);
+  const posWithoutQCastling = Position.fromFen(fenWithoutQCastling);
   assert.notEqual(
-    repetitionKey(fenWithCastling),
-    repetitionKey(fenWithoutQCastling),
+    repetitionKey(posWithCastling.snapshot()),
+    repetitionKey(posWithoutQCastling.snapshot()),
     'positions with different castling rights must have different repetition keys',
   );
+});
+
+test('threefold: regression — e5 ep square does not block repetition', () => {
+  let { game } = newGame();
+  let t = 1_000;
+  // 1.Nf3 e5 2.Ng1 Nf6 3.Nf3 Ng8 4.Ng1 Nf6 5.Nf3 Ng8
+  // The position after e5 appears three times (after moves 1, 3, 5
+  // of the sequence). The first occurrence carries ep square e6,
+  // but no white pawn can capture en-passant, so it normalises to "-".
+  const moves = [
+    'g1f3', 'e7e5', 'f3g1', 'g8f6',
+    'g1f3', 'f6g8', 'f3g1', 'g8f6',
+    'g1f3', 'f6g8',
+  ];
+  for (const uci of moves) {
+    const result = game.playMove(uci, (t += 2_000));
+    game = result.game;
+  }
+  assert.equal(game.status.over, true, 'game should be over after threefold repetition');
+  if (game.status.over) {
+    assert.equal(game.status.termination, 'threefold');
+    assert.equal(game.status.result, '1/2-1/2');
+    assert.equal(game.status.winner, null);
+  }
 });
 
 test('threefold: event-sourcing invariant — fromEvents reconstructs the same draw', () => {

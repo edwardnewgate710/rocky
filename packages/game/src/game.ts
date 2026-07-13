@@ -9,7 +9,7 @@
  * `@chess-platform/core`, never by clients.
  */
 
-import { Position, opposite, parseFen, typeOf, type Color, type Variant } from '@chess-platform/core';
+import { Position, opposite, parseFen, typeOf, type Color, type Variant, repetitionKey } from '@chess-platform/core';
 import {
   charge,
   hasFlagged,
@@ -80,17 +80,8 @@ export interface CreateGameParams {
 
 const ONGOING: GameStatus = { over: false };
 
-/**
- * Derive a repetition key from a FEN string. Uses only the first four fields
- * (piece placement, side to move, castling rights, en-passant square) — the
- * halfmove and fullmove counters are excluded so that positions that differ
- * only in move counters still count as repeats. Positions that differ in
- * castling rights or en-passant availability are NOT repeats.
- */
-export function repetitionKey(fen: string): string {
-  const fields = fen.split(' ');
-  return `${fields[0]} ${fields[1]} ${fields[2]} ${fields[3]}`;
-}
+// Re-exported for backward compatibility with tests and consumers.
+export { repetitionKey } from '@chess-platform/core';
 
 export class Game {
   private constructor(private readonly state: GameState) {}
@@ -185,7 +176,7 @@ export class Game {
     } else {
       // Check threefold repetition: if the new position's key has occurred
       // 3 times (including this one), the game ends as a draw.
-      const key = repetitionKey(nextPos.fen());
+      const key = repetitionKey(nextPos.snapshot());
       if ((s.repetition.get(key) ?? 0) + 1 >= 3) {
         events.push({
           type: 'GameEnded',
@@ -349,7 +340,7 @@ export class Game {
         const position = Position.fromFen(event.initialFen, event.variant);
         // Seed the repetition history with the initial position (count = 1).
         const rep = new Map<string, number>();
-        rep.set(repetitionKey(position.fen()), 1);
+        rep.set(repetitionKey(position.snapshot()), 1);
         return {
           gameId: event.gameId,
           variant: event.variant,
@@ -371,7 +362,7 @@ export class Game {
         const position = state.position.play(event.uci);
         const charged = charge(state.clock, event.by, event.at, state.timeControl, event.moveTimeMs);
         // Update repetition history: increment the count for the new position's key.
-        const key = repetitionKey(position.fen());
+        const key = repetitionKey(position.snapshot());
         const rep = new Map(state.repetition);
         rep.set(key, (rep.get(key) ?? 0) + 1);
         return {
