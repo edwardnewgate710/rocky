@@ -86,6 +86,57 @@ jobs:
       - name: Test persistence against Postgres
         run: npm test --workspace @chess-platform/persistence
 
+  # Builds, typechecks, and tests the deployable gateway service. It is NOT a
+  # root workspace, so the build-test job above never compiles it — this job is
+  # its only CI coverage. The single-owner command-routing suite (ADR-0010)
+  # runs against a real Redis.
+  gateway-service:
+    name: gateway service (build + Redis integration)
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # This job runs repository-controlled build/lint/test scripts and
+          # needs no authenticated Git access, so don't leave the token in
+          # .git/config for those scripts to read.
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: npm
+
+      - name: Install workspace dependencies (reproducible)
+        run: npm ci
+
+      - name: Build domain packages (dependency order)
+        run: npm run build
+
+      - name: Install gateway service dependencies (reproducible)
+        run: npm ci
+        working-directory: services/gateway
+
+      - name: Build + typecheck gateway service
+        run: npm run build && npm run lint
+        working-directory: services/gateway
+
+      - name: Test gateway service against Redis
+        run: npm test
+        working-directory: services/gateway
+
   # M6 acceptance gate: Playwright e2e (full game vs bot + vs human) +
   # Lighthouse a11y audit (score must be >= 95). Runs the e2e harness
   # (in-memory API + gateway + bot) alongside vite preview so the specs

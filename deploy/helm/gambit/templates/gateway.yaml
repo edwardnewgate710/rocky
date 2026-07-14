@@ -1,8 +1,9 @@
 {{/*
 Gateway Deployment + Service.
 
-CRITICAL: replicas MUST be 1. Game-command ownership is NOT coordinated across
-gateway replicas. See values.yaml comments and docs/adr/0009-kubernetes-helm.md.
+M14 inc 5: replicas defaults to 2. Game-command ownership is coordinated
+via a Redis-based ownership registry (ADR-0010). See values.yaml comments
+and docs/adr/0010-game-authority-ownership.md.
 
 - Exposes the WS port (4175) and the health port (4176 = PORT+1).
 - Shares DATABASE_URL with the API (same Secret/ConfigMap source).
@@ -128,6 +129,22 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            # M14 inc 5: command forwarding and ownership lease config
+            - name: CMD_FORWARD_TIMEOUT_MS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "gambit.configMapName" . }}
+                  key: CMD_FORWARD_TIMEOUT_MS
+            - name: OWNERSHIP_LEASE_TTL_SEC
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "gambit.configMapName" . }}
+                  key: OWNERSHIP_LEASE_TTL_SEC
+            - name: OWNERSHIP_RENEWAL_INTERVAL_SEC
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "gambit.configMapName" . }}
+                  key: OWNERSHIP_RENEWAL_INTERVAL_SEC
           livenessProbe:
             httpGet:
               path: /health

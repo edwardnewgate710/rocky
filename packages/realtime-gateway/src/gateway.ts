@@ -23,6 +23,7 @@
  */
 
 import { GameAuthority, AuthorityError, type Command } from './authority';
+import { LocalCommandRouter, type CommandRouter } from './command-router';
 import { Room } from './room';
 import { gameChannel, type PubSub, type Unsubscribe } from './pubsub';
 import type { Connection } from './transport';
@@ -64,13 +65,26 @@ const SIMPLE_TO_COMMAND: Record<SimpleCommandMessage['t'], Command['kind']> = {
 export class RealtimeGateway {
   private readonly sessions = new Map<string, Session>();
   private readonly rooms = new Map<string, RoomEntry>();
+  /**
+   * Command router: directs game commands to the owning node. Defaults to
+   * {@link LocalCommandRouter} (direct authority.apply) for single-node and
+   * backward compatibility. Multi-node deployments inject a Redis-backed
+   * router that forwards non-owned commands (see ADR-0010).
+   */
+  private readonly commandRouter: CommandRouter;
 
   constructor(
     private readonly authority: GameAuthority,
     private readonly pubsub: PubSub,
     private readonly tokenVerifier: TokenVerifier,
     private readonly now: () => number = () => Date.now(),
-  ) {}
+    commandRouter?: CommandRouter,
+  ) {
+    // Fall back to local routing when no router is injected. This preserves
+    // backward compatibility: existing callers that don't pass a router get
+    // the same direct-authority behavior.
+    this.commandRouter = commandRouter ?? new LocalCommandRouter(this.authority);
+  }
 
   /** Register a new connection and wire its lifecycle handlers. */
   handleConnection(conn: Connection): void {
@@ -185,8 +199,8 @@ export class RealtimeGateway {
 
     // Fire the (per-game serialized) command; broadcasts fan out via pub/sub.
     // A rejection is reported back referencing this exact clientSeq.
-    void this.authority
-      .apply(msg.gameId, membership.userId, { kind: 'move', uci: msg.uci })
+    void this.commandRouter
+      .route(msg.gameId, membership.userId, { kind: 'move', uci: msg.uci })
       .catch((err: unknown) => {
         this.reject(session, msg.gameId, msg.clientSeq, codeOf(err), messageOf(err));
       });
@@ -203,8 +217,8 @@ export class RealtimeGateway {
       return;
     }
     const kind = SIMPLE_TO_COMMAND[msg.t];
-    void this.authority
-      .apply(msg.gameId, membership.userId, { kind } as Command)
+    void this.commandRouter
+      .route(msg.gameId, membership.userId, { kind } as Command)
       .then((result) => {
         // Commands that emit no move/terminal broadcast (draw offer/decline)
         // still change shared state; push an authoritative snapshot so both

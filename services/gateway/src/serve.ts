@@ -18,12 +18,19 @@
  *   to the shared Postgres event store; when absent, falls back to in-memory
  *   (state lost on restart).
  * - `REDIS_URL` (optional) — when set, uses Redis pub/sub for multi-node
- *   fanout; when absent, falls back to `InMemoryPubSub` (single-node).
- * - `NODE_ID` (optional) — unique node identifier for Redis origin tagging;
- *   defaults to a random UUID.
+ *   fanout AND Redis-based command routing (ownership + forwarding);
+ *   when absent, falls back to single-node (InMemoryPubSub + LocalCommandRouter).
+ * - `NODE_ID` (optional) — unique node identifier for Redis origin tagging
+ *   and ownership registry; defaults to a random UUID.
+ * - `CMD_FORWARD_TIMEOUT_MS` (default 5000) — timeout for forwarded command
+ *   responses when this node is not the owner.
+ * - `OWNERSHIP_LEASE_TTL_SEC` (default 30) — TTL for game ownership leases.
+ * - `OWNERSHIP_RENEWAL_INTERVAL_SEC` (default 15) — how often the owner
+ *   renews its leases.
  *
  * Durable event log: ADR-0007 (M14 inc 2).
  * Redis pub/sub: ADR-0008 (M14 inc 3).
+ * Command routing: ADR-0010 (M14 inc 5).
  */
 
 import { createServer } from 'node:http';
@@ -32,7 +39,9 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import {
   GameAuthority,
   InMemoryPubSub,
+  LocalCommandRouter,
   RealtimeGateway,
+  type CommandRouter,
   type Connection,
   type ClientMessage,
   type ServerMessage,
@@ -58,7 +67,7 @@ class SharedSecretTokenVerifier implements TokenVerifier {
   }
 
   verify(token: string): { readonly userId: string } | null {
-    const identity = this.tokens.identity(token);
+    const identity = this.tokens.identify(token);
     return identity ? { userId: identity.userId } : null;
   }
 }
@@ -70,6 +79,9 @@ async function main(): Promise<void> {
   const ttlSec = Number(process.env['ACCESS_TOKEN_TTL_SEC'] ?? 15 * 60);
   const redisUrl = process.env['REDIS_URL'];
   const nodeId = process.env['NODE_ID'] ?? `gw-${randomUUID()}`;
+  const cmdForwardTimeoutMs = Number(process.env['CMD_FORWARD_TIMEOUT_MS'] ?? 5000);
+  const ownershipLeaseTtlSec = Number(process.env['OWNERSHIP_LEASE_TTL_SEC'] ?? 30);
+  const ownershipRenewalIntervalSec = Number(process.env['OWNERSHIP_RENEWAL_INTERVAL_SEC'] ?? 15);
 
   if (!secret || secret.length < 32) {
     console.error('ACCESS_TOKEN_SECRET is required and must be at least 32 bytes');
@@ -77,12 +89,6 @@ async function main(): Promise<void> {
   }
 
   // --- Durable event log (M14 inc 2) ---
-  // When DATABASE_URL is set the authority persists every game event to the
-  // shared Postgres event store (the same log the API writes/reads), so games
-  // survive a gateway restart and rehydrate on the next join. Without it the
-  // authority falls back to its in-memory log — fine for local single-node dev,
-  // but game state is lost on restart. The Postgres EventStore satisfies the
-  // gateway's EventLog port structurally, so no adapter is needed.
   let store: EventLog | undefined;
   if (process.env['DATABASE_URL']) {
     const { createPool, PostgresEventStore } = await import('@chess-platform/persistence/pg');
@@ -109,8 +115,46 @@ async function main(): Promise<void> {
   }
 
   const authority = new GameAuthority(pubsub, () => Date.now(), store);
+
+  // --- Command router: local (single-node) or Redis (multi-node) (M14 inc 5) ---
+  let commandRouter: CommandRouter;
+  let ownershipRegistry: { releaseAll: () => Promise<void>; startRenewal: () => void; stopRenewal: () => void; ownedCount: number } | undefined;
+  let commandConsumer: { stop: () => void } | undefined;
+
+  if (redisUrl) {
+    const { OwnershipRegistry } = await import('./ownership.js');
+    const { RedisCommandRouter, OwnerCommandConsumer } = await import('./command-forwarder.js');
+    const { Redis } = await import('ioredis');
+    // Separate Redis connection for command queues / ownership so BLPOP
+    // never blocks the pub/sub publish connection path.
+    const cmdRedis = new Redis(redisUrl, { lazyConnect: false, maxRetriesPerRequest: null });
+    const registry = new OwnershipRegistry({
+      redis: cmdRedis,
+      nodeId,
+      leaseTtlSec: ownershipLeaseTtlSec,
+      renewalIntervalSec: ownershipRenewalIntervalSec,
+    });
+    // Consumer must exist before the router so ownership hooks can start it.
+    const consumer = new OwnerCommandConsumer(authority, cmdRedis);
+    commandRouter = new RedisCommandRouter({
+      authority,
+      registry,
+      redis: cmdRedis,
+      nodeId,
+      forwardTimeoutMs: cmdForwardTimeoutMs,
+      consumer,
+    });
+    commandConsumer = consumer;
+    ownershipRegistry = registry;
+    registry.startRenewal();
+    console.log(`[realtime-gateway] command routing: Redis (nodeId=${nodeId}, forwardTimeout=${cmdForwardTimeoutMs}ms, leaseTtl=${ownershipLeaseTtlSec}s)`);
+  } else {
+    commandRouter = new LocalCommandRouter(authority);
+    console.log('[realtime-gateway] command routing: local (single-node)');
+  }
+
   const tokenVerifier = new SharedSecretTokenVerifier(secret, ttlSec);
-  const gateway = new RealtimeGateway(authority, pubsub, tokenVerifier, () => Date.now());
+  const gateway = new RealtimeGateway(authority, pubsub, tokenVerifier, () => Date.now(), commandRouter);
 
   // --- HTTP health server ---
   const healthServer = createServer((req, res) => {
@@ -121,6 +165,8 @@ async function main(): Promise<void> {
         service: 'realtime-gateway',
         pubsub: redisUrl ? 'redis' : 'memory',
         eventLog: process.env['DATABASE_URL'] ? 'postgres' : 'memory',
+        commandRouting: redisUrl ? 'redis' : 'local',
+        ownedGames: ownershipRegistry?.ownedCount ?? 0,
       }));
       return;
     }
@@ -151,14 +197,11 @@ async function main(): Promise<void> {
     gateway.handleConnection(conn);
   });
 
-  // Wait for the WS listener to actually bind before exposing /health, so a
-  // failed bind (e.g. port in use) fails startup instead of reporting healthy.
   await new Promise<void>((resolve, reject) => {
     wss.once('listening', resolve);
     wss.once('error', reject);
   });
 
-  // Health server on port+1
   const healthPort = port + 1;
   await new Promise<void>((resolve, reject) => {
     healthServer.once('error', reject);
@@ -168,7 +211,8 @@ async function main(): Promise<void> {
   console.log(`[realtime-gateway] WS  listening on ws://${host}:${port}`);
   console.log(`[realtime-gateway] Health on http://${host}:${healthPort}/health`);
 
-  // Graceful shutdown — close active client sockets first, then pub/sub.
+  // Graceful shutdown — close active client sockets first, then command
+  // routing, then pub/sub.
   let shuttingDown = false;
   const shutdown = (): void => {
     if (shuttingDown) return;
@@ -179,6 +223,11 @@ async function main(): Promise<void> {
     }
     wss.close(() => {
       healthServer.close(async () => {
+        if (commandConsumer) commandConsumer.stop();
+        if (ownershipRegistry) {
+          ownershipRegistry.stopRenewal();
+          await ownershipRegistry.releaseAll();
+        }
         if (closePubSub) await closePubSub();
         process.exit(0);
       });

@@ -15,7 +15,28 @@
  */
 
 import { Redis } from 'ioredis';
-import { RedisPubSub, type PubSub } from '@chess-platform/realtime-gateway';
+import { RedisPubSub, type PubSub, type RedisLike } from '@chess-platform/realtime-gateway';
+
+/**
+ * Adapt an ioredis client to the domain's minimal {@link RedisLike} port.
+ * ioredis's `subscribe`/`unsubscribe` are heavily overloaded and return
+ * `Promise<number>`; the port only needs the channel-oriented subset, so we
+ * wrap explicitly (instead of an unsafe cast) to keep the boundary type-safe.
+ */
+function toRedisLike(client: Redis): RedisLike {
+  return {
+    publish: (channel, message) => client.publish(channel, message),
+    subscribe: (channel) => client.subscribe(channel).then(() => undefined),
+    unsubscribe: (channel) => client.unsubscribe(channel).then(() => undefined),
+    on: (event, listener) => {
+      client.on(event, listener);
+    },
+    off: (event, listener) => {
+      client.off(event, listener);
+    },
+    quit: () => client.quit().then(() => undefined),
+  };
+}
 
 export interface RedisPubSubOptions {
   /** Redis URL (e.g. `redis://localhost:6379`). */
@@ -43,7 +64,7 @@ export function createRedisPubSub(opts: RedisPubSubOptions): {
   const pub = new Redis(opts.url, baseOpts);
   const sub = new Redis(opts.url, baseOpts);
 
-  const pubsub = new RedisPubSub(pub, sub, opts.nodeId);
+  const pubsub = new RedisPubSub(toRedisLike(pub), toRedisLike(sub), opts.nodeId);
 
   return {
     pubsub,

@@ -2,14 +2,15 @@
   "name": "@chess-platform/gateway-service",
   "version": "0.1.0",
   "private": true,
-  "description": "Deployable realtime gateway service: WebSocket server wrapping RealtimeGateway with shared-secret token verification, durable event log, and Redis pub/sub for multi-node fanout.",
+  "description": "Deployable realtime gateway service: WebSocket server wrapping RealtimeGateway with shared-secret token verification, durable event log, Redis pub/sub for multi-node fanout, and single-owner command routing (ADR-0010).",
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/serve.js",
+    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/test/**/*.test.js\"",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist dist-test"
   },
   "engines": {
     "node": ">=22"

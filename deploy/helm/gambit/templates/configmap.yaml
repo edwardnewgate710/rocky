@@ -14,3 +14,6 @@ data:
   GATEWAY_PORT: {{ .Values.config.gatewayPort | quote }}
   GATEWAY_HOST: {{ .Values.config.gatewayHost | quote }}
   ACCESS_TOKEN_TTL_SEC: {{ .Values.config.accessTokenTtlSec | quote }}
+  CMD_FORWARD_TIMEOUT_MS: {{ .Values.config.cmdForwardTimeoutMs | quote }}
+  OWNERSHIP_LEASE_TTL_SEC: {{ .Values.config.ownershipLeaseTtlSec | quote }}
+  OWNERSHIP_RENEWAL_INTERVAL_SEC: {{ .Values.config.ownershipRenewalIntervalSec | quote }}

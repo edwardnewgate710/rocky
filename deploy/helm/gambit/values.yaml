@@ -1,7 +1,7 @@
 # ===========================================================================
 # Gambit Helm Chart — values.yaml
 # ===========================================================================
-# M14 Increment 4: Kubernetes manifests + Helm chart.
+# M14 Increment 5: Safe horizontal scaling for the WebSocket gateway.
 #
 # This chart packages the existing docker-compose stack (postgres, redis, api,
 # gateway, web) for Kubernetes. It mirrors the compose wiring:
@@ -9,20 +9,19 @@
 #   - gateway gets REDIS_URL + NODE_ID (pod name via downward API; in Compose, NODE_ID is omitted and the gateway uses a random UUID fallback)
 #   - web proxies /v1 -> api and /ws -> gateway (nginx, inside the image)
 #
-# CRITICAL CONSTRAINT — Gateway replicas:
-# ----------------------------------------
-# The gateway MUST default to replicas: 1. Game-command OWNERSHIP is NOT
-# coordinated across gateway replicas today. If two players in the same game
-# land on different gateway replicas, the non-owning replica's in-memory
-# authority goes stale and its optimistic event-store append fails, so that
-# player's moves are spuriously rejected.
+# Gateway replicas:
+# -----------------
+# M14 Increment 5: The gateway now defaults to replicas: 2. Game-command
+# ownership is coordinated across replicas via a Redis-based ownership registry
+# (ADR-0010). Non-owner nodes forward commands to the owner instead of
+# spuriously rejecting them. Redis Pub/Sub remains broadcast-only (ADR-0008).
 #
-# Scaling the gateway beyond 1 replica requires sticky per-game routing (all
-# connections for a game routed to one replica) or sharded authority — a LATER
-# M14 increment. Do NOT set gateway.replicas > 1 until that work is done.
-# See docs/adr/0009-kubernetes-helm.md for the full rationale.
+# Prerequisite: REDIS_URL must be set when replicas > 1. The gateway validates
+# this at startup and exits with an error if REDIS_URL is absent.
 #
-# The api and web are stateless and MAY default to 2 replicas.
+# See docs/adr/0010-game-authority-ownership.md for the full design.
+#
+# The api and web are stateless and default to 2 replicas.
 # ===========================================================================
 
 # --- Image references (parameterized; reuse existing Dockerfiles) ---
@@ -58,11 +57,11 @@ api:
       memory: 512Mi
 
 # --- Gateway service ---
-# CRITICAL: replicas MUST be 1. See the constraint note at the top of this file
-# and docs/adr/0009-kubernetes-helm.md. Do NOT increase without sticky per-game
-# routing or sharded authority (a later M14 increment).
+# M14 inc 5: replicas defaults to 2. Single-owner authority with command
+# forwarding (ADR-0010) ensures correct move processing across nodes.
+# REDIS_URL is required when replicas > 1.
 gateway:
-  replicas: 1  # DO NOT increase beyond 1 — see constraint above
+  replicas: 2  # M14 inc 5: safe to scale (single-owner authority + command forwarding, ADR-0010)
   port: 4175
   healthPort: 4176  # port+1, same as compose
   resources:
@@ -161,3 +160,7 @@ config:
   gatewayPort: "4175"
   gatewayHost: "0.0.0.0"
   accessTokenTtlSec: "900"
+  # M14 inc 5: command forwarding and ownership lease config
+  cmdForwardTimeoutMs: "5000"
+  ownershipLeaseTtlSec: "30"
+  ownershipRenewalIntervalSec: "15"
