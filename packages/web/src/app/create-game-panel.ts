@@ -181,6 +181,14 @@ export class CreateGamePanel {
     timeField.append(this.customBox);
 
     // --- Mode ---
+    // Mode-neutral hint (reads correctly under either choice) tied to both
+    // options via aria-describedby so screen readers hear the implication.
+    const modeHint = el(
+      d,
+      'p',
+      { class: 'cg-hint', id: 'cg-mode-hint' },
+      'Rated games affect your rating; casual games don’t.',
+    );
     const modeField = el(
       d,
       'fieldset',
@@ -193,8 +201,11 @@ export class CreateGamePanel {
         this.segment('cg-mode', 'casual', 'Casual', initialMode === 'casual'),
         this.segment('cg-mode', 'rated', 'Rated', initialMode === 'rated'),
       ),
-      el(d, 'p', { class: 'cg-hint' }, 'Rated games affect your rating.'),
+      modeHint,
     );
+    for (const radio of modeField.querySelectorAll('input[name="cg-mode"]')) {
+      radio.setAttribute('aria-describedby', 'cg-mode-hint');
+    }
 
     // --- Color ---
     const colorSeg = el(d, 'div', { class: 'cg-segmented' });
