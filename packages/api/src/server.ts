@@ -15,6 +15,7 @@ import type { ApiDependencies } from './deps';
 import { HttpError } from './http/errors';
 import type { Identity } from './http/context';
 import { Router } from './http/router';
+import { withSecurity } from './http/security';
 import { buildRouter } from './routes';
 import type { OpenApiDocument, OpenApiInfo } from './openapi/spec';
 import { buildOpenApiDocument } from './openapi/spec';
@@ -68,11 +69,19 @@ export function createApiServer(deps: ApiDependencies, options: ApiServerOptions
     return identity;
   };
 
-  const handler = router.toListener({
+  const routerListener = router.toListener({
     authenticate,
     maxBodyBytes: deps.config.maxBodyBytes,
     trustProxy: deps.config.trustProxy,
     newRequestId: () => deps.ids.next(),
+  });
+
+  // Wrap the router listener with security headers and CORS enforcement.
+  // Security headers and CORS preflight short-circuit happen before the router
+  // is invoked, so they apply to every response including 404/405/422/500.
+  const handler = withSecurity(routerListener, {
+    cors: deps.config.cors,
+    enableHsts: deps.config.enableHsts,
   });
 
   return {

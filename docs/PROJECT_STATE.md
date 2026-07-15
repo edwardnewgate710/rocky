@@ -71,9 +71,10 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 | **M6** ✅ | `@chess-platform/web` | Playable web frontend: interactive board (drag/click, premoves, promotion), REST + WS client, GameSync, lobby, profile, theme, PWA, a11y; Playwright e2e + Lighthouse gate passed | 239 |
 | **M7** ✅ | `@chess-platform/ai-orchestrator` | Provider-agnostic AI orchestration: `AiProvider`/`AiOrchestrator`/`ProviderRegistry`/`RoutingStrategy`/`ResponseCache`/`RateLimiter`/`HealthTracker`/`BenchmarkRunner`; OpenAI + Anthropic adapters; engine grounding | 114 |
 | **M8** ✅ | `@chess-platform/ai-features` | 8 AI features: Move Explainer, Puzzle Generator, Mistake Predictor, Opening Explorer, Endgame Trainer, Coach, Study Partner, Voice Coach; Tournament Commentator deferred to M9 | 137 (16 key-gated) |
+| **M12** 🚧 | Security hardening | **Increment 1:** CORS policy + security response headers for the API (`withSecurity` middleware — ACAO allowlist, credentials-aware, preflight short-circuit, `X-Content-Type-Options`/`Referrer-Policy`/`X-Frame-Options`/CSP/CORP/HSTS); ADR-0011 Accepted | 66/66 (+18 new) |
 | **M14** 🚧 | Deployable services | Docker Compose local stack (inc 1), durable EventLog + Postgres (inc 2), Redis pub/sub multi-node fanout (inc 3), Kubernetes Helm chart (inc 4); Terraform/blue-green/load-test deferred | — |
 
-**Whole-repo total: 701 tests, 0 failures, across 10 packages + the gateway service** (skips: 2 Postgres-gated + 18 API-key-gated). Strict TS, zero errors, lint clean. CI active — 5 jobs: build+typecheck+test on Node 22/24, Postgres integration, M6 Playwright + Lighthouse acceptance, helm lint + kubeconform.
+**Whole-repo total: 724 tests, 0 failures, across 10 packages + the gateway service** (skips: 2 Postgres-gated + 18 API-key-gated). Strict TS, zero errors, lint clean. CI active — 6 jobs: build+typecheck+test on Node 22/24, Postgres integration, M6 Playwright + Lighthouse acceptance, helm lint + kubeconform, gateway service (build + Redis integration).
 
 ## 3. Architecture summary (as-built)
 
@@ -174,12 +175,13 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 ## 6. Technical debt (status)
 
 1. **`LICENSE` — ✅ DONE** (AGPL-3.0, commit `d295ad2`).
-2. **CI — ✅ ACTIVE.** `.github/workflows/ci.yml` runs five jobs on every push/PR
+2. **CI — ✅ ACTIVE.** `.github/workflows/ci.yml` runs **six** jobs on every push/PR
    to `main`: build + typecheck + test on Node 22.x/24.x, the Postgres
    integration job (persistence against a real database), the M6 acceptance
-   gate (Playwright full-game e2e + Lighthouse a11y ≥ 0.95), and the M14 Helm
+   gate (Playwright full-game e2e + Lighthouse a11y ≥ 0.95), the M14 Helm
    job (`helm lint` + `helm template | kubeconform` for both the bundled and
-   external-datastore renders). The formerly staged copies (`docs/ci/ci.yml`,
+   external-datastore renders), and the **gateway service** job (build + Redis
+   integration tests). The formerly staged copies (`docs/ci/ci.yml`,
    `deploy/helm/ci.yml`) have been merged into the live workflow and deleted.
 3. **Lockfile — ✅ DONE.** The root `package-lock.json` is committed and CI
    installs with `npm ci` for reproducible builds.
@@ -230,8 +232,10 @@ needs no database — it runs against in-memory fakes.
 - Session create + old-session revoke on refresh are two repository calls, not one
   transaction; a crash between them could briefly leave two active sessions. Wrap in
   a transaction when a `UnitOfWork`/tx seam is added to `persistence`.
-- `additionalProperties: false` is documented in the OpenAPI request schemas but the
-  runtime validators don't yet reject unknown fields (they ignore them).
+- ~~`additionalProperties: false` is documented in the OpenAPI request schemas but the
+  runtime validators don't yet reject unknown fields (they ignore them).~~ **RESOLVED:**
+  `strictObject()` in `http/validate.ts` is applied to every mutating route in
+  `routes.ts` and rejects unknown fields with a 422 `validation_failed` response.
 - A user's ratings profile issues one `RatingsRepository.get` per variant (≤8);
   fine now, but add a bulk `ratingsForUser` query before it's hot.
 
@@ -288,10 +292,11 @@ analysis cache remains a future **ADR-0003** (would amend `DATABASE.md`).
 **Gateway replica constraint (M14 inc 4):** The gateway Deployment defaults to `replicas: 1`. Game-command ownership is NOT coordinated across gateway replicas. Scaling beyond 1 requires sticky per-game routing or sharded authority — a later M14 increment. See `docs/adr/0009-kubernetes-helm.md`.
 
 **Next priorities (in order):**
-1. **M4 identity hardening:** WebAuthn/passkeys (table exists), password reset + email verification, login rate limiting/lockout.
-2. **Small deferred correctness:** PGN parser, per-variant timeout rules.
-3. **M9 Tournaments & broadcast:** Arena + Swiss + round-robin, pairings, tiebreaks, live broadcast.
-4. **Remaining M14:** Terraform, blue/green, CI/CD pipeline, 100k-user load testing, secrets management (external-secrets), sticky per-game routing / sharded authority for horizontal gateway scaling.
+1. **M12 inc 2 — `httpOnly` cookie refresh token:** move the refresh token off `localStorage` and onto an `httpOnly` cookie (API sets it on login/refresh; CORS allowlist from inc 1 already supports `allowCredentials: true`).
+2. **M4 identity hardening:** WebAuthn/passkeys (table exists), password reset + email verification, login rate limiting/lockout.
+3. **Small deferred correctness:** PGN parser, per-variant timeout rules.
+4. **M9 Tournaments & broadcast:** Arena + Swiss + round-robin, pairings, tiebreaks, live broadcast.
+5. **Remaining M14:** Terraform, blue/green, CI/CD pipeline, 100k-user load testing, secrets management (external-secrets), sticky per-game routing / sharded authority for horizontal gateway scaling.
 
 Read `docs/AI_HANDOVER.md` for the quickstart and guardrails.
 
