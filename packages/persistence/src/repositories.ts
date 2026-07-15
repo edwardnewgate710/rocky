@@ -147,12 +147,19 @@ export interface GamesRepository {
 
 // --- Seeks / lobby ---------------------------------------------------------
 
+/**
+ * The creator's color preference for a seek. `random` (the default) lets the
+ * pairing step assign sides; `white`/`black` request that specific side.
+ */
+export type SeekColor = 'white' | 'black' | 'random';
+
 export interface SeekRow {
   readonly id: string;
   readonly creatorId: string;
   readonly variant: Variant;
   readonly timeControl: TimeControl;
   readonly rated: boolean;
+  readonly color: SeekColor;
   readonly minRating: number | null;
   readonly maxRating: number | null;
   readonly createdAt: Date;
@@ -164,6 +171,8 @@ export interface NewSeek {
   readonly variant: Variant;
   readonly timeControl: TimeControl;
   readonly rated: boolean;
+  /** Defaults to `random` when omitted. */
+  readonly color?: SeekColor;
   readonly minRating?: number | null;
   readonly maxRating?: number | null;
 }

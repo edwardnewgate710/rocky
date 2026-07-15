@@ -7,7 +7,7 @@
 
 import type { Variant } from '@chess-platform/core';
 import type { TimeControl } from '@chess-platform/game';
-import type { Role } from '@chess-platform/persistence';
+import type { Role, SeekColor } from '@chess-platform/persistence';
 import { HttpError } from './http/errors';
 import { asObject, oneOf } from './http/validate';
 
@@ -40,6 +40,9 @@ export const TIME_CONTROL_KINDS: readonly TimeControl['kind'][] = [
   'unlimited',
 ];
 
+/** Seek color preferences (mirrors `SeekColor` in @chess-platform/persistence). */
+export const SEEK_COLORS: readonly SeekColor[] = ['white', 'black', 'random'];
+
 /** Handles: 3–30 chars, alphanumerics plus `_` and `-`. */
 export const HANDLE_PATTERN = /^[A-Za-z0-9_-]{3,30}$/;
 
@@ -51,6 +54,11 @@ export function parseVariant(value: string, key = 'variant'): Variant {
 /** Parse a role code from an arbitrary string. */
 export function parseRole(value: string, key = 'role'): Role {
   return oneOf(value, ROLES, key);
+}
+
+/** Parse a seek color preference from an arbitrary string. */
+export function parseSeekColor(value: string, key = 'color'): SeekColor {
+  return oneOf(value, SEEK_COLORS, key);
 }
 
 const MAX_DURATION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days — generous correspondence ceiling.

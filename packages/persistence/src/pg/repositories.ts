@@ -19,6 +19,7 @@ import type {
   RatingRow,
   RatingsRepository,
   Role,
+  SeekColor,
   SeekRow,
   SeeksRepository,
   SessionRow,
@@ -81,6 +82,7 @@ interface SeekDbRow {
   variant: string;
   time_control: TimeControl;
   rated: boolean;
+  color: string;
   min_rating: number | null;
   max_rating: number | null;
   created_at: Date;
@@ -146,6 +148,7 @@ function toSeek(r: SeekDbRow): SeekRow {
     variant: r.variant as Variant,
     timeControl: r.time_control,
     rated: r.rated,
+    color: r.color as SeekColor,
     minRating: r.min_rating,
     maxRating: r.max_rating,
     createdAt: r.created_at,
@@ -363,15 +366,16 @@ export class PgSeeksRepository implements SeeksRepository {
 
   async create(seek: NewSeek): Promise<SeekRow> {
     const res = await this.pool.query<SeekDbRow>(
-      `INSERT INTO seeks (id, creator_id, variant, time_control, rated, min_rating, max_rating)
-       VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7)
-       RETURNING id, creator_id, variant, time_control, rated, min_rating, max_rating, created_at`,
+      `INSERT INTO seeks (id, creator_id, variant, time_control, rated, color, min_rating, max_rating)
+       VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)
+       RETURNING id, creator_id, variant, time_control, rated, color, min_rating, max_rating, created_at`,
       [
         seek.id,
         seek.creatorId,
         seek.variant,
         JSON.stringify(seek.timeControl),
         seek.rated,
+        seek.color ?? 'random',
         seek.minRating ?? null,
         seek.maxRating ?? null,
       ],
@@ -381,7 +385,7 @@ export class PgSeeksRepository implements SeeksRepository {
 
   async findById(id: string): Promise<SeekRow | null> {
     const res = await this.pool.query<SeekDbRow>(
-      `SELECT id, creator_id, variant, time_control, rated, min_rating, max_rating, created_at
+      `SELECT id, creator_id, variant, time_control, rated, color, min_rating, max_rating, created_at
        FROM seeks WHERE id = $1`,
       [id],
     );
@@ -390,7 +394,7 @@ export class PgSeeksRepository implements SeeksRepository {
 
   async listOpen(limit: number): Promise<SeekRow[]> {
     const res = await this.pool.query<SeekDbRow>(
-      `SELECT id, creator_id, variant, time_control, rated, min_rating, max_rating, created_at
+      `SELECT id, creator_id, variant, time_control, rated, color, min_rating, max_rating, created_at
        FROM seeks ORDER BY created_at ASC LIMIT $1`,
       [limit],
     );

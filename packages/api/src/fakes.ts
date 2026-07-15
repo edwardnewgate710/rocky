@@ -249,6 +249,7 @@ export class InMemorySeeksRepository implements SeeksRepository {
       variant: seek.variant,
       timeControl: seek.timeControl,
       rated: seek.rated,
+      color: seek.color ?? 'random',
       minRating: seek.minRating ?? null,
       maxRating: seek.maxRating ?? null,
       createdAt: new Date(this.clock.now()),

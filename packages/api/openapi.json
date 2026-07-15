@@ -993,7 +993,7 @@
           },
           "refreshToken": {
             "type": "string",
-            "description": "Opaque, single-use refresh token."
+            "description": "Opaque, single-use refresh token. Also set as an httpOnly cookie for browser clients; non-browser API clients read it from the response body."
           },
           "refreshExpiresAt": {
             "type": "string",
@@ -1193,6 +1193,7 @@
           "speed",
           "timeControl",
           "rated",
+          "color",
           "minRating",
           "maxRating",
           "createdAt"
@@ -1227,6 +1228,14 @@
           },
           "rated": {
             "type": "boolean"
+          },
+          "color": {
+            "type": "string",
+            "enum": [
+              "white",
+              "black",
+              "random"
+            ]
           },
           "minRating": {
             "type": "integer",
@@ -1427,12 +1436,11 @@
       },
       "RefreshRequest": {
         "type": "object",
-        "required": [
-          "refreshToken"
-        ],
+        "description": "Refresh token request. The refresh token may be provided in the JSON body (non-browser API clients) or via the httpOnly `gambit_refresh` cookie (browser flow). The cookie is preferred when both are present.",
         "properties": {
           "refreshToken": {
-            "type": "string"
+            "type": "string",
+            "description": "Opaque refresh token. Optional — may be provided via the httpOnly cookie instead."
           }
         },
         "additionalProperties": false
@@ -1478,6 +1486,15 @@
           "rated": {
             "type": "boolean",
             "description": "Defaults to true."
+          },
+          "color": {
+            "type": "string",
+            "enum": [
+              "white",
+              "black",
+              "random"
+            ],
+            "description": "Creator's color preference. Defaults to 'random'."
           },
           "minRating": {
             "type": "integer",

@@ -11,6 +11,7 @@ function makeSeek(overrides: Partial<SeekView> = {}): SeekView {
     speed: 'blitz',
     timeControl: { initialMs: 180_000, incrementMs: 2_000, delayMs: 0, kind: 'increment' },
     rated: true,
+    color: 'random',
     minRating: null,
     maxRating: null,
     createdAt: '2026-01-01T00:00:00Z',

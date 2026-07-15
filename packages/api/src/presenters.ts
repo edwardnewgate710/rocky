@@ -104,6 +104,7 @@ export interface SeekView {
   readonly speed: string;
   readonly timeControl: SeekRow['timeControl'];
   readonly rated: boolean;
+  readonly color: SeekRow['color'];
   readonly minRating: number | null;
   readonly maxRating: number | null;
   readonly createdAt: string;
@@ -117,6 +118,7 @@ export function seekView(row: SeekRow): SeekView {
     speed: classifySpeed(row.timeControl),
     timeControl: row.timeControl,
     rated: row.rated,
+    color: row.color,
     minRating: row.minRating,
     maxRating: row.maxRating,
     createdAt: row.createdAt.toISOString(),

@@ -11,7 +11,7 @@ import type { RatingRow } from '@chess-platform/persistence';
 import { AuthService } from './auth/service';
 import type { RequestMeta } from './auth/service';
 import type { Repositories } from './deps';
-import { parseRole, parseTimeControl, parseVariant, VARIANTS, HANDLE_PATTERN } from './domain';
+import { parseRole, parseSeekColor, parseTimeControl, parseVariant, VARIANTS, HANDLE_PATTERN } from './domain';
 import { HttpError } from './http/errors';
 import { json, noContent } from './http/context';
 import type { RequestContext } from './http/context';
@@ -354,10 +354,11 @@ export function buildRouter(deps: RouteDeps): Router {
     AUTHED,
     async (ctx) => {
       const identity = requireAuth(ctx);
-      const body = strictObject(ctx.body, ['variant', 'timeControl', 'rated', 'minRating', 'maxRating']);
+      const body = strictObject(ctx.body, ['variant', 'timeControl', 'rated', 'color', 'minRating', 'maxRating']);
       const variant = parseVariant(oneOf(reqString(body, 'variant'), VARIANTS, 'variant'));
       const timeControl = parseTimeControl(body['timeControl']);
       const rated = body['rated'] === undefined ? true : body['rated'] === true;
+      const color = body['color'] === undefined ? 'random' : parseSeekColor(reqString(body, 'color'));
       const minRating = optInt(body, 'minRating', { min: 0, max: 4000 });
       const maxRating = optInt(body, 'maxRating', { min: 0, max: 4000 });
       if (minRating !== undefined && maxRating !== undefined && minRating > maxRating) {
@@ -371,6 +372,7 @@ export function buildRouter(deps: RouteDeps): Router {
         variant,
         timeControl,
         rated,
+        color,
         minRating: minRating ?? null,
         maxRating: maxRating ?? null,
       });

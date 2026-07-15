@@ -5,7 +5,7 @@
  * emit exactly these shapes and the spec builder references them by name.
  */
 
-import { ROLES, TIME_CONTROL_KINDS, VARIANTS } from '../domain';
+import { ROLES, SEEK_COLORS, TIME_CONTROL_KINDS, VARIANTS } from '../domain';
 import type { ComponentSchemas, JsonSchema } from './types';
 
 const dateTime: JsonSchema = { type: 'string', format: 'date-time' };
@@ -126,6 +126,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       'speed',
       'timeControl',
       'rated',
+      'color',
       'minRating',
       'maxRating',
       'createdAt',
@@ -137,6 +138,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       speed: { type: 'string' },
       timeControl: { $ref: '#/components/schemas/TimeControl' },
       rated: { type: 'boolean' },
+      color: { type: 'string', enum: [...SEEK_COLORS] },
       minRating: nullableInt,
       maxRating: nullableInt,
       createdAt: dateTime,
@@ -243,6 +245,11 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       variant: { type: 'string', enum: [...VARIANTS] },
       timeControl: { $ref: '#/components/schemas/TimeControl' },
       rated: { type: 'boolean', description: 'Defaults to true.' },
+      color: {
+        type: 'string',
+        enum: [...SEEK_COLORS],
+        description: "Creator's color preference. Defaults to 'random'.",
+      },
       minRating: { type: 'integer', nullable: true },
       maxRating: { type: 'integer', nullable: true },
     },

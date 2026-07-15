@@ -32,6 +32,13 @@ export const VARIANTS = [
 ] as const;
 export type Variant = (typeof VARIANTS)[number];
 
+/**
+ * A seek's color preference (matches the server's `color` enum). `random` (the
+ * default) lets pairing assign sides; `white`/`black` request that side.
+ */
+export const SEEK_COLORS = ['white', 'black', 'random'] as const;
+export type SeekColor = (typeof SEEK_COLORS)[number];
+
 /** Account roles (matches the server's `role` enum). */
 export const USER_ROLES = ['user', 'coach', 'tournament_director', 'moderator', 'admin'] as const;
 export type UserRole = (typeof USER_ROLES)[number];
@@ -159,6 +166,7 @@ export interface SeekView {
   readonly speed: string;
   readonly timeControl: TimeControl;
   readonly rated: boolean;
+  readonly color: SeekColor;
   readonly minRating: number | null;
   readonly maxRating: number | null;
   readonly createdAt: string;
@@ -168,6 +176,8 @@ export interface CreateSeekRequest {
   readonly variant: Variant;
   readonly timeControl: TimeControl;
   readonly rated?: boolean;
+  /** Creator's color preference. Defaults to `random` server-side when omitted. */
+  readonly color?: SeekColor;
   readonly minRating?: number | null;
   readonly maxRating?: number | null;
 }

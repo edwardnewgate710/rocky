@@ -11,7 +11,7 @@
  * API layer (`GambitClient`) only — no chess rules, no networking internals.
  */
 import type { GambitClient } from '../api/client.js';
-import type { SeekView, CreateSeekRequest, Variant, TimeControl } from '../api/models.js';
+import type { SeekView, CreateSeekRequest, Variant, TimeControl, SeekColor } from '../api/models.js';
 
 /** Callbacks the bootstrap wires to DOM elements. */
 export interface LobbyCallbacks {
@@ -100,6 +100,7 @@ export class LobbyController {
     variant: Variant;
     timeControl: TimeControl;
     rated?: boolean;
+    color?: SeekColor;
     minRating?: number | null;
     maxRating?: number | null;
   }): Promise<SeekView | null> {
@@ -115,6 +116,7 @@ export class LobbyController {
         variant: params.variant,
         timeControl: params.timeControl,
         ...(params.rated !== undefined ? { rated: params.rated } : {}),
+        ...(params.color !== undefined ? { color: params.color } : {}),
         ...(params.minRating !== undefined ? { minRating: params.minRating } : {}),
         ...(params.maxRating !== undefined ? { maxRating: params.maxRating } : {}),
       };
