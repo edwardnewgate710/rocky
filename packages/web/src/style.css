@@ -21,6 +21,13 @@
   --hint: rgba(20, 85, 30, 0.5);
   --last: rgba(155, 199, 0, 0.41);
   --premove: rgba(20, 30, 200, 0.4);
+  /* Semantic z-index scale (low → high): board cues sit under the promotion
+     overlay, which sits under the dragged piece; the skip link tops everything
+     so keyboard users can always reach it. */
+  --z-board-cue: 1;
+  --z-promotion: 20;
+  --z-drag: 30;
+  --z-skip: 40;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: light) {
@@ -51,12 +58,15 @@ body {
   background: var(--fg);
   color: var(--bg);
   padding: 8px;
-  z-index: 10;
+  z-index: var(--z-skip);
 }
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  /* Wrap instead of letting flex items shrink and overlap on narrow screens. */
+  flex-wrap: wrap;
+  gap: 8px 12px;
   padding: 12px 16px;
 }
 .topbar h1 { font-size: 1.25rem; margin: 0; }
@@ -135,13 +145,13 @@ body {
   background-position: center;
   background-repeat: no-repeat;
   background-size: contain;
-  z-index: 1;
+  z-index: var(--z-board-cue);
   cursor: grab;
 }
 .cb-piece.cb-dragging { visibility: hidden; }
 .cb-float {
   position: fixed;
-  z-index: 1000;
+  z-index: var(--z-drag);
   background-position: center;
   background-repeat: no-repeat;
   background-size: contain;
@@ -170,7 +180,7 @@ body {
   justify-content: center;
   gap: 4px;
   background: rgba(0, 0, 0, 0.62);
-  z-index: 5;
+  z-index: var(--z-promotion);
 }
 .cb-promo-choice {
   font-size: clamp(24px, 9vw, 48px);
@@ -210,6 +220,8 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
+  /* Ease the accent in when the turn changes — state, not decoration. */
+  transition: color 150ms ease;
 }
 .clock-side[data-active="true"] {
   color: var(--sel);
@@ -239,9 +251,6 @@ button:focus-visible { outline: 3px solid var(--sel); }
    them take only the lift, not the panel tint. */
 .cb-promo-choice:hover { background: #fff; }
 .cb-promo-cancel:hover { background: rgba(255, 255, 255, 0.12); }
-@media (prefers-reduced-motion: reduce) {
-  button { transition: none; }
-}
 
 
 /* --- Navigation --- */
@@ -255,6 +264,14 @@ button:focus-visible { outline: 3px solid var(--sel); }
   opacity: 0.8;
 }
 .nav a:hover { opacity: 1; }
+/* Links share the button focus ring so keyboard focus reads consistently. */
+.nav a:focus-visible,
+.topbar h1 a:focus-visible {
+  outline: 3px solid var(--sel);
+  outline-offset: 3px;
+  border-radius: 2px;
+  opacity: 1;
+}
 
 /* --- Theme toggle button --- */
 #theme-toggle {
@@ -263,14 +280,21 @@ button:focus-visible { outline: 3px solid var(--sel); }
   padding: 4px 8px;
 }
 
+/* Section headings use the Title token (1.25rem/700) — the No-Hero Rule:
+   nothing scales past this, so the board stays the largest element. */
+.lobby h2,
+.profile h2 {
+  margin: 0 0 12px;
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
 /* --- Lobby --- */
 .lobby {
   max-width: 600px;
   margin: 0 auto;
   padding: 16px;
-}
-.lobby h2 {
-  margin: 0 0 12px;
 }
 .seek-list {
   display: flex;
@@ -287,10 +311,10 @@ button:focus-visible { outline: 3px solid var(--sel); }
   background: var(--panel);
 }
 .seek-info {
-  font-size: 0.9rem;
+  font-size: 0.875rem;
 }
 .seek-cancel {
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   padding: 2px 10px;
 }
 
@@ -300,12 +324,10 @@ button:focus-visible { outline: 3px solid var(--sel); }
   margin: 0 auto;
   padding: 16px;
 }
-.profile h2 {
-  margin: 0 0 12px;
-}
 .profile h3 {
   margin: 16px 0 8px;
   font-size: 1rem;
+  font-weight: 600;
 }
 .ratings {
   display: flex;
@@ -316,7 +338,7 @@ button:focus-visible { outline: 3px solid var(--sel); }
   padding: 6px 12px;
   border-radius: 6px;
   background: var(--panel);
-  font-size: 0.9rem;
+  font-size: 0.875rem;
 }
 .game-list {
   display: flex;
@@ -327,14 +349,14 @@ button:focus-visible { outline: 3px solid var(--sel); }
   padding: 6px 12px;
   border-radius: 6px;
   background: var(--panel);
-  font-size: 0.85rem;
+  font-size: 0.875rem;
 }
 
 /* --- Error display --- */
 /* Ember, not --sel: error must never share the selection hue (see :root). */
 .error {
   color: var(--ember);
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   min-height: 1.2em;
 }
 
@@ -369,6 +391,9 @@ button:focus-visible { outline: 3px solid var(--sel); }
 }
 /* CTA reuses the button vocabulary (border + lift on hover) as a link. */
 .empty-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   margin-top: 10px;
   padding: 6px 14px;
   border: 1px solid currentColor;
@@ -388,8 +413,33 @@ button:focus-visible { outline: 3px solid var(--sel); }
   padding: 4px 0;
   background: none;
 }
+
+/* --- Touch targets --- */
+/* On coarse pointers, interactive controls need a 44px hit area. Promotion
+   choices are excluded — they size to the board square and are already large. */
+@media (pointer: coarse) {
+  button:not(.cb-promo-choice):not(.cb-promo-cancel),
+  .nav a,
+  .empty-cta {
+    min-height: 44px;
+  }
+  .nav a { display: inline-flex; align-items: center; }
+  .seek-cancel {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+  }
+}
+
+/* --- Reduced motion --- */
+/* Every transition in the system collapses to instant here. */
 @media (prefers-reduced-motion: reduce) {
-  .empty-cta { transition: none; }
+  button,
+  .empty-cta,
+  .clock-side {
+    transition: none;
+  }
 }
 
 /* --- Route visibility --- */
