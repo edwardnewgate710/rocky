@@ -69,12 +69,72 @@ export interface BootstrapDependencies extends Partial<AppDependencies> {
   readonly token?: string;
 }
 
+/** Options for {@link renderEmpty}. */
+interface EmptyStateOptions {
+  /** Optional decorative glyph (a chess piece symbol); hidden from a11y. */
+  readonly mark?: string;
+  readonly title: string;
+  readonly body: string;
+  /** Optional call-to-action rendered as a SPA nav link. */
+  readonly cta?: { readonly label: string; readonly href: string; readonly route: string };
+  /** Lighter, left-aligned variant for small sub-sections (no panel). */
+  readonly inline?: boolean;
+}
+
+/**
+ * Render a first-run / no-data empty state into a container, replacing its
+ * contents. Empty states name the next action rather than leaving blank space.
+ */
+function renderEmpty(container: HTMLElement, opts: EmptyStateOptions): void {
+  container.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.className = opts.inline ? 'empty empty-inline' : 'empty';
+
+  if (opts.mark && !opts.inline) {
+    const mark = document.createElement('div');
+    mark.className = 'empty-mark';
+    mark.setAttribute('aria-hidden', 'true');
+    mark.textContent = opts.mark;
+    wrap.appendChild(mark);
+  }
+
+  const title = document.createElement('p');
+  title.className = 'empty-title';
+  title.textContent = opts.title;
+  wrap.appendChild(title);
+
+  const body = document.createElement('p');
+  body.className = 'empty-body';
+  body.textContent = opts.body;
+  wrap.appendChild(body);
+
+  if (opts.cta) {
+    const link = document.createElement('a');
+    link.className = 'empty-cta';
+    link.href = opts.cta.href;
+    link.dataset.route = opts.cta.route;
+    link.textContent = opts.cta.label;
+    wrap.appendChild(link);
+  }
+
+  container.appendChild(wrap);
+}
+
 /**
  * Render a seek list into a DOM element. Each seek is a row with variant,
- * speed, time control, and a cancel button (if owned).
+ * speed, time control, and a cancel button (if owned). An empty list renders
+ * a first-run empty state pointing at the Create-seek action.
  */
 function renderSeeks(container: HTMLElement, seeks: readonly SeekView[]): void {
   container.innerHTML = '';
+  if (seeks.length === 0) {
+    renderEmpty(container, {
+      mark: '♟',
+      title: 'No open seeks right now',
+      body: 'Create a seek below to start a game — the first player to accept joins you.',
+    });
+    return;
+  }
   for (const seek of seeks) {
     const row = document.createElement('div');
     row.className = 'seek-row';
@@ -359,23 +419,40 @@ export function bootstrap(
         onProfile: (p) => {
           if (handleEl) handleEl.textContent = p.user.handle;
           if (ratingsEl) {
-            ratingsEl.innerHTML = '';
-            for (const r of p.ratings) {
-              const row = document.createElement('div');
-              row.className = 'rating-row';
-              row.textContent = `${r.variant}: ${Math.round(r.rating)} (RD ${Math.round(r.rd)})`;
-              ratingsEl.appendChild(row);
+            if (p.ratings.length === 0) {
+              renderEmpty(ratingsEl, {
+                title: 'No ratings yet',
+                body: 'Play a rated game to establish a rating.',
+                inline: true,
+              });
+            } else {
+              ratingsEl.innerHTML = '';
+              for (const r of p.ratings) {
+                const row = document.createElement('div');
+                row.className = 'rating-row';
+                row.textContent = `${r.variant}: ${Math.round(r.rating)} (RD ${Math.round(r.rd)})`;
+                ratingsEl.appendChild(row);
+              }
             }
           }
         },
         onGames: (games) => {
           if (gamesEl) {
-            gamesEl.innerHTML = '';
-            for (const g of games) {
-              const row = document.createElement('div');
-              row.className = 'game-row';
-              row.textContent = `${g.variant} · ${g.speed} · ${g.result ?? 'ongoing'} · ${g.plyCount} ply`;
-              gamesEl.appendChild(row);
+            if (games.length === 0) {
+              renderEmpty(gamesEl, {
+                mark: '♞',
+                title: 'No games yet',
+                body: 'Your finished games will show up here.',
+                cta: { label: 'Find a game', href: '/', route: 'lobby' },
+              });
+            } else {
+              gamesEl.innerHTML = '';
+              for (const g of games) {
+                const row = document.createElement('div');
+                row.className = 'game-row';
+                row.textContent = `${g.variant} · ${g.speed} · ${g.result ?? 'ongoing'} · ${g.plyCount} ply`;
+                gamesEl.appendChild(row);
+              }
             }
           }
         },

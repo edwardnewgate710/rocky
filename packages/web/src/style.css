@@ -15,6 +15,9 @@
   --panel-strong: rgba(255, 255, 255, 0.06);
   /* Interactive Lift: shadow that appears only on hover/focus, never at rest. */
   --lift: 0 2px 8px rgba(0, 0, 0, 0.28);
+  /* Muted: secondary text (empty-state prose, hints). Still ≥4.5:1 — never a
+     washed-out gray. */
+  --muted: #8f8f8c;
   --hint: rgba(20, 85, 30, 0.5);
   --last: rgba(155, 199, 0, 0.41);
   --premove: rgba(20, 30, 200, 0.4);
@@ -27,6 +30,7 @@
     --ember: #b42318;
     --panel: rgba(22, 21, 18, 0.05);
     --panel-strong: rgba(22, 21, 18, 0.07);
+    --muted: #5c5b57;
   }
 }
 
@@ -332,6 +336,60 @@ button:focus-visible { outline: 3px solid var(--sel); }
   color: var(--ember);
   font-size: 0.85rem;
   min-height: 1.2em;
+}
+
+/* --- Empty states (first-run / no-data onboarding) --- */
+/* Quiet, panel-framed prose that names the next action. No illustration —
+   nothing here competes with the board for attention. */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  padding: 32px 20px;
+  border-radius: 6px;
+  background: var(--panel);
+}
+.empty-mark {
+  font-size: 1.75rem;
+  line-height: 1;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.empty-title {
+  margin: 0;
+  font-weight: 600;
+}
+.empty-body {
+  margin: 0;
+  max-width: 42ch;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+/* CTA reuses the button vocabulary (border + lift on hover) as a link. */
+.empty-cta {
+  margin-top: 10px;
+  padding: 6px 14px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  color: var(--fg);
+  text-decoration: none;
+  transition: background 160ms ease, box-shadow 160ms ease;
+}
+.empty-cta:hover { background: var(--panel-strong); box-shadow: var(--lift); }
+.empty-cta:focus-visible { outline: 3px solid var(--sel); }
+/* Inline variant: lighter, left-aligned, no panel — for small sub-sections
+   like the ratings block. */
+.empty-inline {
+  align-items: flex-start;
+  text-align: left;
+  gap: 2px;
+  padding: 4px 0;
+  background: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .empty-cta { transition: none; }
 }
 
 /* --- Route visibility --- */
