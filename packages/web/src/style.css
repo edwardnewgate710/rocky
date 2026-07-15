@@ -318,6 +318,30 @@ button:disabled {
 }
 /* Your own open seek reads as yours (and carries the cancel affordance). */
 .seek-row-own { background: color-mix(in srgb, var(--sel) 10%, var(--panel)); }
+.seek-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+/* "Live and waiting" status on your own seek. */
+.seek-waiting {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.seek-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--sel);
+  animation: seek-pulse 1.6s ease-in-out infinite;
+}
+@keyframes seek-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.7); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .seek-dot { animation: none; }
+}
 .seek-info {
   font-size: 0.875rem;
   min-width: 0;

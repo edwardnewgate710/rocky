@@ -151,10 +151,23 @@ function renderSeeks(
     info.className = 'seek-info';
     const tc = `${Math.floor(seek.timeControl.initialMs / 60000)}+${Math.floor(seek.timeControl.incrementMs / 1000)}`;
     info.textContent = `${seek.variant} · ${seek.speed} · ${tc}${seek.rated ? ' · rated' : ''}`;
-    row.appendChild(info);
 
-    // Only the creator can cancel their seek — don't show a button that 403s.
     if (owned) {
+      // Your own open seek is live and waiting to be accepted — say so, and
+      // give it the cancel affordance (only the creator can cancel; others 403).
+      const main = document.createElement('div');
+      main.className = 'seek-main';
+      main.appendChild(info);
+
+      const waiting = document.createElement('span');
+      waiting.className = 'seek-waiting';
+      const dot = document.createElement('span');
+      dot.className = 'seek-dot';
+      dot.setAttribute('aria-hidden', 'true');
+      waiting.append(dot, 'Waiting for an opponent…');
+      main.appendChild(waiting);
+      row.appendChild(main);
+
       const cancelBtn = document.createElement('button');
       cancelBtn.type = 'button';
       cancelBtn.className = 'seek-cancel';
@@ -162,6 +175,8 @@ function renderSeeks(
       cancelBtn.dataset.seekId = seek.id;
       cancelBtn.setAttribute('aria-label', 'Cancel your seek');
       row.appendChild(cancelBtn);
+    } else {
+      row.appendChild(info);
     }
 
     container.appendChild(row);
