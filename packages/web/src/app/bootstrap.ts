@@ -22,6 +22,7 @@ import { GameController } from './game-controller.js';
 import type { GameController as GameControllerType } from './game-controller.js';
 import { LobbyController } from './lobby-controller.js';
 import type { LobbyController as LobbyControllerType } from './lobby-controller.js';
+import { CreateGamePanel } from './create-game-panel.js';
 import { ProfileController } from './profile-controller.js';
 import type { ProfileController as ProfileControllerType } from './profile-controller.js';
 import { ThemeToggle } from './theme-toggle.js';
@@ -131,7 +132,7 @@ function renderSeeks(container: HTMLElement, seeks: readonly SeekView[]): void {
     renderEmpty(container, {
       mark: '♟',
       title: 'No open seeks right now',
-      body: 'Create a seek below to start a game — the first player to accept joins you.',
+      body: 'Create a game above — the first player to accept joins you.',
     });
     return;
   }
@@ -357,8 +358,10 @@ export function bootstrap(
   const lobbyEl = doc.getElementById('lobby');
   if (lobbyEl && route.name === 'lobby') {
     const seekListEl = doc.getElementById('seek-list');
-    const createBtn = doc.getElementById('create-seek');
+    const createGameEl = doc.getElementById('create-game');
     const errorEl = doc.getElementById('lobby-error');
+
+    let panel: CreateGamePanel | null = null;
 
     const lobby = new LobbyController({
       client: app.api,
@@ -367,9 +370,7 @@ export function bootstrap(
           if (seekListEl) renderSeeks(seekListEl, seeks);
         },
         onCreatePending: (pending) => {
-          if (createBtn instanceof HTMLButtonElement) {
-            createBtn.disabled = pending || !auth.isAuthenticated();
-          }
+          panel?.setPending(pending);
         },
         onError: (msg) => {
           if (errorEl) errorEl.textContent = msg;
@@ -378,14 +379,21 @@ export function bootstrap(
       isAuthenticated: () => auth.isAuthenticated(),
     });
 
-    // Wire create-seek button.
-    if (createBtn instanceof HTMLButtonElement) {
-      createBtn.addEventListener('click', () => {
-        void lobby.createSeek({
-          variant: 'standard',
-          timeControl: { initialMs: 300_000, incrementMs: 0, delayMs: 0, kind: 'sudden_death' },
-          rated: false,
-        });
+    // Mount the create-a-game panel; it hands validated params to the lobby.
+    if (createGameEl) {
+      panel = new CreateGamePanel({
+        doc,
+        mount: createGameEl,
+        initialAuthenticated: auth.isAuthenticated(),
+        callbacks: {
+          onSubmit: async (params) => {
+            const seek = await lobby.createSeek(params);
+            return seek !== null;
+          },
+          onError: (msg) => {
+            if (errorEl) errorEl.textContent = msg ?? '';
+          },
+        },
       });
     }
 

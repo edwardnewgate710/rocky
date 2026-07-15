@@ -108,6 +108,9 @@ test('auth status has role=status', () => {
   assert.ok(HTML_TEMPLATE.includes('id="auth-status" role="status"'));
 });
 
-test('create-seek button is disabled by default with title hint', () => {
-  assert.ok(HTML_TEMPLATE.includes('disabled title="Sign in to create a seek"'));
+test('lobby mounts the create-a-game panel', () => {
+  // The create action is the CreateGamePanel (built in JS). Its trigger is
+  // gated at runtime — disabled with a "Sign in to create a seek" title until
+  // authenticated — which the Playwright/Lighthouse suite exercises live.
+  assert.ok(HTML_TEMPLATE.includes('id="create-game"'));
 });

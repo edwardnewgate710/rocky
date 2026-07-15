@@ -242,11 +242,16 @@ button {
   transition: background 160ms ease, box-shadow 160ms ease;
 }
 /* Interactive Lift + Panel Tint fill — feedback only, never a resting state. */
-button:hover {
+button:not(:disabled):hover {
   background: var(--panel);
   box-shadow: var(--lift);
 }
 button:focus-visible { outline: 3px solid var(--sel); }
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+}
 /* Promotion choices carry their own near-white fill; keep it on hover and let
    them take only the lift, not the panel tint. */
 .cb-promo-choice:hover { background: #fff; }
@@ -440,6 +445,144 @@ button:focus-visible { outline: 3px solid var(--sel); }
   .clock-side {
     transition: none;
   }
+}
+
+/* --- Create-a-game panel --- */
+/* Inline seek builder. One selection vocabulary (the pill) for both the time
+   presets and the segmented toggles; teal marks "selected" and nothing else. */
+.create-game { margin-bottom: 20px; }
+.cg-trigger { font-weight: 600; padding: 8px 16px; }
+
+.cg-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  border-radius: 6px;
+  background: var(--panel);
+}
+.cg-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.cg-field legend {
+  padding: 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+/* Selectable pill — shared by preset chips and segmented options. */
+.cg-chip,
+.cg-seg {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--panel-strong);
+  cursor: pointer;
+  font-size: 0.875rem;
+  line-height: 1.2;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.cg-chip { flex-direction: column; gap: 1px; min-width: 60px; }
+/* The real radio drives state but stays out of the visual (still focusable). */
+.cg-chip input,
+.cg-seg input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  margin: 0;
+}
+.cg-chip:hover,
+.cg-seg:hover { background: var(--panel); }
+.cg-chip:has(input:checked),
+.cg-seg:has(input:checked) {
+  border-color: var(--sel);
+  background: color-mix(in srgb, var(--sel) 12%, transparent);
+}
+.cg-chip:has(input:focus-visible),
+.cg-seg:has(input:focus-visible) {
+  outline: 3px solid var(--sel);
+  outline-offset: 2px;
+}
+.cg-chip-speed { font-size: 0.7rem; color: var(--muted); }
+.cg-seg-label { display: inline-flex; align-items: center; gap: 5px; }
+.cg-seg-glyph { font-size: 1rem; line-height: 1; }
+
+.cg-presets,
+.cg-segmented { display: flex; flex-wrap: wrap; gap: 6px; }
+.cg-hint { margin: 0; font-size: 0.75rem; color: var(--muted); }
+
+/* Form controls (custom time, variant, rating range). */
+.cg-custom,
+.cg-rating-inputs { display: flex; flex-wrap: wrap; gap: 12px; }
+.cg-num,
+.cg-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.cg-custom input,
+.cg-rating-inputs input {
+  width: 6rem;
+}
+.cg-select,
+.cg-form input[type='number'] {
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--panel-strong);
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.875rem;
+}
+.cg-select:focus-visible,
+.cg-form input:focus-visible { outline: 3px solid var(--sel); outline-offset: 1px; }
+
+/* More options disclosure. */
+.cg-more { display: flex; flex-direction: column; gap: 8px; }
+.cg-more-toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+.cg-more-toggle::before { content: '▸'; font-size: 0.7em; }
+.cg-more-toggle[aria-expanded='true']::before { content: '▾'; }
+.cg-more-toggle:hover { color: var(--fg); box-shadow: none; background: none; }
+.cg-advanced { display: flex; flex-direction: column; gap: 12px; }
+
+.cg-actions { display: flex; gap: 8px; align-items: center; }
+.cg-submit { font-weight: 600; }
+.cg-cancel { border-color: transparent; color: var(--muted); }
+
+@media (pointer: coarse) {
+  .cg-chip,
+  .cg-seg,
+  .cg-select,
+  .cg-form input[type='number'] { min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cg-chip,
+  .cg-seg { transition: none; }
 }
 
 /* --- Route visibility --- */
