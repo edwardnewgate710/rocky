@@ -101,12 +101,15 @@ body {
   border: 6px solid var(--hint);
   pointer-events: none;
 }
+/* Pieces are rendered as the Cburnett SVG set (public/piece/cburnett/),
+   bound to the .cb-p-* classes below. The container class sizes and centers
+   the image; the piece class only supplies the artwork. */
 .cb-piece {
-  font-size: clamp(20px, 8vw, 52px);
-  line-height: 1;
-  color: #111;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
-  position: relative;
+  position: absolute;
+  inset: 0;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
   z-index: 1;
   cursor: grab;
 }
@@ -114,13 +117,25 @@ body {
 .cb-float {
   position: fixed;
   z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
   pointer-events: none;
-  color: #111;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
 }
+
+/* Cburnett piece artwork (paths resolve from Vite's public/ root). */
+.cb-p-wk { background-image: url(/piece/cburnett/wK.svg); }
+.cb-p-wq { background-image: url(/piece/cburnett/wQ.svg); }
+.cb-p-wr { background-image: url(/piece/cburnett/wR.svg); }
+.cb-p-wb { background-image: url(/piece/cburnett/wB.svg); }
+.cb-p-wn { background-image: url(/piece/cburnett/wN.svg); }
+.cb-p-wp { background-image: url(/piece/cburnett/wP.svg); }
+.cb-p-bk { background-image: url(/piece/cburnett/bK.svg); }
+.cb-p-bq { background-image: url(/piece/cburnett/bQ.svg); }
+.cb-p-br { background-image: url(/piece/cburnett/bR.svg); }
+.cb-p-bb { background-image: url(/piece/cburnett/bB.svg); }
+.cb-p-bn { background-image: url(/piece/cburnett/bN.svg); }
+.cb-p-bp { background-image: url(/piece/cburnett/bP.svg); }
 .cb-promotion {
   position: absolute;
   inset: 0;

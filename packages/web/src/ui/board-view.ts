@@ -21,11 +21,16 @@ import { parsePlacement, type Piece } from '../core/position.js';
 import type { BoardInteraction, GestureResult, PromotionRole } from '../core/interaction.js';
 import type { Premove } from '../core/premove.js';
 
-const GLYPH: Record<string, string> = {
-  wk: '\u2654', wq: '\u2655', wr: '\u2656', wb: '\u2657', wn: '\u2658', wp: '\u2659',
-  bk: '\u265A', bq: '\u265B', br: '\u265C', bb: '\u265D', bn: '\u265E', bp: '\u265F',
-};
 const PROMO_ROLES: readonly PromotionRole[] = ['q', 'r', 'b', 'n'];
+
+/**
+ * CSS class carrying a piece's image, e.g. `cb-p-wk`. The artwork itself (the
+ * Cburnett SVG set) is bound to these classes in `style.css`; the renderer only
+ * names the piece, keeping image paths out of the DOM layer.
+ */
+function pieceClass(color: string, role: string): string {
+  return `cb-p-${color}${role}`;
+}
 const DRAG_THRESHOLD = 6;
 
 export type ResolvedMove =
@@ -195,12 +200,10 @@ export class BoardView {
     const p = this.pieces.get(sq);
     if (!p) return;
     const el = document.createElement('div');
-    el.className = 'cb-float';
-    el.textContent = GLYPH[`${p.color}${p.role}`] ?? '';
+    el.className = `cb-float ${pieceClass(p.color, p.role)}`;
     const cell = this.root.getBoundingClientRect().width / 8;
     el.style.width = `${cell}px`;
     el.style.height = `${cell}px`;
-    el.style.fontSize = `${cell * 0.72}px`;
     document.body.appendChild(el);
     this.floatEl = el;
   }
@@ -229,8 +232,7 @@ export class BoardView {
     for (const role of PROMO_ROLES) {
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'cb-promo-choice';
-      btn.textContent = GLYPH[`${color}${role}`] ?? '';
+      btn.className = `cb-promo-choice ${pieceClass(color, role)}`;
       btn.setAttribute('aria-label', `Promote to ${role}`);
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -277,7 +279,6 @@ export class BoardView {
       for (const file of files) {
         const sq = toSquare(file, rank);
         const piece = this.pieces.get(sq);
-        const glyph = piece ? (GLYPH[`${piece.color}${piece.role}`] ?? '') : '';
         const classes = ['cb-sq', `cb-${squareShade(sq)}`];
         if (sq === hl.selected) classes.push('cb-selected');
         if (last.has(sq)) classes.push('cb-last');
@@ -285,9 +286,11 @@ export class BoardView {
         if (legal.has(sq)) classes.push(piece ? 'cb-capture' : 'cb-legal');
         const label = piece ? `${sq} ${piece.color}${piece.role}` : sq;
         const dragged = this.dragging && sq === this.dragFrom ? ' cb-dragging' : '';
+        const inner = piece
+          ? `<span class="cb-piece ${pieceClass(piece.color, piece.role)}${dragged}" aria-hidden="true"></span>`
+          : '';
         cells.push(
-          `<div class="${classes.join(' ')}" role="gridcell" data-square="${sq}" aria-label="${label}">` +
-            `<span class="cb-piece${dragged}" aria-hidden="true">${glyph}</span></div>`,
+          `<div class="${classes.join(' ')}" role="gridcell" data-square="${sq}" aria-label="${label}">${inner}</div>`,
         );
       }
     }
