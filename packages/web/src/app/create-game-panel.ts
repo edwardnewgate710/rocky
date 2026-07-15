@@ -14,6 +14,7 @@
  */
 import type { TimeControl, Variant, SeekColor } from '../api/models.js';
 import { VARIANTS } from '../api/models.js';
+import type { KeyValueStorage } from '../net/session.js';
 import {
   TIME_PRESETS,
   DEFAULT_PRESET_ID,
@@ -21,6 +22,13 @@ import {
   presetToTimeControl,
   estimateSpeed,
 } from './time-presets.js';
+import {
+  PREFS_STORAGE_KEY,
+  parseCreateGamePrefs,
+  serializeCreateGamePrefs,
+  type CreateGamePrefs,
+  type SeekMode,
+} from './create-game-prefs.js';
 
 /** The validated seek settings a submit produces. */
 export interface CreateGameParams {
@@ -44,6 +52,8 @@ export interface CreateGamePanelOptions {
   readonly mount: HTMLElement;
   readonly callbacks: CreateGamePanelCallbacks;
   readonly initialAuthenticated?: boolean;
+  /** Persists last-used time control + mode (defaults to `localStorage`). */
+  readonly storage?: KeyValueStorage;
 }
 
 /** Human labels for the contract's variant codes. */
@@ -102,6 +112,7 @@ export class CreateGamePanel {
   private readonly maxRatingInput: HTMLInputElement;
   private readonly ratingError: HTMLParagraphElement;
   private readonly submitBtn: HTMLButtonElement;
+  private readonly storage: KeyValueStorage | undefined;
 
   private expanded = false;
   private pending = false;
@@ -110,7 +121,14 @@ export class CreateGamePanel {
   constructor(opts: CreateGamePanelOptions) {
     this.doc = opts.doc;
     this.callbacks = opts.callbacks;
+    this.storage = opts.storage;
     const d = this.doc;
+
+    // Restore the player's last-used settings (or fall back to first-run
+    // defaults: 10+0 / Casual for a brand-new player).
+    const prefs = this.readPrefs();
+    const initialTimeId = prefs?.time ?? DEFAULT_PRESET_ID;
+    const initialMode: SeekMode = prefs?.mode ?? 'casual';
 
     // --- Trigger (keeps the id the auth gating targets) ---
     this.trigger = el(d, 'button', {
@@ -128,12 +146,13 @@ export class CreateGamePanel {
     for (const p of TIME_PRESETS) {
       const speed = estimateSpeed(presetToTimeControl(p.minutes, p.increment));
       presets.append(
-        this.chip('cg-time', p.id, p.id, p.id === DEFAULT_PRESET_ID, speed),
+        this.chip('cg-time', p.id, p.id, p.id === initialTimeId, speed),
       );
     }
-    presets.append(this.chip('cg-time', 'custom', 'Custom', false));
+    presets.append(this.chip('cg-time', 'custom', 'Custom', initialTimeId === 'custom'));
     timeField.append(presets);
 
+    const restoredCustom = prefs?.time === 'custom';
     this.minutesInput = el(d, 'input', {
       id: 'cg-minutes',
       type: 'number',
@@ -141,7 +160,7 @@ export class CreateGamePanel {
       min: String(CUSTOM_LIMITS.minMinutes),
       max: String(CUSTOM_LIMITS.maxMinutes),
       step: '0.5',
-      value: '5',
+      value: restoredCustom && prefs.minutes !== undefined ? String(prefs.minutes) : '5',
     });
     this.incrementInput = el(d, 'input', {
       id: 'cg-increment',
@@ -150,7 +169,7 @@ export class CreateGamePanel {
       min: String(CUSTOM_LIMITS.minIncrement),
       max: String(CUSTOM_LIMITS.maxIncrement),
       step: '1',
-      value: '0',
+      value: restoredCustom && prefs.increment !== undefined ? String(prefs.increment) : '0',
     });
     this.customBox = el(
       d,
@@ -171,8 +190,8 @@ export class CreateGamePanel {
         d,
         'div',
         { class: 'cg-segmented' },
-        this.segment('cg-mode', 'casual', 'Casual', true),
-        this.segment('cg-mode', 'rated', 'Rated', false),
+        this.segment('cg-mode', 'casual', 'Casual', initialMode === 'casual'),
+        this.segment('cg-mode', 'rated', 'Rated', initialMode === 'rated'),
       ),
       el(d, 'p', { class: 'cg-hint' }, 'Rated games affect your rating.'),
     );
@@ -419,13 +438,47 @@ export class CreateGamePanel {
     return { variant, timeControl, rated, color, minRating, maxRating };
   }
 
+  /** Read the persisted last-used settings, tolerating unavailable storage. */
+  private readPrefs(): CreateGamePrefs | null {
+    if (!this.storage) return null;
+    try {
+      return parseCreateGamePrefs(this.storage.getItem(PREFS_STORAGE_KEY));
+    } catch {
+      return null;
+    }
+  }
+
+  /** Persist the current time control + mode after a successful create. */
+  private savePrefs(): void {
+    if (!this.storage) return;
+    const time = this.readChecked('cg-time') ?? DEFAULT_PRESET_ID;
+    const mode: SeekMode = this.readChecked('cg-mode') === 'rated' ? 'rated' : 'casual';
+    const prefs: CreateGamePrefs =
+      time === 'custom'
+        ? {
+            time,
+            minutes: Number(this.minutesInput.value),
+            increment: Number(this.incrementInput.value),
+            mode,
+          }
+        : { time, mode };
+    try {
+      this.storage.setItem(PREFS_STORAGE_KEY, serializeCreateGamePrefs(prefs));
+    } catch {
+      // Storage may be unavailable (private browsing) — non-fatal.
+    }
+  }
+
   private async submit(): Promise<void> {
     if (this.pending) return;
     const params = this.gather();
     if (!params) return;
     this.callbacks.onError(null);
     const created = await this.callbacks.onSubmit(params);
-    if (created) this.setExpanded(false);
+    if (created) {
+      this.savePrefs();
+      this.setExpanded(false);
+    }
   }
 
   private setExpanded(expanded: boolean): void {

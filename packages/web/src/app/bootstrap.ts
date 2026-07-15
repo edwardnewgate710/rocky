@@ -410,6 +410,11 @@ export function bootstrap(
         doc,
         mount: createGameEl,
         initialAuthenticated: auth.isAuthenticated(),
+        ...(deps?.storage !== undefined
+          ? { storage: deps.storage }
+          : typeof localStorage !== 'undefined'
+            ? { storage: localStorage }
+            : {}),
         callbacks: {
           onSubmit: async (params) => {
             const seek = await lobby.createSeek(params);
