@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-15T00:00:00Z",
+  "title": "Design System: Gambit",
+  "extensions": {
+    "colorMeta": {
+      "ink": { "role": "neutral", "displayName": "Ink", "canonical": "oklch(18% 0.006 60)", "tonalRamp": ["oklch(10% 0.005 60)", "oklch(18% 0.006 60)", "oklch(28% 0.007 60)", "oklch(38% 0.008 60)", "oklch(50% 0.008 60)", "oklch(64% 0.008 60)", "oklch(78% 0.007 60)", "oklch(92% 0.005 60)"] },
+      "paper": { "role": "neutral", "displayName": "Paper", "canonical": "oklch(96.5% 0.002 90)", "tonalRamp": ["oklch(15% 0.003 90)", "oklch(28% 0.003 90)", "oklch(40% 0.003 90)", "oklch(55% 0.003 90)", "oklch(70% 0.002 90)", "oklch(84% 0.002 90)", "oklch(92% 0.002 90)", "oklch(96.5% 0.002 90)"] },
+      "ash": { "role": "neutral", "displayName": "Ash", "canonical": "oklch(76% 0.003 90)", "tonalRamp": ["oklch(15% 0.003 90)", "oklch(28% 0.003 90)", "oklch(42% 0.003 90)", "oklch(56% 0.003 90)", "oklch(68% 0.003 90)", "oklch(76% 0.003 90)", "oklch(86% 0.003 90)", "oklch(94% 0.002 90)"] },
+      "charcoal": { "role": "neutral", "displayName": "Charcoal", "canonical": "oklch(24% 0.003 90)", "tonalRamp": ["oklch(12% 0.003 90)", "oklch(18% 0.003 90)", "oklch(24% 0.003 90)", "oklch(34% 0.003 90)", "oklch(46% 0.003 90)", "oklch(60% 0.003 90)", "oklch(76% 0.003 90)", "oklch(90% 0.002 90)"] },
+      "board-light": { "role": "secondary", "displayName": "Board Light", "canonical": "oklch(88% 0.045 80)", "tonalRamp": ["oklch(30% 0.045 80)", "oklch(42% 0.05 80)", "oklch(54% 0.052 80)", "oklch(66% 0.05 80)", "oklch(76% 0.048 80)", "oklch(84% 0.046 80)", "oklch(88% 0.045 80)", "oklch(94% 0.03 80)"] },
+      "board-dark": { "role": "secondary", "displayName": "Board Dark", "canonical": "oklch(62% 0.07 55)", "tonalRamp": ["oklch(22% 0.05 55)", "oklch(32% 0.06 55)", "oklch(42% 0.065 55)", "oklch(52% 0.07 55)", "oklch(62% 0.07 55)", "oklch(72% 0.065 55)", "oklch(82% 0.05 55)", "oklch(90% 0.035 55)"] },
+      "teal-accent": { "role": "primary", "displayName": "Grandmaster Teal", "canonical": "oklch(65% 0.11 192)", "tonalRamp": ["oklch(20% 0.06 192)", "oklch(30% 0.08 192)", "oklch(40% 0.095 192)", "oklch(50% 0.105 192)", "oklch(58% 0.11 192)", "oklch(65% 0.11 192)", "oklch(76% 0.09 192)", "oklch(88% 0.05 192)"] },
+      "ember": { "role": "tertiary", "displayName": "Ember", "canonical": "oklch(62% 0.19 25)", "tonalRamp": ["oklch(22% 0.1 25)", "oklch(32% 0.14 25)", "oklch(42% 0.17 25)", "oklch(52% 0.185 25)", "oklch(62% 0.19 25)", "oklch(72% 0.15 25)", "oklch(82% 0.1 25)", "oklch(90% 0.05 25)"] },
+      "ember-deep": { "role": "tertiary", "displayName": "Ember Deep", "canonical": "oklch(32% 0.16 25)", "tonalRamp": ["oklch(15% 0.09 25)", "oklch(22% 0.12 25)", "oklch(32% 0.16 25)", "oklch(42% 0.17 25)", "oklch(52% 0.18 25)", "oklch(62% 0.19 25)", "oklch(76% 0.12 25)", "oklch(88% 0.06 25)"] }
+    },
+    "typographyMeta": {
+      "title": { "displayName": "Title", "purpose": "Wordmark and section headings only — the largest text in the system." },
+      "body": { "displayName": "Body", "purpose": "Default running text, labels, status messages." },
+      "small": { "displayName": "Small", "purpose": "List-row content: seeks, ratings, recent games." },
+      "label": { "displayName": "Label", "purpose": "Clock-side labels ('White' / 'Black')." },
+      "numeric": { "displayName": "Numeric", "purpose": "Clock time only — tabular-nums, the one place weight/size step up for legibility under time pressure." }
+    },
+    "shadows": [
+      { "name": "interactive-lift", "value": "0 2px 8px rgba(0, 0, 0, 0.28)", "purpose": "Hover/focus/active feedback on buttons and the promotion picker only — never on a resting element." }
+    ],
+    "motion": [],
+    "breakpoints": [
+      { "name": "game-two-col", "value": "720px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "The single button style used everywhere: sign in, register, create/cancel seek, flip board, theme toggle, sign out.",
+      "html": "<button class=\"ds-btn\">Create seek</button>",
+      "css": ".ds-btn { font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid currentColor; background: transparent; color: #bababa; cursor: pointer; transition: background 0.15s ease-out, box-shadow 0.15s ease-out; } .ds-btn:hover { background: #ffffff0a; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28); } .ds-btn:focus-visible { outline: 3px solid #20b2aa; } .ds-btn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }"
+    },
+    {
+      "name": "List Row",
+      "kind": "custom",
+      "refersTo": "panel-row",
+      "description": "Shared row treatment for seek list, ratings list, and recent-games list.",
+      "html": "<div class=\"ds-row\"><span>Blitz 5+3 · 1450–1550</span><button class=\"ds-btn ds-row-cancel\">Cancel</button></div>",
+      "css": ".ds-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-radius: 6px; background: #ffffff0a; font-size: 0.875rem; color: #bababa; } .ds-row-cancel { font-size: 0.8rem; padding: 2px 10px; }"
+    },
+    {
+      "name": "Clock",
+      "kind": "custom",
+      "refersTo": "clock",
+      "description": "Dual-side chess clock; active side renders in Grandmaster Teal.",
+      "html": "<div class=\"ds-clock\"><div class=\"ds-clock-side ds-clock-active\"><span class=\"ds-clock-label\">White</span><span class=\"ds-clock-time\">10:00</span></div><div class=\"ds-clock-side\"><span class=\"ds-clock-label\">Black</span><span class=\"ds-clock-time\">10:00</span></div></div>",
+      "css": ".ds-clock { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-radius: 6px; background: #ffffff0f; } .ds-clock-side { display: flex; align-items: center; gap: 6px; color: #bababa; } .ds-clock-active { color: #20b2aa; } .ds-clock-label { font-size: 0.75rem; opacity: 0.7; } .ds-clock-time { font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; }"
+    },
+    {
+      "name": "Board Square (light)",
+      "kind": "custom",
+      "refersTo": "board-square-light",
+      "description": "Light board square with legal-move hint dot.",
+      "html": "<div class=\"ds-sq ds-sq-light ds-sq-hint\"></div>",
+      "css": ".ds-sq { position: relative; aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center; } .ds-sq-light { background: #f0d9b5; } .ds-sq-hint::after { content: ''; position: absolute; width: 30%; height: 30%; border-radius: 50%; background: #14551e80; pointer-events: none; }"
+    },
+    {
+      "name": "Board Square (dark, selected)",
+      "kind": "custom",
+      "refersTo": "board-square-dark",
+      "description": "Dark board square in the selected state.",
+      "html": "<div class=\"ds-sq ds-sq-dark ds-sq-selected\"></div>",
+      "css": ".ds-sq-dark { background: #b58863; } .ds-sq-selected { outline: 3px solid #20b2aa; outline-offset: -3px; }"
+    },
+    {
+      "name": "Navigation Link",
+      "kind": "nav",
+      "refersTo": "nav-link",
+      "description": "Topbar navigation link (Lobby / Profile).",
+      "html": "<a class=\"ds-nav-link\" href=\"/profile\">Profile</a>",
+      "css": ".ds-nav-link { color: #bababa; text-decoration: none; opacity: 0.8; transition: opacity 0.15s ease-out; } .ds-nav-link:hover { opacity: 1; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Grandmaster's Study",
+    "overview": "Gambit's UI reads like the desk of a serious player: warm dark wood and felt, one board lit at the center, nothing else competing for attention. The palette borrows the same board-square hues generations of players already trust (Lichess and Chess.com both start here), because reinventing the board would cost recognition for no gain — the differentiation is in restraint, not novelty. Chrome is minimal to the point of being nearly invisible: no shadows at rest, no card stacks, no gradient flourishes. The one saturated color in the system, a teal, exists solely to say \"this is selected, this is active, this is focused\" — it is never decorative. This system explicitly rejects two aesthetics named in PRODUCT.md: the generic SaaS dashboard (cards everywhere, gradient heroes, tool-for-work chrome) and the cluttered, gamified chess site (badge walls, streak counters, noisy gamification competing with the board). Precision reads as premium here; decoration reads as noise.",
+    "keyCharacteristics": [
+      "Warm near-black by default (#161512), with a true light mode, not a tint of the dark palette",
+      "Classic wood board coloring — familiar, not novel",
+      "One accent color, one job: interactive/selected state",
+      "Fully flat at rest; elevation appears only as a response to touch",
+      "A single 6px radius used everywhere",
+      "System font stack only — clarity over typographic personality"
+    ],
+    "rules": [
+      { "name": "The Single Accent Rule", "body": "Grandmaster Teal is the only saturated interactive color in the system. It is never used twice for two different meanings — error state gets Ember, board feedback gets its own dedicated hues.", "section": "colors" },
+      { "name": "The No-Hero Rule", "body": "There is no display-scale heading anywhere in the system. The board is the largest, highest-contrast element on every screen; type never competes with it for size.", "section": "typography" },
+      { "name": "The Flat-at-Rest Rule", "body": "No element carries a shadow in its default state. Shadows exist purely as interaction feedback — the instant the pointer or focus leaves, the shadow leaves with it.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep the board as the single largest, highest-contrast element on every screen.",
+      "Do use Grandmaster Teal for one meaning only: active/selected/focused.",
+      "Do keep every list on the identical panel-row treatment.",
+      "Do reserve shadows for interaction feedback only.",
+      "Do keep legal-move/last-move/premove board cues distinguishable by shape as well as color.",
+      "Do use Ember/Ember Deep for error and danger states exclusively."
+    ],
+    "donts": [
+      "Don't build a generic SaaS-dashboard look — no card grids, no gradient hero banners, no tool-for-work chrome.",
+      "Don't add gamification clutter — no badge walls, streak counters, or achievement noise.",
+      "Don't introduce a second accent color for variety.",
+      "Don't add a resting-state shadow to any card, panel, or list row.",
+      "Don't introduce a new border-radius value.",
+      "Don't reuse the dark-mode Panel Tint unmodified in light mode — it's nearly invisible on Paper; this is an open gap, not a pattern to copy forward."
+    ]
+  }
+}
