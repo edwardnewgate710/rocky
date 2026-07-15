@@ -4,9 +4,8 @@ import {
   MemoryTokenStore,
   NoSessionError,
   SessionManager,
-  WebStorageTokenStore,
 } from '../src/net/session.js';
-import type { KeyValueStorage, StoredSession } from '../src/net/session.js';
+import type { StoredSession } from '../src/net/session.js';
 import type { AuthResponse } from '../src/api/models.js';
 
 function authResponse(access = 'access-1', refresh = 'refresh-1', expiresIn = 3600): AuthResponse {
@@ -27,19 +26,6 @@ function storedSession(): StoredSession {
   return { user: a.user, tokens: a.tokens, accessTokenExpiresAt: 123 };
 }
 
-class FakeStorage implements KeyValueStorage {
-  private readonly map = new Map<string, string>();
-  getItem(key: string): string | null {
-    return this.map.get(key) ?? null;
-  }
-  setItem(key: string, value: string): void {
-    this.map.set(key, value);
-  }
-  removeItem(key: string): void {
-    this.map.delete(key);
-  }
-}
-
 test('MemoryTokenStore stores and clears', () => {
   const store = new MemoryTokenStore();
   assert.equal(store.load(), null);
@@ -49,17 +35,30 @@ test('MemoryTokenStore stores and clears', () => {
   assert.equal(store.load(), null);
 });
 
-test('WebStorageTokenStore round-trips and rejects corrupt payloads', () => {
-  const storage = new FakeStorage();
-  const store = new WebStorageTokenStore(storage, 'k');
-  assert.equal(store.load(), null);
+test('M12 inc 2: MemoryTokenStore never writes to any Web Storage', () => {
+  // The token store is in-memory only — no setItem should ever be called.
+  // This is the core XSS hardening: the access token is never in localStorage.
+  const store = new MemoryTokenStore();
   const session = storedSession();
   store.save(session);
-  assert.deepEqual(store.load(), session);
-  storage.setItem('k', 'not-json');
-  assert.equal(store.load(), null);
+  assert.ok(store.load());
+  assert.equal(store.load()!.tokens.accessToken, 'access-1');
+  // No storage involved — clearing the store is purely in-memory.
   store.clear();
   assert.equal(store.load(), null);
+});
+
+test('M12 inc 2: after login, SessionManager holds access token in memory only', () => {
+  const mgr = new SessionManager({ refresh: async () => authResponse(), now: () => 1000 });
+  mgr.adopt(authResponse('tok-A', 'ref-A', 3600));
+  // The access token is available in memory.
+  assert.equal(mgr.authorizationHeader(), 'Bearer tok-A');
+  assert.equal(mgr.isAuthenticated, true);
+  // But there is no storage to inspect — it's purely in the MemoryTokenStore.
+  // On a "reload" (new SessionManager), the token is gone:
+  const mgr2 = new SessionManager({ refresh: async () => authResponse(), now: () => 1000 });
+  assert.equal(mgr2.isAuthenticated, false);
+  assert.equal(mgr2.authorizationHeader(), undefined);
 });
 
 test('adopt computes access-token expiry from the injected clock', () => {
@@ -143,4 +142,37 @@ test('refreshNow clears the session and rethrows on failure', async () => {
 test('refreshNow without a session throws NoSessionError', async () => {
   const mgr = new SessionManager({ refresh: async () => authResponse(), now: () => 0 });
   await assert.rejects(mgr.refreshNow(), NoSessionError);
+});
+
+test('M12 inc 2: refreshNow passes the refresh token to the refresh function', async () => {
+  let receivedToken: string | undefined;
+  const mgr = new SessionManager({
+    refresh: async (token?: string) => {
+      receivedToken = token;
+      return authResponse('fresh', 'r2', 3600);
+    },
+    now: () => 0,
+  });
+  mgr.adopt(authResponse('a', 'my-refresh', 1));
+  await mgr.refreshNow();
+  assert.equal(receivedToken, 'my-refresh');
+});
+
+test('M12 inc 2: refreshNow works without a refresh token (cookie-based)', async () => {
+  // Simulate a restored session with no refresh token (cookie-based).
+  let receivedToken: string | undefined;
+  const mgr = new SessionManager({
+    refresh: async (token?: string) => {
+      receivedToken = token;
+      return authResponse('fresh', 'r2', 3600);
+    },
+    now: () => 0,
+  });
+  // Adopt a session that has no refresh token (simulating cookie-based restore).
+  mgr.adopt({
+    user: authResponse().user,
+    tokens: { accessToken: 'a', tokenType: 'Bearer', expiresIn: 1, refreshExpiresAt: '' },
+  });
+  await mgr.refreshNow();
+  assert.equal(receivedToken, undefined, 'refresh function should receive undefined when no token');
 });

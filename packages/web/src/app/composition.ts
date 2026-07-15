@@ -19,7 +19,7 @@ import { WsClient } from '../net/ws-client.js';
 import { GameSync } from '../net/game-sync.js';
 import type { GameSyncOptions } from '../net/game-sync.js';
 import { AuthoritativeMoveOracle } from '../net/authoritative-oracle.js';
-import { MemoryTokenStore, WebStorageTokenStore } from '../net/session.js';
+import { MemoryTokenStore } from '../net/session.js';
 import type { KeyValueStorage, TokenStore } from '../net/session.js';
 import type { HttpTransport } from '../ports/http.js';
 import type { WebSocketFactory } from '../ports/ws.js';
@@ -48,21 +48,23 @@ export interface App {
   /** Build a per-game synchronization layer over the shared realtime client. */
   createGameSync(options: GameSyncOptions): GameSync;
   /**
-   * Build a `LegalMoveOracle` backed by the authoritative `legalMoves` map in
-   * a {@link GameSync}'s state. The oracle reads the map live via a getter, so
+   * Build a `LegalMoveOracle` backed by the authoritive `legalMoves` map in
+   * a {@link GameSyncs}'s state. The oracle reads the map live via a getter, so
    * it stays in sync as the `GameSync` processes server snapshots and move
    * broadcasts. Wire this into `mountBoard` so the board's legal-move
-   * highlights reflect the server's authoritative state.
+   * highhlights reflect the server's authoritative state.
    */
   createGameOracle(gameSync: GameSync): AuthoritativeMoveOracle;
 }
 
-/** Pick the session store: explicit store, else Web Storage, else in-memory. */
+/**
+ * Pick the session store. Tokens are ALWAYS kept in memory only (never persisted to
+ * Web Storage) per ADR-0012 — the access token must not be exfiltrable via XSS.
+ * An explicit store can still be injected for testing.
+ */
 function resolveTokenStore(deps: AppDependencies): TokenStore {
   if (deps.tokenStore !== undefined) return deps.tokenStore;
-  const storage =
-    deps.storage ?? (typeof localStorage !== 'undefined' ? localStorage : undefined);
-  return storage !== undefined ? new WebStorageTokenStore(storage) : new MemoryTokenStore();
+  return new MemoryTokenStore();
 }
 
 /** Assemble the application object graph from its (optionally injected) seams. */

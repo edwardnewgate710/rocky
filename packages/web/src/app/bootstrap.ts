@@ -202,14 +202,16 @@ export function bootstrap(
     });
   }
 
-  // Restore any persisted session.
-  auth.restore();
+  // Restore any persisted session. Kept as a promise so the authenticated game
+  // socket below can wait for the access token, which M12 inc 2 obtains
+  // asynchronously via the httpOnly refresh cookie rather than from storage.
+  const restorePromise = auth.restore();
 
   // --- Determine route ---
   const pathname = typeof location !== 'undefined' ? location.pathname : '/';
   const route = parseRoute(pathname);
   const gameId = deps?.gameId ?? (route.name === 'game' ? route.gameId : null);
-  const token = deps?.token ?? auth.currentSession?.accessToken;
+  const token = deps?.token ?? app.api.session.current?.tokens.accessToken;
 
   // --- Toggle top-level section visibility for the active route ---
   // index.html ships lobby/profile hidden; the game <main> is always present.
@@ -273,7 +275,20 @@ export function bootstrap(
     });
 
     controller.start();
-    gameSync.start();
+    if (token !== undefined) {
+      gameSync.start();
+    } else {
+      // M12 inc 2: the access token arrives asynchronously via the httpOnly
+      // refresh cookie (restore → refresh). Open the authenticated socket once
+      // it resolves; fall back to a spectator connection if restore fails.
+      void restorePromise
+        .then(() => {
+          const t = app.api.session.current?.tokens.accessToken;
+          if (t !== undefined) gameSync.setToken(t);
+        })
+        .catch(() => undefined)
+        .finally(() => gameSync.start());
+    }
 
     return { app, board, controller, lobby: null, profile: null, auth, theme };
   }

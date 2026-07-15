@@ -256,12 +256,14 @@ test('C3: bootstrap without game ID does not open a connection', () => {
   assert.equal(result.controller, null);
 });
 
-test('C3: bootstrap opens a connection when no token is provided (anonymous spectator)', () => {
+test('C3: bootstrap opens a connection when no token is provided (anonymous spectator)', async () => {
   const doc = makeDoc();
   const sockets = new FakeSocketFactory();
   // Without a token, bootstrap still opens a connection — the join will be
-  // anonymous (spectator). The gateway handles the no-token case.
+  // anonymous (spectator). M12 inc 2: the socket opens once the async session
+  // restore settles (it may first try a cookie refresh), so flush microtasks.
   const result = bootstrap(doc, { ...makeDeps(sockets), gameId: 'g1' });
   assert.ok(result.controller);
+  await new Promise((r) => setTimeout(r, 0));
   assert.equal(sockets.sockets.length, 1);
 });

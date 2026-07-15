@@ -4,7 +4,7 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-13 — Threefold-repetition fix (en-passant legality in repetition key), Docker Compose NODE_ID fix, Vite security upgrade, documentation sync. **M1–M8 complete, M14 increments 1–4 complete (M14 overall still in progress).** Prior: M14 increment 4 (Kubernetes Helm chart). **M7, M8, M14 inc 1–4 complete.** Prior: Review #03 fixes applied:
+_Last updated: 2026-07-15 — M12 inc 2: httpOnly refresh-token cookie (ADR-0012). **M1–M8 complete, M12 inc 1–2 complete, M14 increments 1–4 complete (M14 overall still in progress).** Prior: M14 increment 4 (Kubernetes Helm chart). **M7, M8, M14 inc 1–4 complete.** Prior: Review #03 fixes applied:
 the authoritative `legalMoves` map from the server snapshot is now surfaced through `GameSync`
 state (populated from each `StateView`, stale after a live move broadcast, empty once the game ends)
 and a new `AuthoritativeMoveOracle` adapter implements the existing `LegalMoveOracle` port, fed by
@@ -71,10 +71,10 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 | **M6** ✅ | `@chess-platform/web` | Playable web frontend: interactive board (drag/click, premoves, promotion), REST + WS client, GameSync, lobby, profile, theme, PWA, a11y; Playwright e2e + Lighthouse gate passed | 239 |
 | **M7** ✅ | `@chess-platform/ai-orchestrator` | Provider-agnostic AI orchestration: `AiProvider`/`AiOrchestrator`/`ProviderRegistry`/`RoutingStrategy`/`ResponseCache`/`RateLimiter`/`HealthTracker`/`BenchmarkRunner`; OpenAI + Anthropic adapters; engine grounding | 114 |
 | **M8** ✅ | `@chess-platform/ai-features` | 8 AI features: Move Explainer, Puzzle Generator, Mistake Predictor, Opening Explorer, Endgame Trainer, Coach, Study Partner, Voice Coach; Tournament Commentator deferred to M9 | 137 (16 key-gated) |
-| **M12** 🚧 | Security hardening | **Increment 1:** CORS policy + security response headers for the API (`withSecurity` middleware — ACAO allowlist, credentials-aware, preflight short-circuit, `X-Content-Type-Options`/`Referrer-Policy`/`X-Frame-Options`/CSP/CORP/HSTS); ADR-0011 Accepted | 66/66 (+18 new) |
+| **M12** 🚧 | Security hardening | **Increment 1:** CORS policy + security response headers for the API (`withSecurity` middleware — ACAO allowlist, credentials-aware, preflight short-circuit, `X-Content-Type-Options`/`Referrer-Policy`/`X-Frame-Options`/CSP/CORP/HSTS); ADR-0011 Accepted. **Increment 2:** httpOnly refresh-token cookie — API sets `HttpOnly; SameSite=Strict; Path=/v1/auth; Max-Age=<ttl>; Secure` cookie on login/refresh; refresh/logout accept cookie or body token; web stops persisting refresh token to `localStorage`; access token in memory only; ADR-0012 Accepted | 66/66 (+18 new, +~30 inc 2) |
 | **M14** 🚧 | Deployable services | Docker Compose local stack (inc 1), durable EventLog + Postgres (inc 2), Redis pub/sub multi-node fanout (inc 3), Kubernetes Helm chart (inc 4); Terraform/blue-green/load-test deferred | — |
 
-**Whole-repo total: 724 tests, 0 failures, across 10 packages + the gateway service** (skips: 2 Postgres-gated + 18 API-key-gated). Strict TS, zero errors, lint clean. CI active — 6 jobs: build+typecheck+test on Node 22/24, Postgres integration, M6 Playwright + Lighthouse acceptance, helm lint + kubeconform, gateway service (build + Redis integration).
+**Whole-repo total: ~754 tests, 0 failures, across 10 packages + the gateway service** (skips: 2 Postgres-gated + 18 API-key-gated). Strict TS, zero errors, lint clean. CI active — 6 jobs: build+typecheck+test on Node 22/24, Postgres integration, M6 Playwright + Lighthouse acceptance, helm lint + kubeconform, gateway service (build + Redis integration).
 
 ## 3. Architecture summary (as-built)
 
@@ -164,13 +164,9 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 - **Game (M2):** per-variant timeout rules.
 - **Realtime (M3):** ship `ws` + Redis production adapters (M14); MessagePack
   frames; per-user connection quotas / backpressure (M12).
-- **Token-storage tradeoff (web):** Refresh tokens currently persist in
-  `localStorage` on the client. This is acceptable for development but is not
-  secure against XSS exfiltration. The plan for the M12 hardening pass is to
-  move the refresh token to an `httpOnly` cookie (set by the API on login/refresh)
-  and keep the short-lived access token in memory only (never persisted to
-  `localStorage` or a cookie). This eliminates the XSS-exposable refresh token
-  while preserving the stateless access-token hot path.
+- **Token-storage tradeoff (web):** **Resolved in M12 inc 2** (ADR-0012).
+  The refresh token now lives in an `httpOnly` cookie (not `localStorage`),
+  and the access token is kept in memory only. See ADR-0012 for details.
 
 ## 6. Technical debt (status)
 
@@ -292,11 +288,10 @@ analysis cache remains a future **ADR-0003** (would amend `DATABASE.md`).
 **Gateway replica constraint (M14 inc 4):** The gateway Deployment defaults to `replicas: 1`. Game-command ownership is NOT coordinated across gateway replicas. Scaling beyond 1 requires sticky per-game routing or sharded authority — a later M14 increment. See `docs/adr/0009-kubernetes-helm.md`.
 
 **Next priorities (in order):**
-1. **M12 inc 2 — `httpOnly` cookie refresh token:** move the refresh token off `localStorage` and onto an `httpOnly` cookie (API sets it on login/refresh; CORS allowlist from inc 1 already supports `allowCredentials: true`).
-2. **M4 identity hardening:** WebAuthn/passkeys (table exists), password reset + email verification, login rate limiting/lockout.
-3. **Small deferred correctness:** PGN parser, per-variant timeout rules.
-4. **M9 Tournaments & broadcast:** Arena + Swiss + round-robin, pairings, tiebreaks, live broadcast.
-5. **Remaining M14:** Terraform, blue/green, CI/CD pipeline, 100k-user load testing, secrets management (external-secrets), sticky per-game routing / sharded authority for horizontal gateway scaling.
+1. **M4 identity hardening:** WebAuthn/passkeys (table exists), password reset + email verification, login rate limiting/lockout.
+2. **Small deferred correctness:** PGN parser, per-variant timeout rules.
+3. **M9 Tournaments & broadcast:** Arena + Swiss + round-robin, pairings, tiebreaks, live broadcast.
+4. **Remaining M14:** Terraform, blue/green, CI/CD pipeline, 100k-user load testing, secrets management (external-secrets), sticky per-game routing / sharded authority for horizontal gateway scaling.
 
 Read `docs/AI_HANDOVER.md` for the quickstart and guardrails.
 

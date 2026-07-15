@@ -17,6 +17,12 @@ import { json, noContent } from './http/context';
 import type { RequestContext } from './http/context';
 import { Router } from './http/router';
 import type { AuthPolicy } from './http/router';
+import {
+  buildRefreshCookie,
+  clearRefreshCookie,
+  parseCookies,
+  REFRESH_COOKIE_NAME,
+} from './http/cookie';
 import { strictObject, oneOf, optInt, optString, parseLimit, reqString } from './http/validate';
 import type { Clock } from './ports/clock';
 import type { IdGenerator } from './ports/ids';
@@ -40,6 +46,10 @@ export interface RouteDeps {
   readonly clock: Clock;
   readonly ids: IdGenerator;
   readonly info: OpenApiInfo;
+  /** Refresh-token cookie `Secure` attribute (default `true`; `false` for local/dev over HTTP). */
+  readonly cookieSecure: boolean;
+  /** Refresh-token lifetime in seconds, used for the cookie `Max-Age`. */
+  readonly refreshTokenTtlSec: number;
 }
 
 const PUBLIC: AuthPolicy = { required: false };
@@ -54,7 +64,9 @@ const MAX_LIST_LIMIT = 200;
 /** Build the fully-wired router. */
 export function buildRouter(deps: RouteDeps): Router {
   const router = new Router();
-  const { auth, repos, clock, ids, info } = deps;
+  const { auth, repos, clock, ids, info, cookieSecure, refreshTokenTtlSec } = deps;
+
+  const cookieOpts = { secure: cookieSecure };
 
   let cachedSpec: OpenApiDocument | null = null;
 
@@ -96,7 +108,12 @@ export function buildRouter(deps: RouteDeps): Router {
       const password = reqString(body, 'password', { min: 8, max: 1024 });
       const email = optString(body, 'email', { max: 320, trim: true });
       const result = await auth.register({ handle, password, email: email ?? null }, meta(ctx));
-      return json(201, { user: selfUser(result.user, result.roles), tokens: result.tokens });
+      return json(201, {
+        user: selfUser(result.user, result.roles),
+        tokens: result.tokens,
+      }, {
+        'Set-Cookie': buildRefreshCookie(result.tokens.refreshToken, refreshTokenTtlSec, cookieOpts),
+      });
     },
   );
 
@@ -114,7 +131,12 @@ export function buildRouter(deps: RouteDeps): Router {
       const handle = reqString(body, 'handle', { trim: true });
       const password = reqString(body, 'password');
       const result = await auth.login({ handle, password }, meta(ctx));
-      return json(200, { user: selfUser(result.user, result.roles), tokens: result.tokens });
+      return json(200, {
+        user: selfUser(result.user, result.roles),
+        tokens: result.tokens,
+      }, {
+        'Set-Cookie': buildRefreshCookie(result.tokens.refreshToken, refreshTokenTtlSec, cookieOpts),
+      });
     },
   );
 
@@ -128,10 +150,18 @@ export function buildRouter(deps: RouteDeps): Router {
     }),
     PUBLIC,
     async (ctx) => {
-      const body = strictObject(ctx.body, ['refreshToken']);
-      const refreshToken = reqString(body, 'refreshToken');
+      // Prefer the cookie; fall back to the JSON body for non-browser API clients.
+      const refreshToken = resolveRefreshToken(ctx);
+      if (!refreshToken) {
+        throw HttpError.badRequest('refreshToken is required (cookie or body)');
+      }
       const result = await auth.refresh(refreshToken, meta(ctx));
-      return json(200, { user: selfUser(result.user, result.roles), tokens: result.tokens });
+      return json(200, {
+        user: selfUser(result.user, result.roles),
+        tokens: result.tokens,
+      }, {
+        'Set-Cookie': buildRefreshCookie(result.tokens.refreshToken, refreshTokenTtlSec, cookieOpts),
+      });
     },
   );
 
@@ -147,10 +177,16 @@ export function buildRouter(deps: RouteDeps): Router {
     AUTHED,
     async (ctx) => {
       const identity = requireAuth(ctx);
-      const body = strictObject(ctx.body, ['refreshToken']);
-      const refreshToken = reqString(body, 'refreshToken');
+      // Prefer the cookie; fall back to the JSON body for non-browser API clients.
+      const refreshToken = resolveRefreshToken(ctx);
+      if (!refreshToken) {
+        throw HttpError.badRequest('refreshToken is required (cookie or body)');
+      }
       await auth.logout(refreshToken, meta(ctx), identity.userId);
-      return noContent();
+      return {
+        status: 204,
+        headers: { 'Set-Cookie': clearRefreshCookie(cookieOpts) },
+      };
     },
   );
 
@@ -386,6 +422,30 @@ export function buildRouter(deps: RouteDeps): Router {
 }
 
 // --- helpers ---------------------------------------------------------------
+
+/**
+ * Resolve the refresh token from the request, preferring the httpOnly cookie
+ * over the JSON body. This keeps browser clients (cookie) and non-browser API
+ * clients (body) both working.
+ */
+function resolveRefreshToken(ctx: RequestContext): string | undefined {
+  const cookies = parseCookies(headerString(ctx.headers['cookie']));
+  const fromCookie = cookies[REFRESH_COOKIE_NAME];
+  if (fromCookie) return fromCookie;
+  // Fall back to the JSON body for non-browser API clients.
+  if (ctx.body !== undefined && typeof ctx.body === 'object') {
+    const body = ctx.body as Record<string, unknown>;
+    const raw = body['refreshToken'];
+    if (typeof raw === 'string') return raw;
+  }
+  return undefined;
+}
+
+/** Safely extract a single string from a header that may be a string or array. */
+function headerString(value: string | string[] | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  return Array.isArray(value) ? value[0] : value;
+}
 
 function meta(ctx: RequestContext): RequestMeta {
   const traceId = ctx.headers['x-trace-id'];

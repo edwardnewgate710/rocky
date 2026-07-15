@@ -81,6 +81,7 @@ test('full game vs. bot — DOM clicks, bot resigns, terminal state shown', asyn
   expect(regResp.ok()).toBeTruthy();
   const auth = await regResp.json();
   const accessToken = auth.tokens.accessToken;
+  const refreshToken = auth.tokens.refreshToken;
   const userId = auth.user.id;
 
   // 2. Create a game via the bridge route with botResignsAfterPlies: 3
@@ -93,13 +94,23 @@ test('full game vs. bot — DOM clicks, bot resigns, terminal state shown', asyn
   const gameId = game.gameId;
   expect(gameId).toBeTruthy();
 
-  // 3. Set the auth session in localStorage BEFORE navigating to the game page.
-  //    Use addInitScript so localStorage is set before any script runs.
-  await page.addInitScript(({ token, handle: h }) => {
-    localStorage.setItem('gambit-session', JSON.stringify({
-      accessToken: token, handle: h, userId: '', roles: [],
-    }));
-  }, { token: accessToken, handle });
+  // 3. Seed the session for the memory-only-token model (M12 inc 2): the
+  //    httpOnly refresh cookie lets the app mint a fresh access token via
+  //    `restore()`, and localStorage carries only the persisted identity.
+  await page.context().addCookies([
+    {
+      name: 'gambit_refresh',
+      value: refreshToken,
+      domain: 'localhost',
+      path: '/v1/auth',
+      httpOnly: true,
+      secure: false,
+      sameSite: 'Strict',
+    },
+  ]);
+  await page.addInitScript(({ handle: h, uid }) => {
+    localStorage.setItem('gambit-session', JSON.stringify({ handle: h, userId: uid }));
+  }, { handle, uid: userId });
 
   // 4. Navigate to the game page
   await page.goto(`/game/${gameId}`);

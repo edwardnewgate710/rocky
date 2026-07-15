@@ -4,9 +4,8 @@
  * The M4 contract issues a short-lived access token plus an opaque, single-use
  * refresh token. This module owns that lifecycle on the client:
  *
- *  - a pluggable {@link TokenStore} (in-memory by default; a Web Storage adapter
- *    for persistence across reloads) so *where* tokens live is a choice, not a
- *    hard dependency;
+ *  - a pluggable {@link TokenStore} (in-memory by default) so *where* tokens live
+ *    is a choice, not a hard dependency;
  *  - a {@link SessionManager} that adopts auth responses, tracks access-token
  *    expiry, hands out `Authorization` headers, and refreshes proactively (before
  *    expiry) with a **single-flight** guard so concurrent requests trigger at
@@ -14,13 +13,23 @@
  *
  * Refresh is injected as a plain function, not the whole API client, to avoid a
  * dependency cycle and keep the manager unit-testable in isolation.
+ *
+ * M12 inc 2: Neither the refresh token NOR the access token is persisted to
+ * storage. Both live in memory only. The browser flow relies on an httpOnly
+ * cookie (set by the API on login/refresh) that is sent automatically with
+ * `credentials: 'include'`. On reload, `AuthController.restore()` calls
+ * `client.auth.refresh()` which uses the cookie to obtain a fresh access token
+ * and populate the in-memory `SessionManager`.
  */
 import type { AuthResponse, SelfUser, TokenPair } from '../api/models.js';
 
 /** A refresh call: exchange a refresh token for a fresh auth response. */
-export type RefreshFn = (refreshToken: string) => Promise<AuthResponse>;
+export type RefreshFn = (refreshToken?: string) => Promise<AuthResponse>;
 
-/** Persisted session state. */
+/**
+ * Full in-memory session (includes the refresh token for the refresh call).
+ * The refresh token is never persisted to storage — only kept in memory.
+ */
 export interface StoredSession {
   readonly user: SelfUser;
   readonly tokens: TokenPair;
@@ -53,40 +62,6 @@ export interface KeyValueStorage {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
   removeItem(key: string): void;
-}
-
-/** Persistent store backed by an injected Web Storage instance. */
-export class WebStorageTokenStore implements TokenStore {
-  private readonly storage: KeyValueStorage;
-  private readonly key: string;
-  constructor(storage: KeyValueStorage, key = 'gambit.session') {
-    this.storage = storage;
-    this.key = key;
-  }
-  load(): StoredSession | null {
-    const raw = this.storage.getItem(this.key);
-    if (raw === null) return null;
-    try {
-      const parsed = JSON.parse(raw) as Partial<StoredSession>;
-      if (
-        parsed !== null &&
-        typeof parsed.accessTokenExpiresAt === 'number' &&
-        parsed.tokens !== undefined &&
-        parsed.user !== undefined
-      ) {
-        return parsed as StoredSession;
-      }
-    } catch {
-      /* corrupt payload — treat as no session */
-    }
-    return null;
-  }
-  save(session: StoredSession): void {
-    this.storage.setItem(this.key, JSON.stringify(session));
-  }
-  clear(): void {
-    this.storage.removeItem(this.key);
-  }
 }
 
 /** Raised when an operation needs a session but none is present. */
@@ -170,6 +145,11 @@ export class SessionManager {
   /**
    * Refresh the session now, coalescing concurrent callers onto one in-flight
    * refresh. On failure the local session is cleared and the error rethrown.
+   *
+   * M12 inc 2: The refresh token is passed from the in-memory session if
+   * available, but the browser flow relies on the httpOnly cookie (the
+   * `RefreshFn` sends `credentials: 'include'` so the cookie is attached
+   * automatically). The body token is omitted for the browser flow.
    */
   async refreshNow(): Promise<StoredSession> {
     const existing = this.refreshInFlight;
@@ -180,6 +160,8 @@ export class SessionManager {
 
     const pending = (async (): Promise<StoredSession> => {
       try {
+        // Pass the refresh token if available (non-browser path).
+        // For the browser flow, the token is undefined and the cookie is sent.
         const auth = await this.doRefresh(session.tokens.refreshToken);
         return this.adopt(auth);
       } catch (error) {

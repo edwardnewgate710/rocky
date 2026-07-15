@@ -59,6 +59,22 @@ test('login adopts the session and later authed calls send the bearer token', as
   assert.equal(t.calls[1]!.headers['authorization'], 'Bearer tok-A');
 });
 
+test('M12 inc 2: login sends credentials:include', async () => {
+  const t = new FakeTransport(
+    () => json(200, auth('tok-A')),
+  );
+  const c = make(t);
+  await c.auth.login({ handle: 'alice', password: 'pw' });
+  assert.equal(t.calls[0]!.credentials, 'include');
+});
+
+test('M12 inc 2: register sends credentials:include', async () => {
+  const t = new FakeTransport(() => json(201, auth('tok-R')));
+  const c = make(t);
+  await c.auth.register({ handle: 'newbie', password: 'password1' });
+  assert.equal(t.calls[0]!.credentials, 'include');
+});
+
 test('authed call without a session fails fast before any request', async () => {
   const t = new FakeTransport();
   await assert.rejects(make(t).users.me(), UnauthorizedError);
@@ -78,7 +94,10 @@ test('a server 401 triggers one refresh and replays with the new token', async (
   assert.equal(me.handle, 'alice');
   assert.equal(t.calls.length, 4);
   assert.equal(t.calls[1]!.headers['authorization'], 'Bearer tok-A');
+  // M12 inc 2: refresh sends credentials:include and no body token.
   assert.equal(t.calls[2]!.url, 'https://api.test/v1/auth/refresh');
+  assert.equal(t.calls[2]!.credentials, 'include');
+  assert.equal(t.calls[2]!.body, undefined);
   assert.equal(t.calls[3]!.headers['authorization'], 'Bearer tok-B');
 });
 
@@ -109,7 +128,7 @@ test('read endpoints encode query params and path segments', async () => {
   assert.equal(t.calls[2]!.url, 'https://api.test/v1/games/g%201');
 });
 
-test('logout revokes server-side and clears the local session', async () => {
+test('M12 inc 2: logout sends credentials:include and no body token', async () => {
   const t = new FakeTransport(
     () => json(200, auth('tok-A', 'refresh-Z')),
     () => empty(204),
@@ -119,9 +138,15 @@ test('logout revokes server-side and clears the local session', async () => {
   await c.auth.logout();
   assert.equal(c.session.isAuthenticated, false);
   assert.equal(t.calls[1]!.url, 'https://api.test/v1/auth/logout');
-  assert.equal(t.calls[1]!.headers['authorization'], 'Bearer tok-A');
-  const body = JSON.parse(t.calls[1]!.body ?? '{}') as { refreshToken?: string };
-  assert.equal(body.refreshToken, 'refresh-Z');
+  assert.equal(t.calls[1]!.credentials, 'include');
+  assert.equal(t.calls[1]!.body, undefined);
+});
+
+test('M12 inc 2: logout without a session is a no-op', async () => {
+  const t = new FakeTransport();
+  const c = make(t);
+  await c.auth.logout();
+  assert.equal(t.calls.length, 0);
 });
 
 test('register adopts the session', async () => {

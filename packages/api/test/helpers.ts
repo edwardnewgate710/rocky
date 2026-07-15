@@ -43,6 +43,7 @@ export async function startHarness(config: ApiConfigInput = {}): Promise<Harness
     accessTokenSecret: TEST_SECRET,
     accessTokenTtlSec: 900,
     refreshTokenTtlSec: 3600,
+    cookieSecure: false, // tests run over plain HTTP
     ...config,
   });
   const tokens = new AccessTokenService({

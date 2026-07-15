@@ -13,6 +13,12 @@
  * This module satisfies the C4/M2 identity entry: the existing auth stack
  * (`GambitClient.auth`) is fully built server-side — this controller is
  * the UI-side wiring that makes it reachable from the frontend.
+ *
+ * M12 inc 2: The access token is NO LONGER persisted to storage. Only the
+ * user's handle and ID are persisted — enough to restore the UI state across
+ * reloads. On reload, `restore()` calls `client.auth.refresh()` which uses
+ * the httpOnly cookie to get a fresh access token. If the cookie is expired
+ * or absent, the session is not restored (user must log in again).
  */
 import type { GambitClient } from '../api/client.js';
 import type { KeyValueStorage } from '../net/session.js';
@@ -27,13 +33,27 @@ export interface AuthCallbacks {
   onError: (message: string) => void;
 }
 
-/** Session data persisted across reloads. */
+/**
+ * Session data persisted across reloads.
+ *
+ * M12 inc 2: Only the handle and userId are persisted — NOT the access token
+ * (stays in memory) and NOT the refresh token (httpOnly cookie). This is
+ * enough to restore the UI state; the actual access token is obtained by
+ * calling refresh on reload, which uses the cookie.
+ */
 export interface AuthSession {
-  /** The access token used for bearer auth. */
-  readonly accessToken: string;
   /** The authenticated user's handle. */
   readonly handle: string;
   /** The authenticated user's ID. */
+  readonly userId: string;
+}
+
+/**
+ * Persisted session shape (stored in localStorage).
+ * Only handle + userId — no tokens.
+ */
+interface PersistedAuth {
+  readonly handle: string;
   readonly userId: string;
 }
 
@@ -51,9 +71,11 @@ const DEFAULT_STORAGE_KEY = 'gambit-session';
 /**
  * Manages the authentication session: login, register, logout, and restore.
  *
- * The controller is framework-independent and DOM-free. It persists the
- * session token to an injectable key-value store so that page reloads
- * preserve the authenticated state. It drives the UI through callbacks.
+ * The controller is framework-independent and DOM-free. It persists only the
+ * user's handle and ID to an injectable key-value store so that page reloads
+ * can restore the UI state. The access token is kept in memory only (via the
+ * SessionManager); the refresh token is in an httpOnly cookie. It drives the
+ * UI through callbacks.
  */
 export class AuthController {
   private readonly client: GambitClient;
@@ -80,18 +102,33 @@ export class AuthController {
     return this.session !== null;
   }
 
-  /** Restore a previously persisted session from storage, if any. */
-  restore(): AuthSession | null {
+  /**
+   * Restore a previously persisted session from storage, if any.
+   *
+   * M12 inc 2: Only the handle and userId are restored from storage. The
+   * access token is obtained by calling `client.auth.refresh()`, which uses
+   * the httpOnly cookie. If the cookie is expired or absent, the session is
+   * not restored.
+   */
+  async restore(): Promise<AuthSession | null> {
     if (this.disposed) return null;
     if (!this.storage) return null;
     try {
       const raw = this.storage.getItem(this.storageKey);
       if (!raw) return null;
-      const parsed = JSON.parse(raw) as AuthSession;
-      if (parsed && typeof parsed.accessToken === 'string' && typeof parsed.handle === 'string') {
-        this.session = parsed;
-        this.callbacks.onSessionChange(this.session);
-        return this.session;
+      const parsed = JSON.parse(raw) as PersistedAuth;
+      if (parsed && typeof parsed.handle === 'string' && typeof parsed.userId === 'string') {
+        // Try to get a fresh access token via the httpOnly cookie.
+        try {
+          await this.client.auth.refresh();
+          this.session = { handle: parsed.handle, userId: parsed.userId };
+          this.callbacks.onSessionChange(this.session);
+          return this.session;
+        } catch {
+          // Cookie expired or absent — clear persisted state and return null.
+          this.clearPersisted();
+          return null;
+        }
       }
     } catch {
       // Corrupted storage entry — clear it and return null.
@@ -111,7 +148,6 @@ export class AuthController {
     try {
       const result = await this.client.auth.login({ handle, password });
       this.session = {
-        accessToken: result.tokens.accessToken,
         handle: result.user.handle,
         userId: result.user.id,
       };
@@ -133,7 +169,6 @@ export class AuthController {
     try {
       const result = await this.client.auth.register({ handle, password });
       this.session = {
-        accessToken: result.tokens.accessToken,
         handle: result.user.handle,
         userId: result.user.id,
       };
@@ -172,7 +207,12 @@ export class AuthController {
   private persist(): void {
     if (!this.storage || !this.session) return;
     try {
-      this.storage.setItem(this.storageKey, JSON.stringify(this.session));
+      // M12 inc 2: persist only handle + userId — no tokens.
+      const persisted: PersistedAuth = {
+        handle: this.session.handle,
+        userId: this.session.userId,
+      };
+      this.storage.setItem(this.storageKey, JSON.stringify(persisted));
     } catch {
       // Storage unavailable — session is in-memory only.
     }

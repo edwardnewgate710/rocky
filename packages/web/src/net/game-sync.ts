@@ -106,7 +106,7 @@ function initialState(gameId: string): GameSyncState {
 export class GameSync {
   private readonly client: WsClient;
   private readonly gameId: string;
-  private readonly token: string | undefined;
+  private token: string | undefined;
   private state: GameSyncState;
   private clientSeq = 0;
   private joined = false;
@@ -129,6 +129,15 @@ export class GameSync {
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  /**
+   * Set the access token used for the authenticated join. Must be called
+   * before {@link start}. Used when the token is obtained asynchronously (e.g.
+   * via the httpOnly refresh cookie on reload) after this GameSync is built.
+   */
+  setToken(token: string): void {
+    this.token = token;
   }
 
   /** Wire up the client and open the connection. */

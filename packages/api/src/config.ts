@@ -1,6 +1,6 @@
 /**
  * @packageDocumentation
- * API configuration. Values are plain data with sane defaults; the only required
+ * API configuration. Values are plain data with safe defaults; the only required
  * field is the access-token signing secret. {@link resolveConfig} fills defaults
  * and can read the secret from the environment for the bootstrap path.
  */
@@ -33,6 +33,13 @@ export interface ApiConfig {
    * @see docs/adr/0011-cors-security-headers.md
    */
   readonly enableHsts: boolean;
+  /**
+   * Emit the `Secure` attribute on the refresh-token cookie. Default `true`.
+   * Set `false` for local/dev over plain HTTP so the browser accepts the cookie.
+   *
+   * @see docs/adr/0012-httponly-refresh-cookie.md
+   */
+  readonly cookieSecure: boolean;
 }
 
 export const DEFAULT_ACCESS_TOKEN_TTL_SEC = 15 * 60;
@@ -58,7 +65,7 @@ function validateCors(cors: CorsConfig): void {
   if (cors.allowedOrigins.includes('*')) {
     throw new Error(
       "resolveConfig: cors.allowedOrigins must not contain '*' — the API reflects " +
-        'exact origins (never a wildcard). List explicit origins instead.',
+        "exact origins (never a wildcard). List explicit origins instead.",
     );
   }
   if (cors.allowCredentials && cors.allowedOrigins.length === 0) {
@@ -91,5 +98,6 @@ export function resolveConfig(input: ApiConfigInput = {}): ApiConfig {
     trustProxy: input.trustProxy ?? false,
     cors,
     enableHsts: input.enableHsts ?? true,
+    cookieSecure: input.cookieSecure ?? true,
   };
 }

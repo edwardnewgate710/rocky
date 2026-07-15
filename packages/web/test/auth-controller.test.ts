@@ -24,6 +24,10 @@ function makeFakeClient(overrides: Record<string, unknown> = {}) {
         tokens: { accessToken: 'tok-2', tokenType: 'Bearer', expiresIn: 900, refreshToken: 'ref-2', refreshExpiresAt: '2030-01-01T00:00:00Z' },
       }),
       logout: async () => {},
+      refresh: async () => ({
+        user: { id: 'u1', handle: 'alice', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] },
+        tokens: { accessToken: 'tok-refreshed', tokenType: 'Bearer', expiresIn: 900, refreshToken: 'ref-2', refreshExpiresAt: '2030-01-01T00:00:00Z' },
+      }),
       ...overrides,
     },
   };
@@ -53,11 +57,26 @@ test('login creates a session with correct fields from AuthResponse', async () =
   });
   const session = await ctrl.login('alice', 'pw');
   assert.ok(session);
-  assert.equal(session!.accessToken, 'tok-1');
   assert.equal(session!.handle, 'alice');
   assert.equal(session!.userId, 'u1');
   assert.equal(ctrl.isAuthenticated(), true);
   assert.deepEqual(pending, [true, false]);
+});
+
+test('M12 inc 2: login does NOT persist the access token to storage', async () => {
+  const storage = makeFakeStorage();
+  const client = makeFakeClient() as any;
+  const ctrl = new AuthController({
+    client,
+    callbacks: { onSessionChange: () => {}, onPending: () => {}, onError: () => {} },
+    storage,
+  });
+  await ctrl.login('alice', 'pw');
+  const raw = storage.getItem('gambit-session')!;
+  const parsed = JSON.parse(raw);
+  assert.equal(parsed.accessToken, undefined, 'accessToken must not be persisted');
+  assert.equal(parsed.handle, 'alice');
+  assert.equal(parsed.userId, 'u1');
 });
 
 test('register creates a session with correct fields', async () => {
@@ -68,7 +87,6 @@ test('register creates a session with correct fields', async () => {
   });
   const session = await ctrl.register('bob', 'pw');
   assert.ok(session);
-  assert.equal(session!.accessToken, 'tok-2');
   assert.equal(session!.handle, 'bob');
   assert.equal(session!.userId, 'u2');
 });
@@ -91,10 +109,10 @@ test('logout clears session and calls onSessionChange(null)', async () => {
   assert.equal(sessions[sessions.length - 1], null);
 });
 
-test('restore loads session from storage', () => {
+test('M12 inc 2: restore loads session from storage via cookie-based refresh', async () => {
   const storage = makeFakeStorage();
   storage.setItem('gambit-session', JSON.stringify({
-    accessToken: 'stored-tok', handle: 'stored-user', userId: 'u3',
+    handle: 'stored-user', userId: 'u3',
   }));
   let session: AuthSession | null = null;
   const ctrl = new AuthController({
@@ -102,20 +120,40 @@ test('restore loads session from storage', () => {
     callbacks: { onSessionChange: (s) => { session = s; }, onPending: () => {}, onError: () => {} },
     storage,
   });
-  const restored = ctrl.restore();
+  const restored = await ctrl.restore();
   assert.ok(restored);
-  assert.equal(restored!.accessToken, 'stored-tok');
+  assert.equal(restored!.handle, 'stored-user');
+  assert.equal(restored!.userId, 'u3');
   assert.equal(session, restored);
 });
 
-test('restore returns null when storage is empty', () => {
+test('M12 inc 2: restore returns null when storage is empty', async () => {
   const storage = makeFakeStorage();
   const ctrl = new AuthController({
     client: makeFakeClient() as any,
     callbacks: { onSessionChange: () => {}, onPending: () => {}, onError: () => {} },
     storage,
   });
-  assert.equal(ctrl.restore(), null);
+  assert.equal(await ctrl.restore(), null);
+});
+
+test('M12 inc 2: restore returns null when refresh fails (cookie expired)', async () => {
+  const storage = makeFakeStorage();
+  storage.setItem('gambit-session', JSON.stringify({
+    handle: 'stored-user', userId: 'u3',
+  }));
+  const client = makeFakeClient({
+    refresh: async () => { throw new Error('cookie expired'); },
+  }) as any;
+  const ctrl = new AuthController({
+    client,
+    callbacks: { onSessionChange: () => {}, onPending: () => {}, onError: () => {} },
+    storage,
+  });
+  const restored = await ctrl.restore();
+  assert.equal(restored, null);
+  // Persisted state should be cleared.
+  assert.equal(storage.getItem('gambit-session'), null);
 });
 
 test('errors are reported via onError', async () => {
@@ -131,6 +169,46 @@ test('errors are reported via onError', async () => {
   assert.equal(result, null);
   assert.equal(errors.length, 1);
   assert.equal(errors[0], 'bad password');
+});
+
+
+test('M12 inc 2: reload path — persisted {handle,userId} + refresh yields session + access token', async () => {
+  const storage = makeFakeStorage();
+  storage.setItem('gambit-session', JSON.stringify({
+    handle: 'stored-user', userId: 'u3',
+  }));
+  let refreshCalled = false;
+  let refreshResult: any = null;
+  const client = makeFakeClient({
+    refresh: async () => {
+      refreshCalled = true;
+      refreshResult = {
+        user: { id: 'u3', handle: 'stored-user', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] },
+        tokens: { accessToken: 'fresh-from-cookie', tokenType: 'Bearer', expiresIn: 900, refreshToken: 'ref-2', refreshExpiresAt: '2030-01-01T00:00:00Z' },
+      };
+      return refreshResult;
+    },
+  }) as any;
+  // Add a mock session that tracks the current access token (like SessionManager does).
+  let currentAccessToken: string | undefined;
+  client.session = {
+    get current() { return currentAccessToken ? { tokens: { accessToken: currentAccessToken } } : null; },
+    adopt: (auth: any) => { currentAccessToken = auth.tokens.accessToken; },
+    reset: () => { currentAccessToken = undefined; },
+    get isAuthenticated() { return currentAccessToken !== undefined; },
+  };
+  const ctrl = new AuthController({
+    client,
+    callbacks: { onSessionChange: () => {}, onPending: () => {}, onError: () => {} },
+    storage,
+  });
+  const restored = await ctrl.restore();
+  assert.ok(restored, 'restore should return a session');
+  assert.equal(restored!.handle, 'stored-user');
+  assert.equal(refreshCalled, true, 'refresh should have been called via cookie');
+  // The refresh response should contain a valid access token.
+  assert.ok(refreshResult?.tokens?.accessToken, 'refresh response should contain an access token');
+  assert.equal(refreshResult.tokens.accessToken, 'fresh-from-cookie');
 });
 
 test('dispose ignores future calls', async () => {

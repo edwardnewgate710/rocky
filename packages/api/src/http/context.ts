@@ -19,7 +19,7 @@ export interface Identity {
   readonly tokenId: string;
 }
 
-/** Everything a handler needs about the incoming request. */
+/** Everything a handler needs to know about the incoming request. */
 export interface RequestContext {
   readonly method: string;
   readonly path: string;
@@ -47,9 +47,16 @@ export interface HandlerResult {
 /** A route handler: context in, result out (sync or async). */
 export type Handler = (ctx: RequestContext) => Promise<HandlerResult> | HandlerResult;
 
-/** Convenience constructor for a JSON response. */
-export function json(status: number, body: unknown): HandlerResult {
-  return { status, body };
+/**
+ * Convenience constructor for a JSON response. Optionally accepts response
+ * headers (e.g. `Set-Cookie` for the httpOnly refresh cookie — M12 inc 2).
+ */
+export function json(
+  status: number,
+  body: unknown,
+  headers?: Readonly<Record<string, string>>,
+): HandlerResult {
+  return headers ? { status, body, headers } : { status, body };
 }
 
 /** Convenience constructor for an empty `204 No Content` response. */

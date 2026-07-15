@@ -90,6 +90,7 @@ test('full game vs. human — Fool\'s Mate through DOM clicks, checkmate in 4 pl
     expect(reg1.ok()).toBeTruthy();
     const auth1 = await reg1.json();
     const token1 = auth1.tokens.accessToken;
+    const refresh1 = auth1.tokens.refreshToken;
     const userId1 = auth1.user.id;
 
     const reg2 = await request.post('/v1/auth/register', {
@@ -97,7 +98,7 @@ test('full game vs. human — Fool\'s Mate through DOM clicks, checkmate in 4 pl
     });
     expect(reg2.ok()).toBeTruthy();
     const auth2 = await reg2.json();
-    const token2 = auth2.tokens.accessToken;
+    const refresh2 = auth2.tokens.refreshToken;
     const userId2 = auth2.user.id;
 
     // 2. Create a game via the bridge route with both player ids
@@ -110,18 +111,26 @@ test('full game vs. human — Fool\'s Mate through DOM clicks, checkmate in 4 pl
     const gameId = game.gameId;
     expect(gameId).toBeTruthy();
 
-    // 3. Set auth sessions via addInitScript (before any page script runs)
-    await page1.addInitScript(({ token, handle: h }) => {
-      localStorage.setItem('gambit-session', JSON.stringify({
-        accessToken: token, handle: h, userId: '', roles: [],
-      }));
-    }, { token: token1, handle: handle1 });
-
-    await page2.addInitScript(({ token, handle: h }) => {
-      localStorage.setItem('gambit-session', JSON.stringify({
-        accessToken: token, handle: h, userId: '', roles: [],
-      }));
-    }, { token: token2, handle: handle2 });
+    // 3. Seed each context for the memory-only-token model (M12 inc 2): the
+    //    httpOnly refresh cookie lets the app mint a fresh access token via
+    //    restore(); localStorage carries only the persisted identity.
+    const refreshCookie = (value: string) => ({
+      name: 'gambit_refresh',
+      value,
+      domain: 'localhost',
+      path: '/v1/auth',
+      httpOnly: true,
+      secure: false,
+      sameSite: 'Strict' as const,
+    });
+    await ctx1.addCookies([refreshCookie(refresh1)]);
+    await ctx2.addCookies([refreshCookie(refresh2)]);
+    await page1.addInitScript(({ handle: h, uid }) => {
+      localStorage.setItem('gambit-session', JSON.stringify({ handle: h, userId: uid }));
+    }, { handle: handle1, uid: userId1 });
+    await page2.addInitScript(({ handle: h, uid }) => {
+      localStorage.setItem('gambit-session', JSON.stringify({ handle: h, userId: uid }));
+    }, { handle: handle2, uid: userId2 });
 
     // 4. Both players navigate to the game page
     await page1.goto(`/game/${gameId}`);

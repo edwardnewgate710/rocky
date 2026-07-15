@@ -40,6 +40,11 @@ export interface RequestSpec {
   readonly signal?: AbortSignal;
   /** Override the method-based retry-safety decision. */
   readonly idempotent?: boolean;
+  /**
+   * Whether to send credentials (cookies) with this request. Default `false`.
+   * Set to `'include'` for cookie-based auth (M12 inc 2: refresh/logout).
+   */
+  readonly credentials?: 'include' | 'omit' | 'same-origin';
 }
 
 export interface HttpClientOptions {
@@ -120,6 +125,7 @@ export class HttpClient {
       headers: this.buildHeaders(spec.headers, hasBody),
       signal: controller.signal,
       ...(hasBody ? { body: JSON.stringify(spec.body) } : {}),
+      ...(spec.credentials !== undefined ? { credentials: spec.credentials } : {}),
     };
 
     let response: HttpResponse;

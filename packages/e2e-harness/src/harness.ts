@@ -104,6 +104,9 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
   const ids = uuidv7Generator;
   const config = resolveConfig({
     accessTokenSecret: 'e2e-harness-test-secret-at-least-32-bytes-long!!',
+    // The e2e stack runs over plain HTTP (vite preview), so the refresh cookie
+    // must not carry the `Secure` attribute or the browser would drop it.
+    cookieSecure: false,
   });
   const hasher = new ScryptPasswordHasher();
   const tokens = new AccessTokenService({

@@ -58,7 +58,15 @@ export function createApiServer(deps: ApiDependencies, options: ApiServerOptions
     refreshTtlSec: deps.config.refreshTokenTtlSec,
   });
 
-  const router = buildRouter({ auth, repos: deps.repos, clock: deps.clock, ids: deps.ids, info });
+  const router = buildRouter({
+    auth,
+    repos: deps.repos,
+    clock: deps.clock,
+    ids: deps.ids,
+    info,
+    cookieSecure: deps.config.cookieSecure,
+    refreshTokenTtlSec: deps.config.refreshTokenTtlSec,
+  });
 
   const authenticate = (authorization: string | undefined): Identity | null => {
     if (!authorization) return null;

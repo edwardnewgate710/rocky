@@ -52,7 +52,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       accessToken: { type: 'string', description: 'HMAC-SHA256 (HS256) bearer token.' },
       tokenType: { type: 'string', enum: ['Bearer'] },
       expiresIn: { type: 'integer', description: 'Access-token lifetime in seconds.' },
-      refreshToken: { type: 'string', description: 'Opaque, single-use refresh token.' },
+      refreshToken: { type: 'string', description: 'Opaque, single-use refresh token. Also set as an httpOnly cookie for browser clients; non-browser API clients read it from the response body.' },
       refreshExpiresAt: dateTime,
     },
   },
@@ -222,8 +222,8 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
 
   RefreshRequest: {
     type: 'object',
-    required: ['refreshToken'],
-    properties: { refreshToken: { type: 'string' } },
+    description: 'Refresh token request. The refresh token may be provided in the JSON body (non-browser API clients) or via the httpOnly `gambit_refresh` cookie (browser flow). The cookie is preferred when both are present.',
+    properties: { refreshToken: { type: 'string', description: 'Opaque refresh token. Optional — may be provided via the httpOnly cookie instead.' } },
     additionalProperties: false,
   },
 

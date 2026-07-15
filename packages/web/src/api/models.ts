@@ -8,9 +8,15 @@
  * fields that are truly optional in the request body use `?`.
  *
  * Scope note (M6 increment 3A): only the endpoints the networking foundation
- * needs are modelled — health, auth/session, users/profile, ratings,
+ * needs are modeled — health, auth/session, users/profile, ratings,
  * leaderboard and game summaries. Lobby/matchmaking (seeks) and live game
  * streaming (WS) land with their own increments and are intentionally absent.
+ *
+ * M12 inc 2: `refreshToken` in `TokenPair` is now optional for the browser
+ * flow — the browser never reads or stores it (it lives in an httpOnly
+ * cookie). Non-browser API clients still receive it in the JSON body.
+ * `RefreshRequest` is kept for API-client compatibility but the browser
+ * flow no longer sends the token in the body (it relies on the cookie).
  */
 
 /** Supported chess variants (matches the server's `variant` enum). */
@@ -30,13 +36,23 @@ export type Variant = (typeof VARIANTS)[number];
 export const USER_ROLES = ['user', 'coach', 'tournament_director', 'moderator', 'admin'] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 
-/** Access + refresh token pair returned by the auth endpoints. */
+/**
+ * Access + refresh token pair returned by the auth endpoints.
+ *
+ * `refreshToken` is optional: the API still returns it in the JSON body for
+ * non-browser API clients, but the browser flow (M12 inc 2) never reads or
+ * stores it — the refresh token lives in an httpOnly cookie set by the API.
+ */
 export interface TokenPair {
   readonly accessToken: string;
   readonly tokenType: 'Bearer';
   /** Access-token lifetime in seconds. */
   readonly expiresIn: number;
-  readonly refreshToken: string;
+  /**
+   * Opaque refresh token. Present for non-browser API clients; the browser
+   * never reads this (it uses the httpOnly cookie). See ADR-0012.
+   */
+  readonly refreshToken?: string;
   /** ISO-8601 timestamp. */
   readonly refreshExpiresAt: string;
 }
@@ -74,8 +90,13 @@ export interface LoginRequest {
   readonly password: string;
 }
 
+/**
+ * Refresh request body. Used by non-browser API clients that send the
+ * refresh token in the JSON body. The browser flow omits the body and
+ * relies on the httpOnly cookie (sent automatically with `credentials: 'include'`).
+ */
 export interface RefreshRequest {
-  readonly refreshToken: string;
+  readonly refreshToken?: string;
 }
 
 /** A server-side session record (device/login). */

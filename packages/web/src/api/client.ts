@@ -10,6 +10,13 @@
  *   - recovers from a server-side 401 by refreshing once and replaying the
  *     request a single time, then surfacing the original error if that fails.
  *
+ * M12 inc 2: refresh and logout now rely on the httpOnly refresh cookie
+ * (`credentials: 'include'`) instead of putting the refresh token in the
+ * request body. The access token stays in memory only. Login and register
+ * also send `credentials: 'include'` so the browser accepts the Set-Cookie.
+ * Non-browser API clients can still send the refresh token in the body
+ * (the API accepts both).
+ *
  * It is framework-independent and deliberately excludes lobby/matchmaking
  * (seeks) and live game streaming (WebSocket), which land in later increments.
  */
@@ -30,7 +37,6 @@ import type {
   LeaderboardEntry,
   LoginRequest,
   RatingView,
-  RefreshRequest,
   RegisterRequest,
   SeekView,
   SelfUser,
@@ -46,7 +52,7 @@ export type ExecSpec = RequestSpec & { readonly auth?: boolean };
 export type Execute = <T>(spec: ExecSpec) => Promise<T>;
 
 export interface GambitClientOptions {
-  /** API origin, e.g. `https://api.gambit.example`. Empty string = same origin. */
+  /** API origin, e.g. `https://api.gambit.example`. Empty string = same-origin. */
   readonly baseUrl: string;
   readonly transport?: HttpTransport;
   readonly retry?: RetryPolicy;
@@ -78,11 +84,13 @@ export class GambitClient {
     });
 
     this.session = new SessionManager({
-      refresh: (refreshToken): Promise<AuthResponse> =>
+      // M12 inc 2: refresh relies on the httpOnly cookie (credentials: 'include').
+      // The refresh token is NOT sent in the body for the browser flow.
+      refresh: (): Promise<AuthResponse> =>
         this.http.request<AuthResponse>({
           method: 'POST',
           path: '/v1/auth/refresh',
-          body: { refreshToken } satisfies RefreshRequest,
+          credentials: 'include',
         }),
       ...(options.tokenStore ? { store: options.tokenStore } : {}),
       ...(options.now ? { now: options.now } : {}),
@@ -152,33 +160,63 @@ export class AuthApi {
   }
 
   async register(body: RegisterRequest): Promise<AuthResponse> {
-    const auth = await this.execute<AuthResponse>({ method: 'POST', path: '/v1/auth/register', body });
+    // M12 inc 2: send credentials so the browser accepts the Set-Cookie.
+    const auth = await this.execute<AuthResponse>({
+      method: 'POST',
+      path: '/v1/auth/register',
+      body,
+      credentials: 'include',
+    });
     this.session.adopt(auth);
     return auth;
   }
 
   async login(body: LoginRequest): Promise<AuthResponse> {
-    const auth = await this.execute<AuthResponse>({ method: 'POST', path: '/v1/auth/login', body });
+    // M12 inc 2: send credentials so the browser accepts the Set-Cookie.
+    const auth = await this.execute<AuthResponse>({
+      method: 'POST',
+      path: '/v1/auth/login',
+      body,
+      credentials: 'include',
+    });
     this.session.adopt(auth);
     return auth;
   }
 
-  /** Force a token refresh now and return the fresh auth state. */
+  /**
+   * Force a token refresh now and return the fresh auth state.
+   *
+   * M12 inc 2: this is the reload-restore path — it must work when there is NO
+   * in-memory session yet, using only the httpOnly refresh cookie. It therefore
+   * POSTs directly with `credentials: 'include'` and adopts the result, rather
+   * than delegating to `session.refreshNow()` (which requires a pre-existing
+   * session to read a body refresh token). The session-based `refreshNow()`
+   * remains the single-flight path used by 401-recovery, where a session exists.
+   */
   async refresh(): Promise<AuthResponse> {
-    const refreshed = await this.session.refreshNow();
-    return { user: refreshed.user, tokens: refreshed.tokens };
+    const auth = await this.execute<AuthResponse>({
+      method: 'POST',
+      path: '/v1/auth/refresh',
+      credentials: 'include',
+    });
+    this.session.adopt(auth);
+    return auth;
   }
 
-  /** Revoke the current refresh token server-side and clear the local session. */
+  /**
+   * Revoke the current refresh token server-side and clear the local session.
+   *
+   * M12 inc 2: sends `credentials: 'include'` so the httpOnly refresh cookie
+   * is sent to the server. No refresh token in the body.
+   */
   async logout(): Promise<void> {
-    const current = this.session.current;
-    if (!current) return;
+    if (!this.session.isAuthenticated) return;
     try {
       await this.execute<void>({
         method: 'POST',
         path: '/v1/auth/logout',
         auth: true,
-        body: { refreshToken: current.tokens.refreshToken } satisfies RefreshRequest,
+        credentials: 'include',
       });
     } finally {
       this.session.reset();

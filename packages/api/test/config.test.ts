@@ -1,12 +1,13 @@
 /**
  * Tests for `resolveConfig` — focused on the CORS invariants enforced per
- * ADR-0011. The middleware reflects exact origins and never emits `*`, so an
- * invalid CORS config should fail fast at startup rather than silently misbehave.
+ * ADR-0011 and the cookieSecure default from ADR-0012. The middleware
+ * reflects exact origins and never emits `*`, so an invalid CORS config
+ * should fail fast at startup rather than silently misbehave.
  */
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveConfig } from '../src/config';
+import { resolveConfig } from '../src/config.js';
 
 const SECRET = 'x'.repeat(32);
 
@@ -47,5 +48,17 @@ describe('resolveConfig CORS validation', () => {
     assert.deepEqual(cfg.cors.allowedOrigins, []);
     assert.equal(cfg.cors.allowCredentials, false);
     assert.equal(cfg.enableHsts, true);
+  });
+});
+
+describe('resolveConfig cookieSecure', () => {
+  it('defaults cookieSecure to true', () => {
+    const cfg = resolveConfig({ accessTokenSecret: SECRET });
+    assert.equal(cfg.cookieSecure, true);
+  });
+
+  it('accepts cookieSecure: false for local/dev over HTTP', () => {
+    const cfg = resolveConfig({ accessTokenSecret: SECRET, cookieSecure: false });
+    assert.equal(cfg.cookieSecure, false);
   });
 });

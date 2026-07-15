@@ -22,6 +22,11 @@ export interface HttpRequest {
   readonly body?: string;
   /** Abort signal used for client-side timeout / cancellation. */
   readonly signal?: AbortSignal;
+  /**
+   * Whether to send credentials (cookies) with the request. Default `false`.
+   * Set to `'include'` for cross-origin cookie-based auth (M12 inc 2).
+   */
+  readonly credentials?: 'include' | 'omit' | 'same-origin';
 }
 
 /** A transport-level response. `status` is always present; `body` is raw text. */
@@ -64,6 +69,9 @@ export class FetchTransport implements HttpTransport {
     };
     if (request.body !== undefined) init.body = request.body;
     if (request.signal !== undefined) init.signal = request.signal;
+    // M12 inc 2: pass credentials through so the httpOnly refresh cookie
+    // is sent on refresh/logout and received on login/register.
+    if (request.credentials !== undefined) init.credentials = request.credentials;
 
     const res = await this.fetchImpl(request.url, init);
     const body = await res.text();
