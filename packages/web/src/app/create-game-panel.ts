@@ -100,10 +100,12 @@ export class CreateGamePanel {
   private readonly variantSelect: HTMLSelectElement;
   private readonly minRatingInput: HTMLInputElement;
   private readonly maxRatingInput: HTMLInputElement;
+  private readonly ratingError: HTMLParagraphElement;
   private readonly submitBtn: HTMLButtonElement;
 
   private expanded = false;
   private pending = false;
+  private ratingInvalid = false;
 
   constructor(opts: CreateGamePanelOptions) {
     this.doc = opts.doc;
@@ -225,6 +227,15 @@ export class CreateGamePanel {
       placeholder: 'Any',
     });
 
+    this.ratingError = el(d, 'p', {
+      class: 'cg-field-error',
+      id: 'cg-rating-error',
+      role: 'alert',
+      hidden: '',
+    });
+    this.minRatingInput.setAttribute('aria-describedby', 'cg-rating-error');
+    this.maxRatingInput.setAttribute('aria-describedby', 'cg-rating-error');
+
     this.advanced = el(
       d,
       'div',
@@ -242,6 +253,7 @@ export class CreateGamePanel {
           el(d, 'label', { class: 'cg-num', for: 'cg-min-rating' }, 'Min', this.minRatingInput),
           el(d, 'label', { class: 'cg-num', for: 'cg-max-rating' }, 'Max', this.maxRatingInput),
         ),
+        this.ratingError,
       ),
     );
     const moreBox = el(d, 'div', { class: 'cg-more' }, this.moreToggle, this.advanced);
@@ -286,6 +298,15 @@ export class CreateGamePanel {
       this.advanced.hidden = !open;
       this.moreToggle.setAttribute('aria-expanded', String(open));
     });
+    // Rating range: validate live (min ≤ max) and clamp to 0–4000 on commit,
+    // so an invalid range is blocked before submit rather than after.
+    for (const input of [this.minRatingInput, this.maxRatingInput]) {
+      input.addEventListener('input', () => this.validateRating());
+      input.addEventListener('change', () => {
+        this.clampField(input);
+        this.validateRating();
+      });
+    }
 
     opts.mount.replaceChildren(this.trigger, this.form);
     this.setAuthenticated(opts.initialAuthenticated ?? false);
@@ -325,11 +346,37 @@ export class CreateGamePanel {
     return input ? input.value : null;
   }
 
+  /** Parse a rating field to an integer clamped to the valid 0–4000 band, or null. */
   private parseRating(raw: string): number | null {
     const t = raw.trim();
     if (!t) return null;
     const n = Number(t);
-    return Number.isFinite(n) ? Math.round(n) : null;
+    if (!Number.isFinite(n)) return null;
+    return Math.min(4000, Math.max(0, Math.round(n)));
+  }
+
+  /** Snap a rating field's visible value to the clamped, parsed value on commit. */
+  private clampField(input: HTMLInputElement): void {
+    const parsed = this.parseRating(input.value);
+    input.value = parsed === null ? '' : String(parsed);
+  }
+
+  /** Live-validate the rating range and reflect the result on submit + a11y. */
+  private validateRating(): void {
+    const min = this.parseRating(this.minRatingInput.value);
+    const max = this.parseRating(this.maxRatingInput.value);
+    const invalid = min !== null && max !== null && min > max;
+    this.ratingInvalid = invalid;
+    this.ratingError.textContent = invalid ? 'Minimum rating can’t exceed the maximum.' : '';
+    this.ratingError.hidden = !invalid;
+    this.minRatingInput.setAttribute('aria-invalid', String(invalid));
+    this.maxRatingInput.setAttribute('aria-invalid', String(invalid));
+    this.updateSubmitState();
+  }
+
+  /** Submit is disabled while a request is in flight or the rating range is invalid. */
+  private updateSubmitState(): void {
+    this.submitBtn.disabled = this.pending || this.ratingInvalid;
   }
 
   /** Read + validate the form. Returns null (and surfaces a message) when invalid. */
@@ -405,8 +452,8 @@ export class CreateGamePanel {
   /** Reflect an in-flight create request on the submit button. */
   setPending(pending: boolean): void {
     this.pending = pending;
-    this.submitBtn.disabled = pending;
     this.submitBtn.textContent = pending ? 'Creating…' : 'Create seek';
+    this.updateSubmitState();
   }
 
   /** Collapse the panel (e.g. after a successful create driven elsewhere). */

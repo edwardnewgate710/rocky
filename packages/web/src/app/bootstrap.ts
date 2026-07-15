@@ -123,10 +123,15 @@ function renderEmpty(container: HTMLElement, opts: EmptyStateOptions): void {
 
 /**
  * Render a seek list into a DOM element. Each seek is a row with variant,
- * speed, time control, and a cancel button (if owned). An empty list renders
- * a first-run empty state pointing at the Create-seek action.
+ * speed, time control, and — only on the viewer's own seeks — a cancel button
+ * (`currentUserId`). Cancelling someone else's seek is a 403, so the affordance
+ * is owner-only. An empty list renders a first-run empty state.
  */
-function renderSeeks(container: HTMLElement, seeks: readonly SeekView[]): void {
+function renderSeeks(
+  container: HTMLElement,
+  seeks: readonly SeekView[],
+  currentUserId: string | null,
+): void {
   container.innerHTML = '';
   if (seeks.length === 0) {
     renderEmpty(container, {
@@ -137,8 +142,9 @@ function renderSeeks(container: HTMLElement, seeks: readonly SeekView[]): void {
     return;
   }
   for (const seek of seeks) {
+    const owned = currentUserId !== null && seek.creatorId === currentUserId;
     const row = document.createElement('div');
-    row.className = 'seek-row';
+    row.className = owned ? 'seek-row seek-row-own' : 'seek-row';
     row.dataset.seekId = seek.id;
 
     const info = document.createElement('span');
@@ -147,12 +153,16 @@ function renderSeeks(container: HTMLElement, seeks: readonly SeekView[]): void {
     info.textContent = `${seek.variant} · ${seek.speed} · ${tc}${seek.rated ? ' · rated' : ''}`;
     row.appendChild(info);
 
-    const cancelBtn = document.createElement('button');
-    cancelBtn.type = 'button';
-    cancelBtn.className = 'seek-cancel';
-    cancelBtn.textContent = 'Cancel';
-    cancelBtn.dataset.seekId = seek.id;
-    row.appendChild(cancelBtn);
+    // Only the creator can cancel their seek — don't show a button that 403s.
+    if (owned) {
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.className = 'seek-cancel';
+      cancelBtn.textContent = 'Cancel';
+      cancelBtn.dataset.seekId = seek.id;
+      cancelBtn.setAttribute('aria-label', 'Cancel your seek');
+      row.appendChild(cancelBtn);
+    }
 
     container.appendChild(row);
   }
@@ -367,7 +377,7 @@ export function bootstrap(
       client: app.api,
       callbacks: {
         onSeeks: (seeks) => {
-          if (seekListEl) renderSeeks(seekListEl, seeks);
+          if (seekListEl) renderSeeks(seekListEl, seeks, app.api.session.current?.user.id ?? null);
         },
         onCreatePending: (pending) => {
           panel?.setPending(pending);

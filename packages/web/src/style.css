@@ -311,12 +311,17 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 8px 12px;
   border-radius: 6px;
   background: var(--panel);
 }
+/* Your own open seek reads as yours (and carries the cancel affordance). */
+.seek-row-own { background: color-mix(in srgb, var(--sel) 10%, var(--panel)); }
 .seek-info {
   font-size: 0.875rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .seek-cancel {
   font-size: 0.75rem;
@@ -522,6 +527,7 @@ button:disabled {
 .cg-presets,
 .cg-segmented { display: flex; flex-wrap: wrap; gap: 6px; }
 .cg-hint { margin: 0; font-size: 0.75rem; color: var(--muted); }
+.cg-field-error { margin: 0; font-size: 0.75rem; color: var(--ember); }
 
 /* Form controls (custom time, variant, rating range). */
 .cg-custom,
