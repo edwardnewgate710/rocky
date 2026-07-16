@@ -19,6 +19,7 @@ import type { AccessTokenService } from './auth/tokens';
 import type { AuditRepository } from './ports/audit';
 import type { Clock } from './ports/clock';
 import type { IdGenerator } from './ports/ids';
+import type { RateLimiter } from './ports/rate-limiter';
 import type { ApiConfig } from './config';
 
 /** The full set of repositories the API consumes. */
@@ -39,4 +40,5 @@ export interface ApiDependencies {
   readonly clock: Clock;
   readonly ids: IdGenerator;
   readonly config: ApiConfig;
+  readonly rateLimiter: RateLimiter;
 }

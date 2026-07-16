@@ -1,0 +1,163 @@
+import { strict as assert } from 'node:assert';
+import { test, describe } from 'node:test';
+import { startHarness } from './helpers';
+import { ManualClock } from '../src/ports/clock';
+import { InMemoryRateLimiter } from '../src/ports/in-memory-rate-limiter';
+
+describe('InMemoryRateLimiter', () => {
+  test('allows requests within limit and denies when exceeded', () => {
+    const clock = new ManualClock(1000);
+    const limiter = new InMemoryRateLimiter(clock);
+    const limit = { maxRequests: 2, windowMs: 10000 };
+
+    const r1 = limiter.check('k1', limit);
+    assert.equal(r1.allowed, true);
+    assert.equal(r1.retryAfterSeconds, 0);
+
+    const r2 = limiter.check('k1', limit);
+    assert.equal(r2.allowed, true);
+
+    const r3 = limiter.check('k1', limit);
+    assert.equal(r3.allowed, false);
+    // windowStart=1000, now=1000, windowMs=10000 -> resetMs = 1000+10000-1000 = 10000ms -> 10s
+    assert.equal(r3.retryAfterSeconds, 10);
+  });
+
+  test('resets window after time passes', () => {
+    const clock = new ManualClock(1000);
+    const limiter = new InMemoryRateLimiter(clock);
+    const limit = { maxRequests: 1, windowMs: 10000 };
+
+    limiter.check('k2', limit); // count=1
+    assert.equal(limiter.check('k2', limit).allowed, false);
+
+    clock.advance(10000); // now=11000 (past 11000 boundary)
+
+    const r3 = limiter.check('k2', limit);
+    assert.equal(r3.allowed, true, 'Allowed after window expires');
+  });
+
+  test('sweeps stale buckets so unique-key floods do not grow memory unbounded', () => {
+    const clock = new ManualClock(1000);
+    const limiter = new InMemoryRateLimiter(clock);
+    const limit = { maxRequests: 5, windowMs: 1000 };
+
+    // Fill many distinct one-off keys — their buckets should not survive
+    // past their own window once the sweep threshold is crossed.
+    for (let i = 0; i < 500; i += 1) {
+      limiter.check(`flood-${i}`, limit);
+    }
+    assert.equal(limiter.size, 500, 'all 500 buckets tracked before the sweep threshold');
+
+    // Move well past every flood bucket's window, then push the call count
+    // past SWEEP_INTERVAL_CALLS (500) to trigger the opportunistic sweep.
+    clock.advance(2000);
+    for (let i = 0; i < 500; i += 1) {
+      limiter.check(`other-${i}`, limit);
+    }
+
+    // Only the 500 fresh 'other-*' buckets (created at the new time) should
+    // remain — every stale 'flood-*' bucket must have been evicted. If they
+    // hadn't been, size would be 1000 (500 stale + 500 fresh).
+    assert.equal(limiter.size, 500, 'stale flood buckets were swept, only fresh buckets remain');
+  });
+});
+
+describe('Auth Endpoints Rate Limiting Integration', () => {
+  test('register endpoint is rate limited per IP', async () => {
+    const h = await startHarness({ trustProxy: true });
+    try {
+      // DEFAULT_RATE_LIMIT.register.perIp is 5 requests.
+      for (let i = 0; i < 5; i++) {
+        const res = await h.json('POST', '/v1/auth/register', {
+          body: { handle: `user${i}`, password: 'password123' },
+          headers: { 'x-forwarded-for': '10.0.0.1' },
+        });
+        assert.equal(res.status, 201, `Request ${i} should be 201`);
+      }
+
+      // 6th request from same IP should be blocked
+      const blocked = await h.json('POST', '/v1/auth/register', {
+        body: { handle: 'user6', password: 'password123' },
+        headers: { 'x-forwarded-for': '10.0.0.1' },
+      });
+      assert.equal(blocked.status, 429);
+      assert.equal(blocked.body.error.code, 'rate_limited');
+      assert.equal(blocked.headers.get('retry-after'), '3600'); // 60 mins
+
+      // Different IP is allowed
+      const ok = await h.json('POST', '/v1/auth/register', {
+        body: { handle: 'user7', password: 'password123' },
+        headers: { 'x-forwarded-for': '10.0.0.2' },
+      });
+      assert.equal(ok.status, 201);
+    } finally {
+      await h.close();
+    }
+  });
+
+  test('login endpoint is rate limited per IP and per handle independently', async () => {
+    const h = await startHarness({ trustProxy: true });
+    try {
+      // DEFAULT_RATE_LIMIT.login.perHandle is 5, perIp is 10.
+      await h.json('POST', '/v1/auth/register', { body: { handle: 'alice', password: 'password123' } });
+
+      // Hit handle limit (5)
+      for (let i = 0; i < 5; i++) {
+        await h.json('POST', '/v1/auth/login', {
+          body: { handle: 'alice', password: 'wrong' },
+          headers: { 'x-forwarded-for': `192.168.1.${i}` }, // different IPs, same handle
+        });
+      }
+
+      const blockedHandle = await h.json('POST', '/v1/auth/login', {
+        body: { handle: 'alice', password: 'wrong' },
+        headers: { 'x-forwarded-for': '192.168.1.100' },
+      });
+      assert.equal(blockedHandle.status, 429, 'Blocked by handle limit');
+      assert.equal(blockedHandle.headers.get('retry-after'), '900'); // 15 mins
+
+      // Hit IP limit (10) for different handles
+      for (let i = 0; i < 10; i++) {
+        await h.json('POST', '/v1/auth/login', {
+          body: { handle: `ghost${i}`, password: 'wrong' },
+          headers: { 'x-forwarded-for': '10.10.10.1' }, // same IP, different handles
+        });
+      }
+
+      const blockedIp = await h.json('POST', '/v1/auth/login', {
+        body: { handle: 'ghost10', password: 'wrong' },
+        headers: { 'x-forwarded-for': '10.10.10.1' },
+      });
+      assert.equal(blockedIp.status, 429, 'Blocked by IP limit');
+      assert.equal(blockedIp.headers.get('retry-after'), '300'); // 5 mins
+    } finally {
+      await h.close();
+    }
+  });
+
+  test('refresh endpoint is rate limited per IP', async () => {
+    const h = await startHarness({ trustProxy: true });
+    try {
+      const reg = await h.json('POST', '/v1/auth/register', { body: { handle: 'bob', password: 'password123' } });
+      const refreshToken = reg.body.tokens.refreshToken;
+
+      // refresh limit is 60/5min
+      for (let i = 0; i < 60; i++) {
+        await h.json('POST', '/v1/auth/refresh', {
+          body: { refreshToken },
+          headers: { 'x-forwarded-for': '172.16.0.1' },
+        });
+      }
+
+      const blocked = await h.json('POST', '/v1/auth/refresh', {
+        body: { refreshToken },
+        headers: { 'x-forwarded-for': '172.16.0.1' },
+      });
+      assert.equal(blocked.status, 429);
+      assert.equal(blocked.headers.get('retry-after'), '300');
+    } finally {
+      await h.close();
+    }
+  });
+});

@@ -30,6 +30,7 @@ export class HttpError extends Error {
     readonly code: ErrorCode,
     message: string,
     readonly details?: Readonly<Record<string, unknown>>,
+    readonly headers?: Readonly<Record<string, string>>,
   ) {
     super(message);
     this.name = 'HttpError';
@@ -57,5 +58,11 @@ export class HttpError extends Error {
 
   static conflict(message: string, details?: Record<string, unknown>): HttpError {
     return new HttpError(409, 'conflict', message, details);
+  }
+
+  static rateLimited(retryAfterSeconds: number, message = 'too many requests'): HttpError {
+    return new HttpError(429, 'rate_limited', message, undefined, {
+      'Retry-After': String(retryAfterSeconds),
+    });
   }
 }

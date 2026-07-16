@@ -24,6 +24,8 @@ import {
   REFRESH_COOKIE_NAME,
 } from './http/cookie';
 import { strictObject, oneOf, optInt, optString, parseLimit, reqString } from './http/validate';
+import type { RateLimiter } from './ports/rate-limiter';
+import type { ApiConfig } from './config';
 import type { Clock } from './ports/clock';
 import type { IdGenerator } from './ports/ids';
 import {
@@ -46,10 +48,8 @@ export interface RouteDeps {
   readonly clock: Clock;
   readonly ids: IdGenerator;
   readonly info: OpenApiInfo;
-  /** Refresh-token cookie `Secure` attribute (default `true`; `false` for local/dev over HTTP). */
-  readonly cookieSecure: boolean;
-  /** Refresh-token lifetime in seconds, used for the cookie `Max-Age`. */
-  readonly refreshTokenTtlSec: number;
+  readonly rateLimiter: RateLimiter;
+  readonly config: ApiConfig;
 }
 
 const PUBLIC: AuthPolicy = { required: false };
@@ -64,9 +64,10 @@ const MAX_LIST_LIMIT = 200;
 /** Build the fully-wired router. */
 export function buildRouter(deps: RouteDeps): Router {
   const router = new Router();
-  const { auth, repos, clock, ids, info, cookieSecure, refreshTokenTtlSec } = deps;
+  const { auth, repos, clock, ids, info, rateLimiter, config } = deps;
 
-  const cookieOpts = { secure: cookieSecure };
+  const cookieOpts = { secure: config.cookieSecure };
+  const refreshTokenTtlSec = config.refreshTokenTtlSec;
 
   let cachedSpec: OpenApiDocument | null = null;
 
@@ -103,6 +104,14 @@ export function buildRouter(deps: RouteDeps): Router {
     }),
     PUBLIC,
     async (ctx) => {
+      if (config.rateLimit.enabled) {
+        const ipKey = `register:ip:${ctx.ip ?? 'unknown'}`;
+        const ipCheck = rateLimiter.check(ipKey, config.rateLimit.register.perIp);
+        if (!ipCheck.allowed) {
+          throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
+        }
+      }
+
       const body = strictObject(ctx.body, ['handle', 'password', 'email']);
       const handle = reqString(body, 'handle', { trim: true, pattern: HANDLE_PATTERN });
       const password = reqString(body, 'password', { min: 8, max: 1024 });
@@ -130,6 +139,18 @@ export function buildRouter(deps: RouteDeps): Router {
       const body = strictObject(ctx.body, ['handle', 'password']);
       const handle = reqString(body, 'handle', { trim: true });
       const password = reqString(body, 'password');
+
+      if (config.rateLimit.enabled) {
+        const ipKey = `login:ip:${ctx.ip ?? 'unknown'}`;
+        const handleKey = `login:handle:${handle}`;
+        
+        const ipCheck = rateLimiter.check(ipKey, config.rateLimit.login.perIp);
+        if (!ipCheck.allowed) throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
+
+        const handleCheck = rateLimiter.check(handleKey, config.rateLimit.login.perHandle);
+        if (!handleCheck.allowed) throw HttpError.rateLimited(handleCheck.retryAfterSeconds);
+      }
+
       const result = await auth.login({ handle, password }, meta(ctx));
       return json(200, {
         user: selfUser(result.user, result.roles),
@@ -150,6 +171,14 @@ export function buildRouter(deps: RouteDeps): Router {
     }),
     PUBLIC,
     async (ctx) => {
+      if (config.rateLimit.enabled) {
+        const ipKey = `refresh:ip:${ctx.ip ?? 'unknown'}`;
+        const ipCheck = rateLimiter.check(ipKey, config.rateLimit.refresh.perIp);
+        if (!ipCheck.allowed) {
+          throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
+        }
+      }
+
       // Prefer the cookie; fall back to the JSON body for non-browser API clients.
       const refreshToken = resolveRefreshToken(ctx);
       if (!refreshToken) {

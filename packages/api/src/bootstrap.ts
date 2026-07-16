@@ -28,6 +28,8 @@ import { systemClock } from './ports/clock';
 import type { Clock } from './ports/clock';
 import { uuidv7Generator } from './ports/ids';
 import type { IdGenerator } from './ports/ids';
+import { InMemoryRateLimiter } from './ports/in-memory-rate-limiter';
+import type { RateLimiter } from './ports/rate-limiter';
 import { createApiServer } from './server';
 import type { ApiServer, ApiServerOptions } from './server';
 
@@ -79,6 +81,7 @@ export interface PgBootstrapOptions {
   readonly hasher?: PasswordHasher;
   readonly clock?: Clock;
   readonly ids?: IdGenerator;
+  readonly rateLimiter?: RateLimiter;
   readonly server?: ApiServerOptions;
 }
 
@@ -100,6 +103,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     clock,
     ids,
   });
+  const rateLimiter = options.rateLimiter ?? new InMemoryRateLimiter(clock);
   const deps: ApiDependencies = {
     repos: createPgRepositories(pool, ids),
     hasher,
@@ -107,6 +111,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     clock,
     ids,
     config,
+    rateLimiter,
   };
   return { deps, pool };
 }

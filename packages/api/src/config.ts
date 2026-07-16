@@ -40,6 +40,29 @@ export interface ApiConfig {
    * @see docs/adr/0012-httponly-refresh-cookie.md
    */
   readonly cookieSecure: boolean;
+  /**
+   * Rate limiting configuration for sensitive endpoints.
+   */
+  readonly rateLimit: RateLimitConfig;
+}
+
+export interface RateLimitEndpointConfig {
+  readonly maxRequests: number;
+  readonly windowMs: number;
+}
+
+export interface RateLimitConfig {
+  readonly enabled: boolean;
+  readonly login: {
+    readonly perIp: RateLimitEndpointConfig;
+    readonly perHandle: RateLimitEndpointConfig;
+  };
+  readonly register: {
+    readonly perIp: RateLimitEndpointConfig;
+  };
+  readonly refresh: {
+    readonly perIp: RateLimitEndpointConfig;
+  };
 }
 
 export const DEFAULT_ACCESS_TOKEN_TTL_SEC = 15 * 60;
@@ -50,6 +73,21 @@ export const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
 export const DEFAULT_CORS: CorsConfig = {
   allowedOrigins: [],
   allowCredentials: false,
+};
+
+/** Default rate limiting configuration. */
+export const DEFAULT_RATE_LIMIT: RateLimitConfig = {
+  enabled: true,
+  login: {
+    perIp: { maxRequests: 10, windowMs: 5 * 60 * 1000 }, // 10 / 5 min
+    perHandle: { maxRequests: 5, windowMs: 15 * 60 * 1000 }, // 5 / 15 min
+  },
+  register: {
+    perIp: { maxRequests: 5, windowMs: 60 * 60 * 1000 }, // 5 / 60 min
+  },
+  refresh: {
+    perIp: { maxRequests: 60, windowMs: 5 * 60 * 1000 }, // 60 / 5 min
+  },
 };
 
 /** Partial config as accepted from callers. */
@@ -99,5 +137,6 @@ export function resolveConfig(input: ApiConfigInput = {}): ApiConfig {
     cors,
     enableHsts: input.enableHsts ?? true,
     cookieSecure: input.cookieSecure ?? true,
+    rateLimit: input.rateLimit ?? DEFAULT_RATE_LIMIT,
   };
 }

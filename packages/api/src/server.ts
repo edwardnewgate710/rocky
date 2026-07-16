@@ -64,8 +64,8 @@ export function createApiServer(deps: ApiDependencies, options: ApiServerOptions
     clock: deps.clock,
     ids: deps.ids,
     info,
-    cookieSecure: deps.config.cookieSecure,
-    refreshTokenTtlSec: deps.config.refreshTokenTtlSec,
+    rateLimiter: deps.rateLimiter,
+    config: deps.config,
   });
 
   const authenticate = (authorization: string | undefined): Identity | null => {

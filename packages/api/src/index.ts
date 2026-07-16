@@ -23,6 +23,8 @@ export * from './auth/service';
 export * from './ports/clock';
 export * from './ports/ids';
 export * from './ports/audit';
+export * from './ports/rate-limiter';
+export * from './ports/in-memory-rate-limiter';
 
 export * from './http/errors';
 export * from './http/context';

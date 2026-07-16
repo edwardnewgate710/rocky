@@ -201,6 +201,7 @@ export class Router {
       if (err instanceof HttpError) {
         writeResult(res, {
           status: err.status,
+          headers: err.headers,
           body: {
             error: {
               code: err.code,

@@ -34,6 +34,7 @@ function main(): void {
     clock,
     ids,
     config,
+    rateLimiter: new (require('../ports/in-memory-rate-limiter').InMemoryRateLimiter)(clock),
   });
 
   const doc = server.openapiDocument();
