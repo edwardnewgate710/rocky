@@ -1,13 +1,40 @@
 import { test, describe } from 'node:test';
 import * as assert from 'node:assert';
 import { RoundRobinPairing } from '../src/round-robin';
-import { GamePairing } from '../src/pairing';
+import type { GamePairing, PairingContext, PlayerHistory, Round } from '../src/pairing';
 
-describe('RoundRobinPairing', () => {
+/**
+ * Helper: drive a RoundRobinPairing to completion, collecting all rounds.
+ * Simulates the Tournament aggregate's round-by-round flow.
+ */
+function collectAllRounds(participants: string[]): Round[] {
+  const strategy = new RoundRobinPairing();
+  const rounds: Round[] = [];
+  const playerHistory = new Map<string, PlayerHistory>();
+  for (const p of participants) {
+    playerHistory.set(p, { opponents: [], whiteCount: 0, blackCount: 0, byeCount: 0, points: 0 });
+  }
+
+  for (let roundNumber = 0; ; roundNumber++) {
+    const context: PairingContext = {
+      participants,
+      roundNumber,
+      completedRounds: [],
+      playerHistory
+    };
+
+    const round = strategy.pairNextRound(context);
+    if (round === null) break;
+    rounds.push(round);
+  }
+
+  return rounds;
+}
+
+describe('RoundRobinPairing (round-by-round interface)', () => {
   test('N = 4: correct round count, pairs meet exactly once, color balance <= 1', () => {
     const participants = ['A', 'B', 'C', 'D'];
-    const strategy = new RoundRobinPairing();
-    const rounds = strategy.generateRounds(participants);
+    const rounds = collectAllRounds(participants);
 
     assert.strictEqual(rounds.length, 3, '4 players should have 3 rounds');
 
@@ -53,8 +80,7 @@ describe('RoundRobinPairing', () => {
 
   test('N = 5: odd N gives one bye per round, color balance holds', () => {
     const participants = ['A', 'B', 'C', 'D', 'E'];
-    const strategy = new RoundRobinPairing();
-    const rounds = strategy.generateRounds(participants);
+    const rounds = collectAllRounds(participants);
 
     assert.strictEqual(rounds.length, 5, '5 players should have 5 rounds');
 
@@ -91,8 +117,7 @@ describe('RoundRobinPairing', () => {
 
   test('N = 6: correct round count, pairs meet exactly once', () => {
     const participants = ['A', 'B', 'C', 'D', 'E', 'F'];
-    const strategy = new RoundRobinPairing();
-    const rounds = strategy.generateRounds(participants);
+    const rounds = collectAllRounds(participants);
 
     assert.strictEqual(rounds.length, 5, '6 players should have 5 rounds');
     
@@ -115,7 +140,44 @@ describe('RoundRobinPairing', () => {
 
   test('rejects less than 2 players', () => {
     const strategy = new RoundRobinPairing();
-    assert.strictEqual(strategy.generateRounds([]).length, 0);
-    assert.strictEqual(strategy.generateRounds(['A']).length, 0);
+    const emptyCtx: PairingContext = {
+      participants: [],
+      roundNumber: 0,
+      completedRounds: [],
+      playerHistory: new Map()
+    };
+    assert.strictEqual(strategy.pairNextRound(emptyCtx), null);
+
+    const singleCtx: PairingContext = {
+      participants: ['A'],
+      roundNumber: 0,
+      completedRounds: [],
+      playerHistory: new Map()
+    };
+    assert.strictEqual(strategy.pairNextRound(singleCtx), null);
+  });
+
+  test('returns null after all rounds are emitted', () => {
+    const participants = ['A', 'B'];
+    const strategy = new RoundRobinPairing();
+
+    // Round 0 should be returned
+    const r0 = strategy.pairNextRound({
+      participants,
+      roundNumber: 0,
+      completedRounds: [],
+      playerHistory: new Map()
+    });
+    assert.ok(r0 !== null, 'Round 0 should exist');
+    assert.strictEqual(r0!.roundIndex, 0);
+
+    // Round 1 should be null (2 players = 1 round)
+    const r1 = strategy.pairNextRound({
+      participants,
+      roundNumber: 1,
+      completedRounds: [],
+      playerHistory: new Map()
+    });
+    assert.strictEqual(r1, null, 'No more rounds for 2 players');
   });
 });

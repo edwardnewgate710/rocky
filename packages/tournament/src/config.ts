@@ -2,17 +2,32 @@ import type { Variant } from '@chess-platform/core';
 import type { TimeControl } from '@chess-platform/game';
 
 /**
- * Base configuration shared by all tournament formats.
+ * Round-robin tournament configuration.
+ * Number of rounds is derived from participant count (N−1 for even N, N for odd N).
  */
-export interface TournamentConfig {
-  /** Unique identifier for the tournament. */
+export interface RoundRobinConfig {
   readonly id: string;
-  /** Human-readable name of the tournament. */
   readonly name: string;
-  /** The tournament format. Discriminated union. */
   readonly format: 'round_robin';
-  /** The chess variant played in this tournament. */
   readonly variant: Variant;
-  /** The time control applied to all games in this tournament. */
   readonly timeControl: TimeControl;
 }
+
+/**
+ * Swiss tournament configuration.
+ * The number of rounds is explicitly configured.
+ */
+export interface SwissConfig {
+  readonly id: string;
+  readonly name: string;
+  readonly format: 'swiss';
+  readonly variant: Variant;
+  readonly timeControl: TimeControl;
+  /** The number of rounds to play. */
+  readonly rounds: number;
+}
+
+/**
+ * Discriminated union of all tournament configurations.
+ */
+export type TournamentConfig = RoundRobinConfig | SwissConfig;

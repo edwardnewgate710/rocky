@@ -1,3 +1,5 @@
+import type { GameResult } from './standings';
+
 /**
  * Represents a pairing between two players in a tournament round.
  */
@@ -29,17 +31,50 @@ export interface Round {
 }
 
 /**
- * Pluggable port for tournament pairing strategies (e.g. Round Robin, Swiss, Arena).
+ * A completed round: the pairings plus their results.
+ */
+export interface CompletedRound {
+  readonly round: Round;
+  /** matchId (roundIndex-pairingIndex) → result */
+  readonly results: ReadonlyMap<string, GameResult | 'bye'>;
+}
+
+/**
+ * Per-player history accumulated over the tournament so far.
+ */
+export interface PlayerHistory {
+  /** IDs of opponents already faced. */
+  readonly opponents: readonly string[];
+  /** Number of games played as white. */
+  readonly whiteCount: number;
+  /** Number of games played as black. */
+  readonly blackCount: number;
+  /** Number of byes received. */
+  readonly byeCount: number;
+  /** Current tournament points. */
+  readonly points: number;
+}
+
+/**
+ * Context provided to a pairing strategy for generating the next round.
+ */
+export interface PairingContext {
+  /** All registered participant IDs, in seed order. */
+  readonly participants: readonly string[];
+  /** 0-based index of the next round to generate. */
+  readonly roundNumber: number;
+  /** All previously completed rounds with their results. */
+  readonly completedRounds: readonly CompletedRound[];
+  /** Per-player accumulated history. Keyed by player ID. */
+  readonly playerHistory: ReadonlyMap<string, PlayerHistory>;
+}
+
+/**
+ * Pluggable port for tournament pairing strategies (Round Robin, Swiss, Arena, …).
+ *
+ * Generates ONE round at a time from the current tournament state.
+ * Returns `null` when no further rounds should be played (tournament complete).
  */
 export interface PairingStrategy {
-  /**
-   * Given an array of registered player IDs, generates the rounds for the tournament.
-   * A strategy like Round Robin returns all rounds up front, whereas dynamic
-   * strategies like Swiss might return only the first round (or we'd need a more dynamic interface later).
-   * For M9 Inc 1, this returns the full static schedule.
-   * 
-   * @param participants The list of participant IDs.
-   * @returns An array of rounds.
-   */
-  generateRounds(participants: readonly string[]): Round[];
+  pairNextRound(context: PairingContext): Round | null;
 }

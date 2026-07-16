@@ -1,4 +1,4 @@
-import { Pairing, PairingStrategy, Round } from './pairing';
+import type { Pairing, PairingContext, PairingStrategy, Round } from './pairing';
 
 /**
  * Implements a standard Berger-table (circle method) round-robin pairing strategy.
@@ -6,13 +6,44 @@ import { Pairing, PairingStrategy, Round } from './pairing';
  * and handles odd N by assigning one bye per round.
  * It also assigns colors mathematically to ensure the difference between white and black
  * games for any player is at most 1.
+ *
+ * Internally pre-computes the full schedule on the first call, then returns one
+ * round per `pairNextRound` invocation. Returns `null` after all rounds are emitted.
  */
 export class RoundRobinPairing implements PairingStrategy {
-  generateRounds(participants: readonly string[]): Round[] {
+  /** Cached full schedule, computed lazily on first call. */
+  private schedule: Round[] | null = null;
+  /** The participant list the cached schedule was computed for. */
+  private scheduledParticipants: readonly string[] | null = null;
+
+  pairNextRound(context: PairingContext): Round | null {
+    const { participants, roundNumber } = context;
+
     if (participants.length < 2) {
-      return [];
+      return null;
     }
 
+    // Recompute if this instance is reused for a different participant set,
+    // so a cached schedule can never emit games for another tournament's players.
+    const participantsChanged =
+      this.scheduledParticipants === null ||
+      participants.length !== this.scheduledParticipants.length ||
+      participants.some((player, index) => player !== this.scheduledParticipants![index]);
+
+    // Lazily compute the full schedule on the first call (or when it changed).
+    if (this.schedule === null || participantsChanged) {
+      this.scheduledParticipants = [...participants];
+      this.schedule = this.computeFullSchedule(participants);
+    }
+
+    if (roundNumber >= this.schedule.length) {
+      return null;
+    }
+
+    return this.schedule[roundNumber];
+  }
+
+  private computeFullSchedule(participants: readonly string[]): Round[] {
     const n = participants.length;
     const isOdd = n % 2 !== 0;
     const totalPlayers = isOdd ? n + 1 : n;
@@ -33,8 +64,8 @@ export class RoundRobinPairing implements PairingStrategy {
       // For the other pairs, we step outwards from r.
       // In a circle of size N-1, the pairs are (r + i) and (r - i) mod (N-1).
       for (let i = 1; i < half; i++) {
-        let a = (r + i) % (totalPlayers - 1);
-        let b = (r - i + totalPlayers - 1) % (totalPlayers - 1);
+        const a = (r + i) % (totalPlayers - 1);
+        const b = (r - i + totalPlayers - 1) % (totalPlayers - 1);
         pairings.push(this.createPairing(a + 1, b + 1, r + 1, half, isOdd, participants));
       }
 
