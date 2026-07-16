@@ -26,7 +26,7 @@ services:
       interval: 5s
       timeout: 30s
       retries: 10
-      command: ["redis-server", "--appendonly", "yes"]
+    command: ["redis-server", "--appendonly", "yes"]
 
   api:
     build:
