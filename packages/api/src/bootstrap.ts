@@ -23,6 +23,7 @@ import { AccessTokenService } from './auth/tokens';
 import { resolveConfig } from './config';
 import type { ApiConfigInput } from './config';
 import type { ApiDependencies, Repositories } from './deps';
+import { InMemoryTournamentsRepository } from './fakes';
 import type { AuditEntry, AuditRepository } from './ports/audit';
 import { systemClock } from './ports/clock';
 import type { Clock } from './ports/clock';
@@ -83,6 +84,7 @@ export interface PgBootstrapOptions {
   readonly ids?: IdGenerator;
   readonly rateLimiter?: RateLimiter;
   readonly server?: ApiServerOptions;
+  readonly tournamentRepo?: InMemoryTournamentsRepository;
 }
 
 /** Build the {@link ApiDependencies} bundle backed by Postgres. */
@@ -104,6 +106,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ids,
   });
   const rateLimiter = options.rateLimiter ?? new InMemoryRateLimiter(clock);
+  const tournamentRepo = options.tournamentRepo ?? new InMemoryTournamentsRepository();
   const deps: ApiDependencies = {
     repos: createPgRepositories(pool, ids),
     hasher,
@@ -112,6 +115,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ids,
     config,
     rateLimiter,
+    tournamentRepo,
   };
   return { deps, pool };
 }

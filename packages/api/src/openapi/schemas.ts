@@ -200,6 +200,70 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
   LeaderboardList: { type: 'array', items: { $ref: '#/components/schemas/LeaderboardEntry' } },
   GameList: { type: 'array', items: { $ref: '#/components/schemas/GameSummary' } },
 
+  TournamentView: {
+    type: 'object',
+    required: ['id', 'name', 'format', 'variant', 'timeControl', 'state', 'participants', 'roundsGenerated'],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      name: { type: 'string' },
+      format: { type: 'string', enum: ['round_robin', 'swiss'] },
+      variant: { type: 'string', enum: [...VARIANTS] },
+      timeControl: { $ref: '#/components/schemas/TimeControl' },
+      rounds: { type: 'integer' },
+      state: { type: 'string', enum: ['registration', 'running', 'finished'] },
+      participants: { type: 'array', items: { type: 'string', format: 'uuid' } },
+      roundsGenerated: { type: 'integer' },
+    },
+  },
+
+  TournamentSummaryView: {
+    type: 'object',
+    required: ['id', 'name', 'format', 'state', 'participantCount'],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      name: { type: 'string' },
+      format: { type: 'string', enum: ['round_robin', 'swiss'] },
+      state: { type: 'string', enum: ['registration', 'running', 'finished'] },
+      participantCount: { type: 'integer' },
+    },
+  },
+
+  RoundView: {
+    type: 'object',
+    required: ['roundIndex', 'pairings'],
+    properties: {
+      roundIndex: { type: 'integer' },
+      pairings: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['kind'],
+          properties: {
+            kind: { type: 'string', enum: ['game', 'bye'] },
+            white: { type: 'string', format: 'uuid' },
+            black: { type: 'string', format: 'uuid' },
+            player: { type: 'string', format: 'uuid' },
+          },
+        },
+      },
+    },
+  },
+
+  PlayerStandingView: {
+    type: 'object',
+    required: ['rank', 'playerId', 'points', 'tiebreak'],
+    properties: {
+      rank: { type: 'integer' },
+      playerId: { type: 'string', format: 'uuid' },
+      points: { type: 'number' },
+      tiebreak: { type: 'number' },
+    },
+  },
+
+  TournamentSummaryList: { type: 'array', items: { $ref: '#/components/schemas/TournamentSummaryView' } },
+  RoundList: { type: 'array', items: { $ref: '#/components/schemas/RoundView' } },
+  StandingList: { type: 'array', items: { $ref: '#/components/schemas/PlayerStandingView' } },
+
   // --- Request bodies ---
   RegisterRequest: {
     type: 'object',
@@ -260,6 +324,37 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     type: 'object',
     required: ['role'],
     properties: { role: { type: 'string', enum: [...ROLES] } },
+    additionalProperties: false,
+  },
+
+  CreateTournamentRequest: {
+    type: 'object',
+    required: ['name', 'format', 'variant', 'timeControl'],
+    properties: {
+      name: { type: 'string' },
+      format: { type: 'string', enum: ['round_robin', 'swiss'] },
+      variant: { type: 'string', enum: [...VARIANTS] },
+      timeControl: { $ref: '#/components/schemas/TimeControl' },
+      rounds: { type: 'integer' },
+    },
+    additionalProperties: false,
+  },
+
+  RegisterParticipantRequest: {
+    type: 'object',
+    properties: {
+      playerId: { type: 'string', format: 'uuid' },
+    },
+    additionalProperties: false,
+  },
+
+  RecordResultRequest: {
+    type: 'object',
+    required: ['pairingIndex', 'result'],
+    properties: {
+      pairingIndex: { type: 'integer' },
+      result: { type: 'string', enum: ['white_win', 'black_win', 'draw'] },
+    },
     additionalProperties: false,
   },
 };

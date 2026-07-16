@@ -183,3 +183,21 @@ export interface SeeksRepository {
   listOpen(limit: number): Promise<SeekRow[]>;
   remove(id: string): Promise<void>;
 }
+
+// --- Tournaments -----------------------------------------------------------
+
+import type { TournamentSnapshot } from '@chess-platform/tournament';
+
+export interface TournamentSummaryRow {
+  readonly id: string;
+  readonly name: string;
+  readonly format: 'round_robin' | 'swiss';
+  readonly state: 'registration' | 'running' | 'finished';
+  readonly participantCount: number;
+}
+
+export interface TournamentsRepository {
+  save(snapshot: TournamentSnapshot): Promise<void>;
+  findById(id: string): Promise<TournamentSnapshot | null>;
+  list(limit: number): Promise<TournamentSummaryRow[]>;
+}

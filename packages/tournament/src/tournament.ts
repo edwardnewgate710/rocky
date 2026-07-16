@@ -5,6 +5,18 @@ import { computeStandings } from './standings';
 
 export type TournamentState = 'registration' | 'running' | 'finished';
 
+/**
+ * A plain, JSON-serializable representation of the tournament's state.
+ */
+export interface TournamentSnapshot {
+  readonly config: TournamentConfig;
+  readonly state: TournamentState;
+  readonly participants: readonly string[];
+  readonly rounds: readonly Round[];
+  readonly results: readonly (readonly [string, GameResult | 'bye'])[];
+  readonly pairingsByMatchId: readonly (readonly [string, { readonly p1: string; readonly p2: string | null }])[];
+}
+
 export class Tournament {
   private state: TournamentState = 'registration';
   private readonly participants: string[] = [];
@@ -225,5 +237,32 @@ export class Tournament {
     if (allResolved) {
       this.advanceRound();
     }
+  }
+
+  /** Returns a deep, structurally-cloned snapshot of the tournament's state. */
+  toSnapshot(): TournamentSnapshot {
+    return {
+      config: JSON.parse(JSON.stringify(this.config)),
+      state: this.state,
+      participants: [...this.participants],
+      rounds: JSON.parse(JSON.stringify(this.rounds)),
+      results: Array.from(this.results.entries()),
+      pairingsByMatchId: Array.from(this.pairingsByMatchId.entries()).map(([k, v]) => [k, { ...v }])
+    };
+  }
+
+  /** Rebuilds an active aggregate from a snapshot. */
+  static restore(snapshot: TournamentSnapshot, strategy: PairingStrategy): Tournament {
+    const t = new Tournament(snapshot.config, strategy);
+    t.state = snapshot.state;
+    t.participants.push(...snapshot.participants);
+    t.rounds.push(...snapshot.rounds);
+    for (const [matchId, result] of snapshot.results) {
+      t.results.set(matchId, result);
+    }
+    for (const [matchId, pairing] of snapshot.pairingsByMatchId) {
+      t.pairingsByMatchId.set(matchId, { ...pairing });
+    }
+    return t;
   }
 }

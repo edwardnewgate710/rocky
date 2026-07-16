@@ -26,7 +26,10 @@ import type {
   SessionsRepository,
   UserRow,
   UsersRepository,
+  TournamentsRepository,
+  TournamentSummaryRow
 } from '@chess-platform/persistence';
+import type { TournamentSnapshot } from '@chess-platform/tournament';
 import type { AuditEntry, AuditRepository } from './ports/audit';
 import type { Clock } from './ports/clock';
 import { systemClock } from './ports/clock';
@@ -293,6 +296,42 @@ export class InMemoryAuditRepository implements AuditRepository {
   }
 }
 
+export class InMemoryTournamentsRepository implements TournamentsRepository {
+  private readonly byId = new Map<string, TournamentSnapshot>();
+  private readonly order: string[] = []; // for newest-first list
+
+  async save(snapshot: TournamentSnapshot): Promise<void> {
+    const isNew = !this.byId.has(snapshot.config.id);
+    this.byId.set(snapshot.config.id, structuredClone(snapshot));
+    if (isNew) {
+      this.order.push(snapshot.config.id);
+    }
+  }
+
+  async findById(id: string): Promise<TournamentSnapshot | null> {
+    const snap = this.byId.get(id);
+    return snap ? structuredClone(snap) : null;
+  }
+
+  async list(limit: number): Promise<TournamentSummaryRow[]> {
+    const summaries: TournamentSummaryRow[] = [];
+    // Iterate newest first (reverse order)
+    for (let i = this.order.length - 1; i >= 0; i--) {
+      const id = this.order[i];
+      const snap = this.byId.get(id)!;
+      summaries.push({
+        id: snap.config.id,
+        name: snap.config.name,
+        format: snap.config.format,
+        state: snap.state,
+        participantCount: snap.participants.length
+      });
+      if (summaries.length >= limit) break;
+    }
+    return summaries;
+  }
+}
+
 /** A bundle of in-memory repositories plus the concrete audit repo for tests. */
 export interface InMemoryRepositories extends Repositories {
   readonly users: InMemoryUsersRepository;
@@ -301,6 +340,7 @@ export interface InMemoryRepositories extends Repositories {
   readonly games: InMemoryGamesRepository;
   readonly seeks: InMemorySeeksRepository;
   readonly audit: InMemoryAuditRepository;
+  readonly tournaments: InMemoryTournamentsRepository;
 }
 
 /** Construct a fresh set of in-memory repositories sharing a clock. */
@@ -312,5 +352,6 @@ export function createInMemoryRepositories(clock: Clock = systemClock): InMemory
     games: new InMemoryGamesRepository(),
     seeks: new InMemorySeeksRepository(clock),
     audit: new InMemoryAuditRepository(),
+    tournaments: new InMemoryTournamentsRepository(),
   };
 }

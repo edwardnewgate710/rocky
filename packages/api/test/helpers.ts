@@ -11,7 +11,7 @@ import { ScryptPasswordHasher } from '../src/auth/password';
 import { AccessTokenService } from '../src/auth/tokens';
 import { resolveConfig } from '../src/config';
 import type { ApiConfigInput } from '../src/config';
-import { createInMemoryRepositories } from '../src/fakes';
+import { createInMemoryRepositories, InMemoryTournamentsRepository } from '../src/fakes';
 import type { InMemoryRepositories } from '../src/fakes';
 import { ManualClock } from '../src/ports/clock';
 import { uuidv7Generator } from '../src/ports/ids';
@@ -25,6 +25,7 @@ export const START_MS = 1_700_000_000_000;
 export interface Harness {
   readonly server: ApiServer;
   readonly repos: InMemoryRepositories;
+  readonly tournamentRepo: InMemoryTournamentsRepository;
   readonly clock: ManualClock;
   readonly tokens: AccessTokenService;
   readonly baseUrl: string;
@@ -54,9 +55,10 @@ export async function startHarness(config: ApiConfigInput = {}): Promise<Harness
     ids,
   });
   const repos = createInMemoryRepositories(clock);
+  const tournamentRepo = new InMemoryTournamentsRepository();
   const hasher = new ScryptPasswordHasher({ N: 1024 }); // low cost for test speed
   const rateLimiter = new InMemoryRateLimiter(clock);
-  const server = createApiServer({ repos, hasher, tokens, clock, ids, rateLimiter, config: resolved });
+  const server = createApiServer({ repos, hasher, tokens, clock, ids, rateLimiter, tournamentRepo, config: resolved });
   const http: Server = await server.listen(0, '127.0.0.1');
   const { port } = http.address() as AddressInfo;
   const baseUrl = `http://127.0.0.1:${port}`;
@@ -64,6 +66,7 @@ export async function startHarness(config: ApiConfigInput = {}): Promise<Harness
   return {
     server,
     repos,
+    tournamentRepo,
     clock,
     tokens,
     baseUrl,

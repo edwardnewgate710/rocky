@@ -13,6 +13,7 @@ import type {
   SeeksRepository,
   SessionsRepository,
   UsersRepository,
+  TournamentsRepository
 } from '@chess-platform/persistence';
 import type { PasswordHasher } from './auth/password';
 import type { AccessTokenService } from './auth/tokens';
@@ -41,4 +42,5 @@ export interface ApiDependencies {
   readonly ids: IdGenerator;
   readonly config: ApiConfig;
   readonly rateLimiter: RateLimiter;
+  readonly tournamentRepo: TournamentsRepository;
 }

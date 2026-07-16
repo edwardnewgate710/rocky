@@ -7,7 +7,7 @@
  */
 
 import type { Variant } from '@chess-platform/core';
-import type { RatingRow } from '@chess-platform/persistence';
+import type { RatingRow, TournamentsRepository } from '@chess-platform/persistence';
 import { AuthService } from './auth/service';
 import type { RequestMeta } from './auth/service';
 import type { Repositories } from './deps';
@@ -37,6 +37,8 @@ import {
   selfUser,
   sessionView,
 } from './presenters';
+import { TournamentService } from './tournament/service';
+import { summaryView, tournamentView, roundView, standingView } from './tournament/presenters';
 import { buildOpenApiDocument } from './openapi/spec';
 import type { OpenApiDocument, OpenApiInfo } from './openapi/spec';
 import type { RouteDoc } from './openapi/types';
@@ -50,6 +52,7 @@ export interface RouteDeps {
   readonly info: OpenApiInfo;
   readonly rateLimiter: RateLimiter;
   readonly config: ApiConfig;
+  readonly tournamentRepo: TournamentsRepository;
 }
 
 const PUBLIC: AuthPolicy = { required: false };
@@ -446,6 +449,210 @@ export function buildRouter(deps: RouteDeps): Router {
       const game = await repos.games.findById(ctx.params['id']!);
       if (!game) throw HttpError.notFound('game not found');
       return json(200, gameSummaryView(game));
+    },
+  );
+
+  // --- Tournaments ---------------------------------------------------------
+  const tournamentService = new TournamentService(deps.tournamentRepo);
+
+  router.post(
+    '/v1/tournaments',
+    doc({
+      summary: 'Create a tournament',
+      tags: ['tournaments'],
+      security: 'bearer',
+      requestSchema: 'CreateTournamentRequest',
+      responses: { 201: ['TournamentView', 'Tournament created'], 403: ['Error', 'Forbidden'], 422: ['Error', 'Validation error'] },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const identity = requireAuth(ctx);
+      if (!identity.roles.includes('tournament_director')) {
+        throw HttpError.forbidden('only tournament directors can create tournaments');
+      }
+      const body = strictObject(ctx.body, ['name', 'format', 'variant', 'timeControl', 'rounds']);
+      const format = oneOf(reqString(body, 'format'), ['round_robin', 'swiss'], 'format');
+      const variantRaw = oneOf(reqString(body, 'variant'), VARIANTS, 'variant');
+      const variant = parseVariant(variantRaw) as 'standard' | 'chess960';
+      const timeControl = parseTimeControl(body['timeControl']);
+      const rounds = format === 'swiss' ? optInt(body, 'rounds') : undefined;
+
+      const t = await tournamentService.create({
+        id: ids.next(),
+        name: reqString(body, 'name', { trim: true }),
+        format,
+        variant,
+        timeControl,
+        rounds,
+      });
+      return json(201, tournamentView(t));
+    },
+  );
+
+  router.get(
+    '/v1/tournaments',
+    doc({
+      summary: 'List tournaments',
+      tags: ['tournaments'],
+      params: [limitParam()],
+      responses: { 200: ['TournamentSummaryList', 'Tournaments'] },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const limit = parseLimit(ctx.query, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+      const list = await deps.tournamentRepo.list(limit);
+      return json(200, list.map(summaryView));
+    },
+  );
+
+  router.get(
+    '/v1/tournaments/:id',
+    doc({
+      summary: 'Get tournament details',
+      tags: ['tournaments'],
+      params: [pathParam('id', 'Tournament id')],
+      responses: { 200: ['TournamentView', 'Tournament'], 404: ['Error', 'Not found'] },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const t = await tournamentService.load(ctx.params['id']!);
+      return json(200, tournamentView(t));
+    },
+  );
+
+  router.post(
+    '/v1/tournaments/:id/participants',
+    doc({
+      summary: 'Register for a tournament',
+      tags: ['tournaments'],
+      security: 'bearer',
+      params: [pathParam('id', 'Tournament id')],
+      requestSchema: 'RegisterParticipantRequest',
+      responses: { 200: ['TournamentView', 'Registered'], 403: ['Error', 'Forbidden'], 404: ['Error', 'Not found'], 409: ['Error', 'Conflict'] },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const identity = requireAuth(ctx);
+      const isDirector = identity.roles.includes('tournament_director');
+      let targetId = identity.userId;
+
+      if (ctx.body && typeof ctx.body === 'object' && 'playerId' in ctx.body) {
+        if (!isDirector) {
+          throw HttpError.forbidden('only tournament directors can register other players');
+        }
+        targetId = reqString(ctx.body as Record<string, unknown>, 'playerId');
+      }
+
+      const t = await tournamentService.register(ctx.params['id']!, targetId);
+      return json(200, tournamentView(t));
+    },
+  );
+
+  router.delete(
+    '/v1/tournaments/:id/participants/:playerId',
+    doc({
+      summary: 'Withdraw from a tournament',
+      tags: ['tournaments'],
+      security: 'bearer',
+      params: [pathParam('id', 'Tournament id'), pathParam('playerId', 'Target user id')],
+      responses: { 200: ['TournamentView', 'Withdrawn'], 403: ['Error', 'Forbidden'], 404: ['Error', 'Not found'], 409: ['Error', 'Conflict'] },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const identity = requireAuth(ctx);
+      const targetId = ctx.params['playerId']!;
+      const isSelf = targetId === identity.userId;
+      const isDirector = identity.roles.includes('tournament_director');
+
+      if (!isSelf && !isDirector) {
+        throw HttpError.forbidden('cannot withdraw other players unless you are a director');
+      }
+
+      const t = await tournamentService.withdraw(ctx.params['id']!, targetId);
+      return json(200, tournamentView(t));
+    },
+  );
+
+  router.post(
+    '/v1/tournaments/:id/start',
+    doc({
+      summary: 'Start a tournament',
+      tags: ['tournaments'],
+      security: 'bearer',
+      params: [pathParam('id', 'Tournament id')],
+      responses: { 200: ['TournamentView', 'Started'], 403: ['Error', 'Forbidden'], 404: ['Error', 'Not found'], 409: ['Error', 'Conflict'] },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const identity = requireAuth(ctx);
+      if (!identity.roles.includes('tournament_director')) {
+        throw HttpError.forbidden('only tournament directors can start tournaments');
+      }
+      const t = await tournamentService.start(ctx.params['id']!);
+      return json(200, tournamentView(t));
+    },
+  );
+
+  router.get(
+    '/v1/tournaments/:id/rounds',
+    doc({
+      summary: 'List generated rounds',
+      tags: ['tournaments'],
+      params: [pathParam('id', 'Tournament id')],
+      responses: { 200: ['RoundList', 'Rounds'], 404: ['Error', 'Not found'] },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const t = await tournamentService.load(ctx.params['id']!);
+      return json(200, t.getRounds().map(roundView));
+    },
+  );
+
+  router.post(
+    '/v1/tournaments/:id/rounds/:roundIndex/results',
+    doc({
+      summary: 'Record a game result',
+      tags: ['tournaments'],
+      security: 'bearer',
+      params: [pathParam('id', 'Tournament id'), pathParam('roundIndex', 'Round index')],
+      requestSchema: 'RecordResultRequest',
+      responses: { 200: ['TournamentView', 'Result recorded'], 403: ['Error', 'Forbidden'], 404: ['Error', 'Not found'], 409: ['Error', 'Conflict'], 422: ['Error', 'Validation error'] },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const identity = requireAuth(ctx);
+      if (!identity.roles.includes('tournament_director')) {
+        throw HttpError.forbidden('only tournament directors can record results');
+      }
+      const roundIndex = parseInt(ctx.params['roundIndex']!, 10);
+      if (isNaN(roundIndex)) throw HttpError.validation('Invalid roundIndex', { roundIndex: 'must be an integer' });
+
+      const body = strictObject(ctx.body, ['pairingIndex', 'result']);
+      const pairingIndex = optInt(body, 'pairingIndex');
+      if (pairingIndex === undefined) throw HttpError.validation('pairingIndex is required', {});
+      const result = oneOf(reqString(body, 'result'), ['white_win', 'black_win', 'draw'], 'result');
+
+      const t = await tournamentService.recordResult(ctx.params['id']!, {
+        roundIndex,
+        pairingIndex,
+        result: result as 'white_win' | 'black_win' | 'draw',
+      });
+      return json(200, tournamentView(t));
+    },
+  );
+
+  router.get(
+    '/v1/tournaments/:id/standings',
+    doc({
+      summary: 'Get tournament standings',
+      tags: ['tournaments'],
+      params: [pathParam('id', 'Tournament id')],
+      responses: { 200: ['StandingList', 'Standings'], 404: ['Error', 'Not found'] },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const t = await tournamentService.load(ctx.params['id']!);
+      return json(200, t.standings().map(standingView));
     },
   );
 

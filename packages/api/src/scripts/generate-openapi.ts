@@ -27,14 +27,16 @@ function main(): void {
     clock,
     ids,
   });
+  const repos = createInMemoryRepositories();
   const server = createApiServer({
-    repos: createInMemoryRepositories(),
+    repos,
     hasher: new ScryptPasswordHasher(),
     tokens,
     clock,
     ids,
     config,
     rateLimiter: new (require('../ports/in-memory-rate-limiter').InMemoryRateLimiter)(clock),
+    tournamentRepo: repos.tournaments,
   });
 
   const doc = server.openapiDocument();

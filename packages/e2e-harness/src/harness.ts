@@ -34,6 +34,7 @@ import {
   systemClock,
   uuidv7Generator,
   InMemoryRateLimiter,
+  InMemoryTournamentsRepository,
   type ApiServer,
   type ApiDependencies,
 } from '@chess-platform/api';
@@ -118,7 +119,8 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
   });
   const repos = createInMemoryRepositories(clock);
   const rateLimiter = new InMemoryRateLimiter(clock);
-  const deps: ApiDependencies = { repos, hasher, tokens, clock, ids, config, rateLimiter };
+  const tournamentRepo = new InMemoryTournamentsRepository();
+  const deps: ApiDependencies = { repos, hasher, tokens, clock, ids, config, rateLimiter, tournamentRepo };
   const apiServer = createApiServer(deps);
 
   // --- Gateway (in-memory pub/sub) ---
