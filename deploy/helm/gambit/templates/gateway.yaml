@@ -9,7 +9,7 @@ and docs/adr/0010-game-authority-ownership.md.
 - Shares DATABASE_URL with the API (same Secret/ConfigMap source).
 - Gets REDIS_URL from values (bundled or external).
 - NODE_ID is the pod name via the Kubernetes downward API.
-- Liveness/readiness probes hit GET :{PORT+1}/health.
+- Liveness probes hit GET :{HEALTH_PORT}/health; readiness probes hit /ready.
 - Health-gated ordering: an init container waits for the API Service to be
   Ready (k8s has no compose-style depends_on; this ensures the schema exists
   before the gateway starts, mirroring compose's depends_on: api: service_healthy).

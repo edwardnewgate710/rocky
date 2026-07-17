@@ -3,7 +3,7 @@
 # Snapshot test: proves key wiring of the Gambit Helm chart.
 #
 # Verifies:
-#   1. Gateway replicas == 1
+#   1. Gateway replicas == 2
 #   2. API + gateway share the same DATABASE_URL source (both reference
 #      $(POSTGRES_PASSWORD) from the Secret when postgres is bundled)
 #   3. POSTGRES_PASSWORD appears BEFORE DATABASE_URL in every container's
@@ -61,9 +61,9 @@ echo ""
 echo "=== Snapshot test: key wiring ==="
 echo ""
 
-# --- 1. Gateway replicas == 1 ---
+# --- 1. Gateway replicas == 2 ---
 GATEWAY_REPLICAS=$(yq '. | select(.kind=="Deployment" and .metadata.name | test("gateway")) | .spec.replicas' "$TMPDIR/default.yaml" 2>/dev/null || echo "")
-check "Gateway replicas == 1 (default values)" "$([ "$GATEWAY_REPLICAS" = "1" ] && echo 0 || echo 1)"
+check "Gateway replicas == 2 (default values)" "$([ "$GATEWAY_REPLICAS" = "2" ] && echo 0 || echo 1)"
 
 # --- 2. API + gateway share the same DATABASE_URL source ---
 API_DB_URL=$(yq '. | select(.kind=="Deployment" and .metadata.name | test("api")) | .spec.template.spec.containers[] | select(.name=="api") | .env[] | select(.name=="DATABASE_URL") | .value' "$TMPDIR/default.yaml" 2>/dev/null || echo "")

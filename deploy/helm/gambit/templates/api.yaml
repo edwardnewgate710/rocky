@@ -3,7 +3,7 @@ API Deployment + Service.
 - Runs persistence migrations via an init container before the API starts
   (same `npm run migrate --workspace @chess-platform/persistence` as compose).
 - Shares DATABASE_URL with the gateway (both source from the same Secret/ConfigMap).
-- Liveness/readiness probes hit GET /v1/health.
+- Liveness probes hit GET /v1/health; readiness probes hit GET /v1/ready.
 - Health-gated ordering via probes: the API won't be Ready until migrations
   complete and the health endpoint responds. The gateway depends on the API
   Service being Ready (via its own readiness probe + init container wait).

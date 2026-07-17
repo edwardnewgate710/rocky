@@ -99,10 +99,8 @@ postgres:
   enabled: true
   image: postgres:16-alpine
   user: gambit
-  # POSTGRES_PASSWORD is sourced from the Secret (gambit-secret), not hardcoded.
-  # The placeholder default below is for local dev/kind only.
-  # In production: helm --set postgres.password=<secret> or use external-secrets.
-  password: ""  # empty → falls back to Secret placeholder
+  # POSTGRES_PASSWORD is sourced from secrets.postgresPassword or the Secret
+  # named by secrets.existingSecret; it is never stored in non-secret values.
   database: gambit
   port: 5432
   storage: 5Gi
