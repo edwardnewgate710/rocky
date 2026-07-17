@@ -15,7 +15,8 @@
  */
 
 import { createHash } from 'node:crypto';
-import type { Role, SessionRow, UserRow } from '@chess-platform/persistence';
+import { DuplicateUserError } from '@chess-platform/persistence';
+import type { NewSession, Role, SessionRow, UserRow } from '@chess-platform/persistence';
 import { HttpError } from '../http/errors';
 import type { Clock } from '../ports/clock';
 import type { IdGenerator } from '../ports/ids';
@@ -92,14 +93,20 @@ export class AuthService {
       throw HttpError.conflict('handle is already taken', { handle: 'taken' });
     }
     const secretHash = await this.hasher.hash(input.password);
-    const user = await this.repos.users.create({
-      id: this.ids.next(),
-      handle: input.handle,
-      emailHash: input.email ? emailHash(input.email) : null,
-    });
-    await this.repos.users.setPassword(user.id, secretHash);
-    await this.repos.users.addRole(user.id, 'user');
-    const roles = await this.repos.users.rolesOf(user.id);
+    let user: UserRow;
+    try {
+      user = await this.repos.users.createWithPasswordAndRole({
+        id: this.ids.next(),
+        handle: input.handle,
+        emailHash: input.email ? emailHash(input.email) : null,
+      }, secretHash, 'user');
+    } catch (error) {
+      if (error instanceof DuplicateUserError || (await this.repos.users.findByHandle(input.handle))) {
+        throw HttpError.conflict('handle is already taken', { handle: 'taken' });
+      }
+      throw error;
+    }
+    const roles: Role[] = ['user'];
 
     const tokens = await this.startSession(user, roles, meta);
     await this.audit(meta, user.id, 'auth.register', user.id);
@@ -155,10 +162,21 @@ export class AuthService {
     }
     const roles = await this.repos.users.rolesOf(user.id);
 
-    const tokens = await this.startSession(user, roles, meta, session.id);
-    await this.repos.sessions.revoke(session.id, new Date(now));
+    const prepared = this.prepareSession(user, roles, meta, session.id);
+    const rotation = await this.repos.sessions.rotate(hash, prepared.session, new Date(now));
+    if (rotation.status === 'missing') {
+      throw HttpError.unauthorized('invalid refresh token');
+    }
+    if (rotation.status === 'expired') {
+      throw HttpError.unauthorized('refresh token has expired');
+    }
+    if (rotation.status === 'revoked') {
+      await this.revokeAllForUser(session.userId, now);
+      await this.audit(meta, session.userId, 'auth.refresh.reuse', session.id);
+      throw HttpError.unauthorized('refresh token has been revoked');
+    }
     await this.audit(meta, user.id, 'auth.refresh', session.id);
-    return { user, roles, tokens };
+    return { user, roles, tokens: prepared.tokens };
   }
 
   /**
@@ -185,10 +203,21 @@ export class AuthService {
     meta: RequestMeta,
     rotatedFrom?: string,
   ): Promise<TokenPair> {
+    const prepared = this.prepareSession(user, roles, meta, rotatedFrom);
+    await this.repos.sessions.create(prepared.session);
+    return prepared.tokens;
+  }
+
+  private prepareSession(
+    user: UserRow,
+    roles: readonly Role[],
+    meta: RequestMeta,
+    rotatedFrom?: string,
+  ): { session: NewSession; tokens: TokenPair } {
     const now = this.clock.now();
     const refreshToken = generateRefreshToken();
     const expiresAt = new Date(now + this.refreshTtlSec * 1000);
-    await this.repos.sessions.create({
+    const session: NewSession = {
       id: this.ids.next(),
       userId: user.id,
       refreshHash: hashRefreshToken(refreshToken),
@@ -196,15 +225,16 @@ export class AuthService {
       ip: meta.ip,
       userAgent: meta.userAgent,
       ...(rotatedFrom ? { rotatedFrom } : {}),
-    });
+    };
     const { token, claims } = this.tokens.issue({ userId: user.id, handle: user.handle, roles });
-    return {
+    const tokens: TokenPair = {
       accessToken: token,
       tokenType: 'Bearer',
       expiresIn: claims.exp - claims.iat,
       refreshToken,
       refreshExpiresAt: expiresAt.toISOString(),
     };
+    return { session, tokens };
   }
 
   private async revokeAllForUser(userId: string, now: number): Promise<void> {

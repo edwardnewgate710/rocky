@@ -68,29 +68,36 @@ helm install gambit deploy/helm/gambit \
 
 | Value | Default | Description |
 |---|---|---|
-| `gateway.replicas` | `1` | **MUST be 1** — see [Gateway replica constraint](#gateway-replica-constraint) |
+| `gateway.replicas` | `2` | Safe horizontal scaling through Redis ownership/command forwarding |
 | `api.replicas` | `2` | API is stateless, can scale horizontally |
 | `web.replicas` | `2` | Web is stateless, can scale horizontally |
 | `postgres.enabled` | `true` | Bundle Postgres as a StatefulSet |
 | `redis.enabled` | `true` | Bundle Redis as a StatefulSet |
 | `externalDatabaseUrl` | `""` | External Postgres URL (when `postgres.enabled=false`) |
 | `externalRedisUrl` | `""` | External Redis URL (when `redis.enabled=false`) |
-| `secrets.accessTokenSecret` | `""` | HMAC secret (placeholder default; override in production) |
-| `secrets.postgresPassword` | `""` | Postgres password (placeholder default; override in production) |
+| `secrets.existingSecret` | `""` | Existing Secret containing the required keys |
+| `secrets.accessTokenSecret` | `""` | Required HMAC secret when `existingSecret` is not set |
+| `secrets.postgresPassword` | `""` | Required when bundled Postgres is enabled |
 | `web.ingress.enabled` | `true` | Enable Ingress for the web service |
 | `web.ingress.host` | `gambit.local` | Ingress hostname |
 
 ### Secrets
 
 **Never commit real secret values.** The chart templates secrets from
-`.Values.secrets` with placeholder defaults for local dev/kind. In production,
-provide secrets via:
+`.Values.secrets`. There are no placeholder credentials: Helm rendering fails
+closed when the access-token secret is missing or shorter than 32 characters.
+Provide secrets via:
 
 ```bash
 helm install gambit deploy/helm/gambit \
   --set secrets.accessTokenSecret="<your-secret>" \
   --set secrets.postgresPassword="<your-password>"
 ```
+
+Alternatively create the Secret outside Helm (for example with
+External Secrets Operator) and set `secrets.existingSecret`. It must contain
+`ACCESS_TOKEN_SECRET` and, when bundled Postgres is enabled,
+`POSTGRES_PASSWORD`.
 
 Full secrets-manager integration (Vault, AWS Secrets Manager, external-secrets)
 is a **later M14 increment** — not included here. The current chart uses a
@@ -130,8 +137,8 @@ endpoint to respond, which ensures the schema exists before the gateway starts
 
 | Service | Liveness | Readiness |
 |---|---|---|
-| API | `GET /v1/health` | `GET /v1/health` |
-| Gateway | `GET :4176/health` | `GET :4176/health` |
+| API | `GET /v1/health` | `GET /v1/ready` (checks PostgreSQL) |
+| Gateway | `GET :4176/health` | `GET :4176/ready` (checks PostgreSQL + Redis) |
 | Web | `GET /` | `GET /` |
 
 Kubernetes has no compose-style `depends_on`. Instead, health-gated ordering is
@@ -139,49 +146,43 @@ achieved via probes: the API's readiness probe prevents traffic until
 migrations complete and the health endpoint responds; the gateway's init
 container waits for the API to be Ready.
 
-## Gateway replica constraint
+## Gateway scaling
 
-> **CRITICAL: The gateway Deployment defaults to `replicas: 1` and MUST NOT be
-> scaled beyond 1 without additional work.**
+M14 increment 5 added a Redis ownership registry and command forwarding. One
+node owns each game; other nodes forward commands to it, while Redis pub/sub
+fans authoritative broadcasts back to every connected client. Consequently
+the chart now defaults to two gateway replicas. `REDIS_URL` is required for a
+multi-replica deployment; keep one replica only when deliberately running
+without Redis.
 
-After M14 increment 3, cross-node BROADCAST fanout works (Redis pub/sub), but
-game-command **OWNERSHIP** is NOT coordinated across gateway replicas. If two
-players in the same game land on different gateway replicas, the non-owning
-replica's in-memory authority goes stale and its optimistic event-store append
-fails, so that player's moves are spuriously rejected.
-
-Scaling the gateway beyond 1 replica requires one of:
-- **Sticky per-game routing**: all WebSocket connections for a given game are
-  routed to the same gateway replica (e.g., via a consistent-hash
-  load balancer keyed by game ID).
-- **Sharded authority**: game authority is sharded across replicas with a
-  coordination protocol (e.g., a distributed lock or a routing layer that
-  forwards commands to the owning replica).
-
-Both are **later M14 increments**. Until then, `gateway.replicas` MUST be 1.
-
-The API and web are stateless and MAY default to 2 replicas.
-
-See `docs/adr/0009-kubernetes-helm.md` for the full decision record.
+See `docs/adr/0010-game-authority-ownership.md` for the decision record.
 
 ## Validation
 
 ```bash
 # Lint the chart
-helm lint deploy/helm/gambit
+helm lint deploy/helm/gambit \
+  --set secrets.accessTokenSecret="$(openssl rand -base64 48)" \
+  --set secrets.postgresPassword="$(openssl rand -base64 24)"
 
 # Render templates (default values)
-helm template deploy/helm/gambit
+helm template deploy/helm/gambit \
+  --set secrets.accessTokenSecret="$(openssl rand -base64 48)" \
+  --set secrets.postgresPassword="$(openssl rand -base64 24)"
 
 # Render templates (external datastores)
 helm template deploy/helm/gambit \
+  --set secrets.accessTokenSecret="$(openssl rand -base64 48)" \
   --set postgres.enabled=false \
   --set redis.enabled=false \
   --set externalDatabaseUrl=postgres://user:pass@db.example.com:5432/gambit \
   --set externalRedisUrl=redis://redis.example.com:6379
 
 # Validate against Kubernetes schemas
-helm template deploy/helm/gambit | kubeconform -strict -summary
+helm template deploy/helm/gambit \
+  --set secrets.accessTokenSecret="$(openssl rand -base64 48)" \
+  --set secrets.postgresPassword="$(openssl rand -base64 24)" \
+  | kubeconform -strict -summary
 
 # Run the snapshot test (verifies key wiring)
 PATH=/usr/local/bin:$PATH bash scripts/helm-snapshot-test.sh

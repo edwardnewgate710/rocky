@@ -17,7 +17,7 @@ export function createLiveTournamentHandler(deps: RouteDeps) {
     // Present standings through the same view as GET /standings so both
     // endpoints expose an identical, stable shape.
     const standings = tournament.standings().map(standingView);
-    const games = deps.liveView.activeGames(id);
+    const games = await deps.liveView.activeGames(id);
 
     return json(200, { games, standings });
   };

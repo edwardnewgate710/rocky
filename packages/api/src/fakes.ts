@@ -29,6 +29,7 @@ import type {
   TournamentsRepository,
   TournamentSummaryRow
 } from '@chess-platform/persistence';
+import { DuplicateUserError } from '@chess-platform/persistence';
 import type { TournamentSnapshot } from '@chess-platform/tournament';
 import type { AuditEntry, AuditRepository } from './ports/audit';
 import type { Clock } from './ports/clock';
@@ -43,6 +44,21 @@ export class InMemoryUsersRepository implements UsersRepository {
   constructor(private readonly clock: Clock = systemClock) {}
 
   async create(user: NewUser): Promise<UserRow> {
+    if (this.hasHandle(user.handle)) throw new DuplicateUserError();
+    return this.insert(user);
+  }
+
+  async createWithPasswordAndRole(user: NewUser, secretHash: string, role: Role): Promise<UserRow> {
+    // Deliberately contains no await: duplicate check + all three writes happen
+    // in one JavaScript turn, mirroring the Postgres transaction in tests.
+    if (this.hasHandle(user.handle)) throw new DuplicateUserError();
+    const row = this.insert(user);
+    this.passwords.set(row.id, secretHash);
+    this.roles.set(row.id, new Set([role]));
+    return row;
+  }
+
+  private insert(user: NewUser): UserRow {
     const row: UserRow = {
       id: user.id,
       handle: user.handle,
@@ -53,6 +69,14 @@ export class InMemoryUsersRepository implements UsersRepository {
     };
     this.byId.set(row.id, row);
     return row;
+  }
+
+  private hasHandle(handle: string): boolean {
+    const lower = handle.toLowerCase();
+    for (const row of this.byId.values()) {
+      if (row.handle.toLowerCase() === lower) return true;
+    }
+    return false;
   }
 
   async findById(id: string): Promise<UserRow | null> {
@@ -127,6 +151,36 @@ export class InMemorySessionsRepository implements SessionsRepository {
       if (stored.refreshHash === refreshHash) return stored.row;
     }
     return null;
+  }
+
+  async rotate(refreshHash: string, replacement: NewSession, at: Date) {
+    let previous: StoredSession | undefined;
+    for (const stored of this.byId.values()) {
+      if (stored.refreshHash === refreshHash) {
+        previous = stored;
+        break;
+      }
+    }
+    if (!previous) return { status: 'missing' as const };
+    if (previous.row.revokedAt) return { status: 'revoked' as const, previous: previous.row };
+    if (previous.row.expiresAt.getTime() <= at.getTime()) {
+      return { status: 'expired' as const, previous: previous.row };
+    }
+
+    previous.row = { ...previous.row, revokedAt: at };
+    const row: SessionRow = {
+      id: replacement.id,
+      userId: replacement.userId,
+      createdAt: new Date(this.clock.now()),
+      expiresAt: replacement.expiresAt,
+      revokedAt: null,
+      rotatedFrom: replacement.rotatedFrom ?? previous.row.id,
+      lastSeenAt: null,
+      lastIp: null,
+      lastUserAgent: null,
+    };
+    this.byId.set(row.id, { row, refreshHash: replacement.refreshHash, seq: this.seq++ });
+    return { status: 'rotated' as const, previous: previous.row, replacement: row };
   }
 
   async touch(id: string, at: Date, ip?: string | null, userAgent?: string | null): Promise<void> {

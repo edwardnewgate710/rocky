@@ -15,6 +15,9 @@ export * from './routes';
 export * from './domain';
 export * from './presenters';
 export * from './tournament/launcher';
+export * from './tournament/durable-launcher';
+export * from './tournament/durable-live-view';
+export * from './ports/pg-rate-limiter';
 export * from './tournament/service';
 export * from './tournament/live-view';
 

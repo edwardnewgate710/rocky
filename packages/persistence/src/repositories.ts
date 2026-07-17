@@ -35,6 +35,8 @@ export interface NewUser {
 
 export interface UsersRepository {
   create(user: NewUser): Promise<UserRow>;
+  /** Atomically create the user, password credential, and initial role. */
+  createWithPasswordAndRole(user: NewUser, secretHash: string, role: Role): Promise<UserRow>;
   findById(id: string): Promise<UserRow | null>;
   findByHandle(handle: string): Promise<UserRow | null>;
   /** Upsert the argon2id-encoded password hash for a user. */
@@ -68,11 +70,19 @@ export interface NewSession {
   readonly rotatedFrom?: string | null;
 }
 
+export type SessionRotationResult =
+  | { readonly status: 'rotated'; readonly previous: SessionRow; readonly replacement: SessionRow }
+  | { readonly status: 'missing' }
+  | { readonly status: 'revoked'; readonly previous: SessionRow }
+  | { readonly status: 'expired'; readonly previous: SessionRow };
+
 export interface SessionsRepository {
   create(session: NewSession): Promise<SessionRow>;
   /** Return a non-revoked, non-expired session, or null. */
   findActiveById(id: string): Promise<SessionRow | null>;
   findByRefreshHash(refreshHash: string): Promise<SessionRow | null>;
+  /** Atomically consume a refresh token and insert its replacement session. */
+  rotate(refreshHash: string, replacement: NewSession, at: Date): Promise<SessionRotationResult>;
   /** Record activity (last_seen_at / last_ip / last_user_agent). */
   touch(id: string, at: Date, ip?: string | null, userAgent?: string | null): Promise<void>;
   revoke(id: string, at: Date): Promise<void>;

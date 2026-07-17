@@ -5,7 +5,7 @@
  * FKs and CHECK constraints in the schema, so string casts here are safe.
  */
 
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import type { Variant } from '@chess-platform/core';
 import type { ResultString, Termination, TimeControl } from '@chess-platform/game';
 import type {
@@ -23,6 +23,7 @@ import type {
   SeekRow,
   SeeksRepository,
   SessionRow,
+  SessionRotationResult,
   SessionsRepository,
   Speed,
   TournamentSummaryRow,
@@ -30,6 +31,7 @@ import type {
   UserRow,
   UsersRepository,
 } from '../repositories';
+import { DuplicateUserError } from '../errors';
 import type { TournamentSnapshot } from '@chess-platform/tournament';
 
 // --- row shapes as returned by pg ------------------------------------------
@@ -174,6 +176,19 @@ const SESSION_COLS =
 const GAME_COLS =
   'id, variant, rated, speed, white_id, black_id, result, termination, ply_count, last_seq, started_at, ended_at';
 
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === 'object' && error !== null &&
+    (error as { code?: unknown }).code === '23505';
+}
+
+async function rollback(client: PoolClient): Promise<void> {
+  try {
+    await client.query('ROLLBACK');
+  } catch {
+    // Preserve the original failure.
+  }
+}
+
 export class PgUsersRepository implements UsersRepository {
   constructor(private readonly pool: Pool) {}
 
@@ -185,6 +200,36 @@ export class PgUsersRepository implements UsersRepository {
       [user.id, user.handle, user.emailHash ?? null, user.country ?? null],
     );
     return toUser(res.rows[0]!);
+  }
+
+  async createWithPasswordAndRole(user: NewUser, secretHash: string, role: Role): Promise<UserRow> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const created = await client.query<UserDbRow>(
+        `INSERT INTO users (id, handle, email_hash, country)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id, handle, email_hash, country, flags, created_at`,
+        [user.id, user.handle, user.emailHash ?? null, user.country ?? null],
+      );
+      await client.query(
+        `INSERT INTO credentials (user_id, kind, secret_hash)
+         VALUES ($1, 'password', $2)`,
+        [user.id, secretHash],
+      );
+      await client.query(
+        'INSERT INTO roles (user_id, role) VALUES ($1, $2)',
+        [user.id, role],
+      );
+      await client.query('COMMIT');
+      return toUser(created.rows[0]!);
+    } catch (error) {
+      await rollback(client);
+      if (isUniqueViolation(error)) throw new DuplicateUserError();
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async findById(id: string): Promise<UserRow | null> {
@@ -271,6 +316,59 @@ export class PgSessionsRepository implements SessionsRepository {
       [refreshHash],
     );
     return res.rows[0] ? toSession(res.rows[0]) : null;
+  }
+
+  async rotate(
+    refreshHash: string,
+    replacement: NewSession,
+    at: Date,
+  ): Promise<SessionRotationResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const found = await client.query<SessionDbRow>(
+        `SELECT ${SESSION_COLS} FROM sessions
+         WHERE refresh_hash = $1 FOR UPDATE`,
+        [refreshHash],
+      );
+      const row = found.rows[0];
+      if (!row) {
+        await client.query('COMMIT');
+        return { status: 'missing' };
+      }
+      const previous = toSession(row);
+      if (previous.revokedAt !== null) {
+        await client.query('COMMIT');
+        return { status: 'revoked', previous };
+      }
+      if (previous.expiresAt.getTime() <= at.getTime()) {
+        await client.query('COMMIT');
+        return { status: 'expired', previous };
+      }
+
+      await client.query('UPDATE sessions SET revoked_at = $2 WHERE id = $1', [previous.id, at]);
+      const inserted = await client.query<SessionDbRow>(
+        `INSERT INTO sessions (id, user_id, refresh_hash, expires_at, rotated_from, created_ip, created_user_agent)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING ${SESSION_COLS}`,
+        [
+          replacement.id,
+          replacement.userId,
+          replacement.refreshHash,
+          replacement.expiresAt,
+          replacement.rotatedFrom ?? previous.id,
+          replacement.ip ?? null,
+          replacement.userAgent ?? null,
+        ],
+      );
+      await client.query('COMMIT');
+      return { status: 'rotated', previous, replacement: toSession(inserted.rows[0]!) };
+    } catch (error) {
+      await rollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async touch(id: string, at: Date, ip?: string | null, userAgent?: string | null): Promise<void> {

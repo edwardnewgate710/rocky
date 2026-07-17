@@ -36,5 +36,5 @@ export interface LiveBoard {
  * Implemented in the composition root (where the GameAuthority is available).
  */
 export interface TournamentLiveView {
-  activeGames(tournamentId: string): LiveBoard[];
+  activeGames(tournamentId: string): LiveBoard[] | Promise<LiveBoard[]>;
 }

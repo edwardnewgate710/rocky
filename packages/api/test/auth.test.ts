@@ -38,6 +38,24 @@ test('duplicate handle is rejected with 409 (case-insensitive)', async () => {
   }
 });
 
+test('concurrent registration creates one complete account and returns one conflict', async () => {
+  const h = await startHarness();
+  try {
+    const requests = ['RaceUser', 'raceuser'].map((handle) =>
+      h.json('POST', '/v1/auth/register', {
+        body: { handle, password: 'password123' },
+      }));
+    const responses = await Promise.all(requests);
+    assert.deepEqual(responses.map((response) => response.status).sort(), [201, 409]);
+    const user = await h.repos.users.findByHandle('RACEUSER');
+    assert.ok(user);
+    assert.ok(await h.repos.users.getPasswordHash(user.id));
+    assert.deepEqual(await h.repos.users.rolesOf(user.id), ['user']);
+  } finally {
+    await h.close();
+  }
+});
+
 test('invalid registration input is a 422 with details', async () => {
   const h = await startHarness();
   try {
@@ -113,6 +131,23 @@ test('refresh rotates the token and revokes the old session', async () => {
     // The old refresh token no longer works.
     const reused = await h.json('POST', '/v1/auth/refresh', { body: { refreshToken: first } });
     assert.equal(reused.status, 401);
+  } finally {
+    await h.close();
+  }
+});
+
+test('two concurrent refreshes consume a token at most once', async () => {
+  const h = await startHarness();
+  try {
+    const reg = await h.json('POST', '/v1/auth/register', {
+      body: { handle: 'refresh-race', password: 'passw0rd!!' },
+    });
+    const refreshToken = reg.body.tokens.refreshToken;
+    const responses = await Promise.all([
+      h.json('POST', '/v1/auth/refresh', { body: { refreshToken } }),
+      h.json('POST', '/v1/auth/refresh', { body: { refreshToken } }),
+    ]);
+    assert.deepEqual(responses.map((response) => response.status).sort(), [200, 401]);
   } finally {
     await h.close();
   }

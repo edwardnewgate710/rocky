@@ -56,7 +56,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 Secret name.
 */}}
 {{- define "gambit.secretName" -}}
-{{- printf "%s-secret" (include "gambit.fullname" .) -}}
+{{- default (printf "%s-secret" (include "gambit.fullname" .)) .Values.secrets.existingSecret -}}
 {{- end -}}
 
 {{/*

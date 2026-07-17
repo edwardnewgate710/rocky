@@ -68,7 +68,7 @@ spec:
           command:
             - sh
             - -c
-            - 'until node -e "fetch(''http://{{ include "gambit.fullname" . }}-api:{{ .Values.api.port }}/v1/health'').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; do echo "Waiting for API health..."; sleep 2; done'
+            - 'until node -e "fetch(''http://{{ include "gambit.fullname" . }}-api:{{ .Values.api.port }}/v1/ready'').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; do echo "Waiting for API readiness..."; sleep 2; done'
       containers:
         - name: gateway
           image: "{{ .Values.images.gateway.repository }}:{{ .Values.images.gateway.tag }}"
@@ -113,6 +113,8 @@ spec:
                 configMapKeyRef:
                   name: {{ include "gambit.configMapName" . }}
                   key: GATEWAY_HOST
+            - name: HEALTH_PORT
+              value: {{ .Values.gateway.healthPort | quote }}
             - name: NODE_ENV
               valueFrom:
                 configMapKeyRef:
@@ -154,7 +156,7 @@ spec:
             timeoutSeconds: 5
           readinessProbe:
             httpGet:
-              path: /health
+              path: /ready
               port: health
             initialDelaySeconds: 5
             periodSeconds: 10

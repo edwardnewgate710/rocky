@@ -262,8 +262,9 @@ export class AiOrchestrator {
       const timeoutMs = request.latencyBudgetMs ?? this.routingConfig.defaultLatencyBudgetMs;
 
       try {
-        const response = await this.withTimeout(
-          decision.provider.provider.complete(request),
+        const response = await this.completeWithTimeout(
+          decision.provider.provider,
+          request,
           timeoutMs,
           providerId,
         );
@@ -288,24 +289,33 @@ export class AiOrchestrator {
     throw lastError ?? new NoProviderError('All providers exhausted.');
   }
 
-  private async withTimeout<T>(
-    promise: Promise<T>,
+  private async completeWithTimeout(
+    provider: AiProvider,
+    request: CompletionRequest,
     ms: number,
     providerId: string,
-  ): Promise<T> {
+  ): Promise<CompletionResponse> {
+    const controller = new AbortController();
+    const forwardAbort = (): void => controller.abort(request.signal?.reason);
+    request.signal?.addEventListener('abort', forwardAbort, { once: true });
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
+      const providerPromise = provider.complete({ ...request, signal: controller.signal });
       return await Promise.race([
-        promise,
-        new Promise<T>((_, reject) => {
+        providerPromise,
+        new Promise<CompletionResponse>((_, reject) => {
           timer = setTimeout(
-            () => reject(new ProviderTimeoutError(providerId, ms)),
+            () => {
+              controller.abort(new ProviderTimeoutError(providerId, ms));
+              reject(new ProviderTimeoutError(providerId, ms));
+            },
             ms,
           );
         }),
       ]);
     } finally {
       if (timer) clearTimeout(timer);
+      request.signal?.removeEventListener('abort', forwardAbort);
     }
   }
 }

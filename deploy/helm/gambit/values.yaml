@@ -28,15 +28,15 @@
 images:
   api:
     repository: ghcr.io/hessiun710/gambit-api
-    tag: latest
+    tag: "0.1.0"
     pullPolicy: IfNotPresent
   gateway:
     repository: ghcr.io/hessiun710/gambit-gateway
-    tag: latest
+    tag: "0.1.0"
     pullPolicy: IfNotPresent
   web:
     repository: ghcr.io/hessiun710/gambit-web
-    tag: latest
+    tag: "0.1.0"
     pullPolicy: IfNotPresent
 
 # --- API service ---
@@ -140,18 +140,20 @@ externalDatabaseUrl: ""
 externalRedisUrl: ""
 
 # --- Secrets ---
-# ACCESS_TOKEN_SECRET and POSTGRES_PASSWORD are templated from these values
-# with empty/placeholder defaults. Do NOT commit real secret values.
+# ACCESS_TOKEN_SECRET and POSTGRES_PASSWORD are never defaulted. Rendering
+# fails until explicit values or an existing Secret are supplied.
 # In production, provide via:
 #   helm --set secrets.accessTokenSecret=<your-secret> \
 #        --set secrets.postgresPassword=<your-password>
 # Or use external-secrets / a secrets manager (full integration is a later
 # M14 increment — see docs/adr/0009-kubernetes-helm.md).
 secrets:
+  # Existing Secret containing ACCESS_TOKEN_SECRET and, when bundled Postgres
+  # is enabled, POSTGRES_PASSWORD. When set, this chart does not create a Secret.
+  existingSecret: ""
   # HMAC secret shared between API and gateway (must be >= 32 bytes).
-  # Placeholder default for local dev/kind only.
-  accessTokenSecret: ""  # empty → placeholder in Secret
-  postgresPassword: ""   # empty → placeholder in Secret
+  accessTokenSecret: ""
+  postgresPassword: ""
 
 # --- Config (non-secret env, shared via ConfigMap) ---
 config:

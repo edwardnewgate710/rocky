@@ -163,7 +163,7 @@ describe('Cache', () => {
   test('hashString is deterministic and collision-resistant', () => {
     assert.equal(hashString('hello'), hashString('hello'));
     assert.notEqual(hashString('hello'), hashString('world'));
-    assert.equal(hashString('').length, 8);
+    assert.equal(hashString('').length, 64);
   });
 
   test('isExpired returns false for TTL=0', () => {
@@ -189,6 +189,19 @@ describe('Cache', () => {
     const k1 = buildCacheKey(makeRequest({ temperature: 0.5 }));
     const k2 = buildCacheKey(makeRequest({ temperature: 1.0 }));
     assert.notEqual(k1.temperature, k2.temperature);
+  });
+
+  test('buildCacheKey includes structured schema, provider, modality, and user scope', () => {
+    const base = makeRequest();
+    const variants = [
+      makeRequest({ structured: true, schema: { type: 'object' } }),
+      makeRequest({ providerPreference: 'provider-b' }),
+      makeRequest({ modality: 'vision' }),
+      makeRequest({ userId: 'another-user' }),
+    ];
+    for (const variant of variants) {
+      assert.notEqual(buildCacheKey(base).optionsHash, buildCacheKey(variant).optionsHash);
+    }
   });
 });
 
@@ -1064,6 +1077,32 @@ describe('AiOrchestrator', () => {
       orch.complete(makeRequest({ signal: controller.signal })),
       CancelledError,
     );
+  });
+
+  test('provider timeout aborts the in-flight provider request before failover', async () => {
+    const orch = new AiOrchestrator({
+      config: {
+        providers: [],
+        routing: { defaultLatencyBudgetMs: 5, maxFailoverAttempts: 1 },
+      },
+    });
+    const provider = new FakeProvider({ id: 'slow', latencyMs: 100 });
+    await orch.registerProvider(provider);
+    await assert.rejects(orch.complete(makeRequest()), /timed out/i);
+    assert.equal(provider.calls[0]!.signal?.aborted, true);
+  });
+
+  test('AI rate limiter evicts inactive user buckets', () => {
+    let now = 0;
+    const limiter = new RateLimiter(
+      { enabled: true, perUserPerMinute: 1000, globalPerMinute: 1_000_000 },
+      () => now,
+    );
+    for (let i = 0; i < 500; i++) limiter.check(`old-${i}`);
+    assert.equal(limiter.size, 500);
+    now = 61_000;
+    for (let i = 0; i < 500; i++) limiter.check(`new-${i}`);
+    assert.equal(limiter.size, 500);
   });
 
   test('health returns orchestrator stats', async () => {

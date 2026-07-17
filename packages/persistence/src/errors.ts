@@ -12,6 +12,14 @@ export class PersistenceError extends Error {
   }
 }
 
+/** A uniqueness conflict while creating an identity record. */
+export class DuplicateUserError extends PersistenceError {
+  constructor() {
+    super('user handle or identity already exists');
+    this.name = 'DuplicateUserError';
+  }
+}
+
 /**
  * Raised when an optimistic append conflicts with the current head sequence of a
  * game's event log (a concurrent writer won the race). The caller should reload

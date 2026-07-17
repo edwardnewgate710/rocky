@@ -13,19 +13,32 @@ RUN npm ci
 # Build all packages in dependency order
 RUN npm run build --workspace @chess-platform/core && \
     npm run build --workspace @chess-platform/game && \
+    npm run build --workspace @chess-platform/tournament && \
     npm run build --workspace @chess-platform/persistence && \
     npm run build --workspace @chess-platform/api
+
+# Remove compilers, test runners, and other development-only packages before
+# copying the dependency tree into the runtime image.
+RUN npm prune --omit=dev
 
 # --- Runtime stage ---
 FROM node:22-slim AS runtime
 
 WORKDIR /app
 
-# Copy built packages and their node_modules, owned by the non-root `node`
-# user (built into the official Node image) so the runtime never runs as root.
 COPY --from=builder --chown=node:node /app/package.json /app/package-lock.json ./
-COPY --from=builder --chown=node:node /app/packages/ ./packages/
 COPY --from=builder --chown=node:node /app/node_modules/ ./node_modules/
+COPY --from=builder --chown=node:node /app/packages/chess-core/package.json ./packages/chess-core/package.json
+COPY --from=builder --chown=node:node /app/packages/chess-core/dist/ ./packages/chess-core/dist/
+COPY --from=builder --chown=node:node /app/packages/game/package.json ./packages/game/package.json
+COPY --from=builder --chown=node:node /app/packages/game/dist/ ./packages/game/dist/
+COPY --from=builder --chown=node:node /app/packages/tournament/package.json ./packages/tournament/package.json
+COPY --from=builder --chown=node:node /app/packages/tournament/dist/ ./packages/tournament/dist/
+COPY --from=builder --chown=node:node /app/packages/persistence/package.json ./packages/persistence/package.json
+COPY --from=builder --chown=node:node /app/packages/persistence/dist/ ./packages/persistence/dist/
+COPY --from=builder --chown=node:node /app/packages/persistence/migrations/ ./packages/persistence/migrations/
+COPY --from=builder --chown=node:node /app/packages/api/package.json ./packages/api/package.json
+COPY --from=builder --chown=node:node /app/packages/api/dist/ ./packages/api/dist/
 
 ENV NODE_ENV=production
 ENV PORT=8080
@@ -35,4 +48,4 @@ EXPOSE 8080
 USER node
 
 # Run migrations then start the API
-CMD ["sh", "-c", "npm run migrate --workspace @chess-platform/persistence && node packages/api/dist/scripts/serve.js"]
+CMD ["sh", "-c", "(cd packages/persistence && node dist/pg/migrate-cli.js) && node packages/api/dist/scripts/serve.js"]

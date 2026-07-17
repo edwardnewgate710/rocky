@@ -35,15 +35,27 @@ check() {
 }
 
 # Render default values
-helm template "$CHART_DIR" > "$TMPDIR/default.yaml" 2>/dev/null
+HELM_SECRETS=(
+  --set secrets.accessTokenSecret=test-only-access-token-secret-32-bytes-minimum
+  --set secrets.postgresPassword=test-only-postgres-password
+)
+
+helm template "$CHART_DIR" "${HELM_SECRETS[@]}" > "$TMPDIR/default.yaml" 2>/dev/null
 
 # Render external-datastore override
 helm template "$CHART_DIR" \
+  --set secrets.accessTokenSecret=test-only-access-token-secret-32-bytes-minimum \
   --set postgres.enabled=false \
   --set redis.enabled=false \
   --set externalDatabaseUrl=postgres://user:pass@db.example.com:5432/gambit \
   --set externalRedisUrl=redis://redis.example.com:6379 \
   > "$TMPDIR/external.yaml" 2>/dev/null
+
+# Rendering without a secret must fail closed.
+if helm template "$CHART_DIR" > /dev/null 2>&1; then
+  echo "Chart rendered without ACCESS_TOKEN_SECRET"
+  exit 1
+fi
 
 echo ""
 echo "=== Snapshot test: key wiring ==="
@@ -125,10 +137,10 @@ check "Gateway has wait-for-api init container" "$([ "$WAIT_CMD" = 'wait-for-api
 
 # --- 8. Probes hit correct endpoints ---
 API_PROBE=$(yq '. | select(.kind=="Deployment" and .metadata.name | test("api")) | .spec.template.spec.containers[] | select(.name=="api") | .readinessProbe.httpGet.path' "$TMPDIR/default.yaml" 2>/dev/null || echo "")
-check "API readiness probe hits /v1/health" "$([ "$API_PROBE" = '/v1/health' ] && echo 0 || echo 1)"
+check "API readiness probe hits /v1/ready" "$([ "$API_PROBE" = '/v1/ready' ] && echo 0 || echo 1)"
 
 GW_PROBE=$(yq '. | select(.kind=="Deployment" and .metadata.name | test("gateway")) | .spec.template.spec.containers[] | select(.name=="gateway") | .readinessProbe.httpGet.path' "$TMPDIR/default.yaml" 2>/dev/null || echo "")
-check "Gateway readiness probe hits /health" "$([ "$GW_PROBE" = '/health' ] && echo 0 || echo 1)"
+check "Gateway readiness probe hits /ready" "$([ "$GW_PROBE" = '/ready' ] && echo 0 || echo 1)"
 
 WEB_PROBE=$(yq '. | select(.kind=="Deployment" and .metadata.name | test("web")) | .spec.template.spec.containers[] | select(.name=="web") | .readinessProbe.httpGet.path' "$TMPDIR/default.yaml" 2>/dev/null || echo "")
 check "Web readiness probe hits /" "$([ "$WEB_PROBE" = '/' ] && echo 0 || echo 1)"

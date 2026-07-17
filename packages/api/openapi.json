@@ -41,6 +41,47 @@
         }
       }
     },
+    "/v1/ready": {
+      "get": {
+        "summary": "Readiness probe",
+        "tags": [
+          "meta"
+        ],
+        "operationId": "get_v1_ready",
+        "responses": {
+          "200": {
+            "description": "Dependencies are ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/openapi.json": {
       "get": {
         "summary": "OpenAPI specification",
@@ -1673,6 +1714,58 @@
           }
         ]
       }
+    },
+    "/v1/tournaments/{id}/live": {
+      "get": {
+        "summary": "Get live active games and standings",
+        "tags": [
+          "tournaments"
+        ],
+        "operationId": "get_v1_tournaments_by_id_live",
+        "responses": {
+          "200": {
+            "description": "Live tournament data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TournamentLiveResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Tournament id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -2367,6 +2460,110 @@
         "type": "array",
         "items": {
           "$ref": "#/components/schemas/PlayerStandingView"
+        }
+      },
+      "LiveBoard": {
+        "type": "object",
+        "required": [
+          "gameId",
+          "white",
+          "black",
+          "ply",
+          "turn",
+          "fen",
+          "fenHash",
+          "clock",
+          "status"
+        ],
+        "properties": {
+          "gameId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "white": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "black": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ply": {
+            "type": "integer"
+          },
+          "turn": {
+            "type": "string",
+            "enum": [
+              "w",
+              "b"
+            ]
+          },
+          "fen": {
+            "type": "string"
+          },
+          "fenHash": {
+            "type": "string"
+          },
+          "clock": {
+            "type": "object",
+            "required": [
+              "w",
+              "b"
+            ],
+            "properties": {
+              "w": {
+                "type": "integer"
+              },
+              "b": {
+                "type": "integer"
+              }
+            }
+          },
+          "status": {
+            "type": "object",
+            "required": [
+              "over"
+            ],
+            "properties": {
+              "over": {
+                "type": "boolean"
+              },
+              "result": {
+                "type": "string",
+                "nullable": true
+              },
+              "termination": {
+                "type": "string",
+                "nullable": true
+              },
+              "winner": {
+                "type": "string",
+                "enum": [
+                  "w",
+                  "b"
+                ],
+                "nullable": true
+              }
+            }
+          }
+        }
+      },
+      "TournamentLiveResponse": {
+        "type": "object",
+        "required": [
+          "games",
+          "standings"
+        ],
+        "properties": {
+          "games": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LiveBoard"
+            }
+          },
+          "standings": {
+            "$ref": "#/components/schemas/StandingList"
+          }
         }
       },
       "RegisterRequest": {

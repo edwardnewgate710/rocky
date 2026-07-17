@@ -109,7 +109,7 @@ test('logout clears session and calls onSessionChange(null)', async () => {
   assert.equal(sessions[sessions.length - 1], null);
 });
 
-test('M12 inc 2: restore loads session from storage via cookie-based refresh', async () => {
+test('M12 inc 2: restore takes identity from cookie refresh, not storage', async () => {
   const storage = makeFakeStorage();
   storage.setItem('gambit-session', JSON.stringify({
     handle: 'stored-user', userId: 'u3',
@@ -122,9 +122,12 @@ test('M12 inc 2: restore loads session from storage via cookie-based refresh', a
   });
   const restored = await ctrl.restore();
   assert.ok(restored);
-  assert.equal(restored!.handle, 'stored-user');
-  assert.equal(restored!.userId, 'u3');
+  assert.equal(restored!.handle, 'alice');
+  assert.equal(restored!.userId, 'u1');
   assert.equal(session, restored);
+  assert.deepEqual(JSON.parse(storage.getItem('gambit-session')!), {
+    handle: 'alice', userId: 'u1',
+  });
 });
 
 test('M12 inc 2: restore returns null when storage is empty', async () => {

@@ -136,6 +136,28 @@ describe('Auth Endpoints Rate Limiting Integration', () => {
     }
   });
 
+  test('login handle limiting is case-insensitive like the identity store', async () => {
+    const h = await startHarness({ trustProxy: true });
+    try {
+      await h.json('POST', '/v1/auth/register', {
+        body: { handle: 'CaseUser', password: 'password123' },
+      });
+      for (const handle of ['caseuser', 'CASEUSER', 'CaseUser', 'cAsEuSeR', 'caseUser']) {
+        await h.json('POST', '/v1/auth/login', {
+          body: { handle, password: 'wrong' },
+          headers: { 'x-forwarded-for': `198.51.100.${handle.length}` },
+        });
+      }
+      const blocked = await h.json('POST', '/v1/auth/login', {
+        body: { handle: 'CASEuser', password: 'wrong' },
+        headers: { 'x-forwarded-for': '198.51.100.200' },
+      });
+      assert.equal(blocked.status, 429);
+    } finally {
+      await h.close();
+    }
+  });
+
   test('refresh endpoint is rate limited per IP', async () => {
     const h = await startHarness({ trustProxy: true });
     try {

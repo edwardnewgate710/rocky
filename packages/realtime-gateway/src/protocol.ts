@@ -302,21 +302,63 @@ export function decode(frame: string): ClientMessage | null {
   } catch {
     return null;
   }
-  if (typeof parsed !== 'object' || parsed === null) return null;
-  const t = (parsed as { t?: unknown }).t;
+  if (!isRecord(parsed)) return null;
+  const t = parsed['t'];
   switch (t) {
-    case 'join':
+    case 'join': {
+      if (!isNonEmptyString(parsed['gameId'], 256)) return null;
+      const token = parsed['token'];
+      if (token !== undefined && !isNonEmptyString(token, 16_384)) return null;
+      return token === undefined
+        ? { t, gameId: parsed['gameId'] }
+        : { t, gameId: parsed['gameId'], token };
+    }
     case 'move':
+      if (!isNonEmptyString(parsed['gameId'], 256)) return null;
+      if (!isNonEmptyString(parsed['uci'], 32)) return null;
+      if (!isPositiveSafeInteger(parsed['clientSeq'])) return null;
+      return {
+        t,
+        gameId: parsed['gameId'],
+        uci: parsed['uci'],
+        clientSeq: parsed['clientSeq'],
+      };
     case 'resign':
     case 'offerDraw':
     case 'acceptDraw':
     case 'declineDraw':
     case 'claimFlag':
     case 'abort':
+      return isNonEmptyString(parsed['gameId'], 256)
+        ? { t, gameId: parsed['gameId'] }
+        : null;
     case 'resume':
+      if (!isNonEmptyString(parsed['gameId'], 256)) return null;
+      if (!isNonNegativeSafeInteger(parsed['lastPly'])) return null;
+      return { t, gameId: parsed['gameId'], lastPly: parsed['lastPly'] };
     case 'ping':
-      return parsed as ClientMessage;
+      return isFiniteNumber(parsed['ts']) ? { t, ts: parsed['ts'] } : null;
     default:
       return null;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown, maxLength: number): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= maxLength;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isPositiveSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }

@@ -58,6 +58,7 @@ export interface RouteDeps {
   readonly tournamentRepo: TournamentsRepository;
   readonly gameLauncher: GameLauncher;
   readonly liveView: TournamentLiveView;
+  readonly readiness: () => Promise<void>;
 }
 
 const PUBLIC: AuthPolicy = { required: false };
@@ -88,6 +89,24 @@ export function buildRouter(deps: RouteDeps): Router {
   );
 
   router.get(
+    '/v1/ready',
+    doc({
+      summary: 'Readiness probe',
+      tags: ['meta'],
+      responses: { 200: ['Health', 'Dependencies are ready'], 503: ['Error', 'Dependency unavailable'] },
+    }),
+    PUBLIC,
+    async () => {
+      try {
+        await deps.readiness();
+      } catch {
+        throw HttpError.unavailable('service dependencies are unavailable');
+      }
+      return json(200, { status: 'ok', name: info.title, version: info.version });
+    },
+  );
+
+  router.get(
     '/v1/openapi.json',
     doc({
       summary: 'OpenAPI specification',
@@ -114,7 +133,7 @@ export function buildRouter(deps: RouteDeps): Router {
     async (ctx) => {
       if (config.rateLimit.enabled) {
         const ipKey = `register:ip:${ctx.ip ?? 'unknown'}`;
-        const ipCheck = rateLimiter.check(ipKey, config.rateLimit.register.perIp);
+        const ipCheck = await rateLimiter.check(ipKey, config.rateLimit.register.perIp);
         if (!ipCheck.allowed) {
           throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
         }
@@ -150,12 +169,12 @@ export function buildRouter(deps: RouteDeps): Router {
 
       if (config.rateLimit.enabled) {
         const ipKey = `login:ip:${ctx.ip ?? 'unknown'}`;
-        const handleKey = `login:handle:${handle}`;
+        const handleKey = `login:handle:${handle.toLowerCase()}`;
         
-        const ipCheck = rateLimiter.check(ipKey, config.rateLimit.login.perIp);
+        const ipCheck = await rateLimiter.check(ipKey, config.rateLimit.login.perIp);
         if (!ipCheck.allowed) throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
 
-        const handleCheck = rateLimiter.check(handleKey, config.rateLimit.login.perHandle);
+        const handleCheck = await rateLimiter.check(handleKey, config.rateLimit.login.perHandle);
         if (!handleCheck.allowed) throw HttpError.rateLimited(handleCheck.retryAfterSeconds);
       }
 
@@ -181,7 +200,7 @@ export function buildRouter(deps: RouteDeps): Router {
     async (ctx) => {
       if (config.rateLimit.enabled) {
         const ipKey = `refresh:ip:${ctx.ip ?? 'unknown'}`;
-        const ipCheck = rateLimiter.check(ipKey, config.rateLimit.refresh.perIp);
+        const ipCheck = await rateLimiter.check(ipKey, config.rateLimit.refresh.perIp);
         if (!ipCheck.allowed) {
           throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
         }

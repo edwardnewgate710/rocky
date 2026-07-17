@@ -115,7 +115,12 @@ export class Router {
         const pat = route.segments[i]!;
         const val = segments[i]!;
         if (pat.startsWith(':')) {
-          params[pat.slice(1)] = decodeURIComponent(val);
+          try {
+            params[pat.slice(1)] = decodeURIComponent(val);
+          } catch (error) {
+            if (error instanceof URIError) throw HttpError.badRequest('path contains invalid percent encoding');
+            throw error;
+          }
         } else if (pat !== val) {
           ok = false;
           break;

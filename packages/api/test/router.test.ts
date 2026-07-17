@@ -79,6 +79,18 @@ test('malformed JSON is rejected with 400', async () => {
   }
 });
 
+test('malformed percent encoding in a path parameter is rejected with 400', async () => {
+  const h = await startHarness();
+  try {
+    const res = await fetch(`${h.baseUrl}/v1/users/%`);
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as any;
+    assert.equal(body.error.code, 'bad_request');
+  } finally {
+    await h.close();
+  }
+});
+
 test('oversized bodies are rejected with 413', async () => {
   const h = await startHarness({ maxBodyBytes: 32 });
   try {

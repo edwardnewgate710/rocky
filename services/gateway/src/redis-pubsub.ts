@@ -56,6 +56,7 @@ export interface RedisPubSubOptions {
  */
 export function createRedisPubSub(opts: RedisPubSubOptions): {
   pubsub: PubSub;
+  ping: () => Promise<void>;
   close: () => Promise<void>;
 } {
   const baseOpts = { ...opts.redisOptions, lazyConnect: false };
@@ -68,6 +69,9 @@ export function createRedisPubSub(opts: RedisPubSubOptions): {
 
   return {
     pubsub,
+    ping: async () => {
+      await pub.ping();
+    },
     close: () => pubsub.close(),
   };
 }

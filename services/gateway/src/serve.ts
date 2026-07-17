@@ -35,7 +35,7 @@
 
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { WebSocketServer, type WebSocket } from 'ws';
+import { WebSocketServer, type VerifyClientCallbackSync, type WebSocket } from 'ws';
 import {
   GameAuthority,
   InMemoryPubSub,
@@ -74,6 +74,7 @@ class SharedSecretTokenVerifier implements TokenVerifier {
 
 async function main(): Promise<void> {
   const port = Number(process.env['PORT'] ?? 4175);
+  const healthPort = Number(process.env['HEALTH_PORT'] ?? port + 1);
   const host = process.env['HOST'] ?? '0.0.0.0';
   const secret = process.env['ACCESS_TOKEN_SECRET'] ?? '';
   const ttlSec = Number(process.env['ACCESS_TOKEN_TTL_SEC'] ?? 15 * 60);
@@ -82,6 +83,14 @@ async function main(): Promise<void> {
   const cmdForwardTimeoutMs = Number(process.env['CMD_FORWARD_TIMEOUT_MS'] ?? 5000);
   const ownershipLeaseTtlSec = Number(process.env['OWNERSHIP_LEASE_TTL_SEC'] ?? 30);
   const ownershipRenewalIntervalSec = Number(process.env['OWNERSHIP_RENEWAL_INTERVAL_SEC'] ?? 15);
+  const maxPayload = positiveIntEnv('WS_MAX_PAYLOAD_BYTES', 32 * 1024);
+  const maxConnections = positiveIntEnv('WS_MAX_CONNECTIONS', 10_000);
+  const maxConnectionsPerIp = positiveIntEnv('WS_MAX_CONNECTIONS_PER_IP', 20);
+  const maxMessagesPerWindow = positiveIntEnv('WS_MAX_MESSAGES_PER_WINDOW', 60);
+  const messageWindowMs = positiveIntEnv('WS_MESSAGE_WINDOW_MS', 10_000);
+  const joinTimeoutMs = positiveIntEnv('WS_JOIN_TIMEOUT_MS', 10_000);
+  const heartbeatIntervalMs = positiveIntEnv('WS_HEARTBEAT_INTERVAL_MS', 30_000);
+  const maxRoomsPerConnection = positiveIntEnv('WS_MAX_ROOMS_PER_CONNECTION', 4);
 
   if (!secret || secret.length < 32) {
     console.error('ACCESS_TOKEN_SECRET is required and must be at least 32 bytes');
@@ -90,10 +99,14 @@ async function main(): Promise<void> {
 
   // --- Durable event log (M14 inc 2) ---
   let store: EventLog | undefined;
+  let pingDatabase: (() => Promise<void>) | undefined;
+  let closeDatabase: (() => Promise<void>) | undefined;
   if (process.env['DATABASE_URL']) {
     const { createPool, PostgresEventStore } = await import('@chess-platform/persistence/pg');
     const pool = createPool();
     store = new PostgresEventStore(pool);
+    pingDatabase = async () => { await pool.query('SELECT 1'); };
+    closeDatabase = async () => { await pool.end(); };
     console.log('[realtime-gateway] durable event log: Postgres');
   } else {
     console.log('[realtime-gateway] durable event log: in-memory (state lost on restart)');
@@ -102,13 +115,15 @@ async function main(): Promise<void> {
   // --- PubSub: Redis (multi-node) or InMemory (single-node) (M14 inc 3) ---
   let pubsub: PubSub;
   let closePubSub: (() => Promise<void>) | undefined;
+  let pingRedis: (() => Promise<void>) | undefined;
 
   if (redisUrl) {
     const { createRedisPubSub } = await import('./redis-pubsub.js');
     const redis = createRedisPubSub({ url: redisUrl, nodeId });
     pubsub = redis.pubsub;
     closePubSub = redis.close;
-    console.log(`[realtime-gateway] pub/sub: Redis (nodeId=${nodeId}, url=${redisUrl})`);
+    pingRedis = redis.ping;
+    console.log(`[realtime-gateway] pub/sub: Redis (nodeId=${nodeId})`);
   } else {
     pubsub = new InMemoryPubSub();
     console.log('[realtime-gateway] pub/sub: in-memory (single-node)');
@@ -120,6 +135,7 @@ async function main(): Promise<void> {
   let commandRouter: CommandRouter;
   let ownershipRegistry: { releaseAll: () => Promise<void>; startRenewal: () => void; stopRenewal: () => void; ownedCount: number } | undefined;
   let commandConsumer: { stop: () => void } | undefined;
+  let closeCommandRedis: (() => Promise<void>) | undefined;
 
   if (redisUrl) {
     const { OwnershipRegistry } = await import('./ownership.js');
@@ -128,6 +144,7 @@ async function main(): Promise<void> {
     // Separate Redis connection for command queues / ownership so BLPOP
     // never blocks the pub/sub publish connection path.
     const cmdRedis = new Redis(redisUrl, { lazyConnect: false, maxRetriesPerRequest: null });
+    closeCommandRedis = async () => { await cmdRedis.quit(); };
     const registry = new OwnershipRegistry({
       redis: cmdRedis,
       nodeId,
@@ -170,29 +187,105 @@ async function main(): Promise<void> {
       }));
       return;
     }
+    if (req.url === '/ready') {
+      void Promise.all([
+        pingDatabase?.() ?? Promise.resolve(),
+        pingRedis?.() ?? Promise.resolve(),
+      ]).then(() => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'ready', service: 'realtime-gateway' }));
+      }).catch(() => {
+        res.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ status: 'unavailable', service: 'realtime-gateway' }));
+      });
+      return;
+    }
     res.writeHead(404);
     res.end();
   });
 
   // --- WebSocket server ---
-  const wss = new WebSocketServer({ port, host });
+  const allowedOrigins = new Set(
+    (process.env['WS_ALLOWED_ORIGINS'] ?? '')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean),
+  );
+  const verifyClient: VerifyClientCallbackSync = ({ origin, req }) =>
+    originAllowed(origin, req.headers.host, allowedOrigins);
+  const wss = new WebSocketServer({
+    port,
+    host,
+    maxPayload,
+    verifyClient,
+  });
+  const connectionsByIp = new Map<string, number>();
+  const alive = new WeakSet<WebSocket>();
 
-  wss.on('connection', (ws: WebSocket) => {
+  wss.on('connection', (ws: WebSocket, request) => {
+    const ip = request.socket.remoteAddress ?? 'unknown';
+    const ipConnections = connectionsByIp.get(ip) ?? 0;
+    if (wss.clients.size > maxConnections || ipConnections >= maxConnectionsPerIp) {
+      ws.close(1013, 'connection limit exceeded');
+      return;
+    }
+    connectionsByIp.set(ip, ipConnections + 1);
+    alive.add(ws);
+    ws.on('pong', () => alive.add(ws));
+    ws.on('error', () => undefined);
+
+    let windowStartedAt = Date.now();
+    let messagesInWindow = 0;
+    const joinedGames = new Set<string>();
+    const joinTimer = setTimeout(() => ws.close(1008, 'join timeout'), joinTimeoutMs);
+    ws.once('close', () => {
+      clearTimeout(joinTimer);
+      const remaining = (connectionsByIp.get(ip) ?? 1) - 1;
+      if (remaining <= 0) connectionsByIp.delete(ip);
+      else connectionsByIp.set(ip, remaining);
+    });
+
     const conn: Connection = {
       id: `ws-${crypto.randomUUID()}`,
       send: (msg: ServerMessage) => {
         if (ws.readyState === ws.OPEN) ws.send(encode(msg));
       },
       onMessage: (handler: (msg: ClientMessage) => void) => {
-        ws.on('message', (data: Buffer) => {
+        ws.on('message', (data: Buffer, isBinary: boolean) => {
+          const now = Date.now();
+          if (now - windowStartedAt >= messageWindowMs) {
+            windowStartedAt = now;
+            messagesInWindow = 0;
+          }
+          messagesInWindow += 1;
+          if (messagesInWindow > maxMessagesPerWindow) {
+            ws.close(1008, 'message rate exceeded');
+            return;
+          }
+          if (isBinary) {
+            ws.close(1003, 'binary frames are not supported');
+            return;
+          }
           const msg = decode(data.toString());
-          if (msg) handler(msg);
+          if (!msg) {
+            ws.close(1008, 'malformed client message');
+            return;
+          }
+          if (msg.t === 'join' && !joinedGames.has(msg.gameId)) {
+            if (joinedGames.size >= maxRoomsPerConnection) {
+              ws.close(1008, 'room limit exceeded');
+              return;
+            }
+            joinedGames.add(msg.gameId);
+            clearTimeout(joinTimer);
+          }
+          handler(msg);
         });
       },
       onClose: (handler: () => void) => {
         ws.on('close', handler);
       },
-      close: () => ws.close(),
+      close: (code = 1000, reason?: string) => ws.close(code, reason),
     };
     gateway.handleConnection(conn);
   });
@@ -202,7 +295,6 @@ async function main(): Promise<void> {
     wss.once('error', reject);
   });
 
-  const healthPort = port + 1;
   await new Promise<void>((resolve, reject) => {
     healthServer.once('error', reject);
     healthServer.listen(healthPort, host, () => resolve());
@@ -211,12 +303,25 @@ async function main(): Promise<void> {
   console.log(`[realtime-gateway] WS  listening on ws://${host}:${port}`);
   console.log(`[realtime-gateway] Health on http://${host}:${healthPort}/health`);
 
+  const heartbeat = setInterval(() => {
+    for (const client of wss.clients) {
+      if (!alive.has(client)) {
+        client.terminate();
+        continue;
+      }
+      alive.delete(client);
+      client.ping();
+    }
+  }, heartbeatIntervalMs);
+  heartbeat.unref();
+
   // Graceful shutdown — close active client sockets first, then command
   // routing, then pub/sub.
   let shuttingDown = false;
   const shutdown = (): void => {
     if (shuttingDown) return;
     shuttingDown = true;
+    clearInterval(heartbeat);
     console.log('Shutdown signal received — closing');
     for (const client of wss.clients) {
       client.terminate();
@@ -229,6 +334,8 @@ async function main(): Promise<void> {
           await ownershipRegistry.releaseAll();
         }
         if (closePubSub) await closePubSub();
+        if (closeCommandRedis) await closeCommandRedis();
+        if (closeDatabase) await closeDatabase();
         process.exit(0);
       });
     });
@@ -241,3 +348,22 @@ void main().catch((err: unknown) => {
   console.error('Failed to start realtime gateway:', err);
   process.exit(1);
 });
+
+function positiveIntEnv(name: string, fallback: number): number {
+  const parsed = Number(process.env[name] ?? fallback);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function originAllowed(origin: string | undefined, hostHeader: string | undefined, allowed: ReadonlySet<string>): boolean {
+  if (!origin) return true; // Non-browser clients do not send Origin.
+  if (allowed.size > 0) return allowed.has(origin);
+  if (!hostHeader) return false;
+  try {
+    return new URL(origin).host === hostHeader;
+  } catch {
+    return false;
+  }
+}

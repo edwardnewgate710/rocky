@@ -120,8 +120,14 @@ export class AuthController {
       if (parsed && typeof parsed.handle === 'string' && typeof parsed.userId === 'string') {
         // Try to get a fresh access token via the httpOnly cookie.
         try {
-          await this.client.auth.refresh();
-          this.session = { handle: parsed.handle, userId: parsed.userId };
+          const refreshed = await this.client.auth.refresh();
+          // localStorage is only a reload hint and is attacker-writable. The
+          // authenticated refresh response is the sole identity source.
+          this.session = {
+            handle: refreshed.user.handle,
+            userId: refreshed.user.id,
+          };
+          this.persist();
           this.callbacks.onSessionChange(this.session);
           return this.session;
         } catch {

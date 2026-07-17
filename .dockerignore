@@ -1,0 +1,10 @@
+.git
+.github
+**/node_modules
+**/dist
+**/dist-test
+**/coverage
+**/test-results
+**/playwright-report
+*.log
+REPO_AUDIT_REPORT_*.md

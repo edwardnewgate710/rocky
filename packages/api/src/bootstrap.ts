@@ -13,6 +13,7 @@ import type { TournamentsRepository } from '@chess-platform/persistence';
 import {
   createPool,
   PgGamesRepository,
+  PostgresEventStore,
   PgRatingsRepository,
   PgSeeksRepository,
   PgSessionsRepository,
@@ -30,13 +31,14 @@ import { systemClock } from './ports/clock';
 import type { Clock } from './ports/clock';
 import { uuidv7Generator } from './ports/ids';
 import type { IdGenerator } from './ports/ids';
-import { InMemoryRateLimiter } from './ports/in-memory-rate-limiter';
+import { PgRateLimiter } from './ports/pg-rate-limiter';
 import type { RateLimiter } from './ports/rate-limiter';
 import { createApiServer } from './server';
 import type { ApiServer, ApiServerOptions } from './server';
-import { InMemoryGameLauncher } from './tournament/launcher';
 import type { GameLauncher } from './tournament/launcher';
 import type { TournamentLiveView } from './tournament/live-view';
+import { DurableGameLauncher } from './tournament/durable-launcher';
+import { DurableTournamentLiveView } from './tournament/durable-live-view';
 
 /** Postgres-backed {@link AuditRepository} writing to the `audit_log` table. */
 export class PgAuditRepository implements AuditRepository {
@@ -111,9 +113,10 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     clock,
     ids,
   });
-  const rateLimiter = options.rateLimiter ?? new InMemoryRateLimiter(clock);
+  const rateLimiter = options.rateLimiter ?? new PgRateLimiter(pool);
   const tournamentRepo = options.tournamentRepo ?? new PgTournamentsRepository(pool);
-  const gameLauncher = options.gameLauncher ?? new InMemoryGameLauncher(ids);
+  const eventStore = new PostgresEventStore(pool);
+  const gameLauncher = options.gameLauncher ?? new DurableGameLauncher(eventStore, clock);
   const deps: ApiDependencies = {
     repos: createPgRepositories(pool, ids),
     hasher,
@@ -124,7 +127,10 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     rateLimiter,
     tournamentRepo,
     gameLauncher,
-    liveView: options.liveView ?? { activeGames: () => [] },
+    liveView: options.liveView ?? new DurableTournamentLiveView(tournamentRepo, eventStore),
+    readiness: async () => {
+      await pool.query('SELECT 1');
+    },
   };
   return { deps, pool };
 }

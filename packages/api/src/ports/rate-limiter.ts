@@ -17,10 +17,10 @@ export interface RateLimitResult {
 }
 
 export interface RateLimiter {
-  check(key: string, limit: RateLimit): RateLimitResult;
+  check(key: string, limit: RateLimit): RateLimitResult | Promise<RateLimitResult>;
   /**
    * Reset the limit for a given key.
    * Useful for testing or administrative actions.
    */
-  reset?(key: string): void;
+  reset?(key: string): void | Promise<void>;
 }

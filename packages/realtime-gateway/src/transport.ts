@@ -22,7 +22,7 @@ export interface Connection {
   /** Register the handler invoked once when the connection closes. */
   onClose(handler: () => void): void;
   /** Close the connection and trigger close handlers. Idempotent. */
-  close(): void;
+  close(code?: number, reason?: string): void;
 }
 
 let counter = 0;
@@ -56,7 +56,7 @@ export class InMemoryConnection implements Connection {
     this.closeHandlers.push(handler);
   }
 
-  close(): void {
+  close(_code?: number, _reason?: string): void {
     if (this.closed) return;
     this.closed = true;
     for (const h of this.closeHandlers) h();

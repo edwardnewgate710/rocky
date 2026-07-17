@@ -5,6 +5,7 @@
  * the same interface.
  */
 
+import { createHash } from 'node:crypto';
 import type { CompletionRequest, CompletionResponse } from './types.js';
 
 /** Cache key — identifies a unique request. */
@@ -15,6 +16,8 @@ export interface CacheKey {
   readonly groundingHash: string;
   readonly temperature: number;
   readonly maxTokens: number | undefined;
+  /** Hash of response-shaping and routing inputs not represented above. */
+  readonly optionsHash: string;
 }
 
 /** Cache entry with metadata. */
@@ -32,23 +35,18 @@ export interface ResponseCache {
   readonly size: number;
 }
 
-/** Compute a stable hash from a string (FNV-1a, dependency-free). */
+/** Compute a collision-resistant stable hash from a string. */
 export function hashString(input: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < input.length; i++) {
-    hash ^= input.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16).padStart(8, '0');
+  return createHash('sha256').update(input, 'utf8').digest('hex');
 }
 
 /** Build a cache key from a request. */
 export function buildCacheKey(request: CompletionRequest): CacheKey {
   const messageHash = hashString(
-    request.messages.map((m) => `${m.role}:${m.content}`).join('\n'),
+    stableSerialize(request.messages),
   );
   const groundingHash = request.grounding
-    ? hashString(JSON.stringify(request.grounding))
+    ? hashString(stableSerialize(request.grounding))
     : 'none';
   return {
     task: request.task,
@@ -57,7 +55,38 @@ export function buildCacheKey(request: CompletionRequest): CacheKey {
     groundingHash,
     temperature: request.temperature ?? 1,
     maxTokens: request.maxTokens,
+    optionsHash: hashString(stableSerialize({
+      modality: request.modality,
+      structured: request.structured ?? false,
+      schema: request.schema,
+      providerPreference: request.providerPreference,
+      latencyBudgetMs: request.latencyBudgetMs,
+      costCeiling: request.costCeiling,
+      userId: request.userId,
+      metadata: request.metadata,
+    })),
   };
+}
+
+/** Canonical JSON-like serialization with sorted object and Map keys. */
+function stableSerialize(value: unknown): string {
+  if (value === undefined) return '"__undefined__"';
+  if (value === null || typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(',')}]`;
+  if (value instanceof Map) {
+    const entries = [...value.entries()]
+      .map(([key, entry]) => [stableSerialize(key), stableSerialize(entry)] as const)
+      .sort(([a], [b]) => a.localeCompare(b));
+    return `{${entries.map(([key, entry]) => `${key}:${entry}`).join(',')}}`;
+  }
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) =>
+      `${JSON.stringify(key)}:${stableSerialize(record[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(String(value));
 }
 
 /** Check if a cache entry is still valid. */
@@ -143,5 +172,5 @@ export class InMemoryLruCache implements ResponseCache {
 
 /** Stringify a cache key for Map storage. */
 function cacheKeyString(key: CacheKey): string {
-  return `${key.task}|${key.model}|${key.messageHash}|${key.groundingHash}|${key.temperature}|${key.maxTokens ?? 'n'}`;
+  return `${key.task}|${key.model}|${key.messageHash}|${key.groundingHash}|${key.temperature}|${key.maxTokens ?? 'n'}|${key.optionsHash}`;
 }

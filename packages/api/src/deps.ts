@@ -47,4 +47,6 @@ export interface ApiDependencies {
   readonly tournamentRepo: TournamentsRepository;
   readonly gameLauncher: GameLauncher;
   readonly liveView: TournamentLiveView;
+  /** Production dependency check used by the readiness endpoint. */
+  readonly readiness?: () => Promise<void>;
 }

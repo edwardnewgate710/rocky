@@ -50,7 +50,7 @@ export class FakeProvider implements AiProvider {
       );
     }
     if (this.options.latencyMs && this.options.latencyMs > 0) {
-      await sleep(this.options.latencyMs);
+      await sleep(this.options.latencyMs, request.signal);
     }
     const content = this.options.content ?? `Response from ${this.id}`;
     const promptTokens = estimateTokens(request.messages.map((m) => m.content).join(''));
@@ -165,8 +165,18 @@ export class FakeProvider implements AiProvider {
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason ?? new Error('aborted'));
+      return;
+    }
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => {
+      clearTimeout(timer);
+      reject(signal.reason ?? new Error('aborted'));
+    }, { once: true });
+  });
 }
 
 function estimateTokens(text: string): number {

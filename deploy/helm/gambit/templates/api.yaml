@@ -118,7 +118,7 @@ spec:
             timeoutSeconds: 5
           readinessProbe:
             httpGet:
-              path: /v1/health
+              path: /v1/ready
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10

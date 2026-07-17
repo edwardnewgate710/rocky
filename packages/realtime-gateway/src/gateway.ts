@@ -90,7 +90,22 @@ export class RealtimeGateway {
   handleConnection(conn: Connection): void {
     const session: Session = { conn, games: new Map() };
     this.sessions.set(conn.id, session);
-    conn.onMessage((msg) => this.onMessage(session, msg));
+    conn.onMessage((msg) => {
+      try {
+        this.onMessage(session, msg);
+      } catch {
+        conn.send({
+          t: 'reject',
+          gameId: typeof (msg as { gameId?: unknown }).gameId === 'string'
+            ? (msg as { gameId: string }).gameId
+            : '',
+          ref: null,
+          code: 'invalid_command',
+          message: 'malformed client message',
+        });
+        conn.close(1008, 'malformed client message');
+      }
+    });
     conn.onClose(() => this.onClose(session));
   }
 
@@ -143,13 +158,17 @@ export class RealtimeGateway {
       this.completeJoin(session, gameId, token);
       return;
     }
-    void this.authority.ensureLoaded(gameId).then((loaded) => {
-      if (!loaded) {
-        this.reject(session, gameId, null, 'unknown_game', `no such game ${gameId}`);
-        return;
-      }
-      this.completeJoin(session, gameId, token);
-    });
+    void this.authority.ensureLoaded(gameId)
+      .then((loaded) => {
+        if (!loaded) {
+          this.reject(session, gameId, null, 'unknown_game', `no such game ${gameId}`);
+          return;
+        }
+        this.completeJoin(session, gameId, token);
+      })
+      .catch(() => {
+        this.reject(session, gameId, null, 'invalid_command', 'failed to load game');
+      });
   }
 
   /** Finish a join once the game is known to be resident in the authority. */
@@ -157,7 +176,12 @@ export class RealtimeGateway {
     // Derive identity from the token. No token → anonymous spectator.
     let userId: string;
     if (token !== undefined) {
-      const verified = this.tokenVerifier.verify(token);
+      let verified: ReturnType<TokenVerifier['verify']>;
+      try {
+        verified = this.tokenVerifier.verify(token);
+      } catch {
+        verified = null;
+      }
       if (verified === null) {
         this.reject(session, gameId, null, 'unauthorized', 'invalid or expired token');
         return;

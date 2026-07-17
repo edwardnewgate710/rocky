@@ -86,6 +86,9 @@ jobs:
       - name: Test persistence against Postgres
         run: npm test --workspace @chess-platform/persistence
 
+      - name: Test API concurrency controls against Postgres
+        run: npm test --workspace @chess-platform/api
+
   # Builds, typechecks, and tests the deployable gateway service. It is NOT a
   # root workspace, so the build-test job above never compiles it — this job is
   # its only CI coverage. The single-owner command-routing suite (ADR-0010)
@@ -191,6 +194,7 @@ jobs:
           # Start vite preview in the background
           npx vite preview --port 4173 --host 127.0.0.1 &
           VITE_PID=$!
+          trap 'kill $VITE_PID 2>/dev/null || true' EXIT
 
           # Wait for the server to be ready
           for i in $(seq 1 30); do
@@ -214,13 +218,8 @@ jobs:
           export CHROME_PATH
           echo "Using CHROME_PATH=$CHROME_PATH"
 
-          # Run Lighthouse once with both JSON and HTML output. A non-zero exit
-          # here can mean either (a) a real a11y failure or (b) an environmental
-          # Chrome-launch failure on the runner. We distinguish the two below:
-          # only a genuine score < 0.95 fails the job; a launch failure that
-          # produces no report is surfaced as a warning so infra flakiness does
-          # not block an otherwise-green PR.
-          set +e
+          # Infrastructure failures are failures too: a green acceptance job
+          # must prove that Lighthouse actually ran and produced a score.
           lighthouse http://127.0.0.1:4173 \
             --output=json --output=html \
             --output-path=./lighthouse-report \
@@ -228,26 +227,16 @@ jobs:
             --only-categories=accessibility \
             --preset=desktop \
             --quiet
-          LH_EXIT=$?
-          set -e
 
-          # Clean up the preview server regardless of outcome
-          kill $VITE_PID 2>/dev/null || true
-
-          # If Lighthouse could not produce a report, treat it as an
-          # environmental failure (not an a11y regression) and warn.
-          if [ ! -f ./lighthouse-report.report.json ]; then
-            echo "::warning::Lighthouse did not produce a report (exit $LH_EXIT) — likely an environmental Chrome-launch failure on the runner. Skipping the a11y gate for this run; not treated as an a11y regression."
-            exit 0
-          fi
+          test -f ./lighthouse-report.report.json
 
           # A report exists: enforce the real a11y threshold.
           A11Y_SCORE=$(jq '.categories.accessibility.score' ./lighthouse-report.report.json)
           echo "Lighthouse a11y score: $A11Y_SCORE"
 
           if [ "$A11Y_SCORE" = "null" ] || [ -z "$A11Y_SCORE" ]; then
-            echo "::warning::Lighthouse report present but a11y score missing — treating as environmental."
-            exit 0
+            echo "::error::Lighthouse report is missing the accessibility score"
+            exit 1
           fi
 
           # Fail only on a genuine sub-threshold accessibility score.
@@ -294,15 +283,29 @@ jobs:
           kubeconform -v
 
       - name: Helm lint
-        run: helm lint deploy/helm/gambit
+        run: >-
+          helm lint deploy/helm/gambit
+          --set secrets.accessTokenSecret=test-only-access-token-secret-32-bytes-minimum
+          --set secrets.postgresPassword=test-only-postgres-password
+
+      - name: Helm rejects missing access-token secret
+        run: |
+          if helm template deploy/helm/gambit >/dev/null 2>&1; then
+            echo "::error::chart rendered with a missing access-token secret"
+            exit 1
+          fi
 
       - name: Helm template (default values) + kubeconform
         run: |
-          helm template deploy/helm/gambit | kubeconform -strict -summary
+          helm template deploy/helm/gambit \
+            --set secrets.accessTokenSecret=test-only-access-token-secret-32-bytes-minimum \
+            --set secrets.postgresPassword=test-only-postgres-password \
+            | kubeconform -strict -summary
 
       - name: Helm template (external datastores) + kubeconform
         run: |
           helm template deploy/helm/gambit \
+            --set secrets.accessTokenSecret=test-only-access-token-secret-32-bytes-minimum \
             --set postgres.enabled=false \
             --set redis.enabled=false \
             --set externalDatabaseUrl=postgres://user:pass@db.example.com:5432/gambit \

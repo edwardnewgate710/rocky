@@ -23,18 +23,26 @@ export class RateLimiter {
   private readonly perUserPerMinute: number;
   private readonly globalPerMinute: number;
   private readonly enabled: boolean;
+  private readonly clock: () => number;
+  private checksSinceSweep = 0;
 
-  constructor(config?: RateLimitConfig) {
+  constructor(config?: RateLimitConfig, clock: () => number = () => Date.now()) {
+    this.clock = clock;
     this.enabled = config?.enabled ?? DEFAULTS.rateLimit.enabled;
     this.perUserPerMinute = config?.perUserPerMinute ?? DEFAULTS.rateLimit.perUserPerMinute;
     this.globalPerMinute = config?.globalPerMinute ?? DEFAULTS.rateLimit.globalPerMinute;
-    this.globalBucket = { tokens: this.globalPerMinute, lastRefill: Date.now() };
+    this.globalBucket = { tokens: this.globalPerMinute, lastRefill: this.clock() };
   }
 
   /** Check if a request is allowed.  Throws if not. */
   check(userId?: string): void {
     if (!this.enabled) return;
-    const now = Date.now();
+    const now = this.clock();
+    this.checksSinceSweep += 1;
+    if (this.checksSinceSweep >= 500) {
+      this.checksSinceSweep = 0;
+      this.sweep(now);
+    }
     this.refill(this.globalBucket, this.globalPerMinute, now);
     if (this.globalBucket.tokens < 1) {
       throw new AiError(
@@ -63,7 +71,7 @@ export class RateLimiter {
   /** Reset all buckets. */
   reset(): void {
     this.perUserBuckets.clear();
-    this.globalBucket = { tokens: this.globalPerMinute, lastRefill: Date.now() };
+    this.globalBucket = { tokens: this.globalPerMinute, lastRefill: this.clock() };
   }
 
   private refill(bucket: Bucket, capacity: number, now: number): void {
@@ -71,5 +79,16 @@ export class RateLimiter {
     const refillRate = capacity / 60_000; // tokens per ms
     bucket.tokens = Math.min(capacity, bucket.tokens + elapsed * refillRate);
     bucket.lastRefill = now;
+  }
+
+  private sweep(now: number): void {
+    for (const [userId, bucket] of this.perUserBuckets) {
+      if (now - bucket.lastRefill >= 60_000) this.perUserBuckets.delete(userId);
+    }
+  }
+
+  /** Number of user buckets retained (diagnostics/tests). */
+  get size(): number {
+    return this.perUserBuckets.size;
   }
 }

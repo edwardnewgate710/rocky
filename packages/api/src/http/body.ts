@@ -33,10 +33,13 @@ export function readRawBody(req: IncomingMessage, maxBytes: number): Promise<Buf
         // Stop accumulating and drain the rest so the connection stays healthy
         // enough for the router to send a 413 response (we never buffer beyond
         // the limit, so memory stays bounded).
-        req.pause();
-        finish(() =>
-          reject(new HttpError(413, 'payload_too_large', `request body exceeds ${maxBytes} bytes`)),
-        );
+        finish(() => {
+          reject(new HttpError(413, 'payload_too_large', `request body exceeds ${maxBytes} bytes`));
+        });
+        // Switch the stream into discard mode after our listeners are removed;
+        // this drains the unread bytes and keeps the HTTP keep-alive framing in
+        // sync without buffering attacker-controlled data.
+        req.resume();
         return;
       }
       chunks.push(chunk);

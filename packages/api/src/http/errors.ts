@@ -17,6 +17,7 @@ export type ErrorCode =
   | 'rate_limited'
   | 'payload_too_large'
   | 'unsupported_media_type'
+  | 'service_unavailable'
   | 'internal';
 
 /**
@@ -64,5 +65,9 @@ export class HttpError extends Error {
     return new HttpError(429, 'rate_limited', message, undefined, {
       'Retry-After': String(retryAfterSeconds),
     });
+  }
+
+  static unavailable(message = 'service unavailable'): HttpError {
+    return new HttpError(503, 'service_unavailable', message);
   }
 }

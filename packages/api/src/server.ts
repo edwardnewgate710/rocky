@@ -69,6 +69,7 @@ export function createApiServer(deps: ApiDependencies, options: ApiServerOptions
     tournamentRepo: deps.tournamentRepo,
     gameLauncher: deps.gameLauncher,
     liveView: deps.liveView,
+    readiness: deps.readiness ?? (() => Promise.resolve()),
   });
 
   const authenticate = (authorization: string | undefined): Identity | null => {
