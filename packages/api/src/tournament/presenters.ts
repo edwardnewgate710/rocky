@@ -24,6 +24,7 @@ export function tournamentView(tournament: Tournament) {
     state: snap.state,
     participants: snap.participants,
     roundsGenerated: snap.rounds.length,
+    tiebreakOrder: snap.config.tiebreakOrder,
   };
 }
 
@@ -51,5 +52,8 @@ export function standingView(standing: PlayerStanding, index: number) {
     playerId: standing.playerId,
     points: standing.points,
     tiebreak: standing.tiebreak,
+    buchholz: standing.buchholz,
+    medianBuchholz: standing.medianBuchholz,
+    withdrawn: standing.withdrawn,
   };
 }

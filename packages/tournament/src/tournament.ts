@@ -12,8 +12,9 @@ export interface TournamentSnapshot {
   readonly config: TournamentConfig;
   readonly state: TournamentState;
   readonly participants: readonly string[];
+  readonly withdrawn?: readonly string[];
   readonly rounds: readonly Round[];
-  readonly results: readonly (readonly [string, GameResult | 'bye'])[];
+  readonly results: readonly (readonly [string, GameResult | 'bye' | 'void'])[];
   readonly pairingsByMatchId: readonly (readonly [string, { readonly p1: string; readonly p2: string | null }])[];
   readonly gameLinks?: readonly (readonly [string, string])[];
   /** matchId -> number of games launched so far (bumped when a game is abandoned). */
@@ -23,10 +24,11 @@ export interface TournamentSnapshot {
 export class Tournament {
   private state: TournamentState = 'registration';
   private readonly participants: string[] = [];
+  private readonly withdrawn = new Set<string>();
   private readonly rounds: Round[] = [];
 
   // matchId -> result
-  private readonly results = new Map<string, GameResult | 'bye'>();
+  private readonly results = new Map<string, GameResult | 'bye' | 'void'>();
   private readonly pairingsByMatchId = new Map<string, { p1: string; p2: string | null }>();
   
   // matchId <-> gameId
@@ -64,12 +66,59 @@ export class Tournament {
   }
 
   withdraw(playerId: string): void {
-    if (this.state !== 'registration') {
-      throw new Error('Cannot withdraw after tournament has started');
+    if (this.state === 'finished') {
+      throw new Error('Cannot withdraw after tournament has finished');
     }
-    const idx = this.participants.indexOf(playerId);
-    if (idx >= 0) {
-      this.participants.splice(idx, 1);
+
+    if (this.state === 'registration') {
+      const idx = this.participants.indexOf(playerId);
+      if (idx >= 0) {
+        this.participants.splice(idx, 1);
+      }
+      return;
+    }
+
+    // running state
+    if (!this.participants.includes(playerId)) {
+      return;
+    }
+    if (this.withdrawn.has(playerId)) {
+      return;
+    }
+
+    this.withdrawn.add(playerId);
+
+    // Forfeit their UNFINISHED game in the current round, if any
+    if (this.rounds.length > 0) {
+      const currentRound = this.rounds[this.rounds.length - 1];
+      for (let p = 0; p < currentRound.pairings.length; p++) {
+        const pairing = currentRound.pairings[p];
+        const matchId = `${currentRound.roundIndex}-${p}`;
+        
+        if (!this.results.has(matchId)) {
+          if (pairing.kind === 'game') {
+            if (pairing.white === playerId || pairing.black === playerId) {
+              const result = pairing.white === playerId ? 'black_win' : 'white_win';
+              this.results.set(matchId, result);
+            }
+          } else if (pairing.kind === 'bye') {
+            if (pairing.player === playerId) {
+              this.results.set(matchId, 'void');
+            }
+          }
+        } else if (this.results.get(matchId) === 'bye' && pairing.kind === 'bye' && pairing.player === playerId) {
+          // If a bye was already recorded for this round (as they are by default in indexRound), void it
+          this.results.set(matchId, 'void');
+        }
+      }
+    }
+
+    // After forfeit, the round might be complete
+    this.tryAdvance();
+
+    // Check if tournament should finish gracefully
+    if (this.participants.length - this.withdrawn.size < 2) {
+      this.state = 'finished';
     }
   }
 
@@ -168,14 +217,20 @@ export class Tournament {
   }
 
   standings(): PlayerStanding[] {
-    return computeStandings(this.getParticipants(), this.results, this.pairingsByMatchId);
+    return computeStandings(
+      this.getParticipants(),
+      this.results,
+      this.pairingsByMatchId,
+      this.config.tiebreakOrder,
+      this.withdrawn
+    );
   }
 
   /** Build the PairingContext from current state. */
   private buildContext(): PairingContext {
     const completedRounds: CompletedRound[] = [];
     for (const round of this.rounds) {
-      const roundResults = new Map<string, GameResult | 'bye'>();
+      const roundResults = new Map<string, GameResult | 'bye' | 'void'>();
       for (let p = 0; p < round.pairings.length; p++) {
         const matchId = `${round.roundIndex}-${p}`;
         const result = this.results.get(matchId);
@@ -210,9 +265,9 @@ export class Tournament {
       const pairing = this.pairingsByMatchId.get(matchId);
       if (!pairing) continue;
 
-      if (result === 'bye') {
+      if (result === 'bye' || result === 'void') {
         const s = historyState.get(pairing.p1);
-        if (s) {
+        if (s && result === 'bye') {
           s.byeCount += 1;
           s.points += 1;
         }
@@ -239,6 +294,7 @@ export class Tournament {
         s1.points += 0.5;
         s2.points += 0.5;
       }
+      // double_forfeit yields 0 points for both
     }
 
     for (const [pid, s] of historyState.entries()) {
@@ -251,8 +307,14 @@ export class Tournament {
       });
     }
 
+    // Exclude withdrawn players from the context for Swiss so they aren't paired again.
+    // Round-robin keeps them to maintain the fixed schedule, relying on the indexRound safety net.
+    const activeParticipants = this.config.format === 'swiss'
+      ? this.participants.filter(p => !this.withdrawn.has(p))
+      : this.participants;
+
     return {
-      participants: this.participants,
+      participants: activeParticipants,
       roundNumber: this.rounds.length,
       completedRounds,
       playerHistory
@@ -264,12 +326,27 @@ export class Tournament {
     for (let p = 0; p < round.pairings.length; p++) {
       const pairing = round.pairings[p];
       const matchId = `${round.roundIndex}-${p}`;
+      
       if (pairing.kind === 'game') {
         this.pairingsByMatchId.set(matchId, { p1: pairing.white, p2: pairing.black });
+        
+        // Safety net for round robin: auto-record forfeit if either player is withdrawn
+        const w1 = this.withdrawn.has(pairing.white);
+        const w2 = this.withdrawn.has(pairing.black);
+        if (w1 && w2) {
+          this.results.set(matchId, 'double_forfeit');
+        } else if (w1) {
+          this.results.set(matchId, 'black_win');
+        } else if (w2) {
+          this.results.set(matchId, 'white_win');
+        }
       } else {
         this.pairingsByMatchId.set(matchId, { p1: pairing.player, p2: null });
-        // Byes are automatically recorded
-        this.results.set(matchId, 'bye');
+        if (this.withdrawn.has(pairing.player)) {
+          this.results.set(matchId, 'void');
+        } else {
+          this.results.set(matchId, 'bye');
+        }
       }
     }
   }
@@ -287,7 +364,7 @@ export class Tournament {
     this.rounds.push(nextRound);
     this.indexRound(nextRound);
 
-    // If the round is all byes (shouldn't happen normally), try to advance again
+    // If the round is fully resolved (e.g. all byes or double forfeits), advance again
     this.tryAdvance();
   }
 
@@ -316,6 +393,7 @@ export class Tournament {
       config: JSON.parse(JSON.stringify(this.config)),
       state: this.state,
       participants: [...this.participants],
+      withdrawn: Array.from(this.withdrawn),
       rounds: JSON.parse(JSON.stringify(this.rounds)),
       results: Array.from(this.results.entries()),
       pairingsByMatchId: Array.from(this.pairingsByMatchId.entries()).map(([k, v]) => [k, { ...v }]),
@@ -329,6 +407,11 @@ export class Tournament {
     const t = new Tournament(snapshot.config, strategy);
     t.state = snapshot.state;
     t.participants.push(...snapshot.participants);
+    if (snapshot.withdrawn) {
+      for (const w of snapshot.withdrawn) {
+        t.withdrawn.add(w);
+      }
+    }
     t.rounds.push(...snapshot.rounds);
     for (const [matchId, result] of snapshot.results) {
       t.results.set(matchId, result);
@@ -346,3 +429,4 @@ export class Tournament {
     return t;
   }
 }
+

@@ -2333,6 +2333,17 @@
           },
           "roundsGenerated": {
             "type": "integer"
+          },
+          "tiebreakOrder": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "sonneborn_berger",
+                "buchholz",
+                "median_buchholz"
+              ]
+            }
           }
         }
       },
@@ -2426,7 +2437,10 @@
           "rank",
           "playerId",
           "points",
-          "tiebreak"
+          "tiebreak",
+          "buchholz",
+          "medianBuchholz",
+          "withdrawn"
         ],
         "properties": {
           "rank": {
@@ -2441,6 +2455,15 @@
           },
           "tiebreak": {
             "type": "number"
+          },
+          "buchholz": {
+            "type": "number"
+          },
+          "medianBuchholz": {
+            "type": "number"
+          },
+          "withdrawn": {
+            "type": "boolean"
           }
         }
       },
@@ -2737,6 +2760,17 @@
           },
           "rounds": {
             "type": "integer"
+          },
+          "tiebreakOrder": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "sonneborn_berger",
+                "buchholz",
+                "median_buchholz"
+              ]
+            }
           }
         },
         "additionalProperties": false

@@ -213,6 +213,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       state: { type: 'string', enum: ['registration', 'running', 'finished'] },
       participants: { type: 'array', items: { type: 'string', format: 'uuid' } },
       roundsGenerated: { type: 'integer' },
+      tiebreakOrder: { type: 'array', items: { type: 'string', enum: ['sonneborn_berger', 'buchholz', 'median_buchholz'] } },
     },
   },
 
@@ -252,12 +253,15 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
 
   PlayerStandingView: {
     type: 'object',
-    required: ['rank', 'playerId', 'points', 'tiebreak'],
+    required: ['rank', 'playerId', 'points', 'tiebreak', 'buchholz', 'medianBuchholz', 'withdrawn'],
     properties: {
       rank: { type: 'integer' },
       playerId: { type: 'string', format: 'uuid' },
       points: { type: 'number' },
       tiebreak: { type: 'number' },
+      buchholz: { type: 'number' },
+      medianBuchholz: { type: 'number' },
+      withdrawn: { type: 'boolean' },
     },
   },
 
@@ -378,6 +382,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       variant: { type: 'string', enum: [...VARIANTS] },
       timeControl: { $ref: '#/components/schemas/TimeControl' },
       rounds: { type: 'integer' },
+      tiebreakOrder: { type: 'array', items: { type: 'string', enum: ['sonneborn_berger', 'buchholz', 'median_buchholz'] } },
     },
     additionalProperties: false,
   },

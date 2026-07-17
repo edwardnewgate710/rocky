@@ -36,7 +36,7 @@ export interface Round {
 export interface CompletedRound {
   readonly round: Round;
   /** matchId (roundIndex-pairingIndex) → result */
-  readonly results: ReadonlyMap<string, GameResult | 'bye'>;
+  readonly results: ReadonlyMap<string, GameResult | 'bye' | 'void'>;
 }
 
 /**

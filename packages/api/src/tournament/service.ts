@@ -12,6 +12,7 @@ export interface CreateTournamentCommand {
   readonly variant: 'standard' | 'chess960';
   readonly timeControl: TournamentConfig['timeControl'];
   readonly rounds?: number; // required if swiss
+  readonly tiebreakOrder?: TournamentConfig['tiebreakOrder'];
 }
 
 export interface RecordResultCommand {
@@ -44,6 +45,7 @@ export class TournamentService {
         format: 'round_robin',
         variant: cmd.variant,
         timeControl: cmd.timeControl,
+        tiebreakOrder: cmd.tiebreakOrder,
       };
     } else {
       config = {
@@ -53,6 +55,7 @@ export class TournamentService {
         variant: cmd.variant,
         timeControl: cmd.timeControl,
         rounds: cmd.rounds!,
+        tiebreakOrder: cmd.tiebreakOrder,
       };
     }
 

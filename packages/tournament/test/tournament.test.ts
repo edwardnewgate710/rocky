@@ -26,7 +26,6 @@ describe('Tournament Aggregate (round-by-round)', () => {
 
     // N=3: 3 rounds total, but only round 0 is generated on start
     assert.throws(() => t.register('Dave'), /Cannot register after tournament has started/);
-    assert.throws(() => t.withdraw('Alice'), /Cannot withdraw after tournament has started/);
     assert.throws(() => t.start(), /Tournament already started/);
 
     // Initially only round 0 is visible
@@ -243,5 +242,98 @@ describe('Tournament Aggregate (round-by-round)', () => {
     const t3 = Tournament.restore(oldSnap, new RoundRobinPairing());
     assert.strictEqual(t3.gameIdFor(0, 0), undefined);
     assert.strictEqual(t3.pairingForGame('game-xyz'), null);
+  });
+
+  test('withdraw during registration removes from participants', () => {
+    const t = new Tournament(config, new RoundRobinPairing());
+    t.register('A');
+    t.register('B');
+    t.withdraw('A');
+    assert.deepStrictEqual(t.getParticipants(), ['B']);
+  });
+
+  test('withdraw during running forfeits the withdrawing player\'s unfinished game', () => {
+    const t = new Tournament(config, new RoundRobinPairing());
+    t.register('A');
+    t.register('B');
+    t.register('C');
+    t.start();
+
+    // Pick a player seated in a real game this round (not the bye) and withdraw
+    // them; the game must be forfeited to their opponent.
+    const round0 = t.getRounds()[0];
+    const gameIdx = round0.pairings.findIndex((p) => p.kind === 'game');
+    const gamePairing = round0.pairings[gameIdx];
+    assert.ok(gamePairing.kind === 'game');
+    const withdrawer = gamePairing.white;
+    const opponent = gamePairing.black;
+
+    t.withdraw(withdrawer);
+
+    const snap = t.toSnapshot();
+    assert.ok(snap.withdrawn?.includes(withdrawer));
+
+    // The withdrawer was White, so the forfeit is recorded as a Black win.
+    const forfeit = snap.results.find(([mid]) => mid === `0-${gameIdx}`);
+    assert.strictEqual(forfeit?.[1], 'black_win');
+
+    const standings = t.standings();
+    assert.strictEqual(standings.find((s) => s.playerId === withdrawer)!.withdrawn, true);
+    assert.ok(
+      standings.find((s) => s.playerId === opponent)!.points >= 1,
+      'opponent receives the forfeit point',
+    );
+  });
+
+  test('withdraw leaves tournament finished if less than 2 active players', () => {
+    const t = new Tournament(config, new RoundRobinPairing());
+    t.register('A');
+    t.register('B');
+    t.start();
+
+    assert.strictEqual(t.getState(), 'running');
+    t.withdraw('A');
+    assert.strictEqual(t.getState(), 'finished', 'tournament finishes gracefully');
+  });
+
+  test('indexRound safety net: withdrawn players forfeit future round-robin games (incl. double forfeit)', () => {
+    const t = new Tournament(config, new RoundRobinPairing());
+    t.register('A');
+    t.register('B');
+    t.register('C');
+    t.register('D');
+    t.start();
+
+    // Round-robin keeps its fixed 4-player schedule for standings/history, so
+    // the safety net in indexRound must auto-forfeit every future game a
+    // withdrawn player is scheduled to appear in. A and B are scheduled to meet
+    // each other, which exercises the double-forfeit branch.
+    t.withdraw('A');
+    t.withdraw('B');
+
+    const snap = t.toSnapshot();
+    const results = new Map(snap.results);
+    const withdrawn = new Set(snap.withdrawn ?? []);
+
+    let sawDoubleForfeit = false;
+    for (const [mid, pairing] of snap.pairingsByMatchId) {
+      if (pairing.p2 === null) continue; // bye, handled elsewhere
+      const whiteOut = withdrawn.has(pairing.p1);
+      const blackOut = withdrawn.has(pairing.p2);
+      if (whiteOut && blackOut) {
+        assert.strictEqual(results.get(mid), 'double_forfeit', `match ${mid} should be a double forfeit`);
+        sawDoubleForfeit = true;
+      } else if (whiteOut) {
+        assert.strictEqual(results.get(mid), 'black_win', `match ${mid}: active Black wins by forfeit`);
+      } else if (blackOut) {
+        assert.strictEqual(results.get(mid), 'white_win', `match ${mid}: active White wins by forfeit`);
+      }
+    }
+    assert.ok(sawDoubleForfeit, 'the A-vs-B pairing should trigger a double forfeit');
+
+    // Withdrawn players never accrue points from forfeits.
+    const standings = t.standings();
+    assert.strictEqual(standings.find((s) => s.playerId === 'A')!.points, 0);
+    assert.strictEqual(standings.find((s) => s.playerId === 'B')!.points, 0);
   });
 });

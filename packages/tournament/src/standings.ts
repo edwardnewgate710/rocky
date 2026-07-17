@@ -1,7 +1,9 @@
+import type { TiebreakKey } from './config';
+
 /**
  * The possible results of a game pairing.
  */
-export type GameResult = 'white_win' | 'black_win' | 'draw';
+export type GameResult = 'white_win' | 'black_win' | 'draw' | 'double_forfeit';
 
 /**
  * A single player's performance in the tournament.
@@ -10,25 +12,30 @@ export interface PlayerStanding {
   readonly playerId: string;
   readonly points: number;
   readonly tiebreak: number; // Sonneborn-Berger
+  readonly buchholz: number;
+  readonly medianBuchholz: number;
   readonly gamesPlayed: number;
   readonly wins: number;
   readonly draws: number;
   readonly losses: number;
   readonly byes: number;
+  readonly withdrawn: boolean;
 }
+
+const DEFAULT_TIEBREAK_ORDER: readonly TiebreakKey[] = ['sonneborn_berger', 'buchholz', 'median_buchholz'];
 
 /**
  * Computes the standings for a set of players given the round results.
  * 
  * Scoring: Win = 1, Draw = 0.5, Loss = 0, Bye = 1.
- * Tiebreak (Sonneborn-Berger):
- * Sum of the points of the opponents a player has defeated, 
- * plus half the points of the opponents they have drawn against.
+ * Double Forfeit = 0 for both. Void = 0 for both (e.g. voided bye).
  */
 export function computeStandings(
   participants: readonly string[],
-  results: ReadonlyMap<string, GameResult | 'bye'>,
-  pairingsByMatchId: ReadonlyMap<string, { p1: string; p2: string | null }>
+  results: ReadonlyMap<string, GameResult | 'bye' | 'void'>,
+  pairingsByMatchId: ReadonlyMap<string, { p1: string; p2: string | null }>,
+  tiebreakOrder: readonly TiebreakKey[] = DEFAULT_TIEBREAK_ORDER,
+  withdrawn: ReadonlySet<string> = new Set()
 ): PlayerStanding[] {
   // 1. Initialize stats
   const stats = new Map<string, {
@@ -66,8 +73,8 @@ export function computeStandings(
     const p2 = pairing.p2;
     const s1 = stats.get(p1);
 
-    if (result === 'bye') {
-      if (s1) {
+    if (result === 'bye' || result === 'void') {
+      if (s1 && result === 'bye') {
         s1.points += 1;
         s1.byes += 1;
       }
@@ -100,15 +107,19 @@ export function computeStandings(
       s2.draws += 1;
       s1.drawnOpponents.push(p2);
       s2.drawnOpponents.push(p1);
+    } else if (result === 'double_forfeit') {
+      s1.losses += 1;
+      s2.losses += 1;
     }
   }
 
-  // 3. Compute Sonneborn-Berger tiebreak
+  // 3. Compute tiebreaks
   const standings: PlayerStanding[] = [];
   for (const p of participants) {
     const s = stats.get(p)!;
-    let sb = 0;
     
+    // Sonneborn-Berger
+    let sb = 0;
     for (const opp of s.defeatedOpponents) {
       sb += stats.get(opp)!.points;
     }
@@ -116,15 +127,38 @@ export function computeStandings(
       sb += stats.get(opp)!.points * 0.5;
     }
 
+    // Buchholz and Median-Buchholz
+    const oppPoints = s.opponents.map(opp => stats.get(opp)!.points);
+    let buchholz = 0;
+    let medianBuchholz = 0;
+
+    for (const pt of oppPoints) {
+      buchholz += pt;
+    }
+
+    if (oppPoints.length >= 3) {
+      const sorted = [...oppPoints].sort((a, b) => a - b);
+      sorted.pop(); // remove max
+      sorted.shift(); // remove min
+      for (const pt of sorted) {
+        medianBuchholz += pt;
+      }
+    } else {
+      medianBuchholz = buchholz;
+    }
+
     standings.push({
       playerId: p,
       points: s.points,
       tiebreak: sb,
+      buchholz,
+      medianBuchholz,
       gamesPlayed: s.gamesPlayed,
       wins: s.wins,
       draws: s.draws,
       losses: s.losses,
-      byes: s.byes
+      byes: s.byes,
+      withdrawn: withdrawn.has(p)
     });
   }
 
@@ -134,10 +168,14 @@ export function computeStandings(
     if (a.points !== b.points) {
       return b.points - a.points;
     }
-    // 2. Tiebreak descending
-    if (a.tiebreak !== b.tiebreak) {
-      return b.tiebreak - a.tiebreak;
+    
+    // 2. Dynamic tiebreaks
+    for (const key of tiebreakOrder) {
+      if (key === 'sonneborn_berger' && a.tiebreak !== b.tiebreak) return b.tiebreak - a.tiebreak;
+      if (key === 'buchholz' && a.buchholz !== b.buchholz) return b.buchholz - a.buchholz;
+      if (key === 'median_buchholz' && a.medianBuchholz !== b.medianBuchholz) return b.medianBuchholz - a.medianBuchholz;
     }
+
     // 3. Deterministic fallback (alphabetical by ID)
     return a.playerId.localeCompare(b.playerId);
   });
