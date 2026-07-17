@@ -21,7 +21,7 @@ import { Game, type GameEvent } from '@chess-platform/game';
 import type { Color, Position } from '@chess-platform/core';
 import type { CreateGameParams } from '@chess-platform/game';
 import { InMemoryEventLog, type EventLog } from './event-log';
-import type { Broadcast, LegalMoves, StateView } from './protocol';
+import type { LegalMoves, StateView, MoveBroadcast, EndedBroadcast } from './protocol';
 import { gameChannel, type PubSub } from './pubsub';
 
 /** A command an authenticated player may issue against a game. */
@@ -53,7 +53,7 @@ export class AuthorityError extends Error {
 interface BroadcastLogEntry {
   readonly seq: number;
   readonly ply: number | null;
-  readonly msg: Broadcast;
+  readonly msg: MoveBroadcast | EndedBroadcast;
 }
 
 interface GameRecord {
@@ -101,7 +101,7 @@ export function legalMovesOf(position: Position): LegalMoves {
 /** The result of applying a command. */
 export interface ApplyResult {
   readonly events: readonly GameEvent[];
-  readonly broadcasts: readonly Broadcast[];
+  readonly broadcasts: readonly (MoveBroadcast | EndedBroadcast)[];
   readonly state: StateView;
 }
 
@@ -233,7 +233,7 @@ export class GameAuthority {
    * Every broadcast a resuming client missed: all broadcasts recorded after the
    * move whose ply equals `lastPly`. `lastPly <= 0` returns the full history.
    */
-  getMissedSince(gameId: string, lastPly: number): Broadcast[] {
+  getMissedSince(gameId: string, lastPly: number): (MoveBroadcast | EndedBroadcast)[] {
     const rec = this.require(gameId);
     if (lastPly <= 0) return rec.broadcasts.map((e) => e.msg);
     let cutSeq = -1;
@@ -359,7 +359,7 @@ export class GameAuthority {
     }
   }
 
-  private toBroadcast(gameId: string, ev: GameEvent, resultingFenHash: string, resultingLegalMoves: LegalMoves): Broadcast | null {
+  private toBroadcast(gameId: string, ev: GameEvent, resultingFenHash: string, resultingLegalMoves: LegalMoves): MoveBroadcast | EndedBroadcast | null {
     switch (ev.type) {
       case 'MovePlayed':
         return {

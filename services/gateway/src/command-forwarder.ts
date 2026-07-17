@@ -23,7 +23,8 @@ import {
   type ApplyResult,
   type AuthorityErrorCode,
   type Command,
-  type Broadcast,
+  type MoveBroadcast,
+  type EndedBroadcast,
   type StateView,
 } from '@chess-platform/realtime-gateway';
 import type { GameEvent } from '@chess-platform/game';
@@ -64,7 +65,10 @@ export interface ForwardedCommand {
 export interface ForwardedSuccess {
   readonly ok: true;
   readonly events: readonly GameEvent[];
-  readonly broadcasts: readonly Broadcast[];
+  // Mirrors the authority's `ApplyResult.broadcasts`: the authority only ever
+  // emits move/ended broadcasts (tournament updates are published separately),
+  // so this stays narrower than the full `Broadcast` union.
+  readonly broadcasts: readonly (MoveBroadcast | EndedBroadcast)[];
   readonly state: StateView;
 }
 

@@ -1506,6 +1506,122 @@
         }
       }
     },
+    "/v1/tournaments/{id}/games/{gameId}/result": {
+      "post": {
+        "summary": "Record a game result by game id",
+        "tags": [
+          "tournaments"
+        ],
+        "operationId": "post_v1_tournaments_by_id_games_by_gameId_result",
+        "responses": {
+          "200": {
+            "description": "Result recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TournamentView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Tournament id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "gameId",
+            "in": "path",
+            "required": true,
+            "description": "Game id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordResultByGameRequest"
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tournaments/{id}/standings": {
       "get": {
         "summary": "Get tournament standings",
@@ -2197,6 +2313,11 @@
                   "type": "string",
                   "format": "uuid"
                 },
+                "gameId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "nullable": true
+                },
                 "player": {
                   "type": "string",
                   "format": "uuid"
@@ -2443,6 +2564,23 @@
           "pairingIndex": {
             "type": "integer"
           },
+          "result": {
+            "type": "string",
+            "enum": [
+              "white_win",
+              "black_win",
+              "draw"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "RecordResultByGameRequest": {
+        "type": "object",
+        "required": [
+          "result"
+        ],
+        "properties": {
           "result": {
             "type": "string",
             "enum": [

@@ -36,6 +36,7 @@ import { createApiServer } from './server';
 import type { ApiServer, ApiServerOptions } from './server';
 import { InMemoryGameLauncher } from './tournament/launcher';
 import type { GameLauncher } from './tournament/launcher';
+import type { TournamentLiveView } from './tournament/live-view';
 
 /** Postgres-backed {@link AuditRepository} writing to the `audit_log` table. */
 export class PgAuditRepository implements AuditRepository {
@@ -89,6 +90,7 @@ export interface PgBootstrapOptions {
   readonly server?: ApiServerOptions;
   readonly tournamentRepo?: TournamentsRepository;
   readonly gameLauncher?: GameLauncher;
+  readonly liveView?: TournamentLiveView;
 }
 
 /** Build the {@link ApiDependencies} bundle backed by Postgres. */
@@ -122,6 +124,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     rateLimiter,
     tournamentRepo,
     gameLauncher,
+    liveView: options.liveView ?? { activeGames: () => [] },
   };
   return { deps, pool };
 }

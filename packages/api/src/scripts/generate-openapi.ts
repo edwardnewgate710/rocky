@@ -39,6 +39,7 @@ function main(): void {
     rateLimiter: new (require('../ports/in-memory-rate-limiter').InMemoryRateLimiter)(clock),
     tournamentRepo: repos.tournaments,
     gameLauncher: new InMemoryGameLauncher(ids),
+    liveView: { activeGames: () => [] },
   });
 
   const doc = server.openapiDocument();

@@ -31,6 +31,11 @@ export function gameChannel(gameId: string): string {
   return `game:${gameId}`;
 }
 
+/** Channel name for a live tournament's broadcast stream. */
+export function tournamentChannel(tournamentId: string): string {
+  return `tournament:${tournamentId}`;
+}
+
 /** In-process {@link PubSub}. Synchronous delivery, deterministic ordering. */
 export class InMemoryPubSub implements PubSub {
   private readonly channels = new Map<string, Set<(msg: Broadcast) => void>>();

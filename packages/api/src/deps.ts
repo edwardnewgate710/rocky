@@ -23,6 +23,7 @@ import type { IdGenerator } from './ports/ids';
 import type { RateLimiter } from './ports/rate-limiter';
 import type { ApiConfig } from './config';
 import type { GameLauncher } from './tournament/launcher';
+import type { TournamentLiveView } from './tournament/live-view';
 
 /** The full set of repositories the API consumes. */
 export interface Repositories {
@@ -45,4 +46,5 @@ export interface ApiDependencies {
   readonly rateLimiter: RateLimiter;
   readonly tournamentRepo: TournamentsRepository;
   readonly gameLauncher: GameLauncher;
+  readonly liveView: TournamentLiveView;
 }

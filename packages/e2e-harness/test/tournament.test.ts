@@ -62,11 +62,33 @@ describe('Real-time tournament integration', () => {
     strictEqual(state1.players.white, gamePairing1.white);
     strictEqual(state1.players.black, gamePairing1.black);
 
+    let broadcasts: any[] = [];
+    harness.pubsub.subscribe(`tournament:${tId}`, (msg) => {
+      broadcasts.push(msg);
+    });
+
+    // Verify REST API /live endpoint sees the tracked game
+    const liveUrl = `http://127.0.0.1:${harness.apiPort}/v1/tournaments/${tId}/live`;
+    const liveRes = await fetch(liveUrl);
+    strictEqual(liveRes.status, 200, 'Live endpoint should return 200');
+    const liveData: any = await liveRes.json();
+    ok(Array.isArray(liveData.games));
+    ok(Array.isArray(liveData.standings));
+    strictEqual(liveData.games.length, 1, 'Should return 1 active game');
+    strictEqual(liveData.games[0].gameId, gameId1, 'Live board matches gameId1');
+
     // Drive game 1 to completion (white win: black resigns)
     await harness.authority.apply(gameId1, state1.players.black, { kind: 'resign' });
 
     // Wait for reporter to process pubsub message
     await delay(50);
+
+    // Assert broadcaster pushed tournament updates
+    ok(broadcasts.length > 0, 'Broadcaster should push tournament updates when game ends');
+    const lastUpdate = broadcasts[broadcasts.length - 1];
+    strictEqual(lastUpdate.t, 'tournamentUpdate');
+    strictEqual(lastUpdate.tournamentId, tId);
+    ok(Array.isArray(lastUpdate.games));
 
     t = await service.load(tId);
     

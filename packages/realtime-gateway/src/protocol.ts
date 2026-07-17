@@ -196,6 +196,32 @@ export interface EndedBroadcast {
   readonly serverTs: number;
 }
 
+/** 
+ * A minimal live snapshot of a single board within a tournament. 
+ * Sourced from the authority's `StateView`.
+ */
+export interface LiveBoardView {
+  readonly gameId: string;
+  readonly white: string;
+  readonly black: string;
+  readonly ply: number;
+  readonly turn: Color;
+  readonly fen: string;
+  readonly fenHash: string;
+  readonly clock: ClockView;
+  readonly status: StateView['status'];
+}
+
+/** 
+ * Broadcast of a live tournament's active boards, fanned out to spectators.
+ */
+export interface TournamentUpdateBroadcast {
+  readonly t: 'tournamentUpdate';
+  readonly tournamentId: string;
+  readonly games: readonly LiveBoardView[];
+  readonly serverTs: number;
+}
+
 /** Room presence: who occupies the player seats and how many are watching. */
 export interface PresenceMessage {
   readonly t: 'presence';
@@ -252,10 +278,11 @@ export type ServerMessage =
   | PresenceMessage
   | ResumedMessage
   | RejectMessage
-  | PongMessage;
+  | PongMessage
+  | TournamentUpdateBroadcast;
 
 /** Broadcasts fanned out to a whole room (as opposed to point-to-point replies). */
-export type Broadcast = MoveBroadcast | EndedBroadcast;
+export type Broadcast = MoveBroadcast | EndedBroadcast | TournamentUpdateBroadcast;
 
 // ─── Default JSON codec ─────────────────────────────────────────────────────
 

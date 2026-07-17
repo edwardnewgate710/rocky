@@ -265,6 +265,47 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
   RoundList: { type: 'array', items: { $ref: '#/components/schemas/RoundView' } },
   StandingList: { type: 'array', items: { $ref: '#/components/schemas/PlayerStandingView' } },
 
+  LiveBoard: {
+    type: 'object',
+    required: ['gameId', 'white', 'black', 'ply', 'turn', 'fen', 'fenHash', 'clock', 'status'],
+    properties: {
+      gameId: { type: 'string', format: 'uuid' },
+      white: { type: 'string', format: 'uuid' },
+      black: { type: 'string', format: 'uuid' },
+      ply: { type: 'integer' },
+      turn: { type: 'string', enum: ['w', 'b'] },
+      fen: { type: 'string' },
+      fenHash: { type: 'string' },
+      clock: {
+        type: 'object',
+        required: ['w', 'b'],
+        properties: {
+          w: { type: 'integer' },
+          b: { type: 'integer' },
+        },
+      },
+      status: {
+        type: 'object',
+        required: ['over'],
+        properties: {
+          over: { type: 'boolean' },
+          result: { type: 'string', nullable: true },
+          termination: { type: 'string', nullable: true },
+          winner: { type: 'string', enum: ['w', 'b'], nullable: true },
+        },
+      },
+    },
+  },
+
+  TournamentLiveResponse: {
+    type: 'object',
+    required: ['games', 'standings'],
+    properties: {
+      games: { type: 'array', items: { $ref: '#/components/schemas/LiveBoard' } },
+      standings: { $ref: '#/components/schemas/StandingList' },
+    },
+  },
+
   // --- Request bodies ---
   RegisterRequest: {
     type: 'object',

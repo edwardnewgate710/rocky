@@ -39,10 +39,12 @@ import {
 } from './presenters';
 import { TournamentService } from './tournament/service';
 import { summaryView, tournamentView, roundView, standingView } from './tournament/presenters';
+import { createLiveTournamentHandler } from './tournament/live';
 import { buildOpenApiDocument } from './openapi/spec';
 import type { OpenApiDocument, OpenApiInfo } from './openapi/spec';
 import type { RouteDoc } from './openapi/types';
 import type { GameLauncher } from './tournament/launcher';
+import type { TournamentLiveView } from './tournament/live-view';
 
 /** Collaborators the route handlers need. */
 export interface RouteDeps {
@@ -55,6 +57,7 @@ export interface RouteDeps {
   readonly config: ApiConfig;
   readonly tournamentRepo: TournamentsRepository;
   readonly gameLauncher: GameLauncher;
+  readonly liveView: TournamentLiveView;
 }
 
 const PUBLIC: AuthPolicy = { required: false };
@@ -685,6 +688,18 @@ export function buildRouter(deps: RouteDeps): Router {
       const t = await tournamentService.load(ctx.params['id']!);
       return json(200, t.standings().map(standingView));
     },
+  );
+
+  router.get(
+    '/v1/tournaments/:id/live',
+    doc({
+      summary: 'Get live active games and standings',
+      tags: ['tournaments'],
+      params: [pathParam('id', 'Tournament id')],
+      responses: { 200: ['TournamentLiveResponse', 'Live tournament data'], 404: ['Error', 'Not found'] },
+    }),
+    PUBLIC,
+    createLiveTournamentHandler(deps),
   );
 
   return router;

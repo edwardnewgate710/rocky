@@ -54,6 +54,7 @@ import {
 import { BotPlayer } from './bot.js';
 import { AuthorityGameLauncher } from './launcher.js';
 import { TournamentResultReporter } from './reporter.js';
+import { TournamentBroadcaster } from './broadcaster.js';
 /** Options for the harness. */
 export interface HarnessOptions {
   readonly apiPort?: number;
@@ -114,7 +115,11 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
   const ids = uuidv7Generator;
   const tournamentRepo = new InMemoryTournamentsRepository();
   let reporter: TournamentResultReporter;
-  const gameLauncher = new AuthorityGameLauncher(authority, (tid, gid) => reporter.watch(tid, gid));
+  const broadcaster = new TournamentBroadcaster(authority, pubsub);
+  const gameLauncher = new AuthorityGameLauncher(authority, (tid, gid) => {
+    reporter.watch(tid, gid);
+    broadcaster.track(tid, gid);
+  });
   const reporterTournamentService = new TournamentService(tournamentRepo, gameLauncher);
   reporter = new TournamentResultReporter(pubsub, reporterTournamentService);
 
@@ -135,7 +140,7 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
   });
   const repos = createInMemoryRepositories(clock);
   const rateLimiter = new InMemoryRateLimiter(clock);
-  const deps: ApiDependencies = { repos, hasher, tokens, clock, ids, config, rateLimiter, tournamentRepo, gameLauncher };
+  const deps: ApiDependencies = { repos, hasher, tokens, clock, ids, config, rateLimiter, tournamentRepo, gameLauncher, liveView: broadcaster };
   const apiServer = createApiServer(deps);
 
   const tokenVerifier = new ApiTokenVerifier((token: string) => {
@@ -234,6 +239,12 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
   return new Promise((resolve, reject) => {
     httpServer.listen(apiPort, apiHost, () => {
       bot.start();
+      // Resolve the actual bound ports: when 0 is requested the OS assigns an
+      // ephemeral port, so the requested value would be a useless 0.
+      const httpAddr = httpServer.address();
+      const wssAddr = wss.address();
+      const boundApiPort = typeof httpAddr === 'object' && httpAddr ? httpAddr.port : apiPort;
+      const boundWsPort = typeof wssAddr === 'object' && wssAddr ? wssAddr.port : wsPort;
       resolve({
         apiServer,
         httpServer,
@@ -242,8 +253,8 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
         pubsub,
         authority,
         bot,
-        apiPort,
-        wsPort,
+        apiPort: boundApiPort,
+        wsPort: boundWsPort,
         deps,
         close: async () => {
           bot.stop();

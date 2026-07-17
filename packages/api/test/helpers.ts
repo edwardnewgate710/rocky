@@ -60,7 +60,8 @@ export async function startHarness(config: ApiConfigInput = {}): Promise<Harness
   const hasher = new ScryptPasswordHasher({ N: 1024 }); // low cost for test speed
   const rateLimiter = new InMemoryRateLimiter(clock);
   const gameLauncher = new InMemoryGameLauncher(ids);
-  const server = createApiServer({ repos, hasher, tokens, clock, ids, rateLimiter, tournamentRepo, gameLauncher, config: resolved });
+  const liveView = { activeGames: () => [] };
+  const server = createApiServer({ repos, hasher, tokens, clock, ids, rateLimiter, tournamentRepo, gameLauncher, liveView, config: resolved });
   const http: Server = await server.listen(0, '127.0.0.1');
   const { port } = http.address() as AddressInfo;
   const baseUrl = `http://127.0.0.1:${port}`;
