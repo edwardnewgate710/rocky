@@ -22,6 +22,7 @@ export interface JsonSchema {
   readonly minLength?: number;
   readonly maxLength?: number;
   readonly example?: unknown;
+  readonly oneOf?: readonly JsonSchema[];
 }
 
 /** An OpenAPI parameter (path or query). */

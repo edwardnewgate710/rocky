@@ -1,5 +1,6 @@
 import type { TournamentsRepository } from '@chess-platform/persistence';
-import type { TournamentConfig } from '@chess-platform/tournament';
+import { isArenaSnapshot } from '@chess-platform/persistence';
+import type { RoundBasedConfig } from '@chess-platform/tournament';
 import { Tournament, createPairingStrategy } from '@chess-platform/tournament';
 import type { GameResult } from '@chess-platform/tournament';
 import { HttpError } from '../http/errors';
@@ -10,9 +11,9 @@ export interface CreateTournamentCommand {
   readonly name: string;
   readonly format: 'round_robin' | 'swiss';
   readonly variant: 'standard' | 'chess960';
-  readonly timeControl: TournamentConfig['timeControl'];
+  readonly timeControl: RoundBasedConfig['timeControl'];
   readonly rounds?: number; // required if swiss
-  readonly tiebreakOrder?: TournamentConfig['tiebreakOrder'];
+  readonly tiebreakOrder?: RoundBasedConfig['tiebreakOrder'];
 }
 
 export interface RecordResultCommand {
@@ -37,7 +38,7 @@ export class TournamentService {
       throw HttpError.validation('Swiss tournaments require a positive number of rounds', { rounds: cmd.rounds });
     }
 
-    let config: TournamentConfig;
+    let config: RoundBasedConfig;
     if (cmd.format === 'round_robin') {
       config = {
         id: cmd.id,
@@ -69,6 +70,9 @@ export class TournamentService {
     const snap = await this.repo.findById(id);
     if (!snap) {
       throw HttpError.notFound('Tournament not found');
+    }
+    if (isArenaSnapshot(snap)) {
+      throw HttpError.conflict('Not a round-based tournament');
     }
     const strategy = createPairingStrategy(snap.config);
     return Tournament.restore(snap, strategy);

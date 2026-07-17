@@ -57,3 +57,31 @@ export function standingView(standing: PlayerStanding, index: number) {
     withdrawn: standing.withdrawn,
   };
 }
+
+export function arenaTournamentView(tournament: import('@chess-platform/tournament').ArenaTournament) {
+  const snap = tournament.toSnapshot();
+  return {
+    id: snap.config.id,
+    name: snap.config.name,
+    format: 'arena' as const,
+    variant: snap.config.variant,
+    timeControl: snap.config.timeControl,
+    durationMs: snap.config.durationMs,
+    state: snap.state,
+    participants: snap.participants,
+    startedAtMs: snap.startedAtMs ?? undefined,
+  };
+}
+
+export function arenaStandingView(standing: import('@chess-platform/tournament').ArenaStanding, index: number) {
+  return {
+    rank: index + 1,
+    playerId: standing.playerId,
+    points: standing.points,
+    wins: standing.wins,
+    draws: standing.draws,
+    losses: standing.losses,
+    gamesPlayed: standing.gamesPlayed,
+    onFire: standing.onFire,
+  };
+}

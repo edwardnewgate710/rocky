@@ -196,18 +196,29 @@ export interface SeeksRepository {
 
 // --- Tournaments -----------------------------------------------------------
 
-import type { TournamentSnapshot } from '@chess-platform/tournament';
+import type { TournamentSnapshot, ArenaSnapshot } from '@chess-platform/tournament';
+
+export type TournamentAnySnapshot = TournamentSnapshot | ArenaSnapshot;
+
+/**
+ * Narrow a stored snapshot to the Arena variant. Both snapshot shapes carry a
+ * `config.format` discriminant, so this lets callers branch on the format
+ * without unsafe casts.
+ */
+export function isArenaSnapshot(snapshot: TournamentAnySnapshot): snapshot is ArenaSnapshot {
+  return snapshot.config.format === 'arena';
+}
 
 export interface TournamentSummaryRow {
   readonly id: string;
   readonly name: string;
-  readonly format: 'round_robin' | 'swiss';
+  readonly format: 'round_robin' | 'swiss' | 'arena';
   readonly state: 'registration' | 'running' | 'finished';
   readonly participantCount: number;
 }
 
 export interface TournamentsRepository {
-  save(snapshot: TournamentSnapshot): Promise<void>;
-  findById(id: string): Promise<TournamentSnapshot | null>;
+  save(snapshot: TournamentAnySnapshot): Promise<void>;
+  findById(id: string): Promise<TournamentAnySnapshot | null>;
   list(limit: number): Promise<TournamentSummaryRow[]>;
 }

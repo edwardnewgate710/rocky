@@ -943,7 +943,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TournamentView"
+                  "$ref": "#/components/schemas/TournamentAnyView"
                 }
               }
             }
@@ -1060,7 +1060,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TournamentView"
+                  "$ref": "#/components/schemas/TournamentAnyView"
                 }
               }
             }
@@ -1112,7 +1112,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TournamentView"
+                  "$ref": "#/components/schemas/TournamentAnyView"
                 }
               }
             }
@@ -1209,7 +1209,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TournamentView"
+                  "$ref": "#/components/schemas/TournamentAnyView"
                 }
               }
             }
@@ -1305,7 +1305,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TournamentView"
+                  "$ref": "#/components/schemas/TournamentAnyView"
                 }
               }
             }
@@ -1444,7 +1444,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TournamentView"
+                  "$ref": "#/components/schemas/TournamentAnyView"
                 }
               }
             }
@@ -1560,7 +1560,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TournamentView"
+                  "$ref": "#/components/schemas/TournamentAnyView"
                 }
               }
             }
@@ -1676,7 +1676,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/StandingList"
+                  "$ref": "#/components/schemas/StandingAnyList"
                 }
               }
             }
@@ -2347,6 +2347,71 @@
           }
         }
       },
+      "ArenaTournamentView": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "format",
+          "variant",
+          "timeControl",
+          "state",
+          "participants",
+          "durationMs"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "arena"
+            ]
+          },
+          "variant": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "chess960",
+              "kingofthehill",
+              "atomic",
+              "crazyhouse",
+              "threecheck",
+              "horde",
+              "racingkings"
+            ]
+          },
+          "timeControl": {
+            "$ref": "#/components/schemas/TimeControl"
+          },
+          "durationMs": {
+            "type": "integer"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "registration",
+              "running",
+              "finished"
+            ]
+          },
+          "participants": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "startedAtMs": {
+            "type": "integer"
+          }
+        }
+      },
       "TournamentSummaryView": {
         "type": "object",
         "required": [
@@ -2368,7 +2433,8 @@
             "type": "string",
             "enum": [
               "round_robin",
-              "swiss"
+              "swiss",
+              "arena"
             ]
           },
           "state": {
@@ -2383,6 +2449,16 @@
             "type": "integer"
           }
         }
+      },
+      "TournamentAnyView": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/TournamentView"
+          },
+          {
+            "$ref": "#/components/schemas/ArenaTournamentView"
+          }
+        ]
       },
       "RoundView": {
         "type": "object",
@@ -2467,6 +2543,46 @@
           }
         }
       },
+      "ArenaStandingView": {
+        "type": "object",
+        "required": [
+          "rank",
+          "playerId",
+          "points",
+          "wins",
+          "draws",
+          "losses",
+          "gamesPlayed",
+          "onFire"
+        ],
+        "properties": {
+          "rank": {
+            "type": "integer"
+          },
+          "playerId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "points": {
+            "type": "integer"
+          },
+          "wins": {
+            "type": "integer"
+          },
+          "draws": {
+            "type": "integer"
+          },
+          "losses": {
+            "type": "integer"
+          },
+          "gamesPlayed": {
+            "type": "integer"
+          },
+          "onFire": {
+            "type": "boolean"
+          }
+        }
+      },
       "TournamentSummaryList": {
         "type": "array",
         "items": {
@@ -2484,6 +2600,22 @@
         "items": {
           "$ref": "#/components/schemas/PlayerStandingView"
         }
+      },
+      "ArenaStandingList": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/ArenaStandingView"
+        }
+      },
+      "StandingAnyList": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/StandingList"
+          },
+          {
+            "$ref": "#/components/schemas/ArenaStandingList"
+          }
+        ]
       },
       "LiveBoard": {
         "type": "object",
@@ -2585,7 +2717,7 @@
             }
           },
           "standings": {
-            "$ref": "#/components/schemas/StandingList"
+            "$ref": "#/components/schemas/StandingAnyList"
           }
         }
       },
@@ -2733,13 +2865,16 @@
         ],
         "properties": {
           "name": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50
           },
           "format": {
             "type": "string",
             "enum": [
               "round_robin",
-              "swiss"
+              "swiss",
+              "arena"
             ]
           },
           "variant": {
@@ -2759,7 +2894,14 @@
             "$ref": "#/components/schemas/TimeControl"
           },
           "rounds": {
-            "type": "integer"
+            "type": "integer",
+            "minimum": 1,
+            "description": "Required for swiss"
+          },
+          "durationMs": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Required for arena"
           },
           "tiebreakOrder": {
             "type": "array",
@@ -2770,7 +2912,8 @@
                 "buchholz",
                 "median_buchholz"
               ]
-            }
+            },
+            "description": "Optional order for round-based formats"
           }
         },
         "additionalProperties": false

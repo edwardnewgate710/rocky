@@ -27,10 +27,11 @@ import type {
   UserRow,
   UsersRepository,
   TournamentsRepository,
-  TournamentSummaryRow
+  TournamentSummaryRow,
+  TournamentAnySnapshot
 } from '@chess-platform/persistence';
 import { DuplicateUserError } from '@chess-platform/persistence';
-import type { TournamentSnapshot } from '@chess-platform/tournament';
+
 import type { AuditEntry, AuditRepository } from './ports/audit';
 import type { Clock } from './ports/clock';
 import { systemClock } from './ports/clock';
@@ -351,10 +352,10 @@ export class InMemoryAuditRepository implements AuditRepository {
 }
 
 export class InMemoryTournamentsRepository implements TournamentsRepository {
-  private readonly byId = new Map<string, TournamentSnapshot>();
+  private readonly byId = new Map<string, TournamentAnySnapshot>();
   private readonly order: string[] = []; // for newest-first list
 
-  async save(snapshot: TournamentSnapshot): Promise<void> {
+  async save(snapshot: TournamentAnySnapshot): Promise<void> {
     const isNew = !this.byId.has(snapshot.config.id);
     this.byId.set(snapshot.config.id, structuredClone(snapshot));
     if (isNew) {
@@ -362,7 +363,7 @@ export class InMemoryTournamentsRepository implements TournamentsRepository {
     }
   }
 
-  async findById(id: string): Promise<TournamentSnapshot | null> {
+  async findById(id: string): Promise<TournamentAnySnapshot | null> {
     const snap = this.byId.get(id);
     return snap ? structuredClone(snap) : null;
   }

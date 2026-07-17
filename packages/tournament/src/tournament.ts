@@ -1,4 +1,4 @@
-import type { TournamentConfig } from './config';
+import type { RoundBasedConfig } from './config';
 import type { PairingContext, PairingStrategy, Round, CompletedRound, PlayerHistory } from './pairing';
 import type { GameResult, PlayerStanding } from './standings';
 import { computeStandings } from './standings';
@@ -9,7 +9,7 @@ export type TournamentState = 'registration' | 'running' | 'finished';
  * A plain, JSON-serializable representation of the tournament's state.
  */
 export interface TournamentSnapshot {
-  readonly config: TournamentConfig;
+  readonly config: RoundBasedConfig;
   readonly state: TournamentState;
   readonly participants: readonly string[];
   readonly withdrawn?: readonly string[];
@@ -39,7 +39,7 @@ export class Tournament {
   private readonly gameAttempts = new Map<string, number>();
 
   constructor(
-    public readonly config: TournamentConfig,
+    public readonly config: RoundBasedConfig,
     private readonly pairingStrategy: PairingStrategy
   ) {}
 

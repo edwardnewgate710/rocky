@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { createPool } from '../src/pg/pool';
 import { migrate } from '../src/pg/migrate';
 import { PgTournamentsRepository } from '../src/pg/repositories';
+import { isArenaSnapshot } from '../src/repositories';
 import { Tournament } from '@chess-platform/tournament';
 import { createPairingStrategy } from '@chess-platform/tournament';
 import type { TournamentConfig } from '@chess-platform/tournament';
@@ -47,6 +48,7 @@ test('tournaments repository: round-trip a round-robin mid-flight snapshot', { s
     // Load state
     const loaded = await repo.findById('t-rr-test');
     assert.ok(loaded);
+    assert.ok(!isArenaSnapshot(loaded), 'round-robin snapshot must not be an arena snapshot');
     assert.deepEqual(loaded.participants, ['U1', 'U2']);
     assert.equal(loaded.state, 'running');
     assert.equal(loaded.rounds.length, 1);
@@ -61,6 +63,7 @@ test('tournaments repository: round-trip a round-robin mid-flight snapshot', { s
 
     const finished = await repo.findById('t-rr-test');
     assert.ok(finished);
+    assert.ok(!isArenaSnapshot(finished), 'round-robin snapshot must not be an arena snapshot');
     assert.equal(finished.state, 'finished');
     const resultEntry = finished.results.find(r => r[0] === '0-0');
     assert.ok(resultEntry);
@@ -110,6 +113,7 @@ test('tournaments repository: round-trip a swiss mid-flight snapshot', { skip },
 
     const loaded = await repo.findById('t-swiss-test');
     assert.ok(loaded);
+    assert.ok(!isArenaSnapshot(loaded), 'swiss snapshot must not be an arena snapshot');
     assert.equal(loaded.state, 'running');
     assert.equal(loaded.rounds.length, 2);
 

@@ -1,5 +1,6 @@
 import type { Variant } from '@chess-platform/core';
 import type { TimeControl } from '@chess-platform/game';
+import type { ArenaConfig } from './arena';
 
 /**
  * Tiebreak calculation methods.
@@ -36,7 +37,9 @@ export interface SwissConfig {
   readonly tiebreakOrder?: readonly TiebreakKey[];
 }
 
+export type RoundBasedConfig = RoundRobinConfig | SwissConfig;
+
 /**
  * Discriminated union of all tournament configurations.
  */
-export type TournamentConfig = RoundRobinConfig | SwissConfig;
+export type TournamentConfig = RoundBasedConfig | ArenaConfig;

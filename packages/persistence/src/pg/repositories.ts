@@ -28,11 +28,11 @@ import type {
   Speed,
   TournamentSummaryRow,
   TournamentsRepository,
+  TournamentAnySnapshot,
   UserRow,
   UsersRepository,
 } from '../repositories';
 import { DuplicateUserError } from '../errors';
-import type { TournamentSnapshot } from '@chess-platform/tournament';
 
 // --- row shapes as returned by pg ------------------------------------------
 
@@ -96,10 +96,10 @@ interface SeekDbRow {
 interface TournamentDbRow {
   id: string;
   name: string;
-  format: 'round_robin' | 'swiss';
+  format: 'round_robin' | 'swiss' | 'arena';
   state: 'registration' | 'running' | 'finished';
   participant_count: number;
-  snapshot: TournamentSnapshot;
+  snapshot: TournamentAnySnapshot;
   created_at: Date;
   updated_at: Date;
 }
@@ -521,7 +521,7 @@ export class PgSeeksRepository implements SeeksRepository {
 export class PgTournamentsRepository implements TournamentsRepository {
   constructor(private readonly pool: Pool) {}
 
-  async save(snapshot: TournamentSnapshot): Promise<void> {
+  async save(snapshot: TournamentAnySnapshot): Promise<void> {
     await this.pool.query(
       `INSERT INTO tournaments (id, name, format, state, participant_count, snapshot)
        VALUES ($1, $2, $3, $4, $5, $6::jsonb)
@@ -543,12 +543,12 @@ export class PgTournamentsRepository implements TournamentsRepository {
     );
   }
 
-  async findById(id: string): Promise<TournamentSnapshot | null> {
+  async findById(id: string): Promise<TournamentAnySnapshot | null> {
     const res = await this.pool.query<TournamentDbRow>(
       'SELECT snapshot FROM tournaments WHERE id = $1',
       [id]
     );
-    return res.rows[0] ? res.rows[0].snapshot : null;
+    return res.rows[0] ? (res.rows[0].snapshot as TournamentAnySnapshot) : null;
   }
 
   async list(limit: number): Promise<TournamentSummaryRow[]> {

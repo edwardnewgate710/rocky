@@ -18,5 +18,10 @@ export function createPairingStrategy(config: TournamentConfig): PairingStrategy
       return new RoundRobinPairing();
     case 'swiss':
       return new SwissPairing(config.rounds);
+    case 'arena':
+      throw new Error("Arena tournaments do not use a round-based pairing strategy");
+    default:
+      const exhaustiveCheck: never = config;
+      throw new Error(`Unsupported tournament format: ${exhaustiveCheck}`);
   }
 }

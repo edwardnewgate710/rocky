@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Game } from '@chess-platform/game';
 import type { EventStore, TournamentsRepository } from '@chess-platform/persistence';
+import { isArenaSnapshot } from '@chess-platform/persistence';
 import type { LiveBoard, TournamentLiveView } from './live-view';
 
 /** Reconstruct active tournament boards from the shared durable event log. */
@@ -14,7 +15,10 @@ export class DurableTournamentLiveView implements TournamentLiveView {
     const tournament = await this.tournaments.findById(tournamentId);
     if (!tournament) return [];
 
-    const reconstructed = await Promise.all((tournament.gameLinks ?? []).map(async ([, gameId]): Promise<LiveBoard | null> => {
+    if (isArenaSnapshot(tournament)) return []; // arena live boards arrive in M9 Inc 12
+
+    const gameLinks = tournament.gameLinks ?? [];
+    const reconstructed = await Promise.all(gameLinks.map(async ([, gameId]): Promise<LiveBoard | null> => {
       const stored = await this.events.load(gameId);
       if (stored.length === 0) return null;
       const game = Game.fromEvents(stored.map((entry) => entry.event));

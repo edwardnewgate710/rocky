@@ -201,4 +201,92 @@ describe('Tournament API', () => {
     assert.ok(gamePairingR1);
     assert.ok(gamePairingR1.gameId, 'Next round should also be launched with gameIds');
   });
+  it('runs a basic arena lifecycle through the API', async () => {
+    // 1. Create an arena
+    const createRes = await h.json('POST', '/v1/tournaments', {
+      token: directorToken,
+      body: {
+        name: 'Rapid Arena',
+        format: 'arena',
+        variant: 'standard',
+        durationMs: 3600000,
+        timeControl: { kind: 'increment', initialMs: 600000, incrementMs: 5000, delayMs: 0 },
+      },
+    });
+    if (createRes.status !== 201) console.error('arena creation error:', createRes.body);
+    assert.equal(createRes.status, 201);
+    const id = createRes.body.id;
+    assert.equal(createRes.body.format, 'arena');
+    assert.equal(createRes.body.durationMs, 3600000);
+
+    // 2. Register players
+    await h.json('POST', `/v1/tournaments/${id}/participants`, { token: userToken });
+    const u2 = await h.makeUser('arena_bob');
+    await h.json('POST', `/v1/tournaments/${id}/participants`, { token: u2.token });
+    
+    // 3. Start
+    const startRes = await h.json('POST', `/v1/tournaments/${id}/start`, { token: directorToken });
+    assert.equal(startRes.status, 200);
+    assert.equal(startRes.body.state, 'running');
+
+    // 4. Standings
+    const stdRes = await h.json('GET', `/v1/tournaments/${id}/standings`);
+    assert.equal(stdRes.status, 200);
+    assert.equal(stdRes.body.length, 2);
+    assert.equal(stdRes.body[0].gamesPlayed, 0);
+
+    // 5. Withdraw
+    const wdRes = await h.json('DELETE', `/v1/tournaments/${id}/participants/${userId}`, { token: userToken });
+    assert.equal(wdRes.status, 200);
+  });
+
+  it('rejects arena creation without a durationMs', async () => {
+    const res = await h.json('POST', '/v1/tournaments', {
+      token: directorToken,
+      body: {
+        name: 'No Duration Arena',
+        format: 'arena',
+        variant: 'standard',
+        timeControl: { kind: 'increment', initialMs: 600000, incrementMs: 5000, delayMs: 0 },
+      },
+    });
+    assert.equal(res.status, 422);
+  });
+
+  it('rejects an invalid tiebreakOrder entry', async () => {
+    const res = await h.json('POST', '/v1/tournaments', {
+      token: directorToken,
+      body: {
+        name: 'Bad Tiebreak',
+        format: 'round_robin',
+        variant: 'standard',
+        timeControl: { kind: 'increment', initialMs: 300000, incrementMs: 2000, delayMs: 0 },
+        tiebreakOrder: ['sonneborn_berger', 'not_a_real_tiebreak'],
+      },
+    });
+    assert.equal(res.status, 422);
+  });
+
+  it('rejects round-based result recording on an arena', async () => {
+    const createRes = await h.json('POST', '/v1/tournaments', {
+      token: directorToken,
+      body: {
+        name: 'Arena No Rounds',
+        format: 'arena',
+        variant: 'standard',
+        durationMs: 3600000,
+        timeControl: { kind: 'increment', initialMs: 600000, incrementMs: 5000, delayMs: 0 },
+      },
+    });
+    assert.equal(createRes.status, 201);
+    const id = createRes.body.id;
+
+    // The round-based "record result" route does not apply to arenas: the
+    // service refuses to load an arena as a round-based tournament (409).
+    const res = await h.json('POST', `/v1/tournaments/${id}/rounds/0/results`, {
+      token: directorToken,
+      body: { pairingIndex: 0, result: 'white_win' },
+    });
+    assert.equal(res.status, 409);
+  });
 });

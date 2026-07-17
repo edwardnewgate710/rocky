@@ -217,16 +217,39 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     },
   },
 
+  ArenaTournamentView: {
+    type: 'object',
+    required: ['id', 'name', 'format', 'variant', 'timeControl', 'state', 'participants', 'durationMs'],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      name: { type: 'string' },
+      format: { type: 'string', enum: ['arena'] },
+      variant: { type: 'string', enum: [...VARIANTS] },
+      timeControl: { $ref: '#/components/schemas/TimeControl' },
+      durationMs: { type: 'integer' },
+      state: { type: 'string', enum: ['registration', 'running', 'finished'] },
+      participants: { type: 'array', items: { type: 'string', format: 'uuid' } },
+      startedAtMs: { type: 'integer' },
+    },
+  },
+
   TournamentSummaryView: {
     type: 'object',
     required: ['id', 'name', 'format', 'state', 'participantCount'],
     properties: {
       id: { type: 'string', format: 'uuid' },
       name: { type: 'string' },
-      format: { type: 'string', enum: ['round_robin', 'swiss'] },
+      format: { type: 'string', enum: ['round_robin', 'swiss', 'arena'] },
       state: { type: 'string', enum: ['registration', 'running', 'finished'] },
       participantCount: { type: 'integer' },
     },
+  },
+
+  TournamentAnyView: {
+    oneOf: [
+      { $ref: '#/components/schemas/TournamentView' },
+      { $ref: '#/components/schemas/ArenaTournamentView' }
+    ]
   },
 
   RoundView: {
@@ -265,9 +288,32 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     },
   },
 
+  ArenaStandingView: {
+    type: 'object',
+    required: ['rank', 'playerId', 'points', 'wins', 'draws', 'losses', 'gamesPlayed', 'onFire'],
+    properties: {
+      rank: { type: 'integer' },
+      playerId: { type: 'string', format: 'uuid' },
+      points: { type: 'integer' },
+      wins: { type: 'integer' },
+      draws: { type: 'integer' },
+      losses: { type: 'integer' },
+      gamesPlayed: { type: 'integer' },
+      onFire: { type: 'boolean' },
+    },
+  },
+
   TournamentSummaryList: { type: 'array', items: { $ref: '#/components/schemas/TournamentSummaryView' } },
   RoundList: { type: 'array', items: { $ref: '#/components/schemas/RoundView' } },
   StandingList: { type: 'array', items: { $ref: '#/components/schemas/PlayerStandingView' } },
+  ArenaStandingList: { type: 'array', items: { $ref: '#/components/schemas/ArenaStandingView' } },
+
+  StandingAnyList: {
+    oneOf: [
+      { $ref: '#/components/schemas/StandingList' },
+      { $ref: '#/components/schemas/ArenaStandingList' }
+    ]
+  },
 
   LiveBoard: {
     type: 'object',
@@ -306,7 +352,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     required: ['games', 'standings'],
     properties: {
       games: { type: 'array', items: { $ref: '#/components/schemas/LiveBoard' } },
-      standings: { $ref: '#/components/schemas/StandingList' },
+      standings: { $ref: '#/components/schemas/StandingAnyList' },
     },
   },
 
@@ -377,12 +423,13 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     type: 'object',
     required: ['name', 'format', 'variant', 'timeControl'],
     properties: {
-      name: { type: 'string' },
-      format: { type: 'string', enum: ['round_robin', 'swiss'] },
+      name: { type: 'string', minLength: 1, maxLength: 50 },
+      format: { type: 'string', enum: ['round_robin', 'swiss', 'arena'] },
       variant: { type: 'string', enum: [...VARIANTS] },
       timeControl: { $ref: '#/components/schemas/TimeControl' },
-      rounds: { type: 'integer' },
-      tiebreakOrder: { type: 'array', items: { type: 'string', enum: ['sonneborn_berger', 'buchholz', 'median_buchholz'] } },
+      rounds: { type: 'integer', minimum: 1, description: 'Required for swiss' },
+      durationMs: { type: 'integer', minimum: 1, description: 'Required for arena' },
+      tiebreakOrder: { type: 'array', items: { type: 'string', enum: ['sonneborn_berger', 'buchholz', 'median_buchholz'] }, description: 'Optional order for round-based formats' },
     },
     additionalProperties: false,
   },
