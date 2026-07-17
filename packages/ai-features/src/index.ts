@@ -7,27 +7,16 @@
  * it runs the engine, grounds the LLM prompt with real analysis, and
  * returns a structured response with a verifiable engine citation.
  *
- * M8 increment 1: **Move Explanation** — the template every later
- * feature follows.
- *
- * M8 increment 2: **Puzzle Generator** — engine-verified tactical puzzles.
- *
- * M8 increment 3: **Mistake Predictor** — engine-measured move quality.
- *
- * M8 increment 4: **Opening Explorer** — opening identification from a
- * database port (first non-engine data source in M8).
- *
- * M8 increment 5: **Endgame Trainer** — engine-verified endgame training
- * with a bundled endgame dataset port.
- *
- * M8 increment 6: **Coach** — composition layer that orchestrates the five
- * existing features into a unified coaching response.
- *
- * M8 increment 7: **Study Partner** — stateful multi-step learning sessions
- * with a session store port.
- *
- * M8 increment 8: **Voice Coach** — turns coaching output into speech-ready
- * text with speech I/O ports for deferred TTS/STT delivery.
+ * M8 AI features built on the M7 orchestration layer:
+ * - `MoveExplainer`: Engine-grounded move explanations.
+ * - `PuzzleGenerator`: Extracts tactical puzzles from live games.
+ * - `MistakePredictor`: Highlights critical moments where humans blunder.
+ * - `OpeningExplorer`: Explains transpositions and plans.
+ * - `EndgameTrainer`: Real-time feedback in technical endgames.
+ * - `Coach`: Conversational assistant with board context.
+ * - `StudyPartner`: Interactive Q&A for PGN studies.
+ * - `VoiceCoach`: STT/TTS adapter for eyes-free coaching.
+ * - `TournamentCommentator`: (M9) Live broadcast commentary and round recaps.
  */
 
 // Types
@@ -94,6 +83,10 @@ export type { StudySessionStore, StudySession, StudyTurn, SessionProgress, Sessi
 export { VoiceCoach } from './voice-coach.js';
 export type { VoiceCoachOptions } from './voice-coach-types.js';
 export type { SpokenCoaching, SpokenSegment, SpokenSegmentKind, CoachAloudRequest } from './voice-coach-types.js';
+
+export { TournamentCommentator } from './tournament-commentator.js';
+export type { TournamentCommentatorOptions } from './tournament-commentator.js';
+export * from './tournament-commentator-types.js';
 export { verbalizeSan, verbalizeUci, speakSquare, speakClassification } from './verbalizer.js';
 export { FakeSpeechSynthesizer, FakeSpeechRecognizer } from './speech-ports.js';
 export type {
