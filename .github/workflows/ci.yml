@@ -9,8 +9,10 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore: ['**/*.md']
   pull_request:
     branches: [main]
+    paths-ignore: ['**/*.md']
 
 # Cancel superseded runs on the same ref to save CI minutes.
 concurrency:
@@ -18,6 +20,59 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Detects which areas a change touches so the heavier, area-specific jobs
+  # (gateway service, M6 Playwright/Lighthouse acceptance, Helm) can skip when a
+  # change cannot affect them — the biggest Actions-minute saver for backend- or
+  # test-only changes. Fail-open: if the diff base can't be resolved, every gated
+  # job runs. Gated jobs are SKIPPED (not removed), so any required status check
+  # still resolves as successful.
+  changes:
+    name: detect changed areas
+    runs-on: ubuntu-latest
+    outputs:
+      gateway: ${{ steps.filter.outputs.gateway }}
+      web: ${{ steps.filter.outputs.web }}
+      deploy: ${{ steps.filter.outputs.deploy }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compute changed areas
+        id: filter
+        run: |
+          gateway=true; web=true; deploy=true
+          base=""; head="HEAD"
+          case "${{ github.event_name }}" in
+            pull_request)
+              base="${{ github.event.pull_request.base.sha }}"
+              head="${{ github.event.pull_request.head.sha }}"
+              ;;
+            push)
+              b="${{ github.event.before }}"
+              [ "$b" != "0000000000000000000000000000000000000000" ] && base="$b"
+              head="${{ github.sha }}"
+              ;;
+          esac
+          changed=""
+          if [ -n "$base" ] && git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            changed="$(git diff --name-only "${base}...${head}" 2>/dev/null || true)"
+          fi
+          if [ -n "$changed" ]; then
+            printf 'Changed files:\n%s\n' "$changed"
+            grep -qE '^(services/gateway/|packages/realtime-gateway/|packages/game/|packages/core/|package(-lock)?\.json|\.github/workflows/)' <<<"$changed" && gateway=true || gateway=false
+            grep -qE '^(packages/web/|packages/e2e-harness/|packages/api/|packages/game/|packages/realtime-gateway/|packages/core/|package(-lock)?\.json|\.github/workflows/)' <<<"$changed" && web=true || web=false
+            grep -qE '^(deploy/|\.github/workflows/)' <<<"$changed" && deploy=true || deploy=false
+          else
+            echo "No diff base resolved; running all gated jobs (fail-open)."
+          fi
+          {
+            echo "gateway=$gateway"
+            echo "web=$web"
+            echo "deploy=$deploy"
+          } >> "$GITHUB_OUTPUT"
+          echo "Resolved: gateway=$gateway web=$web deploy=$deploy"
+
   build-test:
     name: build + typecheck + test (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
@@ -96,6 +151,8 @@ jobs:
   gateway-service:
     name: gateway service (build + Redis integration)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.gateway == 'true'
     services:
       redis:
         image: redis:7
@@ -147,6 +204,8 @@ jobs:
   m6-acceptance:
     name: M6 acceptance (Playwright e2e + Lighthouse a11y)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -264,6 +323,8 @@ jobs:
   helm:
     name: helm lint + kubeconform
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.deploy == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
