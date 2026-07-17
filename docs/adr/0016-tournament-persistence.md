@@ -59,3 +59,15 @@ We extended the OpenAPI component schemas (`packages/api/src/openapi/schemas.ts`
 
 **Negative:**
 - The JSON snapshot pattern means querying deep inside a tournament (e.g., "find all tournaments where player X played black against player Y") requires fetching the entire snapshot or relying on JSONB indexing capabilities in the future Postgres adapter. Given our read patterns, this is an acceptable tradeoff for write simplicity.
+
+## Deferred (M9 Future Increments)
+
+- **Realtime WebSockets**: Broadcasting pairings and standings updates to connected clients.
+- **Game Lifecycle Integration**: Automatically creating `@chess-platform/game` instances from generated pairings.
+- **Tournament Commentator**: Generating AI commentary for tournament events.
+
+*(Update: The Postgres adapter was deferred in M9 inc 3 but implemented in M9 inc 4 via `packages/persistence/migrations/0003_tournaments.sql` and `PgTournamentsRepository`.)*
+
+**M9 inc 4 review notes:**
+- The `tournaments.id` column is `TEXT`, not `UUID`: the domain models a tournament id as an opaque `string` (`TournamentConfig.id`), and the repository must persist whatever the aggregate holds. The API happens to generate UUIDs, but coupling storage to that format would crash on any other valid domain id.
+- The migration runner (`migrate()`) now holds a database-wide **advisory lock** for the duration of a run, so concurrent callers (parallel test files, or multiple app instances booting at once) serialize instead of racing to apply the same migration. This latent race surfaced once a second Postgres-backed test file existed.

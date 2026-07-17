@@ -9,12 +9,14 @@
 
 import type { Pool } from 'pg';
 import { uuidv7 } from '@chess-platform/persistence';
+import type { TournamentsRepository } from '@chess-platform/persistence';
 import {
   createPool,
   PgGamesRepository,
   PgRatingsRepository,
   PgSeeksRepository,
   PgSessionsRepository,
+  PgTournamentsRepository,
   PgUsersRepository,
 } from '@chess-platform/persistence/pg';
 import { ScryptPasswordHasher } from './auth/password';
@@ -23,7 +25,6 @@ import { AccessTokenService } from './auth/tokens';
 import { resolveConfig } from './config';
 import type { ApiConfigInput } from './config';
 import type { ApiDependencies, Repositories } from './deps';
-import { InMemoryTournamentsRepository } from './fakes';
 import type { AuditEntry, AuditRepository } from './ports/audit';
 import { systemClock } from './ports/clock';
 import type { Clock } from './ports/clock';
@@ -84,7 +85,7 @@ export interface PgBootstrapOptions {
   readonly ids?: IdGenerator;
   readonly rateLimiter?: RateLimiter;
   readonly server?: ApiServerOptions;
-  readonly tournamentRepo?: InMemoryTournamentsRepository;
+  readonly tournamentRepo?: TournamentsRepository;
 }
 
 /** Build the {@link ApiDependencies} bundle backed by Postgres. */
@@ -106,7 +107,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ids,
   });
   const rateLimiter = options.rateLimiter ?? new InMemoryRateLimiter(clock);
-  const tournamentRepo = options.tournamentRepo ?? new InMemoryTournamentsRepository();
+  const tournamentRepo = options.tournamentRepo ?? new PgTournamentsRepository(pool);
   const deps: ApiDependencies = {
     repos: createPgRepositories(pool, ids),
     hasher,

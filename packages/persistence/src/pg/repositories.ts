@@ -25,9 +25,12 @@ import type {
   SessionRow,
   SessionsRepository,
   Speed,
+  TournamentSummaryRow,
+  TournamentsRepository,
   UserRow,
   UsersRepository,
 } from '../repositories';
+import type { TournamentSnapshot } from '@chess-platform/tournament';
 
 // --- row shapes as returned by pg ------------------------------------------
 
@@ -86,6 +89,17 @@ interface SeekDbRow {
   min_rating: number | null;
   max_rating: number | null;
   created_at: Date;
+}
+
+interface TournamentDbRow {
+  id: string;
+  name: string;
+  format: 'round_robin' | 'swiss';
+  state: 'registration' | 'running' | 'finished';
+  participant_count: number;
+  snapshot: TournamentSnapshot;
+  created_at: Date;
+  updated_at: Date;
 }
 
 function toUser(r: UserDbRow): UserRow {
@@ -403,5 +417,54 @@ export class PgSeeksRepository implements SeeksRepository {
 
   async remove(id: string): Promise<void> {
     await this.pool.query('DELETE FROM seeks WHERE id = $1', [id]);
+  }
+}
+
+export class PgTournamentsRepository implements TournamentsRepository {
+  constructor(private readonly pool: Pool) {}
+
+  async save(snapshot: TournamentSnapshot): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO tournaments (id, name, format, state, participant_count, snapshot)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+       ON CONFLICT (id) DO UPDATE SET
+         name = EXCLUDED.name,
+         format = EXCLUDED.format,
+         state = EXCLUDED.state,
+         participant_count = EXCLUDED.participant_count,
+         snapshot = EXCLUDED.snapshot,
+         updated_at = now()`,
+      [
+        snapshot.config.id,
+        snapshot.config.name,
+        snapshot.config.format,
+        snapshot.state,
+        snapshot.participants.length,
+        JSON.stringify(snapshot),
+      ]
+    );
+  }
+
+  async findById(id: string): Promise<TournamentSnapshot | null> {
+    const res = await this.pool.query<TournamentDbRow>(
+      'SELECT snapshot FROM tournaments WHERE id = $1',
+      [id]
+    );
+    return res.rows[0] ? res.rows[0].snapshot : null;
+  }
+
+  async list(limit: number): Promise<TournamentSummaryRow[]> {
+    const res = await this.pool.query<TournamentDbRow>(
+      `SELECT id, name, format, state, participant_count
+       FROM tournaments ORDER BY created_at DESC LIMIT $1`,
+      [limit]
+    );
+    return res.rows.map(r => ({
+      id: r.id,
+      name: r.name,
+      format: r.format,
+      state: r.state,
+      participantCount: r.participant_count,
+    }));
   }
 }

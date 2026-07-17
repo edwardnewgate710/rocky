@@ -17,8 +17,28 @@ interface AppliedRow {
   checksum: string;
 }
 
-/** Apply all pending migrations in `dir`. Returns the number newly applied. */
+/** Advisory-lock key that namespaces the migration runner (arbitrary constant). */
+const MIGRATION_ADVISORY_LOCK_KEY = 4915219603172;
+
+/**
+ * Apply all pending migrations in `dir`. Returns the number newly applied.
+ *
+ * The whole run holds a database-wide advisory lock (on a dedicated connection)
+ * so parallel callers — concurrent test files, or multiple app instances booting
+ * at once — serialize instead of racing to apply the same migration.
+ */
 export async function migrate(pool: Pool, dir: string): Promise<number> {
+  const lockClient = await pool.connect();
+  await lockClient.query('SELECT pg_advisory_lock($1)', [MIGRATION_ADVISORY_LOCK_KEY]);
+  try {
+    return await runMigrations(pool, dir);
+  } finally {
+    await lockClient.query('SELECT pg_advisory_unlock($1)', [MIGRATION_ADVISORY_LOCK_KEY]);
+    lockClient.release();
+  }
+}
+
+async function runMigrations(pool: Pool, dir: string): Promise<number> {
   await pool.query(
     `CREATE TABLE IF NOT EXISTS schema_migrations (
        version    INTEGER PRIMARY KEY,
