@@ -15,6 +15,7 @@ export * from './routes';
 export * from './domain';
 export * from './presenters';
 export * from './tournament/launcher';
+export * from './tournament/service';
 
 export * from './auth/password';
 export * from './auth/tokens';

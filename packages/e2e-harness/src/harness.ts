@@ -35,7 +35,7 @@ import {
   uuidv7Generator,
   InMemoryRateLimiter,
   InMemoryTournamentsRepository,
-  InMemoryGameLauncher,
+  TournamentService,
   type ApiServer,
   type ApiDependencies,
 } from '@chess-platform/api';
@@ -43,6 +43,7 @@ import {
   GameAuthority,
   InMemoryPubSub,
   RealtimeGateway,
+  type PubSub,
   type Connection,
   type ClientMessage,
   type ServerMessage,
@@ -51,7 +52,8 @@ import {
   decode,
 } from '@chess-platform/realtime-gateway';
 import { BotPlayer } from './bot.js';
-
+import { AuthorityGameLauncher } from './launcher.js';
+import { TournamentResultReporter } from './reporter.js';
 /** Options for the harness. */
 export interface HarnessOptions {
   readonly apiPort?: number;
@@ -66,10 +68,12 @@ export interface Harness {
   readonly httpServer: Server;
   readonly wss: WebSocketServer;
   readonly gateway: RealtimeGateway;
+  readonly pubsub: PubSub;
   readonly authority: GameAuthority;
   readonly bot: BotPlayer;
   readonly apiPort: number;
   readonly wsPort: number;
+  readonly deps: ApiDependencies;
   /** Stop the harness and close all servers. */
   close(): Promise<void>;
 }
@@ -102,9 +106,20 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
   const apiHost = options.apiHost ?? '127.0.0.1';
   const wsHost = options.wsHost ?? '127.0.0.1';
 
+  // --- Gateway (in-memory pub/sub) ---
+  const pubsub = new InMemoryPubSub();
+  const authority = new GameAuthority(pubsub, () => Date.now());
+
+  // --- Tournament Realtime Bridge ---
+  const ids = uuidv7Generator;
+  const tournamentRepo = new InMemoryTournamentsRepository();
+  let reporter: TournamentResultReporter;
+  const gameLauncher = new AuthorityGameLauncher(authority, (tid, gid) => reporter.watch(tid, gid));
+  const reporterTournamentService = new TournamentService(tournamentRepo, gameLauncher);
+  reporter = new TournamentResultReporter(pubsub, reporterTournamentService);
+
   // --- API (in-memory) ---
   const clock = systemClock;
-  const ids = uuidv7Generator;
   const config = resolveConfig({
     accessTokenSecret: 'e2e-harness-test-secret-at-least-32-bytes-long!!',
     // The e2e stack runs over plain HTTP (vite preview), so the refresh cookie
@@ -120,14 +135,8 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
   });
   const repos = createInMemoryRepositories(clock);
   const rateLimiter = new InMemoryRateLimiter(clock);
-  const tournamentRepo = new InMemoryTournamentsRepository();
-  const gameLauncher = new InMemoryGameLauncher(ids);
   const deps: ApiDependencies = { repos, hasher, tokens, clock, ids, config, rateLimiter, tournamentRepo, gameLauncher };
   const apiServer = createApiServer(deps);
-
-  // --- Gateway (in-memory pub/sub) ---
-  const pubsub = new InMemoryPubSub();
-  const authority = new GameAuthority(pubsub, () => Date.now());
 
   const tokenVerifier = new ApiTokenVerifier((token: string) => {
     const identity = tokens.identify(token);
@@ -230,10 +239,12 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
         httpServer,
         wss,
         gateway,
+        pubsub,
         authority,
         bot,
         apiPort,
         wsPort,
+        deps,
         close: async () => {
           bot.stop();
           await Promise.all([

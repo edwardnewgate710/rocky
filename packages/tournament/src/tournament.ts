@@ -16,6 +16,8 @@ export interface TournamentSnapshot {
   readonly results: readonly (readonly [string, GameResult | 'bye'])[];
   readonly pairingsByMatchId: readonly (readonly [string, { readonly p1: string; readonly p2: string | null }])[];
   readonly gameLinks?: readonly (readonly [string, string])[];
+  /** matchId -> number of games launched so far (bumped when a game is abandoned). */
+  readonly gameAttempts?: readonly (readonly [string, number])[];
 }
 
 export class Tournament {
@@ -30,6 +32,9 @@ export class Tournament {
   // matchId <-> gameId
   private readonly gameLinks = new Map<string, string>();
   private readonly gameIds = new Map<string, string>();
+  // matchId -> how many games have been launched for it. Bumped on abandon so a
+  // re-launched pairing gets a fresh, non-colliding gameId (see AuthorityGameLauncher).
+  private readonly gameAttempts = new Map<string, number>();
 
   constructor(
     public readonly config: TournamentConfig,
@@ -137,6 +142,29 @@ export class Tournament {
     }
     const [roundIndexStr, pairingIndexStr] = matchId.split('-');
     this.recordResult(parseInt(roundIndexStr, 10), parseInt(pairingIndexStr, 10), result);
+  }
+
+  /** How many games have been launched for this pairing (0 before the first). */
+  launchAttemptFor(roundIndex: number, pairingIndex: number): number {
+    return this.gameAttempts.get(`${roundIndex}-${pairingIndex}`) ?? 0;
+  }
+
+  /**
+   * Abandon a launched-but-undecided game (e.g. it was aborted before a result).
+   * Unlinks it and bumps the pairing's launch attempt so the next launch produces
+   * a fresh, non-colliding gameId — letting the pairing be replayed cleanly.
+   */
+  abandonGame(gameId: string): void {
+    const matchId = this.gameIds.get(gameId);
+    if (!matchId) {
+      throw new Error('Unknown game ID');
+    }
+    if (this.results.has(matchId)) {
+      throw new Error('Cannot abandon a game that already has a result');
+    }
+    this.gameLinks.delete(matchId);
+    this.gameIds.delete(gameId);
+    this.gameAttempts.set(matchId, (this.gameAttempts.get(matchId) ?? 0) + 1);
   }
 
   standings(): PlayerStanding[] {
@@ -291,7 +319,8 @@ export class Tournament {
       rounds: JSON.parse(JSON.stringify(this.rounds)),
       results: Array.from(this.results.entries()),
       pairingsByMatchId: Array.from(this.pairingsByMatchId.entries()).map(([k, v]) => [k, { ...v }]),
-      gameLinks: Array.from(this.gameLinks.entries())
+      gameLinks: Array.from(this.gameLinks.entries()),
+      gameAttempts: Array.from(this.gameAttempts.entries())
     };
   }
 
@@ -310,6 +339,9 @@ export class Tournament {
     for (const [matchId, gameId] of snapshot.gameLinks || []) {
       t.gameLinks.set(matchId, gameId);
       t.gameIds.set(gameId, matchId);
+    }
+    for (const [matchId, attempt] of snapshot.gameAttempts || []) {
+      t.gameAttempts.set(matchId, attempt);
     }
     return t;
   }

@@ -132,6 +132,25 @@ export class TournamentService {
     return tournament;
   }
 
+  /**
+   * Abandon an undecided game (e.g. it was aborted) and immediately reconcile,
+   * which launches a fresh game for the same pairing so the round can proceed.
+   */
+  async abandonGame(id: string, gameId: string): Promise<Tournament> {
+    const tournament = await this.load(id);
+    try {
+      tournament.abandonGame(gameId);
+      await this.reconcileLaunch(tournament);
+    } catch (e: any) {
+      if (e.message.includes('Unknown game ID')) {
+        throw HttpError.notFound('Game ID not found in this tournament');
+      }
+      throw HttpError.conflict(e.message);
+    }
+    await this.repo.save(tournament.toSnapshot());
+    return tournament;
+  }
+
   private async reconcileLaunch(tournament: Tournament): Promise<void> {
     const rounds = tournament.getRounds();
     for (const round of rounds) {
@@ -146,6 +165,7 @@ export class TournamentService {
               black: pairing.black,
               variant: tournament.config.variant,
               timeControl: tournament.config.timeControl,
+              attempt: tournament.launchAttemptFor(round.roundIndex, pIndex),
             });
             tournament.linkGame(round.roundIndex, pIndex, result.gameId);
           }

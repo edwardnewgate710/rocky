@@ -163,6 +163,43 @@ describe('Tournament Aggregate (round-by-round)', () => {
     assert.throws(() => t.recordResultByGame('game-old', 'white_win'), /Unknown game ID/);
   });
 
+  test('abandonGame unlinks and bumps the launch attempt', () => {
+    const t = new Tournament(config, new RoundRobinPairing());
+    t.register('A');
+    t.register('B');
+    t.start();
+
+    assert.strictEqual(t.launchAttemptFor(0, 0), 0);
+    t.linkGame(0, 0, 'game-a');
+
+    // Abandon the (undecided) game: it unlinks and the attempt counter bumps.
+    t.abandonGame('game-a');
+    assert.strictEqual(t.gameIdFor(0, 0), undefined, 'abandoned game is unlinked');
+    assert.strictEqual(t.pairingForGame('game-a'), null);
+    assert.strictEqual(t.launchAttemptFor(0, 0), 1, 'attempt is bumped for a fresh launch');
+
+    // A fresh game can now be linked to the same pairing.
+    t.linkGame(0, 0, 'game-a2');
+    assert.strictEqual(t.gameIdFor(0, 0), 'game-a2');
+
+    // Abandoning unknown / decided games is rejected.
+    assert.throws(() => t.abandonGame('game-nope'), /Unknown game ID/);
+    t.recordResultByGame('game-a2', 'white_win');
+    assert.throws(() => t.abandonGame('game-a2'), /already has a result/);
+  });
+
+  test('abandon attempt survives snapshot round-trip', () => {
+    const t = new Tournament(config, new RoundRobinPairing());
+    t.register('A');
+    t.register('B');
+    t.start();
+    t.linkGame(0, 0, 'game-a');
+    t.abandonGame('game-a');
+
+    const restored = Tournament.restore(t.toSnapshot(), new RoundRobinPairing());
+    assert.strictEqual(restored.launchAttemptFor(0, 0), 1);
+  });
+
   test('recordResultByGame works', () => {
     const t = new Tournament(config, new RoundRobinPairing());
     t.register('A');

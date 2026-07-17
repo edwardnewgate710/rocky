@@ -17,11 +17,12 @@ function input(over: Partial<LaunchInput> = {}): LaunchInput {
     black: 'B',
     variant: 'standard',
     timeControl: { kind: 'sudden_death', initialMs: 300000, incrementMs: 0, delayMs: 0 },
+    attempt: 0,
     ...over,
   };
 }
 
-test('InMemoryGameLauncher is idempotent per (tournamentId, matchId)', async () => {
+test('InMemoryGameLauncher is idempotent per (tournamentId, matchId, attempt)', async () => {
   const launcher = new InMemoryGameLauncher(counterIds());
 
   const first = await launcher.launch(input());
@@ -43,4 +44,15 @@ test('InMemoryGameLauncher gives distinct games to distinct pairings', async () 
   assert.equal(b.gameId, 'game-1');
   assert.equal(c.gameId, 'game-2');
   assert.equal(launcher.launched.length, 3);
+});
+
+test('InMemoryGameLauncher treats a bumped attempt as a fresh game', async () => {
+  const launcher = new InMemoryGameLauncher(counterIds());
+
+  const first = await launcher.launch(input({ attempt: 0 }));
+  const replay = await launcher.launch(input({ attempt: 1 })); // same pairing, next attempt
+
+  assert.equal(first.gameId, 'game-0');
+  assert.equal(replay.gameId, 'game-1', 'a new attempt launches a distinct game');
+  assert.equal(launcher.launched.length, 2);
 });
