@@ -111,4 +111,100 @@ describe('Tournament Aggregate (round-by-round)', () => {
       'all standings should start at zero before any result is recorded'
     );
   });
+
+  test('game linking and lookup', () => {
+    const t = new Tournament(config, new RoundRobinPairing());
+    t.register('A');
+    t.register('B');
+    t.register('C'); // A, B, C -> round robin has byes
+    t.start();
+
+    const rounds = t.getRounds();
+    const r0 = rounds[0];
+    
+    // Find a game pairing and a bye pairing
+    const gameIdx = r0.pairings.findIndex(p => p.kind === 'game');
+    const byeIdx = r0.pairings.findIndex(p => p.kind === 'bye');
+    
+    // Link game
+    t.linkGame(0, gameIdx, 'game-123');
+    
+    // Verify lookups
+    assert.strictEqual(t.gameIdFor(0, gameIdx), 'game-123');
+    assert.deepStrictEqual(t.pairingForGame('game-123'), { roundIndex: 0, pairingIndex: gameIdx });
+    
+    // Unknown lookups
+    assert.strictEqual(t.gameIdFor(0, 99), undefined);
+    assert.strictEqual(t.pairingForGame('game-999'), null);
+    
+    // Bye linking fails
+    assert.throws(() => t.linkGame(0, byeIdx, 'game-bye'), /Cannot link game to a bye/);
+    
+    // Unknown pairing fails
+    assert.throws(() => t.linkGame(99, 0, 'game-unknown'), /Unknown pairing/);
+  });
+
+  test('re-linking a match retires the old gameId from the reverse map', () => {
+    const t = new Tournament(config, new RoundRobinPairing());
+    t.register('A');
+    t.register('B');
+    t.start();
+
+    t.linkGame(0, 0, 'game-old');
+    assert.deepStrictEqual(t.pairingForGame('game-old'), { roundIndex: 0, pairingIndex: 0 });
+
+    // Re-link the same match to a new game (e.g. the first launch was abandoned).
+    t.linkGame(0, 0, 'game-new');
+    assert.strictEqual(t.gameIdFor(0, 0), 'game-new');
+    assert.deepStrictEqual(t.pairingForGame('game-new'), { roundIndex: 0, pairingIndex: 0 });
+
+    // The stale id must no longer resolve to a pairing or record a result.
+    assert.strictEqual(t.pairingForGame('game-old'), null);
+    assert.throws(() => t.recordResultByGame('game-old', 'white_win'), /Unknown game ID/);
+  });
+
+  test('recordResultByGame works', () => {
+    const t = new Tournament(config, new RoundRobinPairing());
+    t.register('A');
+    t.register('B');
+    t.start();
+
+    t.linkGame(0, 0, 'game-1');
+    t.recordResultByGame('game-1', 'white_win');
+    
+    assert.strictEqual(t.getState(), 'finished');
+    const snap = t.toSnapshot();
+    assert.strictEqual(snap.results[0][1], 'white_win');
+  });
+
+  test('recordResultByGame throws for unknown game', () => {
+    const t = new Tournament(config, new RoundRobinPairing());
+    t.register('A');
+    t.register('B');
+    t.start();
+
+    assert.throws(() => t.recordResultByGame('unknown-game', 'white_win'), /Unknown game ID/);
+  });
+
+  test('snapshot backwards compatibility and game links persistence', () => {
+    const t = new Tournament(config, new RoundRobinPairing());
+    t.register('A');
+    t.register('B');
+    t.start();
+    t.linkGame(0, 0, 'game-xyz');
+    
+    const snap = t.toSnapshot();
+    assert.ok(snap.gameLinks);
+    assert.strictEqual(snap.gameLinks[0][1], 'game-xyz');
+
+    // Restore from snapshot with links
+    const t2 = Tournament.restore(snap, new RoundRobinPairing());
+    assert.strictEqual(t2.gameIdFor(0, 0), 'game-xyz');
+    
+    // Restore from snapshot WITHOUT links (simulating old data)
+    const oldSnap = { ...snap, gameLinks: undefined };
+    const t3 = Tournament.restore(oldSnap, new RoundRobinPairing());
+    assert.strictEqual(t3.gameIdFor(0, 0), undefined);
+    assert.strictEqual(t3.pairingForGame('game-xyz'), null);
+  });
 });

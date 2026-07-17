@@ -242,6 +242,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
             kind: { type: 'string', enum: ['game', 'bye'] },
             white: { type: 'string', format: 'uuid' },
             black: { type: 'string', format: 'uuid' },
+            gameId: { type: 'string', format: 'uuid', nullable: true },
             player: { type: 'string', format: 'uuid' },
           },
         },
@@ -353,6 +354,15 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     required: ['pairingIndex', 'result'],
     properties: {
       pairingIndex: { type: 'integer' },
+      result: { type: 'string', enum: ['white_win', 'black_win', 'draw'] },
+    },
+    additionalProperties: false,
+  },
+
+  RecordResultByGameRequest: {
+    type: 'object',
+    required: ['result'],
+    properties: {
       result: { type: 'string', enum: ['white_win', 'black_win', 'draw'] },
     },
     additionalProperties: false,

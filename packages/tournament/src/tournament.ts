@@ -15,6 +15,7 @@ export interface TournamentSnapshot {
   readonly rounds: readonly Round[];
   readonly results: readonly (readonly [string, GameResult | 'bye'])[];
   readonly pairingsByMatchId: readonly (readonly [string, { readonly p1: string; readonly p2: string | null }])[];
+  readonly gameLinks?: readonly (readonly [string, string])[];
 }
 
 export class Tournament {
@@ -25,6 +26,10 @@ export class Tournament {
   // matchId -> result
   private readonly results = new Map<string, GameResult | 'bye'>();
   private readonly pairingsByMatchId = new Map<string, { p1: string; p2: string | null }>();
+  
+  // matchId <-> gameId
+  private readonly gameLinks = new Map<string, string>();
+  private readonly gameIds = new Map<string, string>();
 
   constructor(
     public readonly config: TournamentConfig,
@@ -94,6 +99,44 @@ export class Tournament {
 
     // Check if the current round is fully resolved, and if so advance
     this.tryAdvance();
+  }
+
+  linkGame(roundIndex: number, pairingIndex: number, gameId: string): void {
+    const matchId = `${roundIndex}-${pairingIndex}`;
+    if (!this.pairingsByMatchId.has(matchId)) {
+      throw new Error('Unknown pairing');
+    }
+    if (this.pairingsByMatchId.get(matchId)?.p2 === null) {
+      throw new Error('Cannot link game to a bye');
+    }
+    // Re-linking a match to a new game must not leave the old gameId dangling in
+    // the reverse map, otherwise recordResultByGame(oldGameId) would still resolve.
+    const previousGameId = this.gameLinks.get(matchId);
+    if (previousGameId !== undefined && previousGameId !== gameId) {
+      this.gameIds.delete(previousGameId);
+    }
+    this.gameLinks.set(matchId, gameId);
+    this.gameIds.set(gameId, matchId);
+  }
+
+  gameIdFor(roundIndex: number, pairingIndex: number): string | undefined {
+    return this.gameLinks.get(`${roundIndex}-${pairingIndex}`);
+  }
+
+  pairingForGame(gameId: string): { roundIndex: number; pairingIndex: number } | null {
+    const matchId = this.gameIds.get(gameId);
+    if (!matchId) return null;
+    const [roundIndexStr, pairingIndexStr] = matchId.split('-');
+    return { roundIndex: parseInt(roundIndexStr, 10), pairingIndex: parseInt(pairingIndexStr, 10) };
+  }
+
+  recordResultByGame(gameId: string, result: GameResult): void {
+    const matchId = this.gameIds.get(gameId);
+    if (!matchId) {
+      throw new Error('Unknown game ID');
+    }
+    const [roundIndexStr, pairingIndexStr] = matchId.split('-');
+    this.recordResult(parseInt(roundIndexStr, 10), parseInt(pairingIndexStr, 10), result);
   }
 
   standings(): PlayerStanding[] {
@@ -247,7 +290,8 @@ export class Tournament {
       participants: [...this.participants],
       rounds: JSON.parse(JSON.stringify(this.rounds)),
       results: Array.from(this.results.entries()),
-      pairingsByMatchId: Array.from(this.pairingsByMatchId.entries()).map(([k, v]) => [k, { ...v }])
+      pairingsByMatchId: Array.from(this.pairingsByMatchId.entries()).map(([k, v]) => [k, { ...v }]),
+      gameLinks: Array.from(this.gameLinks.entries())
     };
   }
 
@@ -262,6 +306,10 @@ export class Tournament {
     }
     for (const [matchId, pairing] of snapshot.pairingsByMatchId) {
       t.pairingsByMatchId.set(matchId, { ...pairing });
+    }
+    for (const [matchId, gameId] of snapshot.gameLinks || []) {
+      t.gameLinks.set(matchId, gameId);
+      t.gameIds.set(gameId, matchId);
     }
     return t;
   }

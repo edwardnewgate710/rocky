@@ -42,6 +42,7 @@ import { summaryView, tournamentView, roundView, standingView } from './tourname
 import { buildOpenApiDocument } from './openapi/spec';
 import type { OpenApiDocument, OpenApiInfo } from './openapi/spec';
 import type { RouteDoc } from './openapi/types';
+import type { GameLauncher } from './tournament/launcher';
 
 /** Collaborators the route handlers need. */
 export interface RouteDeps {
@@ -53,6 +54,7 @@ export interface RouteDeps {
   readonly rateLimiter: RateLimiter;
   readonly config: ApiConfig;
   readonly tournamentRepo: TournamentsRepository;
+  readonly gameLauncher: GameLauncher;
 }
 
 const PUBLIC: AuthPolicy = { required: false };
@@ -453,7 +455,7 @@ export function buildRouter(deps: RouteDeps): Router {
   );
 
   // --- Tournaments ---------------------------------------------------------
-  const tournamentService = new TournamentService(deps.tournamentRepo);
+  const tournamentService = new TournamentService(deps.tournamentRepo, deps.gameLauncher);
 
   router.post(
     '/v1/tournaments',
@@ -604,7 +606,7 @@ export function buildRouter(deps: RouteDeps): Router {
     PUBLIC,
     async (ctx) => {
       const t = await tournamentService.load(ctx.params['id']!);
-      return json(200, t.getRounds().map(roundView));
+      return json(200, t.getRounds().map(round => roundView(round, t)));
     },
   );
 
@@ -637,6 +639,35 @@ export function buildRouter(deps: RouteDeps): Router {
         pairingIndex,
         result: result as 'white_win' | 'black_win' | 'draw',
       });
+      return json(200, tournamentView(t));
+    },
+  );
+
+  router.post(
+    '/v1/tournaments/:id/games/:gameId/result',
+    doc({
+      summary: 'Record a game result by game id',
+      tags: ['tournaments'],
+      security: 'bearer',
+      params: [pathParam('id', 'Tournament id'), pathParam('gameId', 'Game id')],
+      requestSchema: 'RecordResultByGameRequest',
+      responses: { 200: ['TournamentView', 'Result recorded'], 403: ['Error', 'Forbidden'], 404: ['Error', 'Not found'], 409: ['Error', 'Conflict'], 422: ['Error', 'Validation error'] },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const identity = requireAuth(ctx);
+      if (!identity.roles.includes('tournament_director')) {
+        throw HttpError.forbidden('only tournament directors can record results');
+      }
+
+      const body = strictObject(ctx.body, ['result']);
+      const result = oneOf(reqString(body, 'result'), ['white_win', 'black_win', 'draw'], 'result');
+
+      const t = await tournamentService.recordResultByGame(
+        ctx.params['id']!,
+        ctx.params['gameId']!,
+        result as 'white_win' | 'black_win' | 'draw'
+      );
       return json(200, tournamentView(t));
     },
   );

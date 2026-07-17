@@ -27,12 +27,17 @@ export function tournamentView(tournament: Tournament) {
   };
 }
 
-export function roundView(round: Round) {
+export function roundView(round: Round, tournament: Tournament) {
   return {
     roundIndex: round.roundIndex,
-    pairings: round.pairings.map((p) => {
+    pairings: round.pairings.map((p, pIndex) => {
       if (p.kind === 'game') {
-        return { kind: 'game', white: p.white, black: p.black };
+        return {
+          kind: 'game',
+          white: p.white,
+          black: p.black,
+          gameId: tournament.gameIdFor(round.roundIndex, pIndex) ?? null,
+        };
       } else {
         return { kind: 'bye', player: p.player };
       }

@@ -34,6 +34,8 @@ import { InMemoryRateLimiter } from './ports/in-memory-rate-limiter';
 import type { RateLimiter } from './ports/rate-limiter';
 import { createApiServer } from './server';
 import type { ApiServer, ApiServerOptions } from './server';
+import { InMemoryGameLauncher } from './tournament/launcher';
+import type { GameLauncher } from './tournament/launcher';
 
 /** Postgres-backed {@link AuditRepository} writing to the `audit_log` table. */
 export class PgAuditRepository implements AuditRepository {
@@ -86,6 +88,7 @@ export interface PgBootstrapOptions {
   readonly rateLimiter?: RateLimiter;
   readonly server?: ApiServerOptions;
   readonly tournamentRepo?: TournamentsRepository;
+  readonly gameLauncher?: GameLauncher;
 }
 
 /** Build the {@link ApiDependencies} bundle backed by Postgres. */
@@ -108,6 +111,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
   });
   const rateLimiter = options.rateLimiter ?? new InMemoryRateLimiter(clock);
   const tournamentRepo = options.tournamentRepo ?? new PgTournamentsRepository(pool);
+  const gameLauncher = options.gameLauncher ?? new InMemoryGameLauncher(ids);
   const deps: ApiDependencies = {
     repos: createPgRepositories(pool, ids),
     hasher,
@@ -117,6 +121,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     config,
     rateLimiter,
     tournamentRepo,
+    gameLauncher,
   };
   return { deps, pool };
 }

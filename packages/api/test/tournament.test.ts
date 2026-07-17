@@ -128,4 +128,77 @@ describe('Tournament API', () => {
     assert.equal(listRes.body[0].state, 'running');
     assert.equal(listRes.body[0].participantCount, 4);
   });
+
+  it('launches games and records results by game ID', async () => {
+    // 1. Create a 3-player round robin (so there's a bye)
+    const createRes = await h.json('POST', '/v1/tournaments', {
+      token: directorToken,
+      body: {
+        name: 'Game Link Tourney',
+        format: 'round_robin',
+        variant: 'standard',
+        timeControl: { kind: 'sudden_death', initialMs: 300000, incrementMs: 0, delayMs: 0 },
+      },
+    });
+    assert.equal(createRes.status, 201);
+    const tId = createRes.body.id;
+
+    // 2. Register participants
+    const u2 = await h.makeUser('eve');
+    const u3 = await h.makeUser('frank');
+
+    await h.json('POST', `/v1/tournaments/${tId}/participants`, { token: userToken }); // alice
+    await h.json('POST', `/v1/tournaments/${tId}/participants`, { token: u2.token }); // eve
+    await h.json('POST', `/v1/tournaments/${tId}/participants`, { token: u3.token }); // frank
+
+    // 3. Start tournament
+    const startRes = await h.json('POST', `/v1/tournaments/${tId}/start`, { token: directorToken });
+    assert.equal(startRes.status, 200);
+
+    // 4. Fetch rounds and check game IDs
+    const roundsRes = await h.json('GET', `/v1/tournaments/${tId}/rounds`);
+    assert.equal(roundsRes.status, 200);
+    assert.equal(roundsRes.body.length, 1);
+    
+    const r0 = roundsRes.body[0];
+    
+    // There should be 1 game pairing and 1 bye pairing
+    const gamePairing = r0.pairings.find((p: any) => p.kind === 'game');
+    const byePairing = r0.pairings.find((p: any) => p.kind === 'bye');
+    
+    assert.ok(gamePairing);
+    assert.ok(byePairing);
+    assert.ok(gamePairing.gameId, 'Game pairing should have a generated gameId');
+    assert.equal(byePairing.gameId, undefined, 'Bye pairing has no gameId');
+
+    // 5. Non-director fails to record result
+    const badRes = await h.json('POST', `/v1/tournaments/${tId}/games/${gamePairing.gameId}/result`, {
+      token: userToken,
+      body: { result: 'white_win' },
+    });
+    assert.equal(badRes.status, 403);
+
+    // 6. Unknown game ID returns 404
+    const notFoundRes = await h.json('POST', `/v1/tournaments/${tId}/games/game-does-not-exist/result`, {
+      token: directorToken,
+      body: { result: 'white_win' },
+    });
+    assert.equal(notFoundRes.status, 404);
+
+    // 7. Record result by game ID
+    const r1Res = await h.json('POST', `/v1/tournaments/${tId}/games/${gamePairing.gameId}/result`, {
+      token: directorToken,
+      body: { result: 'white_win' },
+    });
+    assert.equal(r1Res.status, 200);
+
+    // After resolving the single game pairing, the round is complete, so round 2 should be launched.
+    const roundsRes2 = await h.json('GET', `/v1/tournaments/${tId}/rounds`);
+    assert.equal(roundsRes2.body.length, 2);
+    
+    const r1 = roundsRes2.body[1];
+    const gamePairingR1 = r1.pairings.find((p: any) => p.kind === 'game');
+    assert.ok(gamePairingR1);
+    assert.ok(gamePairingR1.gameId, 'Next round should also be launched with gameIds');
+  });
 });
