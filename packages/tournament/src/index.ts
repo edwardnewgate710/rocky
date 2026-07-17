@@ -1,3 +1,4 @@
+export * from './arena';
 export * from './config';
 export * from './factory';
 export * from './pairing';
