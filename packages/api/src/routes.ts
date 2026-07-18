@@ -264,6 +264,76 @@ export function buildRouter(deps: RouteDeps): Router {
     },
   );
 
+  router.post(
+    '/v1/auth/password-reset/request',
+    doc({
+      summary: 'Request a password reset',
+      tags: ['auth'],
+      requestSchema: 'PasswordResetRequest',
+      responses: { 202: [undefined, 'Accepted'] },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const body = strictObject(ctx.body, ['handleOrEmail']);
+      const handleOrEmail = reqString(body, 'handleOrEmail', { trim: true });
+
+      if (config.rateLimit.enabled) {
+        const ipKey = `password-reset:ip:${ctx.ip ?? 'unknown'}`;
+        const targetKey = `password-reset:target:${handleOrEmail.toLowerCase()}`;
+        
+        const ipCheck = await rateLimiter.check(ipKey, config.rateLimit.passwordResetRequest.perIp);
+        if (!ipCheck.allowed) throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
+
+        const targetCheck = await rateLimiter.check(targetKey, config.rateLimit.passwordResetRequest.perTarget);
+        if (!targetCheck.allowed) throw HttpError.rateLimited(targetCheck.retryAfterSeconds);
+      }
+
+      await auth.requestPasswordReset(handleOrEmail, meta(ctx));
+      return { status: 202 };
+    },
+  );
+
+  router.post(
+    '/v1/auth/password-reset/confirm',
+    doc({
+      summary: 'Confirm a password reset',
+      tags: ['auth'],
+      requestSchema: 'PasswordResetConfirmRequest',
+      responses: { 204: [undefined, 'Password reset'], 401: ['Error', 'Invalid or expired token'] },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const body = strictObject(ctx.body, ['token', 'newPassword']);
+      const token = reqString(body, 'token');
+      const newPassword = reqString(body, 'newPassword', { min: 8, max: 1024 });
+
+      await auth.confirmPasswordReset(token, newPassword, meta(ctx));
+      // Clear refresh cookie since sessions are revoked
+      return {
+        status: 204,
+        headers: { 'Set-Cookie': clearRefreshCookie(cookieOpts) },
+      };
+    },
+  );
+
+  router.post(
+    '/v1/auth/email/verify',
+    doc({
+      summary: 'Verify an email address',
+      tags: ['auth'],
+      requestSchema: 'EmailVerifyRequest',
+      responses: { 204: [undefined, 'Email verified'], 401: ['Error', 'Invalid or expired token'] },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const body = strictObject(ctx.body, ['token']);
+      const token = reqString(body, 'token');
+
+      await auth.verifyEmail(token, meta(ctx));
+      return noContent();
+    },
+  );
+
   // --- Users ---------------------------------------------------------------
   router.get(
     '/v1/users/me',

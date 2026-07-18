@@ -19,6 +19,7 @@ import { InMemoryRateLimiter } from '../src/ports/in-memory-rate-limiter';
 import { createApiServer } from '../src/server';
 import type { ApiServer } from '../src/server';
 import { InMemoryGameLauncher } from '../src/tournament/launcher';
+import { InMemoryEmailSender } from '../src/ports/email';
 
 export const TEST_SECRET = 'test-access-token-secret-0123456789abcdef';
 export const START_MS = 1_700_000_000_000;
@@ -29,6 +30,7 @@ export interface Harness {
   readonly tournamentRepo: InMemoryTournamentsRepository;
   readonly clock: ManualClock;
   readonly tokens: AccessTokenService;
+  readonly emailSender: InMemoryEmailSender;
   readonly baseUrl: string;
   makeUser(handle: string, roles?: Role[]): Promise<{ userId: string; token: string }>;
   json(
@@ -61,7 +63,8 @@ export async function startHarness(config: ApiConfigInput = {}): Promise<Harness
   const rateLimiter = new InMemoryRateLimiter(clock);
   const gameLauncher = new InMemoryGameLauncher(ids);
   const liveView = { activeGames: () => [] };
-  const server = createApiServer({ repos, hasher, tokens, clock, ids, rateLimiter, tournamentRepo, gameLauncher, liveView, config: resolved });
+  const emailSender = new InMemoryEmailSender();
+  const server = createApiServer({ repos, hasher, tokens, clock, ids, rateLimiter, tournamentRepo, gameLauncher, liveView, emailSender, config: resolved });
   const http: Server = await server.listen(0, '127.0.0.1');
   const { port } = http.address() as AddressInfo;
   const baseUrl = `http://127.0.0.1:${port}`;
@@ -72,6 +75,7 @@ export async function startHarness(config: ApiConfigInput = {}): Promise<Harness
     tournamentRepo,
     clock,
     tokens,
+    emailSender,
     baseUrl,
     async makeUser(handle, roles = ['user']) {
       const user = await repos.users.create({ id: ids.next(), handle });

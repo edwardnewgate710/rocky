@@ -20,6 +20,8 @@ export type Role = 'user' | 'coach' | 'tournament_director' | 'moderator' | 'adm
 export interface UserRow {
   readonly id: string;
   readonly handle: string;
+  readonly email: string | null;
+  readonly emailVerifiedAt: Date | null;
   readonly emailHash: Buffer | null;
   readonly country: string | null;
   readonly flags: Record<string, unknown>;
@@ -29,6 +31,8 @@ export interface UserRow {
 export interface NewUser {
   readonly id: string;
   readonly handle: string;
+  readonly email?: string | null;
+  readonly emailVerifiedAt?: Date | null;
   readonly emailHash?: Buffer | null;
   readonly country?: string | null;
 }
@@ -39,11 +43,39 @@ export interface UsersRepository {
   createWithPasswordAndRole(user: NewUser, secretHash: string, role: Role): Promise<UserRow>;
   findById(id: string): Promise<UserRow | null>;
   findByHandle(handle: string): Promise<UserRow | null>;
+  findByEmail(email: string): Promise<UserRow | null>;
+  markEmailVerified(userId: string, at: Date): Promise<void>;
   /** Upsert the argon2id-encoded password hash for a user. */
   setPassword(userId: string, secretHash: string): Promise<void>;
   getPasswordHash(userId: string): Promise<string | null>;
   addRole(userId: string, role: Role): Promise<void>;
   rolesOf(userId: string): Promise<Role[]>;
+}
+
+// --- Identity Tokens -------------------------------------------------------
+
+export type IdentityTokenKind = 'password_reset' | 'email_verify';
+
+export interface IdentityTokenRow {
+  readonly tokenHash: string;
+  readonly userId: string;
+  readonly kind: IdentityTokenKind;
+  readonly createdAt: Date;
+  readonly expiresAt: Date;
+  readonly usedAt: Date | null;
+}
+
+export interface NewIdentityToken {
+  readonly tokenHash: string;
+  readonly userId: string;
+  readonly kind: IdentityTokenKind;
+  readonly expiresAt: Date;
+}
+
+export interface IdentityTokensRepository {
+  create(token: NewIdentityToken): Promise<IdentityTokenRow>;
+  /** Atomically consume a token. Returns null if missing, expired, or already used. */
+  consume(tokenHash: string, kind: IdentityTokenKind, at: Date): Promise<IdentityTokenRow | null>;
 }
 
 // --- Sessions --------------------------------------------------------------

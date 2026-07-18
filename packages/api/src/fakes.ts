@@ -28,7 +28,11 @@ import type {
   UsersRepository,
   TournamentsRepository,
   TournamentSummaryRow,
-  TournamentAnySnapshot
+  TournamentAnySnapshot,
+  IdentityTokenKind,
+  IdentityTokenRow,
+  NewIdentityToken,
+  IdentityTokensRepository,
 } from '@chess-platform/persistence';
 import { DuplicateUserError, VersionConflictError } from '@chess-platform/persistence';
 
@@ -53,6 +57,8 @@ export class InMemoryUsersRepository implements UsersRepository {
     // Deliberately contains no await: duplicate check + all three writes happen
     // in one JavaScript turn, mirroring the Postgres transaction in tests.
     if (this.hasHandle(user.handle)) throw new DuplicateUserError();
+    // Mirror the CITEXT UNIQUE constraint on users.email (migration 0007).
+    if (user.email && (await this.findByEmail(user.email))) throw new DuplicateUserError();
     const row = this.insert(user);
     this.passwords.set(row.id, secretHash);
     this.roles.set(row.id, new Set([role]));
@@ -63,7 +69,9 @@ export class InMemoryUsersRepository implements UsersRepository {
     const row: UserRow = {
       id: user.id,
       handle: user.handle,
+      email: user.email ?? null,
       emailHash: user.emailHash ?? null,
+      emailVerifiedAt: null,
       country: user.country ?? null,
       flags: {},
       createdAt: new Date(this.clock.now()),
@@ -82,6 +90,21 @@ export class InMemoryUsersRepository implements UsersRepository {
 
   async findById(id: string): Promise<UserRow | null> {
     return this.byId.get(id) ?? null;
+  }
+
+  async findByEmail(email: string): Promise<UserRow | null> {
+    const lower = email.toLowerCase();
+    for (const row of this.byId.values()) {
+      if (row.email?.toLowerCase() === lower) return row;
+    }
+    return null;
+  }
+
+  async markEmailVerified(userId: string, at: Date): Promise<void> {
+    const row = this.byId.get(userId);
+    if (row) {
+      this.byId.set(userId, { ...row, emailVerifiedAt: at });
+    }
   }
 
   async findByHandle(handle: string): Promise<UserRow | null> {
@@ -392,6 +415,40 @@ export class InMemoryTournamentsRepository implements TournamentsRepository {
   }
 }
 
+export class InMemoryIdentityTokensRepository implements IdentityTokensRepository {
+  private readonly byHash = new Map<string, IdentityTokenRow>();
+
+  async create(token: NewIdentityToken): Promise<IdentityTokenRow> {
+    const row: IdentityTokenRow = {
+      tokenHash: token.tokenHash,
+      userId: token.userId,
+      kind: token.kind,
+      createdAt: new Date(),
+      expiresAt: token.expiresAt,
+      usedAt: null,
+    };
+    this.byHash.set(row.tokenHash, row);
+    return row;
+  }
+
+  async consume(
+    tokenHash: string,
+    kind: IdentityTokenKind,
+    at: Date,
+  ): Promise<IdentityTokenRow | null> {
+    const row = this.byHash.get(tokenHash);
+    if (!row) return null;
+    if (row.kind !== kind) return null;
+    if (row.usedAt !== null) return null;
+    if (row.expiresAt.getTime() <= at.getTime()) return null;
+    
+    // Simulate atomic update
+    const consumed = { ...row, usedAt: at };
+    this.byHash.set(tokenHash, consumed);
+    return consumed;
+  }
+}
+
 /** A bundle of in-memory repositories plus the concrete audit repo for tests. */
 export interface InMemoryRepositories extends Repositories {
   readonly users: InMemoryUsersRepository;
@@ -401,6 +458,7 @@ export interface InMemoryRepositories extends Repositories {
   readonly seeks: InMemorySeeksRepository;
   readonly audit: InMemoryAuditRepository;
   readonly tournaments: InMemoryTournamentsRepository;
+  readonly identityTokens: InMemoryIdentityTokensRepository;
 }
 
 /** Construct a fresh set of in-memory repositories sharing a clock. */
@@ -413,5 +471,6 @@ export function createInMemoryRepositories(clock: Clock = systemClock): InMemory
     seeks: new InMemorySeeksRepository(clock),
     audit: new InMemoryAuditRepository(),
     tournaments: new InMemoryTournamentsRepository(),
+    identityTokens: new InMemoryIdentityTokensRepository(),
   };
 }

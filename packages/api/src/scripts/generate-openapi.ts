@@ -16,6 +16,7 @@ import { systemClock } from '../ports/clock';
 import { uuidv7Generator } from '../ports/ids';
 import { createApiServer } from '../server';
 import { InMemoryGameLauncher } from '../tournament/launcher';
+import { ConsoleEmailSender } from '../ports/email';
 
 function main(): void {
   const clock = systemClock;
@@ -40,6 +41,7 @@ function main(): void {
     tournamentRepo: repos.tournaments,
     gameLauncher: new InMemoryGameLauncher(ids),
     liveView: { activeGames: () => [] },
+    emailSender: new ConsoleEmailSender(),
   });
 
   const doc = server.openapiDocument();

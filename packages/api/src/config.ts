@@ -63,6 +63,10 @@ export interface RateLimitConfig {
   readonly refresh: {
     readonly perIp: RateLimitEndpointConfig;
   };
+  readonly passwordResetRequest: {
+    readonly perIp: RateLimitEndpointConfig;
+    readonly perTarget: RateLimitEndpointConfig;
+  };
 }
 
 export const DEFAULT_ACCESS_TOKEN_TTL_SEC = 15 * 60;
@@ -87,6 +91,10 @@ export const DEFAULT_RATE_LIMIT: RateLimitConfig = {
   },
   refresh: {
     perIp: { maxRequests: 60, windowMs: 5 * 60 * 1000 }, // 60 / 5 min
+  },
+  passwordResetRequest: {
+    perIp: { maxRequests: 5, windowMs: 60 * 60 * 1000 }, // 5 / 60 min
+    perTarget: { maxRequests: 3, windowMs: 60 * 60 * 1000 }, // 3 / 60 min
   },
 };
 

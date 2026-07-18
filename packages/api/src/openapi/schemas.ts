@@ -460,4 +460,32 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     },
     additionalProperties: false,
   },
+
+  PasswordResetRequest: {
+    type: 'object',
+    required: ['handleOrEmail'],
+    properties: {
+      handleOrEmail: { type: 'string' },
+    },
+    additionalProperties: false,
+  },
+
+  PasswordResetConfirmRequest: {
+    type: 'object',
+    required: ['token', 'newPassword'],
+    properties: {
+      token: { type: 'string' },
+      newPassword: { type: 'string', minLength: 8, maxLength: 1024 },
+    },
+    additionalProperties: false,
+  },
+
+  EmailVerifyRequest: {
+    type: 'object',
+    required: ['token'],
+    properties: {
+      token: { type: 'string' },
+    },
+    additionalProperties: false,
+  },
 };

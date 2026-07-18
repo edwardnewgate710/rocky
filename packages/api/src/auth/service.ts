@@ -14,7 +14,7 @@
  *   entire session chain for that user is revoked and the attempt is audited.
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { DuplicateUserError } from '@chess-platform/persistence';
 import type { NewSession, Role, SessionRow, UserRow } from '@chess-platform/persistence';
 import { HttpError } from '../http/errors';
@@ -24,6 +24,7 @@ import type { Repositories } from '../deps';
 import { generateRefreshToken, hashRefreshToken } from './refresh';
 import type { AccessTokenService } from './tokens';
 import type { PasswordHasher } from './password';
+import type { EmailSender } from '../ports/email';
 
 /** Per-request metadata attached to sessions and audit records. */
 export interface RequestMeta {
@@ -66,6 +67,7 @@ export class AuthService {
   private readonly clock: Clock;
   private readonly ids: IdGenerator;
   private readonly refreshTtlSec: number;
+  private readonly emailSender: EmailSender;
 
   constructor(deps: {
     repos: Repositories;
@@ -74,6 +76,7 @@ export class AuthService {
     clock: Clock;
     ids: IdGenerator;
     refreshTtlSec: number;
+    emailSender: EmailSender;
   }) {
     this.repos = deps.repos;
     this.hasher = deps.hasher;
@@ -81,6 +84,7 @@ export class AuthService {
     this.clock = deps.clock;
     this.ids = deps.ids;
     this.refreshTtlSec = deps.refreshTtlSec;
+    this.emailSender = deps.emailSender;
   }
 
   /** Create an account, grant the base `user` role, and start a session. */
@@ -98,6 +102,7 @@ export class AuthService {
       user = await this.repos.users.createWithPasswordAndRole({
         id: this.ids.next(),
         handle: input.handle,
+        email: input.email ?? null,
         emailHash: input.email ? emailHash(input.email) : null,
       }, secretHash, 'user');
     } catch (error) {
@@ -107,6 +112,18 @@ export class AuthService {
       throw error;
     }
     const roles: Role[] = ['user'];
+
+    if (input.email) {
+      const verifyToken = randomBytes(32).toString('hex');
+      const verifyHash = createHash('sha256').update(verifyToken).digest('hex');
+      await this.repos.identityTokens.create({
+        tokenHash: verifyHash,
+        userId: user.id,
+        kind: 'email_verify',
+        expiresAt: new Date(this.clock.now() + 24 * 60 * 60 * 1000), // 24 hours
+      });
+      await this.emailSender.sendEmailVerification(input.email, verifyToken);
+    }
 
     const tokens = await this.startSession(user, roles, meta);
     await this.audit(meta, user.id, 'auth.register', user.id);
@@ -195,6 +212,64 @@ export class AuthService {
   /** List a user's sessions (most recent first). */
   listSessions(userId: string): Promise<SessionRow[]> {
     return this.repos.sessions.listForUser(userId);
+  }
+
+  async requestPasswordReset(handleOrEmail: string, meta: RequestMeta): Promise<void> {
+    const isEmail = handleOrEmail.includes('@');
+    let user: UserRow | null = null;
+    if (isEmail) {
+      user = await this.repos.users.findByEmail(handleOrEmail);
+    } else {
+      user = await this.repos.users.findByHandle(handleOrEmail);
+    }
+    
+    await this.audit(meta, user?.id ?? null, 'auth.password_reset.request', null);
+    
+    if (user && user.email) {
+      const resetToken = randomBytes(32).toString('hex');
+      const resetHash = createHash('sha256').update(resetToken).digest('hex');
+      await this.repos.identityTokens.create({
+        tokenHash: resetHash,
+        userId: user.id,
+        kind: 'password_reset',
+        expiresAt: new Date(this.clock.now() + 30 * 60 * 1000), // 30 minutes
+      });
+      await this.emailSender.sendPasswordReset(user.email, resetToken);
+    }
+  }
+
+  async confirmPasswordReset(token: string, newPassword: string, meta: RequestMeta): Promise<void> {
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const consumed = await this.repos.identityTokens.consume(
+      tokenHash,
+      'password_reset',
+      new Date(this.clock.now())
+    );
+    if (!consumed) {
+      await this.audit(meta, null, 'auth.password_reset.confirm.fail', null);
+      throw HttpError.unauthorized('invalid or expired reset token');
+    }
+
+    const secretHash = await this.hasher.hash(newPassword);
+    await this.repos.users.setPassword(consumed.userId, secretHash);
+    await this.revokeAllForUser(consumed.userId, this.clock.now());
+    await this.audit(meta, consumed.userId, 'auth.password_reset.confirm', consumed.userId);
+  }
+
+  async verifyEmail(token: string, meta: RequestMeta): Promise<void> {
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const consumed = await this.repos.identityTokens.consume(
+      tokenHash,
+      'email_verify',
+      new Date(this.clock.now())
+    );
+    if (!consumed) {
+      await this.audit(meta, null, 'auth.email.verify.fail', null);
+      throw HttpError.unauthorized('invalid or expired verification token');
+    }
+
+    await this.repos.users.markEmailVerified(consumed.userId, new Date(this.clock.now()));
+    await this.audit(meta, consumed.userId, 'auth.email.verify', consumed.userId);
   }
 
   private async startSession(

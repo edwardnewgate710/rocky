@@ -4,7 +4,10 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-18 — M9 inc 13: Durable tournament result recording in production
+_Last updated: 2026-07-19 — M4 Identity Hardening inc 1: password reset + email verification
+(ADR-0026): `users.email` (CITEXT UNIQUE) + `identity_tokens` (hashed, single-use, TTL),
+`EmailSender`/`IdentityTokensRepository` ports, three new `/v1/auth` endpoints with
+anti-enumeration + rate limiting, full-session revocation on reset. Prior: M9 inc 13: Durable tournament result recording in production
 (ADR-0025): optimistic concurrency (version CAS) on `TournamentsRepository`, the
 `TournamentResultReporter` promoted from the e2e harness into `@chess-platform/api` and
 hosted by `services/gateway` behind `TOURNAMENT_REPORTER=1` (startup rehydration + periodic
@@ -173,8 +176,7 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
      one-reporter-per-gateway-replica.
 - **Identity (M4 → hardening pass):** **WebAuthn/passkeys** are NOT implemented yet.
   The `webauthn_credentials` table exists in the schema; add a `WebAuthnRepository`
-  + registration/assertion ceremonies. Also: password-reset + email verification
-  flows, and per-account login rate limiting / lockout.
+  + registration/assertion ceremonies. Password-reset + email verification flows are **IMPLEMENTED** (M4 identity hardening inc 1).
 - **API hardening (M12):** request rate limiting / quotas, CORS policy, security
   headers, and body-shape strictness (reject unknown fields — schemas already
   declare `additionalProperties: false`; validators currently ignore extras).
@@ -309,7 +311,7 @@ analysis cache remains a future **ADR-0003** (would amend `DATABASE.md`).
 **Gateway replica constraint (M14 inc 4):** The gateway Deployment defaults to `replicas: 1`. Game-command ownership is NOT coordinated across gateway replicas. Scaling beyond 1 requires sticky per-game routing or sharded authority — a later M14 increment. See `docs/adr/0009-kubernetes-helm.md`.
 
 **Next priorities (in order):**
-1. **M4 identity hardening:** WebAuthn/passkeys (table exists), password reset + email verification, login rate limiting/lockout.
+1. **M4 identity hardening:** WebAuthn/passkeys (table exists). (Password reset + email verification are complete).
 2. **Small deferred correctness:** PGN parser, per-variant timeout rules.
 3. **M9 Tournaments & broadcast:** Arena pairing, FIDE Dutch compliance, live broadcast.
 4. **Remaining M14:** Terraform, blue/green, CI/CD pipeline, 100k-user load testing, secrets management (external-secrets), sticky per-game routing / sharded authority for horizontal gateway scaling.
@@ -336,3 +338,24 @@ Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
 - **Optimistic Concurrency Control**: Added OCC to the `TournamentsRepository` to prevent lost updates in the domain (using a row-version increment with an automated 3-attempt CAS retry loop).
 - **Production Reporter**: Extracted `TournamentResultReporter` into `@chess-platform/api` to act as a production-grade long-running background worker running alongside the gateway. The reporter tracks pubsub topics for ongoing games to drive tournament progression durably, surviving temporary crashes or downtime by catching up on startup.
 - **Leak Fix**: Fixed test memory leak by supporting graceful `stop()` and event subscription deregistration in `TournamentResultReporter`.
+
+## M4 Identity Hardening — Increment 1: password reset + email verification (ADR-0026)
+- **Email storage**: `users` gains a nullable `email CITEXT UNIQUE` column (plus
+  `email_verified_at`), populated at registration alongside the existing
+  `email_hash`; the privacy tradeoff is recorded in ADR-0026. Migration
+  `0007_identity_hardening.sql` also adds the `identity_tokens` table
+  (kind CHECK `password_reset` | `email_verify`, token stored as SHA-256 hash,
+  TTL-bound, single-use).
+- **Flows**: `POST /v1/auth/password-reset/request` (always 202 —
+  anti-enumeration; rate-limited per-IP and per-target), `POST
+  /v1/auth/password-reset/confirm` (atomic single-use consume, new password via
+  `PasswordHasher`, ALL sessions/refresh chains revoked, refresh cookie
+  cleared), `POST /v1/auth/email/verify`; registration issues a verification
+  token when an email is provided. All audited; OpenAPI regenerated.
+- **Ports**: `EmailSender` (`InMemoryEmailSender` for tests, `ConsoleEmailSender`
+  as the stand-in production default — a real provider adapter is a later
+  increment) and `IdentityTokensRepository` (in-memory + Postgres; consumption
+  is one conditional `UPDATE ... RETURNING`, race-free by construction).
+- **Review hardening**: pre-reset refresh tokens proven dead after a reset;
+  expired-token rejection via the injected clock; the in-memory users fake now
+  mirrors the email UNIQUE constraint (duplicate email registration → 409).

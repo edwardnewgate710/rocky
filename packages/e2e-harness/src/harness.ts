@@ -38,6 +38,7 @@ import {
   TournamentService,
   ArenaService,
   TournamentResultReporter,
+  ConsoleEmailSender,
   type ApiServer,
   type ApiDependencies,
 } from '@chess-platform/api';
@@ -142,7 +143,8 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
   });
   const repos = createInMemoryRepositories(clock);
   const rateLimiter = new InMemoryRateLimiter(clock);
-  const deps: ApiDependencies = { repos, hasher, tokens, clock, ids, config, rateLimiter, tournamentRepo, gameLauncher, liveView: broadcaster };
+  const emailSender = new ConsoleEmailSender();
+  const deps: ApiDependencies = { repos, hasher, tokens, clock, ids, config, rateLimiter, tournamentRepo, gameLauncher, liveView: broadcaster, emailSender };
   const apiServer = createApiServer(deps);
 
   const tokenVerifier = new ApiTokenVerifier((token: string) => {

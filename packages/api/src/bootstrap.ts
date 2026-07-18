@@ -19,7 +19,10 @@ import {
   PgSessionsRepository,
   PgTournamentsRepository,
   PgUsersRepository,
+  PgIdentityTokensRepository,
 } from '@chess-platform/persistence/pg';
+import { ConsoleEmailSender } from './ports/email';
+import type { EmailSender } from './ports/email';
 import { ScryptPasswordHasher } from './auth/password';
 import type { PasswordHasher } from './auth/password';
 import { AccessTokenService } from './auth/tokens';
@@ -76,6 +79,7 @@ export function createPgRepositories(pool: Pool, ids: IdGenerator = uuidv7Genera
     games: new PgGamesRepository(pool),
     seeks: new PgSeeksRepository(pool),
     audit: new PgAuditRepository(pool, ids),
+    identityTokens: new PgIdentityTokensRepository(pool),
   };
 }
 
@@ -93,6 +97,7 @@ export interface PgBootstrapOptions {
   readonly tournamentRepo?: TournamentsRepository;
   readonly gameLauncher?: GameLauncher;
   readonly liveView?: TournamentLiveView;
+  readonly emailSender?: EmailSender;
 }
 
 /** Build the {@link ApiDependencies} bundle backed by Postgres. */
@@ -128,6 +133,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     tournamentRepo,
     gameLauncher,
     liveView: options.liveView ?? new DurableTournamentLiveView(tournamentRepo, eventStore),
+    emailSender: options.emailSender ?? new ConsoleEmailSender(),
     readiness: async () => {
       await pool.query('SELECT 1');
     },

@@ -31,6 +31,10 @@ import type {
   TournamentAnySnapshot,
   UserRow,
   UsersRepository,
+  IdentityTokenKind,
+  IdentityTokenRow,
+  NewIdentityToken,
+  IdentityTokensRepository,
 } from '../repositories';
 import { DuplicateUserError, VersionConflictError } from '../errors';
 
@@ -40,6 +44,8 @@ import { DuplicateUserError, VersionConflictError } from '../errors';
 interface UserDbRow {
   id: string;
   handle: string;
+  email: string | null;
+  email_verified_at: Date | null;
   email_hash: Buffer | null;
   country: string | null;
   flags: Record<string, unknown>;
@@ -110,6 +116,8 @@ function toUser(r: UserDbRow): UserRow {
   return {
     id: r.id,
     handle: r.handle,
+    email: r.email,
+    emailVerifiedAt: r.email_verified_at,
     emailHash: r.email_hash,
     country: r.country,
     flags: r.flags,
@@ -196,10 +204,10 @@ export class PgUsersRepository implements UsersRepository {
 
   async create(user: NewUser): Promise<UserRow> {
     const res = await this.pool.query<UserDbRow>(
-      `INSERT INTO users (id, handle, email_hash, country)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, handle, email_hash, country, flags, created_at`,
-      [user.id, user.handle, user.emailHash ?? null, user.country ?? null],
+      `INSERT INTO users (id, handle, email, email_hash, country)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, handle, email, email_verified_at, email_hash, country, flags, created_at`,
+      [user.id, user.handle, user.email ?? null, user.emailHash ?? null, user.country ?? null],
     );
     return toUser(res.rows[0]!);
   }
@@ -209,10 +217,10 @@ export class PgUsersRepository implements UsersRepository {
     try {
       await client.query('BEGIN');
       const created = await client.query<UserDbRow>(
-        `INSERT INTO users (id, handle, email_hash, country)
-         VALUES ($1, $2, $3, $4)
-         RETURNING id, handle, email_hash, country, flags, created_at`,
-        [user.id, user.handle, user.emailHash ?? null, user.country ?? null],
+        `INSERT INTO users (id, handle, email, email_hash, country)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, handle, email, email_verified_at, email_hash, country, flags, created_at`,
+        [user.id, user.handle, user.email ?? null, user.emailHash ?? null, user.country ?? null],
       );
       await client.query(
         `INSERT INTO credentials (user_id, kind, secret_hash)
@@ -236,7 +244,7 @@ export class PgUsersRepository implements UsersRepository {
 
   async findById(id: string): Promise<UserRow | null> {
     const res = await this.pool.query<UserDbRow>(
-      'SELECT id, handle, email_hash, country, flags, created_at FROM users WHERE id = $1',
+      'SELECT id, handle, email, email_verified_at, email_hash, country, flags, created_at FROM users WHERE id = $1',
       [id],
     );
     return res.rows[0] ? toUser(res.rows[0]) : null;
@@ -244,10 +252,25 @@ export class PgUsersRepository implements UsersRepository {
 
   async findByHandle(handle: string): Promise<UserRow | null> {
     const res = await this.pool.query<UserDbRow>(
-      'SELECT id, handle, email_hash, country, flags, created_at FROM users WHERE handle = $1',
+      'SELECT id, handle, email, email_verified_at, email_hash, country, flags, created_at FROM users WHERE handle = $1',
       [handle],
     );
     return res.rows[0] ? toUser(res.rows[0]) : null;
+  }
+
+  async findByEmail(email: string): Promise<UserRow | null> {
+    const res = await this.pool.query<UserDbRow>(
+      'SELECT id, handle, email, email_verified_at, email_hash, country, flags, created_at FROM users WHERE email = $1',
+      [email],
+    );
+    return res.rows[0] ? toUser(res.rows[0]) : null;
+  }
+
+  async markEmailVerified(userId: string, at: Date): Promise<void> {
+    await this.pool.query(
+      'UPDATE users SET email_verified_at = $2 WHERE id = $1',
+      [userId, at],
+    );
   }
 
   async setPassword(userId: string, secretHash: string): Promise<void> {
@@ -594,5 +617,65 @@ export class PgTournamentsRepository implements TournamentsRepository {
       state: r.state,
       participantCount: r.participant_count,
     }));
+  }
+}
+
+export class PgIdentityTokensRepository implements IdentityTokensRepository {
+  constructor(private readonly pool: Pool) {}
+
+  async create(token: NewIdentityToken): Promise<IdentityTokenRow> {
+    const res = await this.pool.query<{
+      token_hash: string;
+      user_id: string;
+      kind: string;
+      created_at: Date;
+      expires_at: Date;
+      used_at: Date | null;
+    }>(
+      `INSERT INTO identity_tokens (token_hash, user_id, kind, expires_at)
+       VALUES ($1, $2, $3, $4)
+       RETURNING token_hash, user_id, kind, created_at, expires_at, used_at`,
+      [token.tokenHash, token.userId, token.kind, token.expiresAt],
+    );
+    const r = res.rows[0]!;
+    return {
+      tokenHash: r.token_hash,
+      userId: r.user_id,
+      kind: r.kind as IdentityTokenKind,
+      createdAt: r.created_at,
+      expiresAt: r.expires_at,
+      usedAt: r.used_at,
+    };
+  }
+
+  async consume(
+    tokenHash: string,
+    kind: IdentityTokenKind,
+    at: Date,
+  ): Promise<IdentityTokenRow | null> {
+    const res = await this.pool.query<{
+      token_hash: string;
+      user_id: string;
+      kind: string;
+      created_at: Date;
+      expires_at: Date;
+      used_at: Date | null;
+    }>(
+      `UPDATE identity_tokens
+       SET used_at = $3
+       WHERE token_hash = $1 AND kind = $2 AND used_at IS NULL AND expires_at > $3
+       RETURNING token_hash, user_id, kind, created_at, expires_at, used_at`,
+      [tokenHash, kind, at],
+    );
+    const r = res.rows[0];
+    if (!r) return null;
+    return {
+      tokenHash: r.token_hash,
+      userId: r.user_id,
+      kind: r.kind as IdentityTokenKind,
+      createdAt: r.created_at,
+      expiresAt: r.expires_at,
+      usedAt: r.used_at,
+    };
   }
 }

@@ -13,7 +13,8 @@ import type {
   SeeksRepository,
   SessionsRepository,
   UsersRepository,
-  TournamentsRepository
+  TournamentsRepository,
+  IdentityTokensRepository
 } from '@chess-platform/persistence';
 import type { PasswordHasher } from './auth/password';
 import type { AccessTokenService } from './auth/tokens';
@@ -24,6 +25,7 @@ import type { RateLimiter } from './ports/rate-limiter';
 import type { ApiConfig } from './config';
 import type { GameLauncher } from './tournament/launcher';
 import type { TournamentLiveView } from './tournament/live-view';
+import type { EmailSender } from './ports/email';
 
 /** The full set of repositories the API consumes. */
 export interface Repositories {
@@ -33,6 +35,7 @@ export interface Repositories {
   readonly games: GamesRepository;
   readonly seeks: SeeksRepository;
   readonly audit: AuditRepository;
+  readonly identityTokens: IdentityTokensRepository;
 }
 
 /** Everything `createApiServer` needs to construct the service. */
@@ -47,6 +50,7 @@ export interface ApiDependencies {
   readonly tournamentRepo: TournamentsRepository;
   readonly gameLauncher: GameLauncher;
   readonly liveView: TournamentLiveView;
+  readonly emailSender: EmailSender;
   /** Production dependency check used by the readiness endpoint. */
   readonly readiness?: () => Promise<void>;
 }

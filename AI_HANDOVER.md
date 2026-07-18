@@ -30,7 +30,7 @@ dependency-free domain packages** tested with the built-in `node --test` runner.
 | M2 | `@chess-platform/game` | ✅ event-sourced game aggregate + clocks + threefold repetition | 25 |
 | M3 | `@chess-platform/realtime-gateway` | ✅ realtime WS edge + token auth + durable `EventLog` port + `PubSub` (in-memory & Redis) | 61 |
 | M4a | `@chess-platform/persistence` | ✅ durable event store + repositories + Glicko-2 | 20 (6 DB-gated) |
-| M4b | `@chess-platform/api` | ✅ stateless REST + identity (scrypt, rotating refresh, RBAC) | 124 (3 DB-gated) |
+| M4b | `@chess-platform/api` | ✅ stateless REST + identity (scrypt, rotating refresh, RBAC, password reset + email verification — ADR-0026) | 128 (3 DB-gated) |
 | M5 | `@chess-platform/engine` | ✅ provider-agnostic UCI engine bridge | 50 |
 | M6 | `@chess-platform/web` + `@chess-platform/e2e-harness` | ✅ playable frontend; Playwright full-game e2e + Lighthouse a11y ≥ 0.95 in CI | 260 + 4 |
 | M7 | `@chess-platform/ai-orchestrator` | ✅ AI routing/failover/caching + engine-grounded prompts | 117 (2 key-gated) |
@@ -39,7 +39,7 @@ dependency-free domain packages** tested with the built-in `node --test` runner.
 | M12 | api security hardening | 🚧 **increments 1–3 complete:** CORS + security headers (ADR-0011) · httpOnly refresh cookie (ADR-0012) · auth rate limiting w/ Postgres buckets (ADR-0013) | — |
 | **M14** | compose + `services/gateway` + `deploy/helm` | 🚧 **increments 1–4 complete:** local compose stack · durable game authority (write-through `EventLog` → Postgres, evict/rehydrate) · Redis pub/sub multi-node fanout (ADR-0008) · Helm chart + kubeconform CI gate (ADR-0009) · threefold-repetition fix (en-passant legality in repetition key) | 4 (Redis-gated) |
 
-**Whole repo: 870 total tests, 0 failures** (skips: 9 Postgres-gated + 18
+**Whole repo: 874 total tests, 0 failures** (skips: 9 Postgres-gated + 18
 API-key-gated + 4 Redis-gated — run `npm run test:counts` for the live per-package
 breakdown). Strict TS, lint clean. **CI is active** (`.github/workflows/ci.yml`, 6 jobs:
 build+typecheck+test on Node 22/24, Postgres integration, M6 Playwright+Lighthouse acceptance,
@@ -87,8 +87,7 @@ ADR, approved before code) — see `DATABASE.md` (M4), `ENGINE_BRIDGE.md` (M5), 
 
 ## Known tech debt (tracked, updated 2026-07-18)
 
-- **Identity hardening (M4 follow-up)** — WebAuthn/passkeys (table exists, flow doesn't),
-  password reset + email verification. (Refresh-token storage moved to an httpOnly cookie in
+- **Identity hardening (M4 follow-up)** — WebAuthn/passkeys (table exists, flow doesn't). Password reset + email verification are complete. (Refresh-token storage moved to an httpOnly cookie in
   M12 inc 2; auth rate limiting landed in M12 inc 3.)
 - **Tournament reporter refinements (ADR-0025)** — event-log catch-up for ended-broadcasts
   missed before subscription; dedicated single-replica reporter Deployment. Arena
