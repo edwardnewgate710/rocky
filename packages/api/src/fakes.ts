@@ -30,7 +30,7 @@ import type {
   TournamentSummaryRow,
   TournamentAnySnapshot
 } from '@chess-platform/persistence';
-import { DuplicateUserError } from '@chess-platform/persistence';
+import { DuplicateUserError, VersionConflictError } from '@chess-platform/persistence';
 
 import type { AuditEntry, AuditRepository } from './ports/audit';
 import type { Clock } from './ports/clock';
@@ -352,20 +352,25 @@ export class InMemoryAuditRepository implements AuditRepository {
 }
 
 export class InMemoryTournamentsRepository implements TournamentsRepository {
-  private readonly byId = new Map<string, TournamentAnySnapshot>();
+  private readonly byId = new Map<string, { snap: TournamentAnySnapshot; version: number }>();
   private readonly order: string[] = []; // for newest-first list
 
-  async save(snapshot: TournamentAnySnapshot): Promise<void> {
-    const isNew = !this.byId.has(snapshot.config.id);
-    this.byId.set(snapshot.config.id, structuredClone(snapshot));
+  async save(snapshot: TournamentAnySnapshot, expectedVersion: number): Promise<void> {
+    const existing = this.byId.get(snapshot.config.id);
+    const currentVersion = existing ? existing.version : 0;
+    if (currentVersion !== expectedVersion) {
+      throw new VersionConflictError(snapshot.config.id, expectedVersion);
+    }
+    const isNew = !existing;
+    this.byId.set(snapshot.config.id, { snap: structuredClone(snapshot), version: expectedVersion + 1 });
     if (isNew) {
       this.order.push(snapshot.config.id);
     }
   }
 
-  async findById(id: string): Promise<TournamentAnySnapshot | null> {
-    const snap = this.byId.get(id);
-    return snap ? structuredClone(snap) : null;
+  async findById(id: string): Promise<{ snapshot: TournamentAnySnapshot; version: number } | null> {
+    const stored = this.byId.get(id);
+    return stored ? { snapshot: structuredClone(stored.snap), version: stored.version } : null;
   }
 
   async list(limit: number): Promise<TournamentSummaryRow[]> {
@@ -373,7 +378,7 @@ export class InMemoryTournamentsRepository implements TournamentsRepository {
     // Iterate newest first (reverse order)
     for (let i = this.order.length - 1; i >= 0; i--) {
       const id = this.order[i];
-      const snap = this.byId.get(id)!;
+      const { snap } = this.byId.get(id)!;
       summaries.push({
         id: snap.config.id,
         name: snap.config.name,

@@ -4,13 +4,17 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-18 — Repo review pass: fixed the two tournament routes that
+_Last updated: 2026-07-18 — M9 inc 13: Durable tournament result recording in production
+(ADR-0025): optimistic concurrency (version CAS) on `TournamentsRepository`, the
+`TournamentResultReporter` promoted from the e2e harness into `@chess-platform/api` and
+hosted by `services/gateway` behind `TOURNAMENT_REPORTER=1` (startup rehydration + periodic
+re-scan for games launched by other processes). **M1–M9 complete, M12 inc 1–3 complete, M14 increments 1–4 complete (M14 overall still in progress).** Prior: Repo review pass: fixed the two tournament routes that
 predated the Arena format and never gained its dispatch — `POST
 /v1/tournaments/:id/games/:gameId/result` (always 409'd for arenas; arenas had NO
 result-recording path through the REST API) and `GET /v1/tournaments/:id/live`
 (always 409'd for arenas) — plus `ArenaService` domain-error → HTTP mapping
 (unknown gameId is now 404, not 500). Docs (README/AI_HANDOVER/ROADMAP) re-synced
-with reality (M9 ✅, M12 🚧, live test counts). Prior: M9 inc 12: Arena realtime game lifecycle (ADR-0024). **M1–M9 complete, M12 inc 1–3 complete, M14 increments 1–4 complete (M14 overall still in progress).** Prior: M9 inc 11: Arena through the API + persistence (ADR-0023). Prior: M9 inc 10: Arena tournament format (domain model) (ADR-0022). Prior: M9 inc 9: Tournament robustness (ADR-0021). Prior: M9 inc 8: Tournament Commentator AI feature (ADR-0020). Prior: M9 inc 7: Live tournament broadcast (ADR-0019). Prior: M9 inc 6: Real-time tournament integration (ADR-0018). Prior: M9 inc 5: Tournament game lifecycle (ADR-0017). Prior: M9 inc 4: Postgres adapter for tournament persistence. Prior: M9 inc 3: Tournament persistence & REST API (ADR-0016). Prior: M9 inc 2: Swiss pairing + round-by-round port evolution (ADR-0015). Prior: M12 inc 3: rate limiting for sensitive auth endpoints (ADR-0013). Prior: M14 increment 4 (Kubernetes Helm chart). **M7, M8, M9, M14 inc 1–4 complete.** Prior: Review #03 fixes applied:
+with reality (M9 ✅, M12 🚧, live test counts). Prior: M9 inc 12: Arena realtime game lifecycle (ADR-0024). Prior: M9 inc 11: Arena through the API + persistence (ADR-0023). Prior: M9 inc 10: Arena tournament format (domain model) (ADR-0022). Prior: M9 inc 9: Tournament robustness (ADR-0021). Prior: M9 inc 8: Tournament Commentator AI feature (ADR-0020). Prior: M9 inc 7: Live tournament broadcast (ADR-0019). Prior: M9 inc 6: Real-time tournament integration (ADR-0018). Prior: M9 inc 5: Tournament game lifecycle (ADR-0017). Prior: M9 inc 4: Postgres adapter for tournament persistence. Prior: M9 inc 3: Tournament persistence & REST API (ADR-0016). Prior: M9 inc 2: Swiss pairing + round-by-round port evolution (ADR-0015). Prior: M12 inc 3: rate limiting for sensitive auth endpoints (ADR-0013). Prior: M14 increment 4 (Kubernetes Helm chart). **M7, M8, M9, M14 inc 1–4 complete.** Prior: Review #03 fixes applied:
 the authoritative `legalMoves` map from the server snapshot is now surfaced through `GameSync`
 state (populated from each `StateView`, stale after a live move broadcast, empty once the game ends)
 and a new `AuthoritativeMoveOracle` adapter implements the existing `LegalMoveOracle` port, fed by
@@ -157,22 +161,16 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 
 ## 5. Deferred work / follow-ups (tracked, not lost)
 
-- **Tournaments (M9 follow-ups, found in the 2026-07-18 review):**
-  1. `TournamentResultReporter` (auto-recording results from `EndedBroadcast`)
-     lives only in `packages/e2e-harness` — the production compositions
-     (`services/gateway`, `api` bootstrap) do not wire it, so in a deployed
-     stack tournament/arena results must be recorded manually by a
-     `tournament_director` via `POST /v1/tournaments/:id/games/:gameId/result`.
-     Wire a durable reporter (Redis `PubSub` subscriber) into the deployable
-     stack in a later increment.
-  2. `TournamentsRepository.save` is a blind upsert (no optimistic
-     concurrency). Two concurrent result recordings for the same tournament
-     can lose an update (load → mutate → save race). Low risk while recording
-     is manual/TD-driven; must add a version column + compare-and-set (plus a
-     retry loop in the services) before wiring automatic concurrent recording.
-  3. Arena `withdraw` is permanent by design — `register` after `withdraw`
+- **Tournaments (M9 follow-ups):** items 1 (production result reporter) and
+  2 (optimistic concurrency for `TournamentsRepository`) from the 2026-07-18
+  review are **CLOSED by M9 inc 13** (ADR-0025). Still open:
+  1. Arena `withdraw` is permanent by design — `register` after `withdraw`
      does not re-admit the player (the domain keeps them in `withdrawn`).
      Lichess-style pause/rejoin needs an explicit domain decision + ADR.
+  2. Reporter refinements (ADR-0025 consequences): an event-log catch-up read
+     for `EndedBroadcast`s missed between game end and first subscription, and
+     a dedicated single-replica reporter Deployment instead of
+     one-reporter-per-gateway-replica.
 - **Identity (M4 → hardening pass):** **WebAuthn/passkeys** are NOT implemented yet.
   The `webauthn_credentials` table exists in the schema; add a `WebAuthnRepository`
   + registration/assertion ceremonies. Also: password-reset + email verification
@@ -333,3 +331,8 @@ Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
 - **API Branching**: `ArenaService` isolates arena-specific behavior. The REST endpoints natively branch based on the tournament format, falling back to `TournamentService` for standard formats.
 - **Persistence**: Reused `TournamentsRepository` completely by introducing `TournamentAnySnapshot`. `ArenaSnapshot` handles distinct fields for the arena schema. No schema migrations needed as `jsonb` absorbs the structural differences smoothly.
 - **Testing**: Added integration test suite explicitly for validating Arena tournaments natively through the API.
+
+## M9 Increment 13: Durable tournament result recording in production
+- **Optimistic Concurrency Control**: Added OCC to the `TournamentsRepository` to prevent lost updates in the domain (using a row-version increment with an automated 3-attempt CAS retry loop).
+- **Production Reporter**: Extracted `TournamentResultReporter` into `@chess-platform/api` to act as a production-grade long-running background worker running alongside the gateway. The reporter tracks pubsub topics for ongoing games to drive tournament progression durably, surviving temporary crashes or downtime by catching up on startup.
+- **Leak Fix**: Fixed test memory leak by supporting graceful `stop()` and event subscription deregistration in `TournamentResultReporter`.

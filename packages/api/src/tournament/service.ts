@@ -1,5 +1,5 @@
 import type { TournamentsRepository } from '@chess-platform/persistence';
-import { isArenaSnapshot } from '@chess-platform/persistence';
+import { isArenaSnapshot, VersionConflictError } from '@chess-platform/persistence';
 import type { RoundBasedConfig } from '@chess-platform/tournament';
 import { Tournament, createPairingStrategy } from '@chess-platform/tournament';
 import type { GameResult } from '@chess-platform/tournament';
@@ -27,6 +27,40 @@ export class TournamentService {
     private readonly repo: TournamentsRepository,
     private readonly launcher: GameLauncher
   ) {}
+
+  private async withRetry(
+    id: string,
+    action: (tournament: Tournament) => Promise<void> | void
+  ): Promise<Tournament> {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const stored = await this.repo.findById(id);
+      if (!stored) {
+        throw HttpError.notFound('Tournament not found');
+      }
+      if (isArenaSnapshot(stored.snapshot)) {
+        throw HttpError.conflict('Not a round-based tournament');
+      }
+      const strategy = createPairingStrategy(stored.snapshot.config);
+      const tournament = Tournament.restore(stored.snapshot, strategy);
+      
+      try {
+        await action(tournament);
+        await this.repo.save(tournament.toSnapshot(), stored.version);
+        return tournament;
+      } catch (e: any) {
+        if (e instanceof VersionConflictError) {
+          if (attempt === 3) throw HttpError.conflict('Concurrent update failed after retries');
+          continue;
+        }
+        if (e instanceof HttpError) throw e;
+        if (e.message.includes('Unknown game ID')) {
+          throw HttpError.notFound('Game ID not found in this tournament');
+        }
+        throw HttpError.conflict(e.message);
+      }
+    }
+    throw HttpError.conflict('Concurrent update failed after retries');
+  }
 
   async create(cmd: CreateTournamentCommand): Promise<Tournament> {
     const existing = await this.repo.findById(cmd.id);
@@ -62,81 +96,54 @@ export class TournamentService {
 
     const strategy = createPairingStrategy(config);
     const tournament = new Tournament(config, strategy);
-    await this.repo.save(tournament.toSnapshot());
+    // New tournaments are saved with expectedVersion 0
+    await this.repo.save(tournament.toSnapshot(), 0);
     return tournament;
   }
 
   async load(id: string): Promise<Tournament> {
-    const snap = await this.repo.findById(id);
-    if (!snap) {
+    const stored = await this.repo.findById(id);
+    if (!stored) {
       throw HttpError.notFound('Tournament not found');
     }
-    if (isArenaSnapshot(snap)) {
+    if (isArenaSnapshot(stored.snapshot)) {
       throw HttpError.conflict('Not a round-based tournament');
     }
-    const strategy = createPairingStrategy(snap.config);
-    return Tournament.restore(snap, strategy);
+    const strategy = createPairingStrategy(stored.snapshot.config);
+    return Tournament.restore(stored.snapshot, strategy);
   }
 
   async register(id: string, playerId: string): Promise<Tournament> {
-    const tournament = await this.load(id);
-    try {
+    return this.withRetry(id, (tournament) => {
       tournament.register(playerId);
-    } catch (e: any) {
-      throw HttpError.conflict(e.message);
-    }
-    await this.repo.save(tournament.toSnapshot());
-    return tournament;
+    });
   }
 
   async withdraw(id: string, playerId: string): Promise<Tournament> {
-    const tournament = await this.load(id);
-    try {
+    return this.withRetry(id, (tournament) => {
       tournament.withdraw(playerId);
-    } catch (e: any) {
-      throw HttpError.conflict(e.message);
-    }
-    await this.repo.save(tournament.toSnapshot());
-    return tournament;
+    });
   }
 
   async start(id: string): Promise<Tournament> {
-    const tournament = await this.load(id);
-    try {
+    return this.withRetry(id, async (tournament) => {
       tournament.start();
       await this.reconcileLaunch(tournament);
-    } catch (e: any) {
-      throw HttpError.conflict(e.message);
-    }
-    await this.repo.save(tournament.toSnapshot());
-    return tournament;
+    });
   }
 
   async recordResult(id: string, cmd: RecordResultCommand): Promise<Tournament> {
-    const tournament = await this.load(id);
-    try {
+    return this.withRetry(id, async (tournament) => {
       tournament.recordResult(cmd.roundIndex, cmd.pairingIndex, cmd.result);
       await this.reconcileLaunch(tournament);
-    } catch (e: any) {
-      throw HttpError.conflict(e.message);
-    }
-    await this.repo.save(tournament.toSnapshot());
-    return tournament;
+    });
   }
 
   async recordResultByGame(id: string, gameId: string, result: GameResult): Promise<Tournament> {
-    const tournament = await this.load(id);
-    try {
+    return this.withRetry(id, async (tournament) => {
       tournament.recordResultByGame(gameId, result);
       await this.reconcileLaunch(tournament);
-    } catch (e: any) {
-      if (e.message.includes('Unknown game ID')) {
-        throw HttpError.notFound('Game ID not found in this tournament');
-      }
-      throw HttpError.conflict(e.message);
-    }
-    await this.repo.save(tournament.toSnapshot());
-    return tournament;
+    });
   }
 
   /**
@@ -144,18 +151,10 @@ export class TournamentService {
    * which launches a fresh game for the same pairing so the round can proceed.
    */
   async abandonGame(id: string, gameId: string): Promise<Tournament> {
-    const tournament = await this.load(id);
-    try {
+    return this.withRetry(id, async (tournament) => {
       tournament.abandonGame(gameId);
       await this.reconcileLaunch(tournament);
-    } catch (e: any) {
-      if (e.message.includes('Unknown game ID')) {
-        throw HttpError.notFound('Game ID not found in this tournament');
-      }
-      throw HttpError.conflict(e.message);
-    }
-    await this.repo.save(tournament.toSnapshot());
-    return tournament;
+    });
   }
 
   private async reconcileLaunch(tournament: Tournament): Promise<void> {

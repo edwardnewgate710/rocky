@@ -509,7 +509,6 @@ export function buildRouter(deps: RouteDeps): Router {
         const t = await arenaService.create({
           id: ids.next(),
           name: reqString(body, 'name', { trim: true }),
-          format: 'arena',
           variant,
           timeControl,
           durationMs,
@@ -567,7 +566,8 @@ export function buildRouter(deps: RouteDeps): Router {
     }),
     PUBLIC,
     async (ctx) => {
-      const snap = await deps.tournamentRepo.findById(ctx.params['id']!);
+      const stored = await deps.tournamentRepo.findById(ctx.params['id']!);
+      const snap = stored?.snapshot;
       if (!snap) throw HttpError.notFound('tournament not found');
       if (snap.config.format === 'arena') {
         const t = await arenaService.getTournament(ctx.params['id']!);
@@ -601,7 +601,8 @@ export function buildRouter(deps: RouteDeps): Router {
         targetId = reqString(ctx.body as Record<string, unknown>, 'playerId');
       }
 
-      const snap = await deps.tournamentRepo.findById(ctx.params['id']!);
+      const stored = await deps.tournamentRepo.findById(ctx.params['id']!);
+      const snap = stored?.snapshot;
       if (!snap) throw HttpError.notFound('tournament not found');
       if (snap.config.format === 'arena') {
         const t = await arenaService.register(ctx.params['id']!, targetId);
@@ -632,7 +633,8 @@ export function buildRouter(deps: RouteDeps): Router {
         throw HttpError.forbidden('cannot withdraw other players unless you are a director');
       }
 
-      const snap = await deps.tournamentRepo.findById(ctx.params['id']!);
+      const stored = await deps.tournamentRepo.findById(ctx.params['id']!);
+      const snap = stored?.snapshot;
       if (!snap) throw HttpError.notFound('tournament not found');
       if (snap.config.format === 'arena') {
         const t = await arenaService.withdraw(ctx.params['id']!, targetId);
@@ -658,7 +660,8 @@ export function buildRouter(deps: RouteDeps): Router {
       if (!identity.roles.includes('tournament_director')) {
         throw HttpError.forbidden('only tournament directors can start tournaments');
       }
-      const snap = await deps.tournamentRepo.findById(ctx.params['id']!);
+      const stored = await deps.tournamentRepo.findById(ctx.params['id']!);
+      const snap = stored?.snapshot;
       if (!snap) throw HttpError.notFound('tournament not found');
       if (snap.config.format === 'arena') {
         const t = await arenaService.start(ctx.params['id']!, deps.clock.now());
@@ -737,7 +740,8 @@ export function buildRouter(deps: RouteDeps): Router {
       const body = strictObject(ctx.body, ['result']);
       const result = oneOf(reqString(body, 'result'), ['white_win', 'black_win', 'draw'], 'result');
 
-      const snap = await deps.tournamentRepo.findById(ctx.params['id']!);
+      const stored = await deps.tournamentRepo.findById(ctx.params['id']!);
+      const snap = stored?.snapshot;
       if (!snap) throw HttpError.notFound('tournament not found');
       if (snap.config.format === 'arena') {
         const t = await arenaService.recordResultByGame(
@@ -766,7 +770,8 @@ export function buildRouter(deps: RouteDeps): Router {
     }),
     PUBLIC,
     async (ctx) => {
-      const snap = await deps.tournamentRepo.findById(ctx.params['id']!);
+      const stored = await deps.tournamentRepo.findById(ctx.params['id']!);
+      const snap = stored?.snapshot;
       if (!snap) throw HttpError.notFound('tournament not found');
       if (snap.config.format === 'arena') {
         const standings = await arenaService.getStandings(ctx.params['id']!);

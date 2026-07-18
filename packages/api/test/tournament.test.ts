@@ -313,7 +313,7 @@ describe('Tournament API', () => {
     assert.equal(startRes.status, 200);
 
     // Starting an arena pairs the two available players and launches a game.
-    const snap = (await h.tournamentRepo.findById(id)) as any;
+    const snap = (await h.tournamentRepo.findById(id))!.snapshot as any;
     assert.equal(snap.gameLinks.length, 1);
     const [pairingId, gameId] = snap.gameLinks[0];
     const white = snap.activeGames[pairingId].white;
@@ -339,7 +339,7 @@ describe('Tournament API', () => {
     assert.equal(winner.gamesPlayed, 1);
 
     // The freed players are immediately re-paired into a fresh game.
-    const after = (await h.tournamentRepo.findById(id)) as any;
+    const after = (await h.tournamentRepo.findById(id))!.snapshot as any;
     assert.equal(after.gameLinks.length, 1);
     assert.notEqual(after.gameLinks[0][1], gameId);
   });

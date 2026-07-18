@@ -46,7 +46,7 @@ test('durable live view reconstructs linked active games from the event log', as
     results: [],
     pairingsByMatchId: [],
     gameLinks: [['0-0', gameId]],
-  });
+  }, 0);
 
   const boards = await new DurableTournamentLiveView(tournaments, events).activeGames('t1');
   assert.equal(boards.length, 1);

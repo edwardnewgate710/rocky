@@ -14,12 +14,12 @@ export function createLiveTournamentHandler(deps: RouteDeps) {
     // mirroring GET /standings. A missing tournament is a 404; any other
     // failure (e.g. the repository) is left to propagate to the central error
     // handler as a 5xx rather than being masked as a 404.
-    const snap = await deps.tournamentRepo.findById(id);
-    if (!snap) throw HttpError.notFound('Tournament not found');
+    const stored = await deps.tournamentRepo.findById(id);
+    if (!stored) throw HttpError.notFound('Tournament not found');
 
     const games = await deps.liveView.activeGames(id);
 
-    if (snap.config.format === 'arena') {
+    if (stored.snapshot.config.format === 'arena') {
       const arenaService = new ArenaService(deps.tournamentRepo, deps.gameLauncher, () => deps.clock.now());
       const standings = (await arenaService.getStandings(id)).map(arenaStandingView);
       return json(200, { games, standings });

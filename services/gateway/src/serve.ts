@@ -27,6 +27,10 @@
  * - `OWNERSHIP_LEASE_TTL_SEC` (default 30) — TTL for game ownership leases.
  * - `OWNERSHIP_RENEWAL_INTERVAL_SEC` (default 15) — how often the owner
  *   renews its leases.
+ * - `TOURNAMENT_REPORTER` (optional, "1" to enable) — hosts the tournament
+ *   result reporter (ADR-0025) in this process; requires `DATABASE_URL`.
+ * - `TOURNAMENT_REPORTER_SCAN_MS` (default 30000) — how often the reporter
+ *   re-scans running tournaments for games launched by other processes.
  *
  * Durable event log: ADR-0007 (M14 inc 2).
  * Redis pub/sub: ADR-0008 (M14 inc 3).
@@ -52,6 +56,8 @@ import {
   decode,
 } from '@chess-platform/realtime-gateway';
 import { AccessTokenService, systemClock, uuidv7Generator } from '@chess-platform/api';
+import type { TournamentResultReporter, LaunchInput } from '@chess-platform/api';
+import type { EventStore } from '@chess-platform/persistence';
 
 /** A TokenVerifier backed by the API's AccessTokenService (shared secret). */
 class SharedSecretTokenVerifier implements TokenVerifier {
@@ -99,12 +105,17 @@ async function main(): Promise<void> {
 
   // --- Durable event log (M14 inc 2) ---
   let store: EventLog | undefined;
+  let eventStore: EventStore | undefined;
+  let pgPool: ReturnType<typeof import('@chess-platform/persistence/pg')['createPool']> | undefined;
   let pingDatabase: (() => Promise<void>) | undefined;
   let closeDatabase: (() => Promise<void>) | undefined;
   if (process.env['DATABASE_URL']) {
     const { createPool, PostgresEventStore } = await import('@chess-platform/persistence/pg');
     const pool = createPool();
-    store = new PostgresEventStore(pool);
+    pgPool = pool;
+    const pgEventStore = new PostgresEventStore(pool);
+    store = pgEventStore;
+    eventStore = pgEventStore;
     pingDatabase = async () => { await pool.query('SELECT 1'); };
     closeDatabase = async () => { await pool.end(); };
     console.log('[realtime-gateway] durable event log: Postgres');
@@ -130,6 +141,41 @@ async function main(): Promise<void> {
   }
 
   const authority = new GameAuthority(pubsub, () => Date.now(), store);
+
+  // --- Tournament Result Reporter (M9 inc 13, ADR-0025) ---
+  let reporter: TournamentResultReporter | undefined;
+  if (process.env['TOURNAMENT_REPORTER'] === '1') {
+    if (!pgPool || !eventStore) {
+      console.warn('[realtime-gateway] TOURNAMENT_REPORTER requires DATABASE_URL to be set');
+    } else {
+      const { PgTournamentsRepository } = await import('@chess-platform/persistence/pg');
+      const api = await import('@chess-platform/api');
+
+      const tournamentsRepo = new PgTournamentsRepository(pgPool);
+      const durableLauncher = new api.DurableGameLauncher(eventStore, systemClock);
+
+      // Games launched by THIS process are watched immediately; games launched
+      // by API replicas are picked up by the reporter's periodic scan.
+      const reportingLauncher = {
+        launch: async (input: LaunchInput): Promise<{ gameId: string }> => {
+          const res = await durableLauncher.launch(input);
+          reporter?.watch(input.tournamentId, res.gameId);
+          return res;
+        },
+      };
+
+      const tournamentService = new api.TournamentService(tournamentsRepo, reportingLauncher);
+      const arenaService = new api.ArenaService(tournamentsRepo, reportingLauncher, () => Date.now());
+
+      reporter = new api.TournamentResultReporter(pubsub, tournamentsRepo, tournamentService, arenaService, {
+        scanIntervalMs: positiveIntEnv('TOURNAMENT_REPORTER_SCAN_MS', 30_000),
+      });
+      reporter.start().catch((err: unknown) => {
+        console.error('Failed to start TournamentResultReporter:', err);
+      });
+      console.log('[realtime-gateway] TournamentResultReporter is enabled');
+    }
+  }
 
   // --- Command router: local (single-node) or Redis (multi-node) (M14 inc 5) ---
   let commandRouter: CommandRouter;
@@ -322,6 +368,7 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     clearInterval(heartbeat);
+    reporter?.stop();
     console.log('Shutdown signal received — closing');
     for (const client of wss.clients) {
       client.terminate();

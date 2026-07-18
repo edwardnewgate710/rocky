@@ -46,3 +46,14 @@ export class MigrationError extends PersistenceError {
     this.name = 'MigrationError';
   }
 }
+
+/** Raised when an optimistic update conflicts with the stored version. */
+export class VersionConflictError extends PersistenceError {
+  constructor(
+    readonly entityId: string,
+    readonly expectedVersion: number,
+  ) {
+    super(`concurrent update to entity ${entityId}: expected version ${expectedVersion}`);
+    this.name = 'VersionConflictError';
+  }
+}

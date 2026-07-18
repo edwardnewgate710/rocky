@@ -177,10 +177,9 @@ describe('Real-time tournament integration', () => {
 
     let t = await arenaService.create({
       id: tId,
-      name: 'Arena Test',
-      format: 'arena',
+      name: 'Test Arena',
       variant: 'standard',
-      timeControl: { initialMs: 300000, incrementMs: 0, delayMs: 0, kind: 'sudden_death' },
+      timeControl: { initialMs: 300_000, incrementMs: 0, delayMs: 0, kind: 'sudden_death' },
       durationMs: 500, // short duration for test
     });
 

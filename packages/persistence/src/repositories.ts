@@ -218,7 +218,7 @@ export interface TournamentSummaryRow {
 }
 
 export interface TournamentsRepository {
-  save(snapshot: TournamentAnySnapshot): Promise<void>;
-  findById(id: string): Promise<TournamentAnySnapshot | null>;
+  save(snapshot: TournamentAnySnapshot, expectedVersion: number): Promise<void>;
+  findById(id: string): Promise<{ snapshot: TournamentAnySnapshot; version: number } | null>;
   list(limit: number): Promise<TournamentSummaryRow[]>;
 }

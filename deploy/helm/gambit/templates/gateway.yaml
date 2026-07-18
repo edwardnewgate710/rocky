@@ -147,6 +147,16 @@ spec:
                 configMapKeyRef:
                   name: {{ include "gambit.configMapName" . }}
                   key: OWNERSHIP_RENEWAL_INTERVAL_SEC
+            {{- if .Values.gateway.tournamentReporter.enabled }}
+            # M9 inc 13 (ADR-0025): tournament result reporter. Every gateway
+            # replica runs one when enabled; version CAS on the tournaments
+            # table makes duplicate recording attempts safe (loser logs a
+            # benign already-recorded error and moves on).
+            - name: TOURNAMENT_REPORTER
+              value: "1"
+            - name: TOURNAMENT_REPORTER_SCAN_MS
+              value: {{ .Values.gateway.tournamentReporter.scanIntervalMs | quote }}
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /health

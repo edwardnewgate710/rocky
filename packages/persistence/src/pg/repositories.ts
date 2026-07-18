@@ -32,9 +32,10 @@ import type {
   UserRow,
   UsersRepository,
 } from '../repositories';
-import { DuplicateUserError } from '../errors';
+import { DuplicateUserError, VersionConflictError } from '../errors';
 
 // --- row shapes as returned by pg ------------------------------------------
+
 
 interface UserDbRow {
   id: string;
@@ -100,6 +101,7 @@ interface TournamentDbRow {
   state: 'registration' | 'running' | 'finished';
   participant_count: number;
   snapshot: TournamentAnySnapshot;
+  version: number;
   created_at: Date;
   updated_at: Date;
 }
@@ -521,34 +523,62 @@ export class PgSeeksRepository implements SeeksRepository {
 export class PgTournamentsRepository implements TournamentsRepository {
   constructor(private readonly pool: Pool) {}
 
-  async save(snapshot: TournamentAnySnapshot): Promise<void> {
-    await this.pool.query(
-      `INSERT INTO tournaments (id, name, format, state, participant_count, snapshot)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb)
-       ON CONFLICT (id) DO UPDATE SET
-         name = EXCLUDED.name,
-         format = EXCLUDED.format,
-         state = EXCLUDED.state,
-         participant_count = EXCLUDED.participant_count,
-         snapshot = EXCLUDED.snapshot,
-         updated_at = now()`,
-      [
-        snapshot.config.id,
-        snapshot.config.name,
-        snapshot.config.format,
-        snapshot.state,
-        snapshot.participants.length,
-        JSON.stringify(snapshot),
-      ]
-    );
+  async save(snapshot: TournamentAnySnapshot, expectedVersion: number): Promise<void> {
+    if (expectedVersion === 0) {
+      try {
+        await this.pool.query(
+          `INSERT INTO tournaments (id, name, format, state, participant_count, snapshot, version)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb, 1)`,
+          [
+            snapshot.config.id,
+            snapshot.config.name,
+            snapshot.config.format,
+            snapshot.state,
+            snapshot.participants.length,
+            JSON.stringify(snapshot),
+          ]
+        );
+      } catch (err: any) {
+        if (isUniqueViolation(err)) {
+          throw new VersionConflictError(snapshot.config.id, expectedVersion);
+        }
+        throw err;
+      }
+    } else {
+      const res = await this.pool.query(
+        `UPDATE tournaments SET
+           name = $2,
+           format = $3,
+           state = $4,
+           participant_count = $5,
+           snapshot = $6::jsonb,
+           version = version + 1,
+           updated_at = now()
+         WHERE id = $1 AND version = $7`,
+        [
+          snapshot.config.id,
+          snapshot.config.name,
+          snapshot.config.format,
+          snapshot.state,
+          snapshot.participants.length,
+          JSON.stringify(snapshot),
+          expectedVersion,
+        ]
+      );
+      if (res.rowCount === 0) {
+        throw new VersionConflictError(snapshot.config.id, expectedVersion);
+      }
+    }
   }
 
-  async findById(id: string): Promise<TournamentAnySnapshot | null> {
+  async findById(id: string): Promise<{ snapshot: TournamentAnySnapshot; version: number } | null> {
     const res = await this.pool.query<TournamentDbRow>(
-      'SELECT snapshot FROM tournaments WHERE id = $1',
+      'SELECT snapshot, version FROM tournaments WHERE id = $1',
       [id]
     );
-    return res.rows[0] ? (res.rows[0].snapshot as TournamentAnySnapshot) : null;
+    return res.rows[0]
+      ? { snapshot: res.rows[0].snapshot as TournamentAnySnapshot, version: res.rows[0].version }
+      : null;
   }
 
   async list(limit: number): Promise<TournamentSummaryRow[]> {

@@ -29,17 +29,17 @@ dependency-free domain packages** tested with the built-in `node --test` runner.
 | M1 | `@chess-platform/core` | ✅ rules engine (perft-verified) | 16 |
 | M2 | `@chess-platform/game` | ✅ event-sourced game aggregate + clocks + threefold repetition | 25 |
 | M3 | `@chess-platform/realtime-gateway` | ✅ realtime WS edge + token auth + durable `EventLog` port + `PubSub` (in-memory & Redis) | 61 |
-| M4a | `@chess-platform/persistence` | ✅ durable event store + repositories + Glicko-2 | 19 (5 DB-gated) |
-| M4b | `@chess-platform/api` | ✅ stateless REST + identity (scrypt, rotating refresh, RBAC) | 118 (3 DB-gated) |
+| M4a | `@chess-platform/persistence` | ✅ durable event store + repositories + Glicko-2 | 20 (6 DB-gated) |
+| M4b | `@chess-platform/api` | ✅ stateless REST + identity (scrypt, rotating refresh, RBAC) | 124 (3 DB-gated) |
 | M5 | `@chess-platform/engine` | ✅ provider-agnostic UCI engine bridge | 50 |
 | M6 | `@chess-platform/web` + `@chess-platform/e2e-harness` | ✅ playable frontend; Playwright full-game e2e + Lighthouse a11y ≥ 0.95 in CI | 260 + 4 |
 | M7 | `@chess-platform/ai-orchestrator` | ✅ AI routing/failover/caching + engine-grounded prompts | 117 (2 key-gated) |
 | M8 | `@chess-platform/ai-features` | ✅ 9 features (Move Explanation → Tournament Commentator) | 140 (16 key-gated) |
-| M9 | `@chess-platform/tournament` (+ api/realtime integration) | ✅ round-robin, Swiss, and Arena formats; persistence + REST API; durable game launcher; realtime result recording; live broadcast (ADR-0014 → ADR-0024) | 49 |
+| M9 | `@chess-platform/tournament` (+ api/realtime integration) | ✅ round-robin, Swiss, and Arena formats; persistence + REST API; durable game launcher; realtime result recording (production reporter hosted by the gateway behind `TOURNAMENT_REPORTER=1`, with optimistic-concurrency CAS on tournament saves — inc 13, ADR-0025); live broadcast (ADR-0014 → ADR-0025) | 49 |
 | M12 | api security hardening | 🚧 **increments 1–3 complete:** CORS + security headers (ADR-0011) · httpOnly refresh cookie (ADR-0012) · auth rate limiting w/ Postgres buckets (ADR-0013) | — |
 | **M14** | compose + `services/gateway` + `deploy/helm` | 🚧 **increments 1–4 complete:** local compose stack · durable game authority (write-through `EventLog` → Postgres, evict/rehydrate) · Redis pub/sub multi-node fanout (ADR-0008) · Helm chart + kubeconform CI gate (ADR-0009) · threefold-repetition fix (en-passant legality in repetition key) | 4 (Redis-gated) |
 
-**Whole repo: 863 total tests, 0 failures** (skips: 8 Postgres-gated + 18
+**Whole repo: 870 total tests, 0 failures** (skips: 9 Postgres-gated + 18
 API-key-gated + 4 Redis-gated — run `npm run test:counts` for the live per-package
 breakdown). Strict TS, lint clean. **CI is active** (`.github/workflows/ci.yml`, 6 jobs:
 build+typecheck+test on Node 22/24, Postgres integration, M6 Playwright+Lighthouse acceptance,
@@ -74,10 +74,10 @@ ADR, approved before code) — see `DATABASE.md` (M4), `ENGINE_BRIDGE.md` (M5), 
 
 ## Guardrails
 
-- **Gateway horizontal scaling is NOT safe yet.** Redis fans broadcasts across nodes, but
-  game-command *ownership* is not coordinated across gateway replicas — the Helm chart pins
-  `gateway.replicas: 1` and must stay that way until sticky per-game routing or sharded
-  authority lands (a later M14 increment). Do not scale the gateway or imply that it scales.
+- **Gateway horizontal scaling requires Redis.** Since M14 inc 5 (ADR-0010) the gateway is
+  safe to scale (single-owner authority + Redis command forwarding; the Helm chart defaults to
+  `gateway.replicas: 2`), but ONLY with `REDIS_URL` set — never scale beyond 1 replica without
+  Redis command routing.
 - Keep domain packages **dependency-free**; native/infra code (pg, ioredis, ws) enters only via
   documented ports (`EventLog`, `PubSub`/`RedisLike`, `TokenVerifier`, `EngineTransport`) wired
   in `services/gateway` or package `/pg`-style subpaths — never in domain code.
@@ -85,12 +85,15 @@ ADR, approved before code) — see `DATABASE.md` (M4), `ENGINE_BRIDGE.md` (M5), 
 - Keep GitHub authoritative: after each checkpoint update README/ROADMAP/PROJECT_STATE/this
   file, then commit and push, so the next agent needs no conversation history.
 
-## Known tech debt (tracked, updated 2026-07-12)
+## Known tech debt (tracked, updated 2026-07-18)
 
 - **Identity hardening (M4 follow-up)** — WebAuthn/passkeys (table exists, flow doesn't),
-  password reset + email verification, per-account login rate limiting.
-- **Client refresh-token storage** — currently `localStorage`; move to httpOnly cookie in M12.
-- **Gateway multi-replica ownership** — see the first guardrail; next M14 increments also
-  include Terraform, CI/CD deploy gates (blue/green), load/chaos testing, secrets management.
+  password reset + email verification. (Refresh-token storage moved to an httpOnly cookie in
+  M12 inc 2; auth rate limiting landed in M12 inc 3.)
+- **Tournament reporter refinements (ADR-0025)** — event-log catch-up for ended-broadcasts
+  missed before subscription; dedicated single-replica reporter Deployment. Arena
+  withdraw is permanent (pause/rejoin needs a domain decision + ADR).
+- **M14 remaining** — Terraform, CI/CD deploy gates (blue/green), load/chaos testing,
+  secrets management.
 
 Full details and the exact next step: `docs/PROJECT_STATE.md`.

@@ -73,6 +73,10 @@ services:
       NODE_ENV: production
       # Redis pub/sub for multi-node fanout (M14 inc 3, ADR-0008).
       REDIS_URL: redis://redis:6379
+      # Tournament result reporter (M9 inc 13, ADR-0025): records tournament
+      # and arena results from ended-game broadcasts. Single gateway node in
+      # compose, so exactly one reporter instance runs.
+      TOURNAMENT_REPORTER: ${TOURNAMENT_REPORTER:-1}
     ports:
       - "${GATEWAY_PORT:-4175}:4175"
     healthcheck:

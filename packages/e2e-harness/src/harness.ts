@@ -37,6 +37,7 @@ import {
   InMemoryTournamentsRepository,
   TournamentService,
   ArenaService,
+  TournamentResultReporter,
   type ApiServer,
   type ApiDependencies,
 } from '@chess-platform/api';
@@ -54,7 +55,6 @@ import {
 } from '@chess-platform/realtime-gateway';
 import { BotPlayer } from './bot.js';
 import { AuthorityGameLauncher } from './launcher.js';
-import { TournamentResultReporter } from './reporter.js';
 import { TournamentBroadcaster } from './broadcaster.js';
 /** Options for the harness. */
 export interface HarnessOptions {
@@ -260,6 +260,7 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
         deps,
         close: async () => {
           bot.stop();
+          reporter.stop();
           await Promise.all([
             new Promise<void>((resolveClose) => {
               wss.close(() => resolveClose());

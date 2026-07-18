@@ -64,6 +64,14 @@ gateway:
   replicas: 2  # M14 inc 5: safe to scale (single-owner authority + command forwarding, ADR-0010)
   port: 4175
   healthPort: 4176  # port+1, same as compose
+  # M9 inc 13 (ADR-0025): host the tournament result reporter in the gateway.
+  # When enabled, EVERY gateway replica runs a reporter; optimistic concurrency
+  # (version CAS on tournaments) makes duplicate recording attempts safe — the
+  # losing replica logs a benign already-recorded error. A dedicated
+  # single-replica reporter Deployment is a possible later increment.
+  tournamentReporter:
+    enabled: false
+    scanIntervalMs: 30000
   resources:
     requests:
       cpu: 100m

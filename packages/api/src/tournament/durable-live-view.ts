@@ -12,10 +12,10 @@ export class DurableTournamentLiveView implements TournamentLiveView {
   ) {}
 
   async activeGames(tournamentId: string): Promise<LiveBoard[]> {
-    const tournament = await this.tournaments.findById(tournamentId);
-    if (!tournament) return [];
+    const stored = await this.tournaments.findById(tournamentId);
+    if (!stored) return [];
 
-    const gameLinks = tournament.gameLinks ?? [];
+    const gameLinks = stored.snapshot.gameLinks ?? [];
     const reconstructed = await Promise.all(gameLinks.map(async ([, gameId]): Promise<LiveBoard | null> => {
       const stored = await this.events.load(gameId);
       if (stored.length === 0) return null;
