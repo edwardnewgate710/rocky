@@ -19,6 +19,7 @@ export * from './tournament/durable-launcher';
 export * from './tournament/durable-live-view';
 export * from './ports/pg-rate-limiter';
 export * from './tournament/service';
+export * from './tournament/arena.service';
 export * from './tournament/live-view';
 
 export * from './auth/password';

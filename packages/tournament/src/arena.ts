@@ -1,5 +1,6 @@
 import type { Variant } from '@chess-platform/core';
 import type { TimeControl } from '@chess-platform/game';
+import type { GameResult } from './standings';
 
 export interface ArenaConfig {
   readonly id: string;
@@ -48,6 +49,7 @@ export interface ArenaSnapshot {
   readonly lastOpponents: Record<string, string>;
   readonly playedAsWhite: Record<string, number>;
   readonly playedAsBlack: Record<string, number>;
+  readonly gameLinks?: readonly [string, string][];
 }
 
 export class ArenaTournament {
@@ -75,6 +77,8 @@ export class ArenaTournament {
   // Color balancing
   private readonly playedAsWhite = new Map<string, number>();
   private readonly playedAsBlack = new Map<string, number>();
+
+  private readonly gameLinks = new Map<string, string>(); // pairingId -> gameId
 
   constructor(public readonly config: ArenaConfig) {}
 
@@ -213,21 +217,66 @@ export class ArenaTournament {
     return newPairings;
   }
 
-  recordResult(pairingId: string, result: 'white_win' | 'black_win' | 'draw', nowMs: number): void {
+  recordResult(pairingId: string, result: GameResult, nowMs: number): void {
     const game = this.activeGames.get(pairingId);
     if (!game) {
       throw new Error(`Unknown or already-resolved pairingId: ${pairingId}`);
     }
 
     this.activeGames.delete(pairingId);
+    // Drop the resolved game's link so gameLinks tracks only in-flight games:
+    // keeps the snapshot bounded and the live-board reconstruction from having
+    // to walk (and discard) every finished game over a long arena.
+    this.gameLinks.delete(pairingId);
 
     this.lastOpponents.set(game.white, game.black);
     this.lastOpponents.set(game.black, game.white);
 
-    this.applyResult(game.white, result === 'white_win' ? 'win' : result === 'black_win' ? 'loss' : 'draw');
-    this.applyResult(game.black, result === 'black_win' ? 'win' : result === 'white_win' ? 'loss' : 'draw');
+    if (result === 'double_forfeit') {
+      this.applyResult(game.white, 'loss');
+      this.applyResult(game.black, 'loss');
+    } else {
+      this.applyResult(game.white, result === 'white_win' ? 'win' : result === 'black_win' ? 'loss' : 'draw');
+      this.applyResult(game.black, result === 'black_win' ? 'win' : result === 'white_win' ? 'loss' : 'draw');
+    }
 
     this.settle(nowMs);
+  }
+
+  linkGame(pairingId: string, gameId: string): void {
+    if (!this.activeGames.has(pairingId)) {
+      throw new Error(`Cannot link game for unknown or resolved pairingId: ${pairingId}`);
+    }
+    this.gameLinks.set(pairingId, gameId);
+  }
+
+  gameIdFor(pairingId: string): string | undefined {
+    return this.gameLinks.get(pairingId);
+  }
+
+  pairingForGame(gameId: string): string | undefined {
+    for (const [pId, gId] of this.gameLinks.entries()) {
+      if (gId === gameId) return pId;
+    }
+    return undefined;
+  }
+
+  recordResultByGame(gameId: string, result: GameResult, nowMs: number): void {
+    const pairingId = this.pairingForGame(gameId);
+    if (!pairingId) {
+      throw new Error(`Unknown gameId: ${gameId}`);
+    }
+    this.recordResult(pairingId, result, nowMs);
+  }
+
+  abandonGame(gameId: string): void {
+    const pairingId = this.pairingForGame(gameId);
+    if (!pairingId) {
+      throw new Error(`Unknown gameId: ${gameId}`);
+    }
+    // Remove the pairing completely, putting players back into the pool.
+    this.activeGames.delete(pairingId);
+    this.gameLinks.delete(pairingId);
   }
 
   private applyResult(playerId: string, result: 'win' | 'loss' | 'draw') {
@@ -296,7 +345,8 @@ export class ArenaTournament {
       pairingSequence: this.pairingSequence,
       lastOpponents: Object.fromEntries(this.lastOpponents.entries()),
       playedAsWhite: Object.fromEntries(this.playedAsWhite.entries()),
-      playedAsBlack: Object.fromEntries(this.playedAsBlack.entries())
+      playedAsBlack: Object.fromEntries(this.playedAsBlack.entries()),
+      gameLinks: Array.from(this.gameLinks.entries())
     };
   }
 
@@ -340,6 +390,12 @@ export class ArenaTournament {
     if (snap.playedAsBlack) {
       for (const [p, num] of Object.entries(snap.playedAsBlack)) {
         t.playedAsBlack.set(p, num);
+      }
+    }
+    
+    if (snap.gameLinks) {
+      for (const [pId, gId] of snap.gameLinks) {
+        t.gameLinks.set(pId, gId);
       }
     }
     

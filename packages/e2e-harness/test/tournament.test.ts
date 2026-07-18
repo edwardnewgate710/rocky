@@ -1,7 +1,7 @@
 import { describe, it, before, after } from 'node:test';
 import { strictEqual, ok } from 'node:assert';
 import { createHarness, type Harness } from '../src/index.js';
-import { TournamentService } from '@chess-platform/api';
+import { TournamentService, ArenaService } from '@chess-platform/api';
 
 // We can use setTimeout to wait for the reporter to process pubsub messages
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -169,5 +169,85 @@ describe('Real-time tournament integration', () => {
     ok(standings.length === 3);
     const totalPoints = standings.reduce((acc: number, s: any) => acc + s.points, 0);
     ok(totalPoints > 0, 'Points should be awarded');
+  });
+
+  it('runs an arena tournament to completion', async () => {
+    const arenaService = new ArenaService(harness.deps.tournamentRepo, harness.deps.gameLauncher, () => harness.deps.clock.now());
+    const tId = 'arena-1';
+
+    let t = await arenaService.create({
+      id: tId,
+      name: 'Arena Test',
+      format: 'arena',
+      variant: 'standard',
+      timeControl: { initialMs: 300000, incrementMs: 0, delayMs: 0, kind: 'sudden_death' },
+      durationMs: 500, // short duration for test
+    });
+
+    // Register players
+    await arenaService.register(tId, 'u1');
+    await arenaService.register(tId, 'u2');
+
+    // Start
+    t = await arenaService.start(tId, harness.deps.clock.now());
+    strictEqual(t.getState(), 'running');
+
+    // Get the launched game from snapshot
+    let snap = t.toSnapshot();
+    const activeGames = Object.entries(snap.activeGames);
+    strictEqual(activeGames.length, 1, 'Should launch 1 game immediately');
+    const [pairingId] = activeGames[0];
+    
+    // Check links
+    const gameId = t.gameIdFor(pairingId);
+    ok(gameId, 'Game should be linked');
+
+    // Abort the game to test returning to pool
+    const state = harness.authority.getState(gameId);
+    await harness.authority.apply(gameId, state.players.white, { kind: 'abort' });
+
+    await delay(50);
+    
+    // Load again, should be a new game linked
+    t = await arenaService.getTournament(tId);
+    snap = t.toSnapshot();
+    const activeGames2 = Object.entries(snap.activeGames);
+    strictEqual(activeGames2.length, 1, 'Should re-launch a game after abort');
+    const [pairingId2] = activeGames2[0];
+    ok(pairingId2 !== pairingId, 'Should be a fresh pairing');
+
+    const gameId2 = t.gameIdFor(pairingId2)!;
+    ok(gameId2 !== gameId, 'Should have a fresh gameId');
+
+    // Make white win
+    const state2 = harness.authority.getState(gameId2);
+    await harness.authority.apply(gameId2, state2.players.black, { kind: 'resign' });
+
+    await delay(50);
+
+    // Wait until expiration
+    await delay(500);
+
+    // After expiration, no new games should launch, but we must finish the active one
+    // to let the arena settle.
+    t = await arenaService.getTournament(tId);
+    snap = t.toSnapshot();
+    const finalActive = Object.entries(snap.activeGames);
+    strictEqual(finalActive.length, 1, 'Should have 1 game active at deadline');
+    const finalGameId = t.gameIdFor(finalActive[0][0])!;
+    
+    // Make white win the final game
+    const finalState = harness.authority.getState(finalGameId);
+    await harness.authority.apply(finalGameId, finalState.players.black, { kind: 'resign' });
+    
+    await delay(50);
+
+    // Read to settle
+    t = await arenaService.getTournament(tId);
+    strictEqual(t.getState(), 'finished', 'Arena should settle on read after deadline when all games end');
+
+    const st = t.standings();
+    strictEqual(st.length, 2);
+    ok(st.find(s => s.points > 0), 'Someone should have points');
   });
 });

@@ -480,7 +480,7 @@ export function buildRouter(deps: RouteDeps): Router {
 
   // --- Tournaments ---------------------------------------------------------
   const tournamentService = new TournamentService(deps.tournamentRepo, deps.gameLauncher);
-  const arenaService = new ArenaService(deps.tournamentRepo);
+  const arenaService = new ArenaService(deps.tournamentRepo, deps.gameLauncher, () => deps.clock.now());
 
   router.post(
     '/v1/tournaments',

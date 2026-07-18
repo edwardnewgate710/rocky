@@ -36,6 +36,7 @@ import {
   InMemoryRateLimiter,
   InMemoryTournamentsRepository,
   TournamentService,
+  ArenaService,
   type ApiServer,
   type ApiDependencies,
 } from '@chess-platform/api';
@@ -121,7 +122,8 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
     broadcaster.track(tid, gid);
   });
   const reporterTournamentService = new TournamentService(tournamentRepo, gameLauncher);
-  reporter = new TournamentResultReporter(pubsub, reporterTournamentService);
+  const reporterArenaService = new ArenaService(tournamentRepo, gameLauncher, () => systemClock.now());
+  reporter = new TournamentResultReporter(pubsub, tournamentRepo, reporterTournamentService, reporterArenaService);
 
   // --- API (in-memory) ---
   const clock = systemClock;
