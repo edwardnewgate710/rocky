@@ -737,6 +737,16 @@ export function buildRouter(deps: RouteDeps): Router {
       const body = strictObject(ctx.body, ['result']);
       const result = oneOf(reqString(body, 'result'), ['white_win', 'black_win', 'draw'], 'result');
 
+      const snap = await deps.tournamentRepo.findById(ctx.params['id']!);
+      if (!snap) throw HttpError.notFound('tournament not found');
+      if (snap.config.format === 'arena') {
+        const t = await arenaService.recordResultByGame(
+          ctx.params['id']!,
+          ctx.params['gameId']!,
+          result as 'white_win' | 'black_win' | 'draw'
+        );
+        return json(200, arenaTournamentView(t));
+      }
       const t = await tournamentService.recordResultByGame(
         ctx.params['id']!,
         ctx.params['gameId']!,

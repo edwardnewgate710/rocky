@@ -79,7 +79,14 @@ export class ArenaService {
 
   async recordResultByGame(id: string, gameId: string, result: GameResult): Promise<ArenaTournament> {
     const arena = await this.getTournament(id);
-    arena.recordResultByGame(gameId, result, this.clock());
+    try {
+      arena.recordResultByGame(gameId, result, this.clock());
+    } catch (e: any) {
+      if (e.message.includes('Unknown gameId')) {
+        throw HttpError.notFound('Game ID not found in this tournament');
+      }
+      throw HttpError.conflict(e.message);
+    }
     await this.reconcileLaunch(arena);
     await this.repo.save(arena.toSnapshot());
     return arena;
@@ -87,7 +94,14 @@ export class ArenaService {
 
   async abandonGame(id: string, gameId: string): Promise<ArenaTournament> {
     const arena = await this.getTournament(id);
-    arena.abandonGame(gameId);
+    try {
+      arena.abandonGame(gameId);
+    } catch (e: any) {
+      if (e.message.includes('Unknown gameId')) {
+        throw HttpError.notFound('Game ID not found in this tournament');
+      }
+      throw HttpError.conflict(e.message);
+    }
     await this.reconcileLaunch(arena);
     await this.repo.save(arena.toSnapshot());
     return arena;

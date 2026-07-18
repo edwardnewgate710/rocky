@@ -22,28 +22,31 @@ dependency-free domain packages** tested with the built-in `node --test` runner.
 - `packages/*` — the domain/service packages. `services/gateway` — the deployable realtime
   gateway binary (infra adapters: Postgres event log, Redis pub/sub, `ws`).
 
-## Current status (2026-07-12)
+## Current status (2026-07-18)
 
 | Milestone | Package(s) | Status | Tests |
 |---|---|---|---|
 | M1 | `@chess-platform/core` | ✅ rules engine (perft-verified) | 16 |
-| M2 | `@chess-platform/game` | ✅ event-sourced game aggregate + clocks + threefold repetition | 23 |
-| M3 | `@chess-platform/realtime-gateway` | ✅ realtime WS edge + token auth + durable `EventLog` port + `PubSub` (in-memory & Redis) | 56 |
-| M4a | `@chess-platform/persistence` | ✅ durable event store + repositories + Glicko-2 | 16 (2 DB-gated) |
-| M4b | `@chess-platform/api` | ✅ stateless REST + identity (scrypt, rotating refresh, RBAC) | 48 |
+| M2 | `@chess-platform/game` | ✅ event-sourced game aggregate + clocks + threefold repetition | 25 |
+| M3 | `@chess-platform/realtime-gateway` | ✅ realtime WS edge + token auth + durable `EventLog` port + `PubSub` (in-memory & Redis) | 61 |
+| M4a | `@chess-platform/persistence` | ✅ durable event store + repositories + Glicko-2 | 19 (5 DB-gated) |
+| M4b | `@chess-platform/api` | ✅ stateless REST + identity (scrypt, rotating refresh, RBAC) | 118 (3 DB-gated) |
 | M5 | `@chess-platform/engine` | ✅ provider-agnostic UCI engine bridge | 50 |
-| M6 | `@chess-platform/web` + `@chess-platform/e2e-harness` | ✅ playable frontend; Playwright full-game e2e + Lighthouse a11y ≥ 0.95 in CI | 239 + 2 |
-| M7 | `@chess-platform/ai-orchestrator` | ✅ AI routing/failover/caching + engine-grounded prompts | 114 (2 key-gated) |
-| M8 | `@chess-platform/ai-features` | ✅ 8 features (Move Explanation → Voice Coach); Tournament Commentator deferred to M9 | 137 (16 key-gated) |
-| **M14** | compose + `services/gateway` + `deploy/helm` | 🚧 **increments 1–4 complete:** local compose stack · durable game authority (write-through `EventLog` → Postgres, evict/rehydrate) · Redis pub/sub multi-node fanout (ADR-0008) · Helm chart + kubeconform CI gate (ADR-0009) · threefold-repetition fix (en-passant legality in repetition key) | — |
+| M6 | `@chess-platform/web` + `@chess-platform/e2e-harness` | ✅ playable frontend; Playwright full-game e2e + Lighthouse a11y ≥ 0.95 in CI | 260 + 4 |
+| M7 | `@chess-platform/ai-orchestrator` | ✅ AI routing/failover/caching + engine-grounded prompts | 117 (2 key-gated) |
+| M8 | `@chess-platform/ai-features` | ✅ 9 features (Move Explanation → Tournament Commentator) | 140 (16 key-gated) |
+| M9 | `@chess-platform/tournament` (+ api/realtime integration) | ✅ round-robin, Swiss, and Arena formats; persistence + REST API; durable game launcher; realtime result recording; live broadcast (ADR-0014 → ADR-0024) | 49 |
+| M12 | api security hardening | 🚧 **increments 1–3 complete:** CORS + security headers (ADR-0011) · httpOnly refresh cookie (ADR-0012) · auth rate limiting w/ Postgres buckets (ADR-0013) | — |
+| **M14** | compose + `services/gateway` + `deploy/helm` | 🚧 **increments 1–4 complete:** local compose stack · durable game authority (write-through `EventLog` → Postgres, evict/rehydrate) · Redis pub/sub multi-node fanout (ADR-0008) · Helm chart + kubeconform CI gate (ADR-0009) · threefold-repetition fix (en-passant legality in repetition key) | 4 (Redis-gated) |
 
-**Whole repo: 701 total tests, 0 failures** (skips: 2 Postgres-gated + 18
-API-key-gated). Strict TS, lint clean. **CI is active** (`.github/workflows/ci.yml`, 5 jobs:
+**Whole repo: 863 total tests, 0 failures** (skips: 8 Postgres-gated + 18
+API-key-gated + 4 Redis-gated — run `npm run test:counts` for the live per-package
+breakdown). Strict TS, lint clean. **CI is active** (`.github/workflows/ci.yml`, 6 jobs:
 build+typecheck+test on Node 22/24, Postgres integration, M6 Playwright+Lighthouse acceptance,
-helm lint+kubeconform).
+helm lint+kubeconform, gateway service).
 
-M9–M13 (tournaments, social/learning + GraphQL, search, security/anti-cheat, observability)
-are ⬜ planned — see the ROADMAP.
+M10, M11, and M13 (social/learning + GraphQL, search, observability) are ⬜ planned;
+M12's anti-cheat half is also still ahead — see the ROADMAP.
 
 ## Build & test
 

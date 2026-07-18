@@ -289,4 +289,82 @@ describe('Tournament API', () => {
     });
     assert.equal(res.status, 409);
   });
+
+  it('records an arena game result by game id and relaunches the freed players', async () => {
+    const createRes = await h.json('POST', '/v1/tournaments', {
+      token: directorToken,
+      body: {
+        name: 'Arena By-Game Result',
+        format: 'arena',
+        variant: 'standard',
+        durationMs: 3600000,
+        timeControl: { kind: 'increment', initialMs: 600000, incrementMs: 5000, delayMs: 0 },
+      },
+    });
+    assert.equal(createRes.status, 201);
+    const id = createRes.body.id;
+
+    const carol = await h.makeUser('arena_carol');
+    const dave = await h.makeUser('arena_dave');
+    await h.json('POST', `/v1/tournaments/${id}/participants`, { token: carol.token });
+    await h.json('POST', `/v1/tournaments/${id}/participants`, { token: dave.token });
+
+    const startRes = await h.json('POST', `/v1/tournaments/${id}/start`, { token: directorToken });
+    assert.equal(startRes.status, 200);
+
+    // Starting an arena pairs the two available players and launches a game.
+    const snap = (await h.tournamentRepo.findById(id)) as any;
+    assert.equal(snap.gameLinks.length, 1);
+    const [pairingId, gameId] = snap.gameLinks[0];
+    const white = snap.activeGames[pairingId].white;
+
+    // An unknown game id on an arena is a 404, not a 409/500.
+    const missingRes = await h.json('POST', `/v1/tournaments/${id}/games/not-a-game/result`, {
+      token: directorToken,
+      body: { result: 'white_win' },
+    });
+    assert.equal(missingRes.status, 404);
+
+    const resultRes = await h.json('POST', `/v1/tournaments/${id}/games/${gameId}/result`, {
+      token: directorToken,
+      body: { result: 'white_win' },
+    });
+    assert.equal(resultRes.status, 200);
+    assert.equal(resultRes.body.format, 'arena');
+
+    const stdRes = await h.json('GET', `/v1/tournaments/${id}/standings`);
+    assert.equal(stdRes.status, 200);
+    const winner = stdRes.body.find((s: any) => s.playerId === white);
+    assert.equal(winner.points, 2);
+    assert.equal(winner.gamesPlayed, 1);
+
+    // The freed players are immediately re-paired into a fresh game.
+    const after = (await h.tournamentRepo.findById(id)) as any;
+    assert.equal(after.gameLinks.length, 1);
+    assert.notEqual(after.gameLinks[0][1], gameId);
+  });
+
+  it('serves the live view for an arena', async () => {
+    const createRes = await h.json('POST', '/v1/tournaments', {
+      token: directorToken,
+      body: {
+        name: 'Arena Live View',
+        format: 'arena',
+        variant: 'standard',
+        durationMs: 3600000,
+        timeControl: { kind: 'increment', initialMs: 600000, incrementMs: 5000, delayMs: 0 },
+      },
+    });
+    assert.equal(createRes.status, 201);
+    const id = createRes.body.id;
+
+    const erin = await h.makeUser('arena_erin');
+    await h.json('POST', `/v1/tournaments/${id}/participants`, { token: erin.token });
+
+    const liveRes = await h.json('GET', `/v1/tournaments/${id}/live`);
+    assert.equal(liveRes.status, 200);
+    assert.ok(Array.isArray(liveRes.body.games));
+    assert.equal(liveRes.body.standings.length, 1);
+    assert.equal(liveRes.body.standings[0].playerId, erin.userId);
+  });
 });

@@ -4,7 +4,13 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-18 — M9 inc 12: Arena realtime game lifecycle (ADR-0024). **M1–M9 complete, M12 inc 1–3 complete, M14 increments 1–4 complete (M14 overall still in progress).** Prior: M9 inc 11: Arena through the API + persistence (ADR-0023). Prior: M9 inc 10: Arena tournament format (domain model) (ADR-0022). Prior: M9 inc 9: Tournament robustness (ADR-0021). Prior: M9 inc 8: Tournament Commentator AI feature (ADR-0020). Prior: M9 inc 7: Live tournament broadcast (ADR-0019). Prior: M9 inc 6: Real-time tournament integration (ADR-0018). Prior: M9 inc 5: Tournament game lifecycle (ADR-0017). Prior: M9 inc 4: Postgres adapter for tournament persistence. Prior: M9 inc 3: Tournament persistence & REST API (ADR-0016). Prior: M9 inc 2: Swiss pairing + round-by-round port evolution (ADR-0015). Prior: M12 inc 3: rate limiting for sensitive auth endpoints (ADR-0013). Prior: M14 increment 4 (Kubernetes Helm chart). **M7, M8, M9, M14 inc 1–4 complete.** Prior: Review #03 fixes applied:
+_Last updated: 2026-07-18 — Repo review pass: fixed the two tournament routes that
+predated the Arena format and never gained its dispatch — `POST
+/v1/tournaments/:id/games/:gameId/result` (always 409'd for arenas; arenas had NO
+result-recording path through the REST API) and `GET /v1/tournaments/:id/live`
+(always 409'd for arenas) — plus `ArenaService` domain-error → HTTP mapping
+(unknown gameId is now 404, not 500). Docs (README/AI_HANDOVER/ROADMAP) re-synced
+with reality (M9 ✅, M12 🚧, live test counts). Prior: M9 inc 12: Arena realtime game lifecycle (ADR-0024). **M1–M9 complete, M12 inc 1–3 complete, M14 increments 1–4 complete (M14 overall still in progress).** Prior: M9 inc 11: Arena through the API + persistence (ADR-0023). Prior: M9 inc 10: Arena tournament format (domain model) (ADR-0022). Prior: M9 inc 9: Tournament robustness (ADR-0021). Prior: M9 inc 8: Tournament Commentator AI feature (ADR-0020). Prior: M9 inc 7: Live tournament broadcast (ADR-0019). Prior: M9 inc 6: Real-time tournament integration (ADR-0018). Prior: M9 inc 5: Tournament game lifecycle (ADR-0017). Prior: M9 inc 4: Postgres adapter for tournament persistence. Prior: M9 inc 3: Tournament persistence & REST API (ADR-0016). Prior: M9 inc 2: Swiss pairing + round-by-round port evolution (ADR-0015). Prior: M12 inc 3: rate limiting for sensitive auth endpoints (ADR-0013). Prior: M14 increment 4 (Kubernetes Helm chart). **M7, M8, M9, M14 inc 1–4 complete.** Prior: Review #03 fixes applied:
 the authoritative `legalMoves` map from the server snapshot is now surfaced through `GameSync`
 state (populated from each `StateView`, stale after a live move broadcast, empty once the game ends)
 and a new `AuthoritativeMoveOracle` adapter implements the existing `LegalMoveOracle` port, fed by
@@ -75,7 +81,7 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 | **M12** 🚧 | Security hardening | **Increment 1:** CORS policy + security response headers for the API (`withSecurity` middleware — ACAO allowlist, credentials-aware, preflight short-circuit, `X-Content-Type-Options`/`Referrer-Policy`/`X-Frame-Options`/CSP/CORP/HSTS); ADR-0011 Accepted. **Increment 2:** httpOnly refresh-token cookie — API sets `HttpOnly; SameSite=Strict; Path=/v1/auth; Max-Age=<ttl>; Secure` cookie on login/refresh; refresh/logout accept cookie or body token; web stops persisting refresh token to `localStorage`; access token in memory only; ADR-0012 Accepted. **Increment 3:** Rate limiting for auth endpoints — API injects a `RateLimiter` port (`InMemoryRateLimiter` default) to protect `/v1/auth/{login,register,refresh}`, returns `429 Too Many Requests` with `Retry-After`; ADR-0013 Accepted | 70/70 (+4 inc 3) |
 | **M14** 🚧 | Deployable services | Docker Compose local stack (inc 1), durable EventLog + Postgres (inc 2), Redis pub/sub multi-node fanout (inc 3), Kubernetes Helm chart (inc 4); Terraform/blue-green/load-test deferred | — |
 
-**Whole-repo total: ~810 tests, 0 failures, across 11 packages + the gateway service** (skips: 5 Postgres-gated + 18 API-key-gated). Strict TS, zero errors, lint clean. CI active — 6 jobs: build+typecheck+test on Node 22/24, Postgres integration, M6 Playwright + Lighthouse acceptance, helm lint + kubeconform, gateway service (build + Redis integration).
+**Whole-repo total: 863 tests, 0 failures, across 11 packages + the gateway service** (skips: 8 Postgres-gated + 18 API-key-gated + 4 Redis-gated; `npm run test:counts` prints the live per-package breakdown). Strict TS, zero errors, lint clean. CI active — 6 jobs: build+typecheck+test on Node 22/24, Postgres integration, M6 Playwright + Lighthouse acceptance, helm lint + kubeconform, gateway service (build + Redis integration).
 
 ## 3. Architecture summary (as-built)
 
@@ -151,6 +157,22 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 
 ## 5. Deferred work / follow-ups (tracked, not lost)
 
+- **Tournaments (M9 follow-ups, found in the 2026-07-18 review):**
+  1. `TournamentResultReporter` (auto-recording results from `EndedBroadcast`)
+     lives only in `packages/e2e-harness` — the production compositions
+     (`services/gateway`, `api` bootstrap) do not wire it, so in a deployed
+     stack tournament/arena results must be recorded manually by a
+     `tournament_director` via `POST /v1/tournaments/:id/games/:gameId/result`.
+     Wire a durable reporter (Redis `PubSub` subscriber) into the deployable
+     stack in a later increment.
+  2. `TournamentsRepository.save` is a blind upsert (no optimistic
+     concurrency). Two concurrent result recordings for the same tournament
+     can lose an update (load → mutate → save race). Low risk while recording
+     is manual/TD-driven; must add a version column + compare-and-set (plus a
+     retry loop in the services) before wiring automatic concurrent recording.
+  3. Arena `withdraw` is permanent by design — `register` after `withdraw`
+     does not re-admit the player (the domain keeps them in `withdrawn`).
+     Lichess-style pause/rejoin needs an explicit domain decision + ADR.
 - **Identity (M4 → hardening pass):** **WebAuthn/passkeys** are NOT implemented yet.
   The `webauthn_credentials` table exists in the schema; add a `WebAuthnRepository`
   + registration/assertion ceremonies. Also: password-reset + email verification

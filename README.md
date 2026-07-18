@@ -5,7 +5,8 @@ Lichess and Chess.com, plus a first-class AI layer. This repository is built
 **milestone by milestone**, and every milestone ships real, tested, typed code —
 no skeletons, no placeholders.
 
-> **Status:** Milestones 1–8 complete, M14 (deployment & scale) in progress —
+> **Status:** Milestones 1–9 complete, M12 (security hardening) and M14
+> (deployment & scale) in progress —
 > a perft-verified, variant-aware chess rules engine (`@chess-platform/core`),
 > an event-sourced game authority with clocks (`@chess-platform/game`), a
 > real-time gateway with authoritative fanout, durable event log, and Redis
@@ -14,8 +15,10 @@ no skeletons, no placeholders.
 > published OpenAPI spec (`@chess-platform/api`), a provider-agnostic engine
 > bridge (`@chess-platform/engine`), a playable web frontend with Playwright
 > full-game e2e + Lighthouse a11y gates (`@chess-platform/web`), an AI
-> orchestration layer (`@chess-platform/ai-orchestrator`), eight AI features
-> (`@chess-platform/ai-features`), and a deployable stack: one-command
+> orchestration layer (`@chess-platform/ai-orchestrator`), nine AI features
+> (`@chess-platform/ai-features`), a tournament system with round-robin,
+> Swiss, and Arena formats plus live broadcast
+> (`@chess-platform/tournament`), and a deployable stack: one-command
 > `docker compose up` plus a Helm chart validated in CI.
 > See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what is built vs. planned.
 
@@ -40,8 +43,9 @@ chess-platform/
 │   ├── engine/             # ✅ Stockfish-backed analysis engine: eval, best lines, UCI bridge
 │   ├── web/                # ✅ Web frontend: lobby, board UI, live game play, PWA, a11y
 │   ├── e2e-harness/        # ✅ In-process backend harness for Playwright acceptance
+│   ├── tournament/         # ✅ Round-robin, Swiss, and Arena tournament domain
 │   ├── ai-orchestrator/    # ✅ AI provider routing, failover, caching, grounding
-│   └── ai-features/        # ✅ Coach, puzzles, explanations, trainers (8 features)
+│   └── ai-features/        # ✅ Coach, puzzles, explanations, commentator (9 features)
 ├── docs/
 │   ├── ARCHITECTURE.md     # Full system design (services, data, real-time, AI, security)
 │   ├── DATABASE.md         # Approved database architecture (M4 gate)
@@ -51,9 +55,9 @@ chess-platform/
 └── README.md
 ```
 
-Planned packages (see roadmap): `ai-orchestrator`, `web` (frontend),
-`engine-bridge` (Stockfish/Fairy-Stockfish), `search`, and `infra`
-(Terraform/K8s).
+Planned packages (see roadmap): `search` and `infra` (Terraform/K8s);
+`services/gateway` is the deployable realtime-gateway binary with its
+production adapters (Postgres event log, Redis pub/sub, `ws`).
 
 ## `@chess-platform/core`
 
@@ -123,7 +127,7 @@ const rebuilt = Game.fromEvents(eventLog);
 - Server-authoritative legality (clients never decide results).
 - Clocks: Fischer increment, Bronstein/US delay, sudden-death, unlimited.
 - Commands: move, resign, draw offer/accept/decline, flag claim, abort.
-- 18 tests pass; exact event-log reconstruction; ~1.17ms/game replay.
+- 25 tests pass; exact event-log reconstruction; ~1.17ms/game replay.
 
 ```bash
 cd packages/game && npm install && npm run build && npm test
@@ -149,7 +153,7 @@ documented adapter seams (`transport.ts`, `pubsub.ts`).
   restored) and asks for every move it missed since `lastPly`.
 - **Latency compensation.** `ping`/`pong` carry a server timestamp; clocks stay
   authoritative on the server and clients interpolate locally.
-- 31 tests pass, including a reconnection integration test and a fanout load
+- 61 tests pass, including a reconnection integration test and a fanout load
   test: **p99 < 50ms** broadcasting to 5,000 active subscribers with 50,000
   idle connections registered.
 
@@ -199,7 +203,7 @@ relational projections and identity tables.
   (not native ENUM). Forward-only, checksum-verified migration runner + CLI.
 - **UUIDv7** (time-ordered ids) and a **Glicko-2** implementation verified against
   Glickman's worked example.
-- 14 tests pass (Postgres integration tests gated on `DATABASE_URL`); the
+- 19 tests pass (Postgres integration tests gated on `DATABASE_URL`); the
   play → store → `Game.fromEvents` round-trip is verified.
 
 ```bash
@@ -222,7 +226,7 @@ dependency at the root entry.
   per-variant leaderboards, and game summaries.
 - **Published OpenAPI 3.1** generated from the live route table (served at
   `/v1/openapi.json`, committed to `packages/api/openapi.json`).
-- 45 tests pass, including the M4 **authorization matrix**. Strict TS, zero errors.
+- 118 tests pass, including the M4 **authorization matrix**. Strict TS, zero errors.
 
 ```ts
 import { createPgApiServer } from '@chess-platform/api/pg';
@@ -251,7 +255,7 @@ Stockfish binary.
   variations.
 - **Adapter seam:** `InMemoryEngine` for tests/dev, `StockfishEngine` for
   production.
-- 12 tests pass; strict TS, zero errors.
+- 50 tests pass; strict TS, zero errors.
 
 ```bash
 cd packages/engine && npm install && npm run build && npm test
@@ -265,7 +269,7 @@ client.
 
 - **Complete (M6):** lobby and game views, board rendering, realtime
   connection management.
-- 239 tests pass (unit + component); strict TS, zero errors.
+- 260 tests pass (unit + component); strict TS, zero errors.
 
 ```bash
 cd packages/web && npm install && npm run build && npm test

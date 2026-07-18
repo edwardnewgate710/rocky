@@ -495,9 +495,21 @@ infrastructure (tournament state, game feeds, broadcast integration) that
 does not exist yet. The deferral is honest and explicit — 8 features
 delivered, 1 deferred with a reason.
 
-## ⬜ Milestone 9 — Tournaments & broadcast
+## ✅ Milestone 9 — Tournaments & broadcast
 
 Arena + Swiss + round-robin, pairings, tiebreaks, live broadcast multiplexing.
+
+**M9 is complete** (12 increments, ADR-0014 → ADR-0024): a pure tournament
+domain package (`@chess-platform/tournament`) with round-robin (Berger
+circle method), Swiss (deterministic Monrad/Dutch-lite with backtracking
+match), and Arena (continuous pairing, streak scoring, fixed duration);
+Sonneborn-Berger/Buchholz standings; snapshot persistence (in-memory +
+Postgres); a REST API with `tournament_director` authorization; a durable
+game launcher (deterministic game ids, idempotent per
+`(tournamentId, matchId, attempt)`); realtime result recording via PubSub;
+live broadcast multiplexing + `GET /v1/tournaments/:id/live`; and the
+Tournament Commentator AI feature deferred from M8. Full FIDE Dutch pairing
+remains deferred (ADR-0015).
 
 ## ⬜ Milestone 10 — Social & learning
 
@@ -511,9 +523,14 @@ extended in M11) for the nested, client-driven reads these features need.
 Keyword + semantic (pgvector/Meilisearch) over games, openings, players, studies;
 natural-language query parsing.
 
-## ⬜ Milestone 12 — Security hardening & anti-cheat
+## 🚧 Milestone 12 — Security hardening & anti-cheat
 
 Engine-correlation scoring, bot detection, fraud/DDoS, audit, pen-test pass.
+
+**Increments 1–3 complete:** CORS policy + security response headers
+(ADR-0011), httpOnly refresh-token cookie (ADR-0012), rate limiting for
+sensitive auth endpoints with a durable Postgres bucket store (ADR-0013).
+Anti-cheat, bot detection, and the pen-test pass remain.
 
 ## ⬜ Milestone 13 — Observability & SRE
 
