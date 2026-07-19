@@ -449,6 +449,98 @@ export class InMemoryIdentityTokensRepository implements IdentityTokensRepositor
   }
 }
 
+import type {
+  WebAuthnCredentialRow,
+  NewWebAuthnCredential,
+  WebAuthnCredentialsRepository,
+  WebAuthnLoginChallengeRow,
+  NewWebAuthnLoginChallenge,
+  WebAuthnLoginChallengesRepository,
+} from '@chess-platform/persistence';
+
+export class InMemoryWebAuthnLoginChallengesRepository implements WebAuthnLoginChallengesRepository {
+  private readonly byHash = new Map<string, WebAuthnLoginChallengeRow>();
+
+  async upsert(challenge: NewWebAuthnLoginChallenge): Promise<void> {
+    this.byHash.set(challenge.challengeHash, {
+      ...challenge,
+    });
+  }
+
+  async consume(challengeHash: string, at: Date): Promise<WebAuthnLoginChallengeRow | null> {
+    const row = this.byHash.get(challengeHash);
+    if (!row) return null;
+    if (row.expiresAt.getTime() <= at.getTime()) {
+      this.byHash.delete(challengeHash);
+      return null;
+    }
+    this.byHash.delete(challengeHash);
+    return row;
+  }
+
+  async cleanup(at: Date): Promise<void> {
+    for (const [hash, row] of this.byHash.entries()) {
+      if (row.expiresAt.getTime() <= at.getTime()) {
+        this.byHash.delete(hash);
+      }
+    }
+  }
+}
+
+export class InMemoryWebAuthnCredentialsRepository implements WebAuthnCredentialsRepository {
+  private readonly byId = new Map<string, WebAuthnCredentialRow>();
+  private readonly order: string[] = [];
+
+  async create(credential: NewWebAuthnCredential): Promise<WebAuthnCredentialRow> {
+    const row: WebAuthnCredentialRow = {
+      id: credential.id,
+      userId: credential.userId,
+      publicKey: credential.publicKey,
+      signCount: credential.signCount,
+      transports: credential.transports,
+      name: credential.name,
+      createdAt: new Date(),
+      lastUsedAt: null,
+    };
+    const key = credential.id.toString('hex');
+    this.byId.set(key, row);
+    this.order.push(key);
+    return row;
+  }
+
+  async findByCredentialId(id: Buffer): Promise<WebAuthnCredentialRow | null> {
+    return this.byId.get(id.toString('hex')) ?? null;
+  }
+
+  async listForUser(userId: string): Promise<WebAuthnCredentialRow[]> {
+    return this.order
+      .map(k => this.byId.get(k)!)
+      .filter(c => c.userId === userId);
+  }
+
+  async updateSignCount(id: Buffer, signCount: number, at: Date): Promise<void> {
+    const key = id.toString('hex');
+    const row = this.byId.get(key);
+    if (!row || (row.signCount !== 0 && signCount <= row.signCount)) {
+      throw new Error('ConcurrentAssertionError');
+    }
+    this.byId.set(key, { ...row, signCount, lastUsedAt: at });
+  }
+
+  async delete(id: Buffer): Promise<void> {
+    const key = id.toString('hex');
+    this.byId.delete(key);
+    const idx = this.order.indexOf(key);
+    if (idx !== -1) this.order.splice(idx, 1);
+  }
+
+  async countForUser(userId: string): Promise<number> {
+    return this.order
+      .map(k => this.byId.get(k)!)
+      .filter(c => c.userId === userId).length;
+  }
+}
+
 /** A bundle of in-memory repositories plus the concrete audit repo for tests. */
 export interface InMemoryRepositories extends Repositories {
   readonly users: InMemoryUsersRepository;
@@ -459,6 +551,8 @@ export interface InMemoryRepositories extends Repositories {
   readonly audit: InMemoryAuditRepository;
   readonly tournaments: InMemoryTournamentsRepository;
   readonly identityTokens: InMemoryIdentityTokensRepository;
+  readonly webauthnLoginChallenges: InMemoryWebAuthnLoginChallengesRepository;
+  readonly webauthnCredentials: InMemoryWebAuthnCredentialsRepository;
 }
 
 /** Construct a fresh set of in-memory repositories sharing a clock. */
@@ -472,5 +566,7 @@ export function createInMemoryRepositories(clock: Clock = systemClock): InMemory
     audit: new InMemoryAuditRepository(),
     tournaments: new InMemoryTournamentsRepository(),
     identityTokens: new InMemoryIdentityTokensRepository(),
+    webauthnLoginChallenges: new InMemoryWebAuthnLoginChallengesRepository(),
+    webauthnCredentials: new InMemoryWebAuthnCredentialsRepository(),
   };
 }

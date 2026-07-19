@@ -44,6 +44,13 @@ export interface ApiConfig {
    * Rate limiting configuration for sensitive endpoints.
    */
   readonly rateLimit: RateLimitConfig;
+  /**
+   * WebAuthn / Passkeys configuration.
+   */
+  readonly webauthn: {
+    readonly rpId: string;
+    readonly origins: readonly string[];
+  };
 }
 
 export interface RateLimitEndpointConfig {
@@ -66,6 +73,13 @@ export interface RateLimitConfig {
   readonly passwordResetRequest: {
     readonly perIp: RateLimitEndpointConfig;
     readonly perTarget: RateLimitEndpointConfig;
+  };
+  readonly webauthnLogin: {
+    readonly perIp: RateLimitEndpointConfig;
+    readonly perHandle: RateLimitEndpointConfig;
+  };
+  readonly webauthnRegister: {
+    readonly perIp: RateLimitEndpointConfig;
   };
 }
 
@@ -95,6 +109,13 @@ export const DEFAULT_RATE_LIMIT: RateLimitConfig = {
   passwordResetRequest: {
     perIp: { maxRequests: 5, windowMs: 60 * 60 * 1000 }, // 5 / 60 min
     perTarget: { maxRequests: 3, windowMs: 60 * 60 * 1000 }, // 3 / 60 min
+  },
+  webauthnLogin: {
+    perIp: { maxRequests: 10, windowMs: 5 * 60 * 1000 }, // 10 / 5 min
+    perHandle: { maxRequests: 5, windowMs: 15 * 60 * 1000 }, // 5 / 15 min
+  },
+  webauthnRegister: {
+    perIp: { maxRequests: 5, windowMs: 60 * 60 * 1000 }, // 5 / 60 min
   },
 };
 
@@ -146,5 +167,9 @@ export function resolveConfig(input: ApiConfigInput = {}): ApiConfig {
     enableHsts: input.enableHsts ?? true,
     cookieSecure: input.cookieSecure ?? true,
     rateLimit: input.rateLimit ?? DEFAULT_RATE_LIMIT,
+    webauthn: input.webauthn ?? {
+      rpId: process.env['WEBAUTHN_RP_ID'] ?? 'localhost',
+      origins: (process.env['WEBAUTHN_ORIGINS'] ?? 'http://localhost:3000').split(','),
+    },
   };
 }

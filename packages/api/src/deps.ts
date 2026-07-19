@@ -14,7 +14,9 @@ import type {
   SessionsRepository,
   UsersRepository,
   TournamentsRepository,
-  IdentityTokensRepository
+  IdentityTokensRepository,
+  WebAuthnCredentialsRepository,
+  WebAuthnLoginChallengesRepository
 } from '@chess-platform/persistence';
 import type { PasswordHasher } from './auth/password';
 import type { AccessTokenService } from './auth/tokens';
@@ -36,6 +38,8 @@ export interface Repositories {
   readonly seeks: SeeksRepository;
   readonly audit: AuditRepository;
   readonly identityTokens: IdentityTokensRepository;
+  readonly webauthnCredentials: WebAuthnCredentialsRepository;
+  readonly webauthnLoginChallenges: WebAuthnLoginChallengesRepository;
 }
 
 /** Everything `createApiServer` needs to construct the service. */

@@ -57,6 +57,8 @@ export function createApiServer(deps: ApiDependencies, options: ApiServerOptions
     ids: deps.ids,
     refreshTtlSec: deps.config.refreshTokenTtlSec,
     emailSender: deps.emailSender,
+    webauthn: deps.config.webauthn,
+
   });
 
   const router = buildRouter({

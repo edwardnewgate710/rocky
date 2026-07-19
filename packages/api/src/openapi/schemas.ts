@@ -488,4 +488,96 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     },
     additionalProperties: false,
   },
+
+  // --- WebAuthn / Passkeys ---
+  PasskeyView: {
+    type: 'object',
+    required: ['id', 'name', 'createdAt'],
+    properties: {
+      id: { type: 'string', description: 'Base64URL encoded credential ID' },
+      name: { type: 'string' },
+      createdAt: dateTime,
+      lastUsedAt: { ...dateTime, nullable: true },
+    },
+  },
+
+  PasskeyList: { type: 'array', items: { $ref: '#/components/schemas/PasskeyView' } },
+
+  WebAuthnRegisterOptions: {
+    type: 'object',
+    required: ['challenge', 'rp', 'user', 'pubKeyCredParams', 'timeout', 'attestation', 'authenticatorSelection'],
+    properties: {
+      challenge: { type: 'string' }, // Base64URL
+      rp: { type: 'object', required: ['name', 'id'], properties: { name: { type: 'string' }, id: { type: 'string' } } },
+      user: { type: 'object', required: ['id', 'name', 'displayName'], properties: { id: { type: 'string' }, name: { type: 'string' }, displayName: { type: 'string' } } },
+      pubKeyCredParams: { type: 'array', items: { type: 'object', required: ['type', 'alg'], properties: { type: { type: 'string' }, alg: { type: 'integer' } } } },
+      timeout: { type: 'integer' },
+      attestation: { type: 'string' },
+      authenticatorSelection: { type: 'object', properties: { userVerification: { type: 'string' }, requireResidentKey: { type: 'boolean' } } },
+    },
+  },
+
+  WebAuthnRegisterVerifyRequest: {
+    type: 'object',
+    required: ['id', 'rawId', 'type', 'response'],
+    properties: {
+      id: { type: 'string' },
+      rawId: { type: 'string' },
+      type: { type: 'string' },
+      response: {
+        type: 'object',
+        required: ['clientDataJSON', 'attestationObject'],
+        properties: {
+          clientDataJSON: { type: 'string' },
+          attestationObject: { type: 'string' },
+        },
+      },
+    },
+  },
+
+  WebAuthnLoginOptionsRequest: {
+    type: 'object',
+    required: ['handle'],
+    properties: { handle: { type: 'string' } },
+    additionalProperties: false,
+  },
+
+  WebAuthnLoginOptions: {
+    type: 'object',
+    required: ['challenge', 'timeout', 'rpId', 'allowCredentials', 'userVerification'],
+    properties: {
+      challenge: { type: 'string' },
+      timeout: { type: 'integer' },
+      rpId: { type: 'string' },
+      allowCredentials: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['type', 'id'],
+          properties: { type: { type: 'string' }, id: { type: 'string' }, transports: { type: 'array', items: { type: 'string' } } },
+        },
+      },
+      userVerification: { type: 'string' },
+    },
+  },
+
+  WebAuthnLoginVerifyRequest: {
+    type: 'object',
+    required: ['id', 'rawId', 'type', 'response'],
+    properties: {
+      id: { type: 'string' },
+      rawId: { type: 'string' },
+      type: { type: 'string' },
+      response: {
+        type: 'object',
+        required: ['clientDataJSON', 'authenticatorData', 'signature'],
+        properties: {
+          clientDataJSON: { type: 'string' },
+          authenticatorData: { type: 'string' },
+          signature: { type: 'string' },
+          userHandle: { type: 'string' },
+        },
+      },
+    },
+  },
 };

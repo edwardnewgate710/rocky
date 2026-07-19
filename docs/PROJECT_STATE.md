@@ -4,7 +4,10 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-19 — M4 Identity Hardening inc 1: password reset + email verification
+_Last updated: 2026-07-19 — M4 Identity Hardening inc 2 review hardening: strict
+typed `clientDataJSON` validation, complete authenticator-extension framing,
+signature-counter regression protection, and reusable dummy verification key. Prior: M4 Identity Hardening inc 2: WebAuthn (passkeys) support
+(ADR-0027): `webauthn_credentials` Postgres table + `WebAuthnCredentialsRepository`, auth-service logic for credential parsing/signature verification with `node:crypto` (ES256), and `POST /v1/auth/webauthn/*` endpoints with decoy flows. Prior: M4 Identity Hardening inc 1: password reset + email verification
 (ADR-0026): `users.email` (CITEXT UNIQUE) + `identity_tokens` (hashed, single-use, TTL),
 `EmailSender`/`IdentityTokensRepository` ports, three new `/v1/auth` endpoints with
 anti-enumeration + rate limiting, full-session revocation on reset. Prior: M9 inc 13: Durable tournament result recording in production
@@ -359,3 +362,17 @@ Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
 - **Review hardening**: pre-reset refresh tokens proven dead after a reset;
   expired-token rejection via the injected clock; the in-memory users fake now
   mirrors the email UNIQUE constraint (duplicate email registration → 409).
+
+## M4 Identity Hardening — Increment 2: WebAuthn / Passkeys (ADR-0027)
+- **Storage**: Added `webauthn_login_challenges` to Postgres for stateless login challenge handling without fake user FKs.
+- **Security Primitives**: Hardened `decodeFirst` CBOR parser against trailing bytes, recursion limits, and duplicate map keys.
+- **Anti-Enumeration**: `allowCredentials` omitted from login options to prevent handle enumeration. Login flow uses decoy challenges (HMAC) for non-existent users.
+- **Sign Counts**: Atomic concurrency control when updating sign counts via `WebAuthnCredentialsRepository.updateSignCount`.
+- **API Endpoints**: Rate-limited `POST /v1/auth/webauthn/*` endpoints with comprehensive tests validating ceremony and decoy behaviors.
+
+## M4 Identity Hardening — Increment 2 Review Hardening
+- **Client data validation**: Both WebAuthn ceremonies now require typed, canonical client-data challenges, exact ceremony type, an allowed origin, `crossOrigin: false` when present, and no `topOrigin` under the current same-origin policy; malformed data returns 422 instead of reaching `node:crypto` as a 500.
+- **Authenticator data framing**: The parser rejects trailing bytes unless the ED flag is set, and requires ED payloads to be one complete CBOR map for both assertions and attested credential data.
+- **Counter/replay protection**: A stored non-zero signature counter can no longer regress to zero, and the in-memory repository now mirrors the Postgres compare-and-update rule.
+- **Resource hardening**: Unknown credentials reuse one process-level dummy EC key instead of synchronously generating a key pair for every unauthenticated verification request.
+- **Regression coverage**: Added tests for extension framing, signature-counter regression, malformed challenges, and forbidden `topOrigin`.

@@ -334,6 +334,147 @@ export function buildRouter(deps: RouteDeps): Router {
     },
   );
 
+  // --- WebAuthn / Passkeys -------------------------------------------------
+  router.get(
+    '/v1/auth/webauthn/passkeys',
+    doc({
+      summary: 'List passkeys',
+      tags: ['auth', 'webauthn'],
+      security: 'bearer',
+      responses: { 200: ['PasskeyList', 'Passkeys'] },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const identity = requireAuth(ctx);
+      const list = await auth.listPasskeys(identity.userId);
+      return json(200, list.map(c => ({
+        id: c.id.toString('base64url'),
+        name: c.name,
+        createdAt: c.createdAt.toISOString(),
+        lastUsedAt: c.lastUsedAt ? c.lastUsedAt.toISOString() : null,
+      })));
+    },
+  );
+
+  router.delete(
+    '/v1/auth/webauthn/passkeys/:id',
+    doc({
+      summary: 'Delete a passkey',
+      tags: ['auth', 'webauthn'],
+      security: 'bearer',
+      params: [pathParam('id', 'Base64URL encoded credential ID')],
+      responses: { 204: [undefined, 'Deleted'], 404: ['Error', 'Not found'] },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const identity = requireAuth(ctx);
+      // convert base64url back to hex for internal use
+      const idHex = Buffer.from(ctx.params['id']!, 'base64url').toString('hex');
+      await auth.deletePasskey(identity.userId, idHex, meta(ctx));
+      return noContent();
+    },
+  );
+
+  router.post(
+    '/v1/auth/webauthn/register/options',
+    doc({
+      summary: 'Get WebAuthn registration options',
+      tags: ['auth', 'webauthn'],
+      security: 'bearer',
+      responses: { 200: ['WebAuthnRegisterOptions', 'Options'] },
+    }),
+    AUTHED,
+    async (ctx) => {
+      if (config.rateLimit.enabled) {
+        const ipKey = `webauthn-register:ip:${ctx.ip ?? 'unknown'}`;
+        const ipCheck = await rateLimiter.check(ipKey, config.rateLimit.webauthnRegister.perIp);
+        if (!ipCheck.allowed) throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
+      }
+
+      const identity = requireAuth(ctx);
+      const options = await auth.generateWebAuthnRegisterOptions(identity.userId);
+      return json(200, options);
+    },
+  );
+
+  router.post(
+    '/v1/auth/webauthn/register/verify',
+    doc({
+      summary: 'Verify WebAuthn registration',
+      tags: ['auth', 'webauthn'],
+      security: 'bearer',
+      requestSchema: 'WebAuthnRegisterVerifyRequest',
+      responses: { 200: ['PasskeyView', 'Registered'], 400: ['Error', 'Validation Error'] },
+    }),
+    AUTHED,
+    async (ctx) => {
+      if (config.rateLimit.enabled) {
+        const ipKey = `webauthn-register:ip:${ctx.ip ?? 'unknown'}`;
+        const ipCheck = await rateLimiter.check(ipKey, config.rateLimit.webauthnRegister.perIp);
+        if (!ipCheck.allowed) throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
+      }
+
+      const identity = requireAuth(ctx);
+      const result = await auth.verifyWebAuthnRegister(identity.userId, ctx.body, meta(ctx));
+      return json(200, result);
+    },
+  );
+
+  router.post(
+    '/v1/auth/webauthn/login/options',
+    doc({
+      summary: 'Get WebAuthn login options',
+      tags: ['auth', 'webauthn'],
+      requestSchema: 'WebAuthnLoginOptionsRequest',
+      responses: { 200: ['WebAuthnLoginOptions', 'Options'] },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const body = strictObject(ctx.body, ['handle']);
+      const handle = reqString(body, 'handle', { trim: true });
+
+      if (config.rateLimit.enabled) {
+        const ipKey = `webauthn-login:ip:${ctx.ip ?? 'unknown'}`;
+        const handleKey = `webauthn-login:handle:${handle.toLowerCase()}`;
+
+        const ipCheck = await rateLimiter.check(ipKey, config.rateLimit.webauthnLogin.perIp);
+        if (!ipCheck.allowed) throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
+
+        const handleCheck = await rateLimiter.check(handleKey, config.rateLimit.webauthnLogin.perHandle);
+        if (!handleCheck.allowed) throw HttpError.rateLimited(handleCheck.retryAfterSeconds);
+      }
+
+      const options = await auth.generateWebAuthnLoginOptions(handle);
+      return json(200, options);
+    },
+  );
+
+  router.post(
+    '/v1/auth/webauthn/login/verify',
+    doc({
+      summary: 'Verify WebAuthn login',
+      tags: ['auth', 'webauthn'],
+      requestSchema: 'WebAuthnLoginVerifyRequest',
+      responses: { 200: ['AuthResponse', 'Authenticated'], 401: ['Error', 'Invalid credentials'] },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      if (config.rateLimit.enabled) {
+        const ipKey = `webauthn-login:ip:${ctx.ip ?? 'unknown'}`;
+        const ipCheck = await rateLimiter.check(ipKey, config.rateLimit.webauthnLogin.perIp);
+        if (!ipCheck.allowed) throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
+      }
+
+      const result = await auth.verifyWebAuthnLogin(ctx.body, meta(ctx));
+      return json(200, {
+        user: selfUser(result.user, result.roles),
+        tokens: result.tokens,
+      }, {
+        'Set-Cookie': buildRefreshCookie(result.tokens.refreshToken, refreshTokenTtlSec, cookieOpts),
+      });
+    },
+  );
+
   // --- Users ---------------------------------------------------------------
   router.get(
     '/v1/users/me',

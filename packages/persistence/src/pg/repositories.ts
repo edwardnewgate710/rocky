@@ -35,6 +35,12 @@ import type {
   IdentityTokenRow,
   NewIdentityToken,
   IdentityTokensRepository,
+  WebAuthnCredentialRow,
+  NewWebAuthnCredential,
+  WebAuthnCredentialsRepository,
+  WebAuthnLoginChallengeRow,
+  NewWebAuthnLoginChallenge,
+  WebAuthnLoginChallengesRepository,
 } from '../repositories';
 import { DuplicateUserError, VersionConflictError } from '../errors';
 
@@ -677,5 +683,166 @@ export class PgIdentityTokensRepository implements IdentityTokensRepository {
       expiresAt: r.expires_at,
       usedAt: r.used_at,
     };
+  }
+}
+
+export class PgWebAuthnLoginChallengesRepository implements WebAuthnLoginChallengesRepository {
+  constructor(private readonly pool: Pool) {}
+
+  async upsert(challenge: NewWebAuthnLoginChallenge): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO webauthn_login_challenges (challenge_hash, user_id, expires_at)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (challenge_hash) DO UPDATE SET user_id = EXCLUDED.user_id, expires_at = EXCLUDED.expires_at`,
+      [challenge.challengeHash, challenge.userId, challenge.expiresAt],
+    );
+  }
+
+  async consume(challengeHash: string, at: Date): Promise<WebAuthnLoginChallengeRow | null> {
+    const res = await this.pool.query<{
+      challenge_hash: string;
+      user_id: string | null;
+      expires_at: Date;
+    }>(
+      `DELETE FROM webauthn_login_challenges
+       WHERE challenge_hash = $1 AND expires_at > $2
+       RETURNING challenge_hash, user_id, expires_at`,
+      [challengeHash, at],
+    );
+    const r = res.rows[0];
+    if (!r) return null;
+    return {
+      challengeHash: r.challenge_hash,
+      userId: r.user_id,
+      expiresAt: r.expires_at,
+    };
+  }
+
+  async cleanup(at: Date): Promise<void> {
+    await this.pool.query('DELETE FROM webauthn_login_challenges WHERE expires_at <= $1', [at]);
+  }
+}
+
+export class PgWebAuthnCredentialsRepository implements WebAuthnCredentialsRepository {
+  constructor(private readonly pool: Pool) {}
+
+  async create(credential: NewWebAuthnCredential): Promise<WebAuthnCredentialRow> {
+    const res = await this.pool.query<{
+      id: Buffer;
+      user_id: string;
+      public_key: Buffer;
+      sign_count: string;
+      transports: string[];
+      name: string;
+      created_at: Date;
+      last_used_at: Date | null;
+    }>(
+      `INSERT INTO webauthn_credentials (id, user_id, public_key, sign_count, transports, name)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, user_id, public_key, sign_count, transports, name, created_at, last_used_at`,
+      [
+        credential.id,
+        credential.userId,
+        credential.publicKey,
+        credential.signCount,
+        credential.transports,
+        credential.name,
+      ],
+    );
+    const r = res.rows[0]!;
+    return {
+      id: r.id,
+      userId: r.user_id,
+      publicKey: r.public_key,
+      signCount: parseInt(r.sign_count, 10),
+      transports: r.transports,
+      name: r.name,
+      createdAt: r.created_at,
+      lastUsedAt: r.last_used_at,
+    };
+  }
+
+  async findByCredentialId(id: Buffer): Promise<WebAuthnCredentialRow | null> {
+    const res = await this.pool.query<{
+      id: Buffer;
+      user_id: string;
+      public_key: Buffer;
+      sign_count: string;
+      transports: string[];
+      name: string;
+      created_at: Date;
+      last_used_at: Date | null;
+    }>(
+      `SELECT id, user_id, public_key, sign_count, transports, name, created_at, last_used_at
+       FROM webauthn_credentials
+       WHERE id = $1`,
+      [id],
+    );
+    const r = res.rows[0];
+    if (!r) return null;
+    return {
+      id: r.id,
+      userId: r.user_id,
+      publicKey: r.public_key,
+      signCount: parseInt(r.sign_count, 10),
+      transports: r.transports,
+      name: r.name,
+      createdAt: r.created_at,
+      lastUsedAt: r.last_used_at,
+    };
+  }
+
+  async listForUser(userId: string): Promise<WebAuthnCredentialRow[]> {
+    const res = await this.pool.query<{
+      id: Buffer;
+      user_id: string;
+      public_key: Buffer;
+      sign_count: string;
+      transports: string[];
+      name: string;
+      created_at: Date;
+      last_used_at: Date | null;
+    }>(
+      `SELECT id, user_id, public_key, sign_count, transports, name, created_at, last_used_at
+       FROM webauthn_credentials
+       WHERE user_id = $1
+       ORDER BY created_at ASC`,
+      [userId],
+    );
+    return res.rows.map(r => ({
+      id: r.id,
+      userId: r.user_id,
+      publicKey: r.public_key,
+      signCount: parseInt(r.sign_count, 10),
+      transports: r.transports,
+      name: r.name,
+      createdAt: r.created_at,
+      lastUsedAt: r.last_used_at,
+    }));
+  }
+
+  async updateSignCount(id: Buffer, signCount: number, at: Date): Promise<void> {
+    const res = await this.pool.query(
+      `UPDATE webauthn_credentials
+       SET sign_count = $2, last_used_at = $3
+       WHERE id = $1 AND (sign_count = 0 OR sign_count < $2)
+       RETURNING id`,
+      [id, signCount, at],
+    );
+    if (res.rowCount === 0) {
+      throw new Error('ConcurrentAssertionError'); // Captured in service layer
+    }
+  }
+
+  async delete(id: Buffer): Promise<void> {
+    await this.pool.query('DELETE FROM webauthn_credentials WHERE id = $1', [id]);
+  }
+
+  async countForUser(userId: string): Promise<number> {
+    const res = await this.pool.query<{ count: string }>(
+      'SELECT COUNT(*) as count FROM webauthn_credentials WHERE user_id = $1',
+      [userId],
+    );
+    return parseInt(res.rows[0]!.count, 10);
   }
 }

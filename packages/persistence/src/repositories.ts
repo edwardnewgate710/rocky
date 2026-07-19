@@ -54,7 +54,7 @@ export interface UsersRepository {
 
 // --- Identity Tokens -------------------------------------------------------
 
-export type IdentityTokenKind = 'password_reset' | 'email_verify';
+export type IdentityTokenKind = 'password_reset' | 'email_verify' | 'webauthn_register';
 
 export interface IdentityTokenRow {
   readonly tokenHash: string;
@@ -76,6 +76,55 @@ export interface IdentityTokensRepository {
   create(token: NewIdentityToken): Promise<IdentityTokenRow>;
   /** Atomically consume a token. Returns null if missing, expired, or already used. */
   consume(tokenHash: string, kind: IdentityTokenKind, at: Date): Promise<IdentityTokenRow | null>;
+}
+
+// --- WebAuthn Credentials ----------------------------------------------------
+
+export interface WebAuthnLoginChallengeRow {
+  readonly challengeHash: string;
+  readonly userId: string | null;
+  readonly expiresAt: Date;
+}
+
+export interface NewWebAuthnLoginChallenge {
+  readonly challengeHash: string;
+  readonly userId: string | null;
+  readonly expiresAt: Date;
+}
+
+export interface WebAuthnLoginChallengesRepository {
+  upsert(challenge: NewWebAuthnLoginChallenge): Promise<void>;
+  consume(challengeHash: string, at: Date): Promise<WebAuthnLoginChallengeRow | null>;
+  cleanup(at: Date): Promise<void>;
+}
+
+export interface WebAuthnCredentialRow {
+  readonly id: Buffer;            // credential ID (byte array)
+  readonly userId: string;
+  readonly publicKey: Buffer;
+  readonly signCount: number;
+  readonly transports: string[];
+  readonly name: string;
+  readonly createdAt: Date;
+  readonly lastUsedAt: Date | null;
+}
+
+export interface NewWebAuthnCredential {
+  readonly id: Buffer;
+  readonly userId: string;
+  readonly publicKey: Buffer;
+  readonly signCount: number;
+  readonly transports: string[];
+  readonly name: string;
+}
+
+export interface WebAuthnCredentialsRepository {
+  create(credential: NewWebAuthnCredential): Promise<WebAuthnCredentialRow>;
+  findByCredentialId(id: Buffer): Promise<WebAuthnCredentialRow | null>;
+  listForUser(userId: string): Promise<WebAuthnCredentialRow[]>;
+  updateSignCount(id: Buffer, signCount: number, at: Date): Promise<void>;
+  delete(id: Buffer): Promise<void>;
+  countForUser(userId: string): Promise<number>;
 }
 
 // --- Sessions --------------------------------------------------------------
