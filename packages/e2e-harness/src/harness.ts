@@ -29,6 +29,7 @@ import {
   createApiServer,
   createInMemoryRepositories,
   resolveConfig,
+  DEFAULT_RATE_LIMIT,
   ScryptPasswordHasher,
   AccessTokenService,
   systemClock,
@@ -111,7 +112,11 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
 
   // --- Gateway (in-memory pub/sub) ---
   const pubsub = new InMemoryPubSub();
-  const authority = new GameAuthority(pubsub, () => Date.now());
+  const clock = systemClock;
+  const repos = createInMemoryRepositories(clock);
+  // Match production wiring: API acceptance and the realtime authority share
+  // one durable event log, so a newly matched game can hydrate on first join.
+  const authority = new GameAuthority(pubsub, () => clock.now(), repos.events);
 
   // --- Tournament Realtime Bridge ---
   const ids = uuidv7Generator;
@@ -127,12 +132,14 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
   reporter = new TournamentResultReporter(pubsub, tournamentRepo, reporterTournamentService, reporterArenaService);
 
   // --- API (in-memory) ---
-  const clock = systemClock;
   const config = resolveConfig({
     accessTokenSecret: 'e2e-harness-test-secret-at-least-32-bytes-long!!',
     // The e2e stack runs over plain HTTP (vite preview), so the refresh cookie
     // must not carry the `Secure` attribute or the browser would drop it.
     cookieSecure: false,
+    // Product rate limits are covered by API integration tests. The shared e2e
+    // harness must permit parallel specs and Playwright retries to create users.
+    rateLimit: { ...DEFAULT_RATE_LIMIT, enabled: false },
   });
   const hasher = new ScryptPasswordHasher();
   const tokens = new AccessTokenService({
@@ -141,7 +148,6 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
     clock,
     ids,
   });
-  const repos = createInMemoryRepositories(clock);
   const rateLimiter = new InMemoryRateLimiter(clock);
   const emailSender = new ConsoleEmailSender();
   const deps: ApiDependencies = { repos, hasher, tokens, clock, ids, config, rateLimiter, tournamentRepo, gameLauncher, liveView: broadcaster, emailSender };

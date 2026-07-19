@@ -170,6 +170,8 @@ export interface SeekView {
   readonly minRating: number | null;
   readonly maxRating: number | null;
   readonly createdAt: string;
+  readonly gameId: string | null;
+  readonly acceptedAt: string | null;
 }
 
 export interface CreateSeekRequest {

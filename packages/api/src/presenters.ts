@@ -108,6 +108,8 @@ export interface SeekView {
   readonly minRating: number | null;
   readonly maxRating: number | null;
   readonly createdAt: string;
+  readonly gameId: string | null;
+  readonly acceptedAt: string | null;
 }
 
 export function seekView(row: SeekRow): SeekView {
@@ -122,6 +124,8 @@ export function seekView(row: SeekRow): SeekView {
     minRating: row.minRating,
     maxRating: row.maxRating,
     createdAt: row.createdAt.toISOString(),
+    gameId: row.gameId,
+    acceptedAt: row.acceptedAt ? row.acceptedAt.toISOString() : null,
   };
 }
 

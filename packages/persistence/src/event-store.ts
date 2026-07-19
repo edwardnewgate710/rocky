@@ -117,4 +117,9 @@ export class InMemoryEventStore implements EventStore {
   exists(gameId: string): Promise<boolean> {
     return Promise.resolve((this.logs.get(gameId)?.length ?? 0) > 0);
   }
+
+  /** Test/local-dev transaction compensation used by the in-memory seek acceptor. */
+  _removeGame(gameId: string): void {
+    this.logs.delete(gameId);
+  }
 }

@@ -21,6 +21,8 @@ export interface LobbyCallbacks {
   onCreatePending: (pending: boolean) => void;
   /** Called when an error occurs (for UI error display). */
   onError: (message: string) => void;
+  /** Called when a seek created by the current user is matched. */
+  onGameMatched?: (gameId: string) => void;
 }
 
 export interface LobbyControllerOptions {
@@ -72,7 +74,15 @@ export class LobbyController {
     if (this.disposed) return;
     try {
       this.seeks = await this.client.seeks.list();
-      this.callbacks.onSeeks(this.seeks);
+      
+      // Look for a matched seek (our backend only returns them if we are the creator)
+      const matched = this.seeks.find((s) => s.gameId !== null);
+      if (matched && this.callbacks.onGameMatched) {
+        this.callbacks.onGameMatched(matched.gameId!);
+      }
+
+      // Filter out matched seeks before passing to the UI
+      this.callbacks.onSeeks(this.seeks.filter((s) => s.gameId === null));
     } catch (err) {
       this.callbacks.onError(err instanceof Error ? err.message : String(err));
     }
@@ -138,6 +148,25 @@ export class LobbyController {
     try {
       await this.client.seeks.cancel(id);
       await this.refresh();
+      return true;
+    } catch (err) {
+      this.callbacks.onError(err instanceof Error ? err.message : String(err));
+      return false;
+    }
+  }
+
+  /** Accept an open seek. */
+  async acceptSeek(id: string): Promise<boolean> {
+    if (this.disposed) return false;
+    if (this.isAuthenticated !== undefined && !this.isAuthenticated()) {
+      this.callbacks.onError('Sign in to accept a seek.');
+      return false;
+    }
+    try {
+      const seek = await this.client.seeks.accept(id);
+      if (seek.gameId && this.callbacks.onGameMatched) {
+        this.callbacks.onGameMatched(seek.gameId);
+      }
       return true;
     } catch (err) {
       this.callbacks.onError(err instanceof Error ? err.message : String(err));

@@ -24,6 +24,16 @@ import { InMemoryEmailSender } from '../src/ports/email';
 export const TEST_SECRET = 'test-access-token-secret-0123456789abcdef';
 export const START_MS = 1_700_000_000_000;
 
+// WHATWG Fetch blocks several legacy-service ports even on localhost. Windows
+// can allocate them from a low ephemeral range, so discard those assignments.
+const FETCH_BLOCKED_EPHEMERAL_PORTS = new Set([
+  1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566,
+  6665, 6666, 6667, 6668, 6669, 6697, 10080,
+]);
+
+const closeServer = (server: Server): Promise<void> =>
+  new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+
 export interface Harness {
   readonly server: ApiServer;
   readonly repos: InMemoryRepositories;
@@ -65,8 +75,13 @@ export async function startHarness(config: ApiConfigInput = {}): Promise<Harness
   const liveView = { activeGames: () => [] };
   const emailSender = new InMemoryEmailSender();
   const server = createApiServer({ repos, hasher, tokens, clock, ids, rateLimiter, tournamentRepo, gameLauncher, liveView, emailSender, config: resolved });
-  const http: Server = await server.listen(0, '127.0.0.1');
-  const { port } = http.address() as AddressInfo;
+  let http: Server;
+  let port: number;
+  do {
+    http = await server.listen(0, '127.0.0.1');
+    ({ port } = http.address() as AddressInfo);
+    if (FETCH_BLOCKED_EPHEMERAL_PORTS.has(port)) await closeServer(http);
+  } while (FETCH_BLOCKED_EPHEMERAL_PORTS.has(port));
   const baseUrl = `http://127.0.0.1:${port}`;
 
   return {
@@ -97,9 +112,6 @@ export async function startHarness(config: ApiConfigInput = {}): Promise<Harness
       const body = text ? JSON.parse(text) : undefined;
       return { status: res.status, body, headers: res.headers };
     },
-    close: () =>
-      new Promise<void>((resolve, reject) =>
-        http.close((err) => (err ? reject(err) : resolve())),
-      ),
+    close: () => closeServer(http),
   };
 }

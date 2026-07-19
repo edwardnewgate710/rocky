@@ -22,6 +22,7 @@ import {
   PgIdentityTokensRepository,
   PgWebAuthnCredentialsRepository,
   PgWebAuthnLoginChallengesRepository,
+  PgSeekAcceptor,
 } from '@chess-platform/persistence/pg';
 import { ConsoleEmailSender } from './ports/email';
 import type { EmailSender } from './ports/email';
@@ -84,6 +85,7 @@ export function createPgRepositories(pool: Pool, ids: IdGenerator = uuidv7Genera
     identityTokens: new PgIdentityTokensRepository(pool),
     webauthnCredentials: new PgWebAuthnCredentialsRepository(pool),
     webauthnLoginChallenges: new PgWebAuthnLoginChallengesRepository(pool),
+    seekAcceptor: new PgSeekAcceptor(pool),
   };
 }
 

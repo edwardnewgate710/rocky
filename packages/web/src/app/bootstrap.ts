@@ -176,7 +176,18 @@ function renderSeeks(
       cancelBtn.setAttribute('aria-label', 'Cancel your seek');
       row.appendChild(cancelBtn);
     } else {
-      row.appendChild(info);
+      const main = document.createElement('div');
+      main.className = 'seek-main';
+      main.appendChild(info);
+      row.appendChild(main);
+
+      const acceptBtn = document.createElement('button');
+      acceptBtn.type = 'button';
+      acceptBtn.className = 'seek-accept button primary';
+      acceptBtn.textContent = 'Play';
+      acceptBtn.dataset.seekId = seek.id;
+      acceptBtn.setAttribute('aria-label', 'Accept seek');
+      row.appendChild(acceptBtn);
     }
 
     container.appendChild(row);
@@ -400,6 +411,9 @@ export function bootstrap(
         onError: (msg) => {
           if (errorEl) errorEl.textContent = msg;
         },
+        onGameMatched: (gameId) => {
+          window.location.href = `/game/${gameId}`;
+        },
       },
       isAuthenticated: () => auth.isAuthenticated(),
     });
@@ -427,13 +441,17 @@ export function bootstrap(
       });
     }
 
-    // Wire cancel buttons (event delegation on the seek list).
+    // Wire cancel/accept buttons (event delegation on the seek list).
     if (seekListEl) {
       seekListEl.addEventListener('click', (e) => {
         const target = e.target;
-        if (target instanceof HTMLElement && target.classList.contains('seek-cancel')) {
+        if (target instanceof HTMLElement && target.dataset.seekId) {
           const id = target.dataset.seekId;
-          if (id) void lobby.cancelSeek(id);
+          if (target.classList.contains('seek-cancel')) {
+            void lobby.cancelSeek(id);
+          } else if (target.classList.contains('seek-accept')) {
+            void lobby.acceptSeek(id);
+          }
         }
       });
     }

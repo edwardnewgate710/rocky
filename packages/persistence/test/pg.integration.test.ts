@@ -5,6 +5,7 @@ import { Game } from '@chess-platform/game';
 import { createPool } from '../src/pg/pool';
 import { migrate } from '../src/pg/migrate';
 import { PostgresEventStore } from '../src/pg/event-store';
+import { PgSeeksRepository, PgSeekAcceptor, PgUsersRepository } from '../src/pg/repositories';
 import { uuidv7 } from '../src/ids';
 import { ConcurrencyError } from '../src/errors';
 
@@ -54,6 +55,148 @@ test('postgres event store: round-trip and optimistic concurrency', { skip }, as
 
     // A second append at a stale head is rejected.
     await assert.rejects(store.append(gameId, -1, events), ConcurrencyError);
+  } finally {
+    await pool.end();
+  }
+});
+
+test('postgres seek acceptance: optimistic concurrency', { skip }, async () => {
+  const pool = createPool();
+  try {
+    await migrate(pool, join(process.cwd(), 'migrations'));
+    const seeks = new PgSeeksRepository(pool);
+    const acceptor = new PgSeekAcceptor(pool);
+    const users = new PgUsersRepository(pool);
+
+    const creatorId = uuidv7();
+    const p2Id = uuidv7();
+    const p3Id = uuidv7();
+    await users.createWithPasswordAndRole({ id: creatorId, handle: `creator-${creatorId.slice(0, 8)}` }, 'hash', 'user');
+    await users.createWithPasswordAndRole({ id: p2Id, handle: `p2-${p2Id.slice(0, 8)}` }, 'hash', 'user');
+    await users.createWithPasswordAndRole({ id: p3Id, handle: `p3-${p3Id.slice(0, 8)}` }, 'hash', 'user');
+
+    const seekId = uuidv7();
+    await seeks.create({
+      id: seekId,
+      creatorId,
+      variant: 'standard',
+      timeControl: { initialMs: 180000, incrementMs: 2000, delayMs: 0, kind: 'increment' },
+      rated: false,
+      color: 'random',
+      minRating: null,
+      maxRating: null,
+    });
+
+    const gameId1 = uuidv7();
+    const gameId2 = uuidv7();
+    const startedAt1 = Date.now();
+    const startedAt2 = startedAt1 + 1;
+    const { events: events1 } = Game.create({
+      gameId: gameId1,
+      timeControl: { initialMs: 180000, incrementMs: 2000, delayMs: 0, kind: 'increment' },
+      players: { white: creatorId, black: p2Id },
+      rated: false,
+      at: startedAt1,
+    });
+    const { events: events2 } = Game.create({
+      gameId: gameId2,
+      timeControl: { initialMs: 180000, incrementMs: 2000, delayMs: 0, kind: 'increment' },
+      players: { white: creatorId, black: p3Id },
+      rated: false,
+      at: startedAt2,
+    });
+
+    const accept1 = acceptor.accept(seekId, gameId1, events1, {
+      id: gameId1,
+      variant: 'standard',
+      rated: false,
+      speed: 'blitz',
+      whiteId: creatorId,
+      blackId: p2Id,
+      startedAt: new Date(startedAt1),
+    });
+
+    const accept2 = acceptor.accept(seekId, gameId2, events2, {
+      id: gameId2,
+      variant: 'standard',
+      rated: false,
+      speed: 'blitz',
+      whiteId: creatorId,
+      blackId: p3Id,
+      startedAt: new Date(startedAt2),
+    });
+
+    const [res1, res2] = await Promise.all([accept1, accept2]);
+
+    const successes = [res1, res2].filter(r => r !== null);
+    assert.equal(successes.length, 1, 'exactly one accept must succeed');
+    
+    const successRes = successes[0]!;
+    const winningGameId = successRes.gameId;
+
+    const gameRes = await pool.query('SELECT * FROM games WHERE id = $1', [winningGameId]);
+    assert.equal(gameRes.rowCount, 1, 'exactly one game should exist');
+
+    const eventsRes = await pool.query('SELECT * FROM game_events WHERE game_id = $1', [winningGameId]);
+    assert.ok(eventsRes.rowCount! > 0, 'game events should exist');
+
+    const losingGameId = res1 === null ? gameId1 : gameId2;
+    const orphanGame = await pool.query('SELECT * FROM games WHERE id = $1', [losingGameId]);
+    assert.equal(orphanGame.rowCount, 0, 'no orphan game should exist');
+    const orphanEvents = await pool.query('SELECT * FROM game_events WHERE game_id = $1', [losingGameId]);
+    assert.equal(orphanEvents.rowCount, 0, 'no orphan events should exist');
+
+    // Cancellation uses the same open-row predicate as acceptance. Whichever
+    // operation obtains the row first wins, and an accepted receipt is never deleted.
+    const cancelSeekId = uuidv7();
+    const cancelGameId = uuidv7();
+    const cancelStartedAt = Date.now();
+    await seeks.create({
+      id: cancelSeekId,
+      creatorId,
+      variant: 'standard',
+      timeControl: { initialMs: 180000, incrementMs: 2000, delayMs: 0, kind: 'increment' },
+      rated: false,
+      color: 'white',
+      minRating: null,
+      maxRating: null,
+    });
+    const { events: cancelEvents } = Game.create({
+      gameId: cancelGameId,
+      timeControl: { initialMs: 180000, incrementMs: 2000, delayMs: 0, kind: 'increment' },
+      players: { white: creatorId, black: p2Id },
+      rated: false,
+      at: cancelStartedAt,
+    });
+
+    const [removed, accepted] = await Promise.all([
+      seeks.remove(cancelSeekId),
+      acceptor.accept(cancelSeekId, cancelGameId, cancelEvents, {
+        id: cancelGameId,
+        variant: 'standard',
+        rated: false,
+        speed: 'blitz',
+        whiteId: creatorId,
+        blackId: p2Id,
+        startedAt: new Date(cancelStartedAt),
+      }),
+    ]);
+    assert.equal(Number(removed) + Number(accepted !== null), 1, 'cancel or accept must win, never both');
+
+    const finalSeek = await seeks.findById(cancelSeekId);
+    const finalGame = await pool.query('SELECT id FROM games WHERE id = $1', [cancelGameId]);
+    const finalEvents = await pool.query('SELECT game_id FROM game_events WHERE game_id = $1', [cancelGameId]);
+    if (accepted) {
+      assert.equal(removed, false);
+      assert.equal(finalSeek?.gameId, cancelGameId);
+      assert.equal(finalGame.rowCount, 1);
+      assert.ok(finalEvents.rowCount! > 0);
+    } else {
+      assert.equal(removed, true);
+      assert.equal(finalSeek, null);
+      assert.equal(finalGame.rowCount, 0);
+      assert.equal(finalEvents.rowCount, 0);
+    }
   } finally {
     await pool.end();
   }

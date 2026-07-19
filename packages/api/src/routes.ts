@@ -12,6 +12,7 @@ import type { RatingRow, TournamentsRepository } from '@chess-platform/persisten
 import { AuthService } from './auth/service';
 import type { RequestMeta } from './auth/service';
 import type { Repositories } from './deps';
+import { Game, classifySpeed } from '@chess-platform/game';
 import { parseRole, parseSeekColor, parseTimeControl, parseVariant, VARIANTS, HANDLE_PATTERN } from './domain';
 import { HttpError } from './http/errors';
 import { json, noContent } from './http/context';
@@ -606,7 +607,12 @@ export function buildRouter(deps: RouteDeps): Router {
     PUBLIC,
     async (ctx) => {
       const limit = parseLimit(ctx.query, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
-      const seeks = await repos.seeks.listOpen(limit);
+      
+      if (Math.random() < 0.1) {
+        repos.seeks.cleanup(new Date(clock.now())).catch(() => {});
+      }
+
+      const seeks = await repos.seeks.listOpen(limit, ctx.auth?.userId);
       return json(200, seeks.map(seekView));
     },
   );
@@ -667,8 +673,85 @@ export function buildRouter(deps: RouteDeps): Router {
       if (seek.creatorId !== identity.userId && !privileged) {
         throw HttpError.forbidden('only the creator or a moderator can cancel this seek');
       }
-      await repos.seeks.remove(seek.id);
+      const removed = await repos.seeks.remove(seek.id);
+      if (!removed) throw HttpError.notFound('seek not found or already accepted');
       return noContent();
+    },
+  );
+
+  router.post(
+    '/v1/seeks/:id/accept',
+    doc({
+      summary: 'Accept an open seek',
+      tags: ['seeks'],
+      security: 'bearer',
+      params: [pathParam('id', 'Seek id')],
+      responses: { 
+        200: ['SeekView', 'Seek matched and game created'],
+        400: ['Error', 'Cannot accept own seek'],
+        403: ['Error', 'Rating requirements not met'],
+        404: ['Error', 'Seek not found or already accepted'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const identity = requireAuth(ctx);
+      const seek = await repos.seeks.findById(ctx.params['id']!);
+      if (!seek || seek.gameId !== null) throw HttpError.notFound('seek not found or already accepted');
+      if (seek.creatorId === identity.userId) throw HttpError.badRequest('cannot accept own seek');
+
+      if (seek.minRating !== null || seek.maxRating !== null) {
+        const ratingRow = await repos.ratings.get(identity.userId, seek.variant);
+        const currentRating = ratingRow ? ratingRow.rating : 1500;
+        if (seek.minRating !== null && currentRating < seek.minRating) {
+          throw HttpError.forbidden('rating too low for this seek');
+        }
+        if (seek.maxRating !== null && currentRating > seek.maxRating) {
+          throw HttpError.forbidden('rating too high for this seek');
+        }
+      }
+
+      let whiteId: string;
+      let blackId: string;
+      if (seek.color === 'white') {
+        whiteId = seek.creatorId;
+        blackId = identity.userId;
+      } else if (seek.color === 'black') {
+        whiteId = identity.userId;
+        blackId = seek.creatorId;
+      } else {
+        if (Math.random() < 0.5) {
+          whiteId = seek.creatorId;
+          blackId = identity.userId;
+        } else {
+          whiteId = identity.userId;
+          blackId = seek.creatorId;
+        }
+      }
+
+      const gameId = ids.next();
+      const startedAt = clock.now();
+      const { events } = Game.create({
+        gameId,
+        variant: seek.variant,
+        timeControl: seek.timeControl,
+        players: { white: whiteId, black: blackId },
+        rated: seek.rated,
+        at: startedAt,
+      });
+
+      const updatedSeek = await repos.seekAcceptor.accept(seek.id, gameId, events, {
+        id: gameId,
+        variant: seek.variant,
+        rated: seek.rated,
+        speed: classifySpeed(seek.timeControl),
+        whiteId,
+        blackId,
+        startedAt: new Date(startedAt),
+      });
+
+      if (!updatedSeek) throw HttpError.notFound('seek not found or already accepted');
+      return json(200, seekView(updatedSeek));
     },
   );
 

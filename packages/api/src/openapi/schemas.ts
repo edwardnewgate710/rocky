@@ -142,6 +142,8 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       minRating: nullableInt,
       maxRating: nullableInt,
       createdAt: dateTime,
+      gameId: nullableString,
+      acceptedAt: { ...dateTime, nullable: true },
     },
   },
 

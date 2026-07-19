@@ -15,6 +15,8 @@ function makeSeek(overrides: Partial<SeekView> = {}): SeekView {
     minRating: null,
     maxRating: null,
     createdAt: '2026-01-01T00:00:00Z',
+    gameId: null,
+    acceptedAt: null,
     ...overrides,
   };
 }
@@ -33,6 +35,9 @@ function makeFakeClient(seeks: SeekView[] = []) {
       },
       cancel: async (id: string) => {
         cancelCalls.push(id);
+      },
+      accept: async (id: string) => {
+        return makeSeek({ id, gameId: 'g1' });
       },
     },
   };

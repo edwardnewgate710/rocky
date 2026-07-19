@@ -7,7 +7,7 @@
 
 import type { Pool, PoolClient } from 'pg';
 import type { Variant } from '@chess-platform/core';
-import type { ResultString, Termination, TimeControl } from '@chess-platform/game';
+import type { ResultString, Termination, TimeControl, GameEvent } from '@chess-platform/game';
 import type {
   GameFinish,
   GameStart,
@@ -20,6 +20,7 @@ import type {
   RatingsRepository,
   Role,
   SeekColor,
+  SeekAcceptor,
   SeekRow,
   SeeksRepository,
   SessionRow,
@@ -42,6 +43,7 @@ import type {
   NewWebAuthnLoginChallenge,
   WebAuthnLoginChallengesRepository,
 } from '../repositories';
+import { CURRENT_EVENT_VERSION } from '../event-store.js';
 import { DuplicateUserError, VersionConflictError } from '../errors';
 
 // --- row shapes as returned by pg ------------------------------------------
@@ -104,6 +106,8 @@ interface SeekDbRow {
   min_rating: number | null;
   max_rating: number | null;
   created_at: Date;
+  game_id: string | null;
+  accepted_at: Date | null;
 }
 
 interface TournamentDbRow {
@@ -184,6 +188,8 @@ function toSeek(r: SeekDbRow): SeekRow {
     minRating: r.min_rating,
     maxRating: r.max_rating,
     createdAt: r.created_at,
+    gameId: r.game_id,
+    acceptedAt: r.accepted_at,
   };
 }
 
@@ -511,7 +517,7 @@ export class PgSeeksRepository implements SeeksRepository {
     const res = await this.pool.query<SeekDbRow>(
       `INSERT INTO seeks (id, creator_id, variant, time_control, rated, color, min_rating, max_rating)
        VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)
-       RETURNING id, creator_id, variant, time_control, rated, color, min_rating, max_rating, created_at`,
+       RETURNING id, creator_id, variant, time_control, rated, color, min_rating, max_rating, created_at, game_id, accepted_at`,
       [
         seek.id,
         seek.creatorId,
@@ -528,24 +534,92 @@ export class PgSeeksRepository implements SeeksRepository {
 
   async findById(id: string): Promise<SeekRow | null> {
     const res = await this.pool.query<SeekDbRow>(
-      `SELECT id, creator_id, variant, time_control, rated, color, min_rating, max_rating, created_at
+      `SELECT id, creator_id, variant, time_control, rated, color, min_rating, max_rating, created_at, game_id, accepted_at
        FROM seeks WHERE id = $1`,
       [id],
     );
     return res.rows[0] ? toSeek(res.rows[0]) : null;
   }
 
-  async listOpen(limit: number): Promise<SeekRow[]> {
+  async listOpen(limit: number, creatorId?: string): Promise<SeekRow[]> {
+    const cid = creatorId ?? '00000000-0000-0000-0000-000000000000';
     const res = await this.pool.query<SeekDbRow>(
-      `SELECT id, creator_id, variant, time_control, rated, color, min_rating, max_rating, created_at
-       FROM seeks ORDER BY created_at ASC LIMIT $1`,
-      [limit],
+      `(
+         SELECT id, creator_id, variant, time_control, rated, color, min_rating, max_rating, created_at, game_id, accepted_at
+         FROM seeks
+         WHERE creator_id = $2 AND game_id IS NOT NULL AND accepted_at > NOW() - interval '5 minutes'
+         ORDER BY accepted_at DESC, created_at DESC
+         LIMIT 1
+       )
+       UNION ALL
+       (
+         SELECT id, creator_id, variant, time_control, rated, color, min_rating, max_rating, created_at, game_id, accepted_at
+         FROM seeks
+         WHERE game_id IS NULL
+         ORDER BY created_at ASC
+         LIMIT $1
+       )`,
+      [limit, cid],
     );
     return res.rows.map(toSeek);
   }
 
-  async remove(id: string): Promise<void> {
-    await this.pool.query('DELETE FROM seeks WHERE id = $1', [id]);
+  async remove(id: string): Promise<boolean> {
+    const res = await this.pool.query(
+      'DELETE FROM seeks WHERE id = $1 AND game_id IS NULL RETURNING id',
+      [id],
+    );
+    return res.rowCount === 1;
+  }
+
+  async cleanup(at: Date): Promise<void> {
+    await this.pool.query(
+      `DELETE FROM seeks WHERE game_id IS NOT NULL AND accepted_at <= $1 - interval '5 minutes'`,
+      [at]
+    );
+  }
+}
+
+export class PgSeekAcceptor implements SeekAcceptor {
+  constructor(private readonly pool: Pool) {}
+
+  async accept(seekId: string, gameId: string, events: readonly GameEvent[], gameStart: GameStart): Promise<SeekRow | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const seekRes = await client.query<SeekDbRow>(
+        `UPDATE seeks SET game_id = $1, accepted_at = NOW() WHERE id = $2 AND game_id IS NULL
+         RETURNING id, creator_id, variant, time_control, rated, color, min_rating, max_rating, created_at, game_id, accepted_at`,
+        [gameId, seekId]
+      );
+      if (seekRes.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+      
+      let seq = -1;
+      for (const event of events) {
+        seq += 1;
+        await client.query(
+          `INSERT INTO game_events (game_id, seq, type, event_version, payload) VALUES ($1, $2, $3, $4, $5::jsonb)`,
+          [gameId, seq, event.type, CURRENT_EVENT_VERSION, JSON.stringify(event)]
+        );
+      }
+      
+      await client.query(
+        `INSERT INTO games (id, variant, rated, speed, white_id, black_id, started_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [gameId, gameStart.variant, gameStart.rated, gameStart.speed, gameStart.whiteId, gameStart.blackId, gameStart.startedAt]
+      );
+      
+      await client.query('COMMIT');
+      return toSeek(seekRes.rows[0]!);
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 }
 

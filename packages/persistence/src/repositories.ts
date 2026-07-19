@@ -7,8 +7,7 @@
  */
 
 import type { Variant } from '@chess-platform/core';
-import type { ResultString, Termination, TimeControl } from '@chess-platform/game';
-
+import type { ResultString, Termination, TimeControl, GameEvent } from '@chess-platform/game';
 /** Time-control speed bucket (mirror of `classifySpeed` in @chess-platform/game). */
 export type Speed = 'ultrabullet' | 'bullet' | 'blitz' | 'rapid' | 'classical' | 'correspondence';
 
@@ -254,6 +253,8 @@ export interface SeekRow {
   readonly minRating: number | null;
   readonly maxRating: number | null;
   readonly createdAt: Date;
+  readonly gameId: string | null;
+  readonly acceptedAt: Date | null;
 }
 
 export interface NewSeek {
@@ -271,8 +272,20 @@ export interface NewSeek {
 export interface SeeksRepository {
   create(seek: NewSeek): Promise<SeekRow>;
   findById(id: string): Promise<SeekRow | null>;
-  listOpen(limit: number): Promise<SeekRow[]>;
-  remove(id: string): Promise<void>;
+  /** Returns open seeks. If `creatorId` is provided, also includes that user's latest match receipt. */
+  listOpen(limit: number, creatorId?: string): Promise<SeekRow[]>;
+  /** Removes an open seek. Returns false when it is missing or has already been accepted. */
+  remove(id: string): Promise<boolean>;
+  cleanup(at: Date): Promise<void>;
+}
+
+export interface SeekAcceptor {
+  /**
+   * Atomically claims a seek and creates the corresponding game.
+   * Both operations happen in a single transaction.
+   * Returns the updated seek on success, or null if the seek is missing/already claimed.
+   */
+  accept(seekId: string, gameId: string, events: readonly GameEvent[], gameStart: GameStart): Promise<SeekRow | null>;
 }
 
 // --- Tournaments -----------------------------------------------------------

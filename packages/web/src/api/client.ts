@@ -46,7 +46,7 @@ import type {
 } from './models.js';
 
 /** A request spec plus whether it requires authentication. */
-export type ExecSpec = RequestSpec & { readonly auth?: boolean };
+export type ExecSpec = RequestSpec & { readonly auth?: boolean | 'optional' };
 
 /** The bound request executor handed to resource groups. */
 export type Execute = <T>(spec: ExecSpec) => Promise<T>;
@@ -125,20 +125,23 @@ export class GambitClient {
     if (auth) {
       const token = await this.session.validAccessToken();
       if (token === undefined) {
-        throw new UnauthorizedError({
-          status: 401,
-          code: 'unauthenticated',
-          message: 'no active session',
-          retryable: false,
-        });
+        if (auth === true) {
+          throw new UnauthorizedError({
+            status: 401,
+            code: 'unauthenticated',
+            message: 'no active session',
+            retryable: false,
+          });
+        }
+      } else {
+        headers['authorization'] = `Bearer ${token}`;
       }
-      headers['authorization'] = `Bearer ${token}`;
     }
 
     try {
       return await this.http.request<T>({ ...rest, headers });
     } catch (error) {
-      if (auth && !retried && error instanceof UnauthorizedError) {
+      if (auth && !retried && error instanceof UnauthorizedError && headers['authorization']) {
         try {
           await this.session.refreshNow();
         } catch {
@@ -276,7 +279,7 @@ export class SeeksApi {
   }
 
   list(): Promise<SeekView[]> {
-    return this.execute<SeekView[]>({ method: 'GET', path: '/v1/seeks' });
+    return this.execute<SeekView[]>({ method: 'GET', path: '/v1/seeks', auth: 'optional' });
   }
 
   create(body: CreateSeekRequest): Promise<SeekView> {
@@ -285,5 +288,9 @@ export class SeeksApi {
 
   cancel(id: string): Promise<void> {
     return this.execute<void>({ method: 'DELETE', path: `/v1/seeks/${encodeURIComponent(id)}`, auth: true });
+  }
+
+  accept(id: string): Promise<SeekView> {
+    return this.execute<SeekView>({ method: 'POST', path: `/v1/seeks/${encodeURIComponent(id)}/accept`, auth: true });
   }
 }

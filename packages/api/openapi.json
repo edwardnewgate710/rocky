@@ -1306,6 +1306,83 @@
         ]
       }
     },
+    "/v1/seeks/{id}/accept": {
+      "post": {
+        "summary": "Accept an open seek",
+        "tags": [
+          "seeks"
+        ],
+        "operationId": "post_v1_seeks_by_id_accept",
+        "responses": {
+          "200": {
+            "description": "Seek matched and game created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeekView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Cannot accept own seek",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Rating requirements not met",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Seek not found or already accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Seek id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/v1/games/{id}": {
       "get": {
         "summary": "Get a game summary",
@@ -2554,6 +2631,15 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "gameId": {
+            "type": "string",
+            "nullable": true
+          },
+          "acceptedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
           }
         }
       },

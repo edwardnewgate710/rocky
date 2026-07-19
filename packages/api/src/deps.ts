@@ -10,6 +10,7 @@
 import type {
   GamesRepository,
   RatingsRepository,
+  SeekAcceptor,
   SeeksRepository,
   SessionsRepository,
   UsersRepository,
@@ -40,6 +41,7 @@ export interface Repositories {
   readonly identityTokens: IdentityTokensRepository;
   readonly webauthnCredentials: WebAuthnCredentialsRepository;
   readonly webauthnLoginChallenges: WebAuthnLoginChallengesRepository;
+  readonly seekAcceptor: SeekAcceptor;
 }
 
 /** Everything `createApiServer` needs to construct the service. */

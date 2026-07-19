@@ -20,6 +20,7 @@ import type {
   RatingRow,
   RatingsRepository,
   Role,
+  SeekAcceptor,
   SeekRow,
   SeeksRepository,
   SessionRow,
@@ -38,6 +39,8 @@ import { DuplicateUserError, VersionConflictError } from '@chess-platform/persis
 
 import type { AuditEntry, AuditRepository } from './ports/audit';
 import type { Clock } from './ports/clock';
+import { InMemoryEventStore } from '@chess-platform/persistence';
+import type { GameEvent } from '@chess-platform/game';
 import { systemClock } from './ports/clock';
 import type { Repositories } from './deps';
 
@@ -314,6 +317,12 @@ export class InMemoryGamesRepository implements GamesRepository {
       .sort((a, b) => (this.order.get(b.id) ?? 0) - (this.order.get(a.id) ?? 0))
       .slice(0, limit);
   }
+
+  /** Test/local-dev transaction compensation used by the in-memory seek acceptor. */
+  _remove(id: string): void {
+    this.byId.delete(id);
+    this.order.delete(id);
+  }
 }
 
 export class InMemorySeeksRepository implements SeeksRepository {
@@ -334,6 +343,8 @@ export class InMemorySeeksRepository implements SeeksRepository {
       minRating: seek.minRating ?? null,
       maxRating: seek.maxRating ?? null,
       createdAt: new Date(this.clock.now()),
+      gameId: null,
+      acceptedAt: null,
     };
     this.byId.set(row.id, row);
     this.order.set(row.id, this.seq++);
@@ -344,15 +355,98 @@ export class InMemorySeeksRepository implements SeeksRepository {
     return this.byId.get(id) ?? null;
   }
 
-  async listOpen(limit: number): Promise<SeekRow[]> {
-    return [...this.byId.values()]
+  async listOpen(limit: number, creatorId?: string): Promise<SeekRow[]> {
+    const now = this.clock.now();
+    const fiveMinsAgo = now - 5 * 60 * 1000;
+    const rows = [...this.byId.values()];
+    const open = rows
+      .filter((s) => s.gameId === null)
       .sort((a, b) => (this.order.get(a.id) ?? 0) - (this.order.get(b.id) ?? 0))
       .slice(0, limit);
+
+    if (!creatorId) return open;
+
+    const latestMatch = rows
+      .filter(
+        (s) =>
+          s.creatorId === creatorId &&
+          s.gameId !== null &&
+          s.acceptedAt !== null &&
+          s.acceptedAt.getTime() > fiveMinsAgo,
+      )
+      .sort(
+        (a, b) =>
+          b.acceptedAt!.getTime() - a.acceptedAt!.getTime() ||
+          (this.order.get(b.id) ?? 0) - (this.order.get(a.id) ?? 0),
+      )[0];
+
+    return latestMatch ? [latestMatch, ...open] : open;
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(id: string): Promise<boolean> {
+    const existing = this.byId.get(id);
+    if (!existing || existing.gameId !== null) return false;
     this.byId.delete(id);
     this.order.delete(id);
+    return true;
+  }
+
+  /** Test/local-dev compare-and-set used by the in-memory seek acceptor. */
+  _claim(id: string, gameId: string, acceptedAt: Date): SeekRow | null {
+    const existing = this.byId.get(id);
+    if (!existing || existing.gameId !== null) return null;
+    const claimed = { ...existing, gameId, acceptedAt };
+    this.byId.set(id, claimed);
+    return claimed;
+  }
+
+  /** Restore only the claim owned by `gameId`, leaving a newer state untouched. */
+  _releaseClaim(id: string, gameId: string): void {
+    const existing = this.byId.get(id);
+    if (existing?.gameId === gameId) {
+      this.byId.set(id, { ...existing, gameId: null, acceptedAt: null });
+    }
+  }
+
+  async cleanup(at: Date): Promise<void> {
+    const cutoff = at.getTime() - 5 * 60 * 1000;
+    for (const [id, seek] of this.byId) {
+      if (seek.gameId !== null && seek.acceptedAt && seek.acceptedAt.getTime() <= cutoff) {
+        this.byId.delete(id);
+        this.order.delete(id);
+      }
+    }
+  }
+}
+
+export class InMemorySeekAcceptor implements SeekAcceptor {
+  constructor(
+    private readonly seeks: InMemorySeeksRepository,
+    private readonly events: InMemoryEventStore,
+    private readonly games: InMemoryGamesRepository,
+    private readonly clock: Clock,
+  ) {}
+
+  async accept(seekId: string, gameId: string, events: readonly GameEvent[], gameStart: GameStart): Promise<SeekRow | null> {
+    // Deliberately contains no await before the compare-and-set: only one caller
+    // can claim an open seek in a single JavaScript event-loop turn.
+    const claimed = this.seeks._claim(seekId, gameId, new Date(this.clock.now()));
+    if (!claimed) return null;
+
+    let eventsAppended = false;
+    let gameStarted = false;
+    try {
+      await this.events.append(gameId, -1, events);
+      eventsAppended = true;
+      await this.games.start(gameStart);
+      gameStarted = true;
+      return claimed;
+    } catch (err) {
+      if (eventsAppended) this.events._removeGame(gameId);
+      if (gameStarted) this.games._remove(gameId);
+      this.seeks._releaseClaim(seekId, gameId);
+      throw err;
+    }
   }
 }
 
@@ -543,6 +637,8 @@ export class InMemoryWebAuthnCredentialsRepository implements WebAuthnCredential
 
 /** A bundle of in-memory repositories plus the concrete audit repo for tests. */
 export interface InMemoryRepositories extends Repositories {
+  /** Shared event log so local API and realtime authority can use one source of truth. */
+  readonly events: InMemoryEventStore;
   readonly users: InMemoryUsersRepository;
   readonly sessions: InMemorySessionsRepository;
   readonly ratings: InMemoryRatingsRepository;
@@ -553,20 +649,27 @@ export interface InMemoryRepositories extends Repositories {
   readonly identityTokens: InMemoryIdentityTokensRepository;
   readonly webauthnLoginChallenges: InMemoryWebAuthnLoginChallengesRepository;
   readonly webauthnCredentials: InMemoryWebAuthnCredentialsRepository;
+  readonly seekAcceptor: InMemorySeekAcceptor;
 }
 
 /** Construct a fresh set of in-memory repositories sharing a clock. */
 export function createInMemoryRepositories(clock: Clock = systemClock): InMemoryRepositories {
+  const seeks = new InMemorySeeksRepository(clock);
+  const games = new InMemoryGamesRepository();
+  const events = new InMemoryEventStore(() => clock.now());
+  
   return {
+    events,
     users: new InMemoryUsersRepository(clock),
     sessions: new InMemorySessionsRepository(clock),
     ratings: new InMemoryRatingsRepository(clock),
-    games: new InMemoryGamesRepository(),
-    seeks: new InMemorySeeksRepository(clock),
+    games,
+    seeks,
     audit: new InMemoryAuditRepository(),
     tournaments: new InMemoryTournamentsRepository(),
     identityTokens: new InMemoryIdentityTokensRepository(),
     webauthnLoginChallenges: new InMemoryWebAuthnLoginChallengesRepository(),
     webauthnCredentials: new InMemoryWebAuthnCredentialsRepository(),
+    seekAcceptor: new InMemorySeekAcceptor(seeks, events, games, clock),
   };
 }
