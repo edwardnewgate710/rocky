@@ -37,6 +37,7 @@ export class ProfileController {
   private readonly gameLimit: number;
   private profile: UserProfile | null = null;
   private games: readonly GameSummary[] = [];
+  private requestGeneration = 0;
   private disposed = false;
 
   constructor(opts: ProfileControllerOptions) {
@@ -58,29 +59,53 @@ export class ProfileController {
   /** Fetch the profile and games for a user by handle. */
   async load(handle: string): Promise<void> {
     if (this.disposed) return;
+    const generation = ++this.requestGeneration;
     try {
-      this.profile = await this.client.users.byHandle(handle);
-      this.callbacks.onProfile(this.profile);
-      this.games = await this.client.users.games(handle, { limit: this.gameLimit });
-      this.callbacks.onGames(this.games);
+      const profile = await this.client.users.byHandle(handle);
+      if (!this.isCurrent(generation)) return;
+      this.profile = profile;
+      this.callbacks.onProfile(profile);
+
+      const games = await this.client.users.games(handle, { limit: this.gameLimit });
+      if (!this.isCurrent(generation)) return;
+      this.games = games;
+      this.callbacks.onGames(games);
     } catch (err) {
-      this.callbacks.onError(err instanceof Error ? err.message : String(err));
+      if (this.isCurrent(generation)) {
+        this.callbacks.onError(err instanceof Error ? err.message : String(err));
+      }
     }
   }
 
   /** Fetch the authenticated user's own profile. */
   async loadSelf(): Promise<void> {
     if (this.disposed) return;
+    const generation = ++this.requestGeneration;
     try {
       const self = await this.client.users.me();
+      if (!this.isCurrent(generation)) return;
       await this.load(self.handle);
     } catch (err) {
-      this.callbacks.onError(err instanceof Error ? err.message : String(err));
+      if (this.isCurrent(generation)) {
+        this.callbacks.onError(err instanceof Error ? err.message : String(err));
+      }
     }
+  }
+
+  /** Invalidate pending requests and clear the current profile snapshots. */
+  reset(): void {
+    if (this.disposed) return;
+    this.requestGeneration++;
+    this.profile = null;
+    this.games = [];
   }
 
   /** Permanently dispose the controller. */
   dispose(): void {
     this.disposed = true;
+  }
+
+  private isCurrent(generation: number): boolean {
+    return !this.disposed && generation === this.requestGeneration;
   }
 }

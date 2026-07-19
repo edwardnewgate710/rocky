@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <a class="skip-link" href="#board">Skip to board</a>
+    <a id="skip-board" class="skip-link" href="#board" hidden>Skip to board</a>
     <header class="topbar">
       <h1><a href="/" data-route="lobby">Gambit</a></h1>
       <nav class="nav">
@@ -19,7 +19,7 @@
       <span id="auth-status" role="status" aria-live="polite">Not signed in</span>
       <button id="auth-logout" type="button" aria-label="Sign out" hidden>Sign out</button>
       <button id="theme-toggle" type="button" aria-label="Toggle light/dark theme">🌙</button>
-      <button id="flip" type="button" aria-label="Flip board">Flip</button>
+      <button id="flip" type="button" aria-label="Flip board" hidden>Flip</button>
     </header>
     <main class="game" id="game-main">
       <section id="board" aria-label="Chess board"></section>

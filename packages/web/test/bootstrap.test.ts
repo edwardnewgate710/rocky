@@ -267,3 +267,104 @@ test('C3: bootstrap opens a connection when no token is provided (anonymous spec
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(sockets.sockets.length, 1);
 });
+
+test('self profile reloads only when the authenticated user changes and clears on logout', async () => {
+  const doc = makeDoc([
+    'profile',
+    'profile-handle',
+    'profile-error',
+    'theme-toggle',
+    'auth-status',
+    'auth-logout',
+    'auth-submit',
+    'auth-error',
+    'auth-form',
+    'auth-handle',
+    'auth-password',
+    'create-seek',
+  ]);
+  const handleEl = doc.getElementById('profile-handle')!;
+  const errorEl = doc.getElementById('profile-error')!;
+  let signedIn: { id: string; handle: string; country: null; createdAt: string; roles: string[] } | null = null;
+
+  const transport = new FakeTransport().onEach((request) => {
+    const path = new URL(request.url).pathname;
+    if (request.method === 'POST' && path === '/v1/auth/login') {
+      const handle = (JSON.parse(request.body ?? '{}') as { handle?: string }).handle ?? '';
+      signedIn = {
+        id: handle === 'alice' ? 'u1' : 'u2',
+        handle,
+        country: null,
+        createdAt: '2026-01-01T00:00:00Z',
+        roles: ['user'],
+      };
+      return json(200, {
+        user: signedIn,
+        tokens: {
+          accessToken: `token-${signedIn.id}`,
+          tokenType: 'Bearer',
+          expiresIn: 900,
+          refreshExpiresAt: '2030-01-01T00:00:00Z',
+        },
+      });
+    }
+    if (request.method === 'POST' && path === '/v1/auth/logout') {
+      signedIn = null;
+      return json(200, {});
+    }
+    if (request.method === 'GET' && path === '/v1/users/me') {
+      return signedIn ? json(200, signedIn) : json(401, { message: 'no active session' });
+    }
+    if (request.method === 'GET' && path.endsWith('/games')) {
+      return json(200, []);
+    }
+    if (request.method === 'GET' && path.startsWith('/v1/users/')) {
+      const handle = decodeURIComponent(path.slice('/v1/users/'.length));
+      const id = handle === 'alice' ? 'u1' : 'u2';
+      return json(200, {
+        user: { id, handle, country: null, createdAt: '2026-01-01T00:00:00Z' },
+        ratings: [],
+      });
+    }
+    return json(404, { message: `unexpected request: ${request.method} ${path}` });
+  });
+
+  const originalLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+  Object.defineProperty(globalThis, 'location', {
+    configurable: true,
+    value: { pathname: '/profile' },
+  });
+
+  try {
+    const result = bootstrap(doc, { ...makeDeps(), httpTransport: transport });
+
+    await result.auth.login('alice', 'pw');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(handleEl.textContent, 'alice');
+
+    errorEl.textContent = 'stale error';
+    await result.auth.login('bob', 'pw');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(handleEl.textContent, 'bob');
+    assert.equal(errorEl.textContent, '');
+
+    const selfLoads = (): number => transport.calls.filter(
+      (request) => new URL(request.url).pathname === '/v1/users/me',
+    ).length;
+    assert.equal(selfLoads(), 2);
+
+    await result.auth.login('bob', 'pw');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(selfLoads(), 2, 'same authenticated user must not reload the profile');
+
+    await result.auth.logout();
+    assert.equal(handleEl.textContent, '');
+    assert.equal(errorEl.textContent, 'Sign in to view your profile.');
+  } finally {
+    if (originalLocation) {
+      Object.defineProperty(globalThis, 'location', originalLocation);
+    } else {
+      delete (globalThis as { location?: unknown }).location;
+    }
+  }
+});

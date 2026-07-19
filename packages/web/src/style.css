@@ -28,17 +28,32 @@
   --z-promotion: 20;
   --z-drag: 30;
   --z-skip: 40;
-  color-scheme: light dark;
+  color-scheme: dark;
 }
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not(.light):not(.dark) {
     --bg: #f7f6f5;
     --fg: #2b2b2b;
     --ember: #b42318;
     --panel: rgba(22, 21, 18, 0.05);
     --panel-strong: rgba(22, 21, 18, 0.07);
     --muted: #5c5b57;
+    color-scheme: light;
   }
+}
+
+/* Once the user makes an explicit choice it must win over the operating
+   system preference. Previously only `.dark` was toggled, so switching to
+   light on a dark-system browser removed a class but left every colour token
+   dark. Keep an explicit light state as the persisted, authoritative choice. */
+:root.light {
+  --bg: #f7f6f5;
+  --fg: #2b2b2b;
+  --ember: #b42318;
+  --panel: rgba(22, 21, 18, 0.05);
+  --panel-strong: rgba(22, 21, 18, 0.07);
+  --muted: #5c5b57;
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }

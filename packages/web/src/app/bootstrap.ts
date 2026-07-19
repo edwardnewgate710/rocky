@@ -29,6 +29,7 @@ import { ThemeToggle } from './theme-toggle.js';
 import type { ThemeToggle as ThemeToggleType } from './theme-toggle.js';
 import { AuthController } from './auth-controller.js';
 import type { AuthController as AuthControllerType } from './auth-controller.js';
+import type { AuthSession } from './auth-controller.js';
 import { parseRoute } from './router.js';
 import type { SeekView } from '../api/models.js';
 
@@ -213,10 +214,22 @@ export function bootstrap(
   const app = createApp(appDeps);
 
   // --- Theme toggle (always wired) ---
+  const themeButtonEl = doc.getElementById('theme-toggle');
   const theme = new ThemeToggle({
     callbacks: {
       onTheme: (t) => {
         doc.documentElement.classList.toggle('dark', t === 'dark');
+        doc.documentElement.classList.toggle('light', t === 'light');
+        if (themeButtonEl) {
+          const next = t === 'dark' ? 'light' : 'dark';
+          themeButtonEl.textContent = t === 'dark' ? '☀️' : '🌙';
+          themeButtonEl.setAttribute('aria-label', `Switch to ${next} theme`);
+          themeButtonEl.setAttribute('title', `Switch to ${next} theme`);
+        }
+        if ('querySelector' in doc && typeof doc.querySelector === 'function') {
+          const themeColor = doc.querySelector('meta[name="theme-color"]');
+          themeColor?.setAttribute('content', t === 'dark' ? '#161512' : '#f7f6f5');
+        }
       },
     },
     ...(deps?.storage !== undefined ? { storage: deps.storage } : typeof localStorage !== 'undefined' ? { storage: localStorage } : {}),
@@ -233,6 +246,7 @@ export function bootstrap(
   const authLogoutEl = doc.getElementById('auth-logout');
   const authStatusEl = doc.getElementById('auth-status');
 
+  let selfProfileSessionHandler: ((session: AuthSession | null) => void) | null = null;
   const auth = new AuthController({
     client: app.api,
     callbacks: {
@@ -249,6 +263,7 @@ export function bootstrap(
           createBtn.disabled = session === null;
           createBtn.title = session === null ? 'Sign in to create a seek' : '';
         }
+        selfProfileSessionHandler?.(session);
       },
       onPending: (pending) => {
         if (authSubmitEl instanceof HTMLButtonElement) {
@@ -322,6 +337,13 @@ export function bootstrap(
   if (mainEl) mainEl.hidden = !showGame;
   if (lobbySectionEl) lobbySectionEl.hidden = !showLobby;
   if (profileSectionEl) profileSectionEl.hidden = !showProfile;
+
+  // Board-only controls should not suggest functionality on lobby/profile
+  // routes. They were previously visible everywhere despite doing nothing.
+  const routeFlipEl = doc.getElementById('flip');
+  const skipBoardEl = doc.getElementById('skip-board');
+  if (routeFlipEl) routeFlipEl.hidden = !showGame;
+  if (skipBoardEl) skipBoardEl.hidden = !showGame;
 
   // --- Game view ---
   const boardEl = doc.getElementById('board');
@@ -522,7 +544,39 @@ export function bootstrap(
     if (handle) {
       void profile.load(handle);
     } else {
-      void profile.loadSelf();
+      // Session restoration rotates the httpOnly refresh cookie and is
+      // asynchronous. Loading /users/me before it finishes produces a false
+      // "no active session" error even though the header becomes signed-in a
+      // moment later. Wait for the authenticated session, and also react when
+      // a user signs in while already on this route.
+      let loadedUserId: string | null = null;
+      const clearSelfProfile = (): void => {
+        if (handleEl) handleEl.textContent = '';
+        if (ratingsEl) ratingsEl.innerHTML = '';
+        if (gamesEl) gamesEl.innerHTML = '';
+        if (profileErrorEl) profileErrorEl.textContent = '';
+      };
+      selfProfileSessionHandler = (session) => {
+        if (session === null) {
+          loadedUserId = null;
+          profile.reset();
+          clearSelfProfile();
+          if (profileErrorEl) profileErrorEl.textContent = 'Sign in to view your profile.';
+          return;
+        }
+
+        if (session.userId === loadedUserId) return;
+
+        loadedUserId = session.userId;
+        profile.reset();
+        clearSelfProfile();
+        void profile.loadSelf();
+      };
+      if (auth.currentSession !== null) {
+        selfProfileSessionHandler(auth.currentSession);
+      } else {
+        void restorePromise.then((session) => selfProfileSessionHandler?.(session));
+      }
     }
 
     return { app, board: null, controller: null, lobby: null, profile, auth, theme };

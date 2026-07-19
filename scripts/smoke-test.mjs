@@ -14,11 +14,16 @@
  *   node scripts/smoke-test.mjs
  *
  * Or with custom URLs:
- *   API_URL=http://localhost:8080 WS_URL=ws://localhost:4175 WEB_URL=http://localhost:3000 node scripts/smoke-test.mjs
+ *   API_URL=http://localhost:8080 WS_URL=ws://localhost:3000/ws WEB_URL=http://localhost:3000 node scripts/smoke-test.mjs
  */
 
+import WebSocket from 'ws';
+
 const apiUrl = process.env['API_URL'] ?? 'http://localhost:8080';
-const wsUrl = process.env['WS_URL'] ?? 'ws://localhost:4175';
+// Exercise the same nginx upgrade path a real browser uses, not the gateway's
+// direct host port. Supplying Origin below also verifies the production
+// same-origin guard and proxy Host forwarding.
+const wsUrl = process.env['WS_URL'] ?? 'ws://localhost:3000/ws';
 const webUrl = process.env['WEB_URL'] ?? 'http://localhost:3000';
 
 const TIMEOUT_MS = 60_000;
@@ -69,7 +74,12 @@ async function createSeek(token) {
     },
     body: JSON.stringify({
       variant: 'standard',
-      speed: 'blitz',
+      timeControl: {
+        kind: 'increment',
+        initialMs: 300_000,
+        incrementMs: 3_000,
+        delayMs: 0,
+      },
       color: 'random',
       rated: false,
     }),
@@ -83,29 +93,58 @@ async function createSeek(token) {
   return body;
 }
 
-function waitForWs(url, token) {
+async function acceptSeek(token, seekId) {
+  const res = await fetch(`${apiUrl}/v1/seeks/${encodeURIComponent(seekId)}/accept`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Accept seek failed (${res.status}): ${text}`);
+  }
+  const body = await res.json();
+  if (!body.gameId) throw new Error('Accept seek returned no gameId');
+  log(`✓ Accepted seek and provisioned game (id: ${body.gameId})`);
+  return body;
+}
+
+function waitForWs(url, token, gameId) {
   return new Promise((resolve, reject) => {
     const deadline = Date.now() + 15_000;
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(url, { origin: webUrl });
 
     ws.addEventListener('open', () => {
       log('✓ WebSocket connected');
-      // Send a join message for a test game
-      ws.send(JSON.stringify({ t: 'join', gameId: 'smoke-test-game', token }));
+      ws.send(JSON.stringify({ t: 'join', gameId, token }));
     });
 
-    ws.addEventListener('message', (event) => {
-      const msg = JSON.parse(event.data);
-      // We expect either 'joined' (success) or 'reject' (game doesn't exist,
-      // but token was verified — the rejection reason proves auth worked)
-      if (msg.t === 'reject' && msg.code === 'unknown_game') {
-        log('✓ WebSocket authenticated (token verified, game not found as expected)');
+    ws.addEventListener('message', async (event) => {
+      try {
+        // Node's built-in WebSocket may expose a text frame as a Blob rather
+        // than a string. Normalise every WebSocket-compatible representation
+        // before decoding the protocol JSON.
+        const data = event.data;
+        const raw = typeof data === 'string'
+          ? data
+          : data instanceof Blob
+            ? await data.text()
+            : data instanceof ArrayBuffer
+              ? Buffer.from(data).toString('utf8')
+              : ArrayBuffer.isView(data)
+                ? Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString('utf8')
+                : String(data);
+        const msg = JSON.parse(raw);
+        if (msg.t === 'joined' && msg.gameId === gameId) {
+          log('✓ WebSocket joined game (token verified, state received)');
+          ws.close();
+          resolve(true);
+        } else if (msg.t === 'reject') {
+          ws.close();
+          reject(new Error(`WebSocket join rejected (${msg.code}): ${msg.message}`));
+        }
+      } catch (err) {
         ws.close();
-        resolve(true);
-      } else if (msg.t === 'joined') {
-        log('✓ WebSocket joined game (token verified, state received)');
-        ws.close();
-        resolve(true);
+        reject(new Error(`WebSocket response decode failed: ${err.message}`));
       }
     });
 
@@ -135,23 +174,31 @@ async function main() {
 
   // 2. Register a user
   log('Registering a test user...');
-  const handle = `smoke-${Date.now().toString(36)}`;
+  const suffix = Date.now().toString(36);
+  const handle = `smoke-a-${suffix}`;
+  const opponentHandle = `smoke-b-${suffix}`;
   const auth = await registerUser(handle, 'test-password-123');
-  const token = auth.accessToken;
+  const opponentAuth = await registerUser(opponentHandle, 'test-password-123');
+  const token = auth.tokens?.accessToken;
+  const opponentToken = opponentAuth.tokens?.accessToken;
   if (!token) {
     throw new Error('No accessToken in register response');
+  }
+  if (!opponentToken) {
+    throw new Error('No opponent accessToken in register response');
   }
   log(`✓ Got access token (${token.slice(0, 20)}...)`);
   log('');
 
   // 3. Create a seek
   log('Creating a seek...');
-  await createSeek(token);
+  const seek = await createSeek(token);
+  const matched = await acceptSeek(opponentToken, seek.id);
   log('');
 
   // 4. WebSocket authentication
   log('Connecting to WebSocket gateway...');
-  await waitForWs(wsUrl, token);
+  await waitForWs(wsUrl, token, matched.gameId);
   log('');
 
   log('════════════════════════════════════════════════════════════');
@@ -159,7 +206,7 @@ async function main() {
   log('════════════════════════════════════════════════════════════');
   log('');
   log('  • Postgres: schema migrated, user persisted');
-  log('  • API: register + seek creation over real REST');
+  log('  • API: register + atomic seek acceptance over real REST');
   log('  • Gateway: WebSocket authenticated with real token');
   log('  • Token verification: shared-secret HMAC verified across services');
   process.exit(0);

@@ -19,9 +19,10 @@ RUN npm run build --workspace @chess-platform/core && \
     npm run build --workspace @chess-platform/api
 
 # Install/build the non-workspace service from its own lockfile, then remove
-# TypeScript and all other development-only packages.
+# TypeScript and all other development-only packages from both dependency trees.
 RUN npm ci --prefix services/gateway && \
     npm run build --prefix services/gateway && \
+    npm prune --omit=dev && \
     npm prune --omit=dev --prefix services/gateway
 
 # --- Runtime stage ---
@@ -29,6 +30,8 @@ FROM node:22-slim AS runtime
 
 WORKDIR /app
 
+COPY --from=builder --chown=node:node /app/package.json /app/package-lock.json ./
+COPY --from=builder --chown=node:node /app/node_modules/ ./node_modules/
 COPY --from=builder --chown=node:node /app/services/gateway/package.json ./services/gateway/package.json
 COPY --from=builder --chown=node:node /app/services/gateway/dist/ ./services/gateway/dist/
 COPY --from=builder --chown=node:node /app/services/gateway/node_modules/ ./services/gateway/node_modules/

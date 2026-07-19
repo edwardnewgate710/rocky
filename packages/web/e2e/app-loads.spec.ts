@@ -28,6 +28,22 @@ test('theme toggle button is present', async ({ page }) => {
   await expect(toggle).toBeVisible();
 });
 
+test('theme toggle changes the actual colour scheme and exposes the next action', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.goto('/');
+
+  const toggle = page.locator('#theme-toggle');
+  await expect(page.locator('html')).toHaveClass(/dark/);
+  await expect(toggle).toHaveAttribute('aria-label', 'Switch to light theme');
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(22, 21, 18)');
+
+  await toggle.click();
+
+  await expect(page.locator('html')).toHaveClass(/light/);
+  await expect(toggle).toHaveAttribute('aria-label', 'Switch to dark theme');
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(247, 246, 245)');
+});
+
 test('skip link is present for keyboard users', async ({ page }) => {
   await page.goto('/');
   const skipLink = page.locator('.skip-link');

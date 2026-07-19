@@ -107,6 +107,50 @@ test('dispose ignores future calls', async () => {
   assert.equal(ctrl.currentProfile, null);
 });
 
+test('reset suppresses an in-flight self-profile load from a previous session', async () => {
+  let resolveAlice: ((profile: UserProfile) => void) | undefined;
+  let markAliceStarted: (() => void) | undefined;
+  const aliceProfile = new Promise<UserProfile>((resolve) => {
+    resolveAlice = resolve;
+  });
+  const aliceStarted = new Promise<void>((resolve) => {
+    markAliceStarted = resolve;
+  });
+  const client = {
+    users: {
+      me: async () => ({ id: 'u1', handle: 'alice', country: null, createdAt: '', roles: ['user'] }),
+      byHandle: async (handle: string) => {
+        if (handle === 'alice') {
+          markAliceStarted!();
+          return aliceProfile;
+        }
+        return makeProfile(handle);
+      },
+      ratings: async () => [],
+      games: async () => [],
+    },
+  };
+  const handles: string[] = [];
+  const ctrl = new ProfileController({
+    client: client as any,
+    callbacks: {
+      onProfile: (profile) => { handles.push(profile.user.handle); },
+      onGames: () => {},
+      onError: () => {},
+    },
+  });
+
+  const staleLoad = ctrl.loadSelf();
+  await aliceStarted;
+  ctrl.reset();
+  await ctrl.load('bob');
+  resolveAlice!(makeProfile('alice'));
+  await staleLoad;
+
+  assert.deepEqual(handles, ['bob']);
+  assert.equal(ctrl.currentProfile?.user.handle, 'bob');
+});
+
 test('currentProfile and currentGames return snapshots', async () => {
   const profile = makeProfile('alice');
   const games = [makeGame('g1'), makeGame('g2'), makeGame('g3')];

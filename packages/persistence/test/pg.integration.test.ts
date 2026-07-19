@@ -5,7 +5,7 @@ import { Game } from '@chess-platform/game';
 import { createPool } from '../src/pg/pool';
 import { migrate } from '../src/pg/migrate';
 import { PostgresEventStore } from '../src/pg/event-store';
-import { PgSeeksRepository, PgSeekAcceptor, PgUsersRepository } from '../src/pg/repositories';
+import { PgGamesRepository, PgSeeksRepository, PgSeekAcceptor, PgUsersRepository } from '../src/pg/repositories';
 import { uuidv7 } from '../src/ids';
 import { ConcurrencyError } from '../src/errors';
 
@@ -55,6 +55,17 @@ test('postgres event store: round-trip and optimistic concurrency', { skip }, as
 
     // A second append at a stale head is rejected.
     await assert.rejects(store.append(gameId, -1, events), ConcurrencyError);
+  } finally {
+    await pool.end();
+  }
+});
+
+test('postgres games repository treats a malformed public id as not found', { skip }, async () => {
+  const pool = createPool();
+  try {
+    await migrate(pool, join(process.cwd(), 'migrations'));
+    const games = new PgGamesRepository(pool);
+    assert.equal(await games.findById('not-a-uuid'), null);
   } finally {
     await pool.end();
   }

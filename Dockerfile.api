@@ -14,6 +14,7 @@ RUN npm ci
 RUN npm run build --workspace @chess-platform/core && \
     npm run build --workspace @chess-platform/game && \
     npm run build --workspace @chess-platform/tournament && \
+    npm run build --workspace @chess-platform/realtime-gateway && \
     npm run build --workspace @chess-platform/persistence && \
     npm run build --workspace @chess-platform/api
 
@@ -34,6 +35,8 @@ COPY --from=builder --chown=node:node /app/packages/game/package.json ./packages
 COPY --from=builder --chown=node:node /app/packages/game/dist/ ./packages/game/dist/
 COPY --from=builder --chown=node:node /app/packages/tournament/package.json ./packages/tournament/package.json
 COPY --from=builder --chown=node:node /app/packages/tournament/dist/ ./packages/tournament/dist/
+COPY --from=builder --chown=node:node /app/packages/realtime-gateway/package.json ./packages/realtime-gateway/package.json
+COPY --from=builder --chown=node:node /app/packages/realtime-gateway/dist/ ./packages/realtime-gateway/dist/
 COPY --from=builder --chown=node:node /app/packages/persistence/package.json ./packages/persistence/package.json
 COPY --from=builder --chown=node:node /app/packages/persistence/dist/ ./packages/persistence/dist/
 COPY --from=builder --chown=node:node /app/packages/persistence/migrations/ ./packages/persistence/migrations/

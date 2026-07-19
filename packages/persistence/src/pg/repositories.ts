@@ -493,6 +493,10 @@ export class PgGamesRepository implements GamesRepository {
   }
 
   async findById(id: string): Promise<GameSummaryRow | null> {
+    // PostgreSQL throws 22P02 when a text path parameter is compared with a
+    // UUID column. Treat a malformed public id exactly like an unknown game so
+    // GET /v1/games/:id returns the documented 404 instead of leaking a 500.
+    if (!isCanonicalUuid(id)) return null;
     const res = await this.pool.query<GameDbRow>(
       `SELECT ${GAME_COLS} FROM games WHERE id = $1`,
       [id],
@@ -508,6 +512,12 @@ export class PgGamesRepository implements GamesRepository {
     );
     return res.rows.map(toGame);
   }
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isCanonicalUuid(value: string): boolean {
+  return UUID_PATTERN.test(value);
 }
 
 export class PgSeeksRepository implements SeeksRepository {
