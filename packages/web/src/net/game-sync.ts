@@ -25,6 +25,7 @@ import type {
   RejectMessage,
   Role,
   ServerMessage,
+  SimpleCommand,
   StateView,
   WsColor,
 } from './ws-protocol.js';
@@ -72,6 +73,8 @@ export interface GameSyncState {
   readonly pending: PendingMove | null;
   /** The most recent rejection (e.g. for surfacing a rollback reason). */
   readonly lastReject: RejectMessage | null;
+  /** The action currently awaiting server acknowledgment. */
+  readonly pendingAction: SimpleCommand | null;
 }
 
 export interface GameSyncOptions {
@@ -100,6 +103,7 @@ function initialState(gameId: string): GameSyncState {
     legalMoves: {},
     pending: null,
     lastReject: null,
+    pendingAction: null,
   };
 }
 
@@ -188,22 +192,34 @@ export class GameSync {
   }
 
   resign(): boolean {
-    return this.client.send({ t: 'resign', gameId: this.gameId });
+    return this.sendAction('resign');
   }
+
   offerDraw(): boolean {
-    return this.client.send({ t: 'offerDraw', gameId: this.gameId });
+    return this.sendAction('offerDraw');
   }
+
   acceptDraw(): boolean {
-    return this.client.send({ t: 'acceptDraw', gameId: this.gameId });
+    return this.sendAction('acceptDraw');
   }
+
   declineDraw(): boolean {
-    return this.client.send({ t: 'declineDraw', gameId: this.gameId });
+    return this.sendAction('declineDraw');
   }
+
   claimFlag(): boolean {
-    return this.client.send({ t: 'claimFlag', gameId: this.gameId });
+    return this.sendAction('claimFlag');
   }
+
   abort(): boolean {
-    return this.client.send({ t: 'abort', gameId: this.gameId });
+    return this.sendAction('abort');
+  }
+
+  private sendAction(action: SimpleCommand): boolean {
+    if (this.state.pending !== null || this.state.pendingAction !== null || this.state.status?.over) return false;
+    const sent = this.client.send({ t: action, gameId: this.gameId });
+    if (sent) this.patch({ pendingAction: action, lastReject: null });
+    return sent;
   }
 
   private handleOpen(): void {
@@ -262,6 +278,8 @@ export class GameSync {
       legalMoves: view.legalMoves,
       // A full authoritative snapshot supersedes any optimistic pending move.
       pending: null,
+      pendingAction: null,
+      lastReject: null,
     });
   }
 
@@ -285,6 +303,8 @@ export class GameSync {
       // resulting position's side to move (empty if the game ended).
       legalMoves: msg.legalMoves,
       pending: confirmsPending ? null : pending,
+      pendingAction: null,
+      lastReject: null,
     });
   }
 
@@ -292,13 +312,19 @@ export class GameSync {
     this.patch({
       status: { over: true, result: msg.result, termination: msg.termination, winner: msg.winner },
       legalMoves: {},
+      pendingAction: null,
+      lastReject: null,
     });
   }
 
   private applyReject(msg: RejectMessage): void {
     const pending = this.state.pending;
     const rollsBack = pending !== null && (msg.ref === null || msg.ref === pending.clientSeq);
-    this.patch({ lastReject: msg, pending: rollsBack ? null : pending });
+    this.patch({
+      lastReject: msg,
+      pending: rollsBack ? null : pending,
+      pendingAction: null,
+    });
   }
 
   private patch(patch: Partial<GameSyncState>): void {

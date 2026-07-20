@@ -24,7 +24,7 @@
     <main class="game" id="game-main">
       <section id="board" aria-label="Chess board"></section>
       <aside class="sidebar" aria-label="Game info">
-        <p id="status" role="status" aria-live="polite">Your move.</p>
+        <p id="status" role="status" aria-live="polite" tabindex="-1">Your move.</p>
         <div id="clock" class="clock" aria-label="Clocks">
           <div id="clock-white" class="clock-side" data-active="true">
             <span class="clock-label">White</span>
@@ -33,6 +33,32 @@
           <div id="clock-black" class="clock-side">
             <span class="clock-label">Black</span>
             <span class="clock-time">10:00</span>
+          </div>
+        </div>
+        <div id="game-actions" class="game-actions" role="group" aria-label="Game actions" hidden>
+          <div id="action-error" class="error" role="alert" aria-live="polite" hidden></div>
+          <button id="action-offer-draw" type="button" class="button">Offer draw</button>
+          <button id="action-claim-flag" type="button" class="button">Claim timeout</button>
+          <div class="action-row">
+            <button id="action-resign" type="button" class="button destructive">Resign</button>
+            <div id="confirm-resign" class="confirm-inline" hidden>
+              <span>Sure?</span>
+              <button id="confirm-resign-yes" type="button" class="button destructive" aria-label="Confirm resignation">Yes</button>
+              <button id="confirm-resign-no" type="button" class="button" aria-label="Cancel resignation">No</button>
+            </div>
+          </div>
+          <div class="action-row">
+            <button id="action-abort" type="button" class="button destructive">Abort</button>
+            <div id="confirm-abort" class="confirm-inline" hidden>
+              <span>Sure?</span>
+              <button id="confirm-abort-yes" type="button" class="button destructive" aria-label="Confirm abort">Yes</button>
+              <button id="confirm-abort-no" type="button" class="button" aria-label="Cancel abort">No</button>
+            </div>
+          </div>
+          <div id="draw-offer-received" class="draw-offer-banner" role="alert" hidden>
+            <span>Opponent offered a draw</span>
+            <button id="action-accept-draw" type="button" class="button primary">Accept</button>
+            <button id="action-decline-draw" type="button" class="button">Decline</button>
           </div>
         </div>
       </aside>

@@ -499,3 +499,184 @@ test('R2#3: reject rollback → onTurn(true) fires even when turn is held consta
   controller.stop();
   sync.stop();
 });
+
+// ── Game Actions ─────────────────────────────────────────────────────────────
+
+test('action methods delegate to GameSync', () => {
+  const { factory, sync, controller } = setup();
+  controller.start();
+  sync.start();
+  factory.last.open();
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w', 'startpos') });
+
+  controller.resign();
+  let sent = JSON.parse(factory.last.sent.at(-1)!);
+  assert.equal(sent.t, 'resign');
+  factory.last.emit({ t: 'state', gameId: 'g1', state: stateView(0, 'w', 'startpos') });
+
+  controller.abort();
+  sent = JSON.parse(factory.last.sent.at(-1)!);
+  assert.equal(sent.t, 'abort');
+  factory.last.emit({ t: 'state', gameId: 'g1', state: stateView(0, 'w', 'startpos') });
+
+  controller.offerDraw();
+  sent = JSON.parse(factory.last.sent.at(-1)!);
+  assert.equal(sent.t, 'offerDraw');
+  factory.last.emit({ t: 'state', gameId: 'g1', state: stateView(0, 'w', 'startpos') });
+
+  // For draw responses, the opponent must have offered a draw
+  const receivedDrawState = { ...stateView(0, 'w', 'startpos'), drawOffer: 'b' as const };
+  factory.last.emit({ t: 'state', gameId: 'g1', state: receivedDrawState });
+
+  controller.acceptDraw();
+  sent = JSON.parse(factory.last.sent.at(-1)!);
+  assert.equal(sent.t, 'acceptDraw');
+  factory.last.emit({ t: 'state', gameId: 'g1', state: receivedDrawState });
+
+  controller.declineDraw();
+  sent = JSON.parse(factory.last.sent.at(-1)!);
+  assert.equal(sent.t, 'declineDraw');
+  factory.last.emit({ t: 'state', gameId: 'g1', state: stateView(0, 'w', 'startpos') });
+
+  controller.claimFlag();
+  sent = JSON.parse(factory.last.sent.at(-1)!);
+  assert.equal(sent.t, 'claimFlag');
+
+  controller.stop();
+  sync.stop();
+});
+
+test('onActionState derives correctly for players and spectators', () => {
+  const { factory, sync, controller } = setup();
+  const actionStates: any[] = [];
+  controller.stop();
+  const controller2 = new GameController({
+    gameSync: sync,
+    callbacks: {
+      onPosition: () => {},
+      onTurn: () => {},
+      onClock: () => {},
+      onStatus: () => {},
+      onActionState: (state) => actionStates.push(state),
+    },
+  });
+  controller2.start();
+  sync.start();
+  factory.last.open();
+
+  // Spectator
+  const spectatorState = { ...stateView(0, 'w', 'startpos'), drawOffer: 'w' as const };
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'spectator', state: spectatorState });
+  assert.equal(actionStates.at(-1)!.isPlayer, false);
+  assert.equal(actionStates.at(-1)!.drawOffer, 'none');
+
+  // Player
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w', 'startpos') });
+  assert.equal(actionStates.at(-1)!.isPlayer, true);
+  assert.equal(actionStates.at(-1)!.canAbort, true);
+
+  // Ply >= 2 means no abort
+  factory.last.emit({ t: 'state', gameId: 'g1', state: stateView(2, 'w', 'startpos') });
+  assert.equal(actionStates.at(-1)!.canAbort, false);
+
+  // Draw offer sent
+  const stateWithSentOffer = { ...stateView(2, 'w', 'startpos'), drawOffer: 'w' as const };
+  factory.last.emit({ t: 'state', gameId: 'g1', state: stateWithSentOffer });
+  assert.equal(actionStates.at(-1)!.drawOffer, 'sent');
+
+  // Draw offer received
+  const stateWithReceivedOffer = { ...stateView(2, 'w', 'startpos'), drawOffer: 'b' as const };
+  factory.last.emit({ t: 'state', gameId: 'g1', state: stateWithReceivedOffer });
+  assert.equal(actionStates.at(-1)!.drawOffer, 'received');
+
+  controller2.stop();
+  sync.stop();
+});
+
+test('actions are gated when pendingAction is set', () => {
+  const { factory, sync, controller } = setup();
+  controller.start();
+  sync.start();
+  factory.last.open();
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w', 'startpos') });
+
+  // Clear sent history
+  factory.last.sent.length = 0;
+
+  // First action goes through
+  controller.resign();
+  assert.equal(JSON.parse(factory.last.sent.at(-1)!).t, 'resign');
+
+  // Second action is blocked by pendingAction
+  controller.offerDraw();
+  assert.equal(factory.last.sent.length, 1, 'duplicate action should be prevented');
+
+  // Resolve pending action
+  factory.last.emit({ t: 'state', gameId: 'g1', state: stateView(0, 'w', 'startpos') });
+
+  // Now an action works
+  controller.offerDraw();
+  assert.equal(JSON.parse(factory.last.sent.at(-1)!).t, 'offerDraw');
+
+  controller.stop();
+  sync.stop();
+});
+
+test('stale errors are cleared on intended transitions', () => {
+  const { factory, sync } = setup();
+  let lastReject: string | null = null;
+  const controller2 = new GameController({
+    gameSync: sync,
+    callbacks: {
+      onPosition: () => {},
+      onTurn: () => {},
+      onClock: () => {},
+      onStatus: () => {},
+      onActionState: (state) => { lastReject = state.lastReject; },
+    },
+  });
+  controller2.start();
+  sync.start();
+  factory.last.open();
+  const validFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w', validFen) });
+
+  // Cause an error
+  factory.last.emit({ t: 'reject', gameId: 'g1', message: 'Illegal move', code: 'illegal', ref: null });
+  assert.equal(lastReject, 'Illegal move');
+
+  // Emit a state transition
+  factory.last.emit({ t: 'state', gameId: 'g1', state: stateView(0, 'w', validFen) });
+  assert.equal(lastReject, null);
+
+  // Cause another error
+  factory.last.emit({ t: 'reject', gameId: 'g1', message: 'Not your turn', code: 'not_turn', ref: null });
+  assert.equal(lastReject, 'Not your turn');
+
+  // Emit a move transition
+  factory.last.emit({
+    t: 'move', gameId: 'g1', ply: 1, uci: 'e2e4', san: 'e4', by: 'w',
+    fenHash: 'h1', clock: { w: 59_000, b: 60_000 }, serverTs: 1, legalMoves: {}
+  });
+  assert.equal(lastReject, null);
+
+  controller2.stop();
+  sync.stop();
+});
+
+test('action methods return false when WsClient.send fails', () => {
+  const { factory, sync, controller } = setup();
+  controller.start();
+  sync.start();
+  factory.last.open();
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w', 'startpos') });
+
+  // Close socket so send fails
+  factory.last.serverClose();
+
+  const sent = controller.resign();
+  assert.equal(sent, false);
+
+  controller.stop();
+  sync.stop();
+});

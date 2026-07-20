@@ -353,6 +353,23 @@ export function bootstrap(
   const whiteClockEl = doc.getElementById('clock-white');
   const blackClockEl = doc.getElementById('clock-black');
 
+  // Game action controls
+  const actionsPanelEl = doc.getElementById('game-actions');
+  const actionErrorEl = doc.getElementById('action-error');
+  const btnOfferDraw = doc.getElementById('action-offer-draw') as HTMLButtonElement | null;
+  const btnClaimFlag = doc.getElementById('action-claim-flag') as HTMLButtonElement | null;
+  const btnResign = doc.getElementById('action-resign') as HTMLButtonElement | null;
+  const btnAbort = doc.getElementById('action-abort') as HTMLButtonElement | null;
+  const confirmResignEl = doc.getElementById('confirm-resign');
+  const confirmResignYes = doc.getElementById('confirm-resign-yes');
+  const confirmResignNo = doc.getElementById('confirm-resign-no');
+  const confirmAbortEl = doc.getElementById('confirm-abort');
+  const confirmAbortYes = doc.getElementById('confirm-abort-yes');
+  const confirmAbortNo = doc.getElementById('confirm-abort-no');
+  const drawOfferReceivedEl = doc.getElementById('draw-offer-received');
+  const btnAcceptDraw = doc.getElementById('action-accept-draw');
+  const btnDeclineDraw = doc.getElementById('action-decline-draw');
+
   if (boardEl && gameId) {
     const gameSync = app.createGameSync({ gameId, ...(token !== undefined ? { token } : {}) });
     const oracle = app.createGameOracle(gameSync);
@@ -390,8 +407,124 @@ export function bootstrap(
         onColor: (color) => {
           if (color === 'b') board.setOrientation('black');
         },
+        onActionState: (state) => {
+          if (actionsPanelEl) actionsPanelEl.hidden = !state.isPlayer;
+          if (!state.isPlayer) return;
+
+          const disabled = !state.connected || state.isOver || state.pendingAction !== null;
+
+          if (btnOfferDraw) {
+            if (state.drawOffer === 'sent') {
+              btnOfferDraw.textContent = 'Draw offered';
+              btnOfferDraw.disabled = true;
+            } else {
+              btnOfferDraw.textContent = 'Offer draw';
+              btnOfferDraw.disabled = disabled || state.drawOffer !== 'none';
+            }
+          }
+          if (btnClaimFlag) btnClaimFlag.disabled = disabled;
+
+          if (btnResign) {
+            btnResign.disabled = disabled;
+            if (disabled && confirmResignEl && !confirmResignEl.hidden) {
+              confirmResignEl.hidden = true;
+              if (confirmResignYes instanceof HTMLButtonElement) confirmResignYes.disabled = true;
+              if (confirmResignNo instanceof HTMLButtonElement) confirmResignNo.disabled = true;
+              btnResign.hidden = false;
+              statusEl?.focus();
+            }
+          }
+
+          if (btnAbort) {
+            btnAbort.hidden = !state.canAbort;
+            btnAbort.disabled = disabled;
+            if ((disabled || !state.canAbort) && confirmAbortEl && !confirmAbortEl.hidden) {
+              confirmAbortEl.hidden = true;
+              if (confirmAbortYes instanceof HTMLButtonElement) confirmAbortYes.disabled = true;
+              if (confirmAbortNo instanceof HTMLButtonElement) confirmAbortNo.disabled = true;
+              btnAbort.hidden = !state.canAbort;
+              statusEl?.focus();
+            }
+          }
+
+          if (drawOfferReceivedEl) {
+            drawOfferReceivedEl.hidden = state.drawOffer !== 'received' || state.isOver;
+          }
+          if (btnAcceptDraw) {
+            (btnAcceptDraw as HTMLButtonElement).disabled = disabled || state.drawOffer !== 'received';
+          }
+          if (btnDeclineDraw) {
+            (btnDeclineDraw as HTMLButtonElement).disabled = disabled || state.drawOffer !== 'received';
+          }
+
+          if (actionErrorEl) {
+            actionErrorEl.hidden = state.lastReject === null;
+            actionErrorEl.textContent = state.lastReject ?? '';
+          }
+        },
       },
     });
+
+    // Wire action buttons
+    if (btnOfferDraw) {
+      btnOfferDraw.addEventListener('click', () => controller.offerDraw());
+    }
+    if (btnClaimFlag) {
+      btnClaimFlag.addEventListener('click', () => controller.claimFlag());
+    }
+    if (btnAcceptDraw) {
+      btnAcceptDraw.addEventListener('click', () => controller.acceptDraw());
+    }
+    if (btnDeclineDraw) {
+      btnDeclineDraw.addEventListener('click', () => controller.declineDraw());
+    }
+
+    // Inline confirmations
+    if (btnResign && confirmResignEl && confirmResignYes && confirmResignNo) {
+      btnResign.addEventListener('click', () => {
+        btnResign.hidden = true;
+        confirmResignEl.hidden = false;
+        (confirmResignYes as HTMLButtonElement).disabled = false;
+        (confirmResignNo as HTMLButtonElement).disabled = false;
+        confirmResignYes.focus();
+      });
+      confirmResignNo.addEventListener('click', () => {
+        confirmResignEl.hidden = true;
+        btnResign.hidden = false;
+        btnResign.focus();
+      });
+      confirmResignYes.addEventListener('click', () => {
+        if (controller.resign()) {
+          // Immediately disable to prevent double clicks before GameSync patches state
+          (confirmResignYes as HTMLButtonElement).disabled = true;
+          (confirmResignNo as HTMLButtonElement).disabled = true;
+          statusEl?.focus();
+        }
+      });
+    }
+
+    if (btnAbort && confirmAbortEl && confirmAbortYes && confirmAbortNo) {
+      btnAbort.addEventListener('click', () => {
+        btnAbort.hidden = true;
+        confirmAbortEl.hidden = false;
+        (confirmAbortYes as HTMLButtonElement).disabled = false;
+        (confirmAbortNo as HTMLButtonElement).disabled = false;
+        confirmAbortYes.focus();
+      });
+      confirmAbortNo.addEventListener('click', () => {
+        confirmAbortEl.hidden = true;
+        btnAbort.hidden = false;
+        btnAbort.focus();
+      });
+      confirmAbortYes.addEventListener('click', () => {
+        if (controller.abort()) {
+          // Immediately disable to prevent double clicks before GameSync patches state
+          (confirmAbortYes as HTMLButtonElement).disabled = true;
+          (confirmAbortNo as HTMLButtonElement).disabled = true;
+          statusEl?.focus();
+        }
+      });
+    }
 
     controller.start();
     if (token !== undefined) {

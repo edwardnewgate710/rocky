@@ -91,6 +91,25 @@ test('submitMove sends an incrementing clientSeq and a matching broadcast confir
   assert.deepEqual(s.clock, { w: 59_000, b: 60_000 });
 });
 
+test('game actions are blocked while a move is pending', () => {
+  const { factory, sync } = setup();
+  sync.start();
+  factory.last.open();
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w') });
+
+  assert.deepEqual(sync.submitMove('e2e4'), { uci: 'e2e4', clientSeq: 1 });
+  const sentBeforeActions = factory.last.sent.length;
+
+  assert.equal(sync.resign(), false);
+  assert.equal(sync.offerDraw(), false);
+  assert.equal(sync.acceptDraw(), false);
+  assert.equal(sync.declineDraw(), false);
+  assert.equal(sync.claimFlag(), false);
+  assert.equal(sync.abort(), false);
+  assert.equal(factory.last.sent.length, sentBeforeActions);
+  assert.equal(sync.getState().pendingAction, null);
+});
+
 test('a reject rolls back the pending move and records the reason', () => {
   const { factory, sync } = setup();
   sync.start();

@@ -1,7 +1,7 @@
 # Gambit feature-parity audit
 
 - Date: 2026-07-19
-- Target: `main` at `7603abf`, plus the local fixes listed below
+- Target: `main` at `9b7aad4`, plus the local fixes listed below
 - Environment: production Docker Compose stack at `http://localhost:3000`
 
 This audit distinguishes four different meanings of “implemented”:
@@ -20,7 +20,7 @@ Having a package in the monorepo does not imply that it is a product feature.
 | Chess rules, legal moves, terminal detection | Yes | Yes | Yes | Yes | Standard play verified through a real browser move; the variant selector exposes all eight implemented variants. |
 | Server-authoritative clocks and event-sourced games | Yes | Yes | Yes | Yes | Real matched game returned authoritative clocks and position over `/ws`. |
 | Click/drag, legal highlights, promotion, premove, board flip | Yes | Yes | Yes | Yes | Board renders 64 squares/32 pieces; `e2-e4` and server legal highlights verified. Promotion and premove remain covered by automated tests. |
-| Resign, draw offer/accept/decline, abort, claim flag | Yes | Yes (WebSocket commands) | Partly | **No controls** | Protocol and controller methods exist, but the game screen exposes none of these actions. |
+| Resign, draw offer/accept/decline, abort, claim flag | Yes | Yes (WebSocket commands) | Yes | Yes | Actions are fully exposed in the game sidebar with proper state sync and confirmation flows. Resign and draw offer/accept flows are E2E-verified; others are covered at the component/unit level. |
 | Presence, spectator role, reconnect/resume | Yes | Yes | Yes | Partial | Synchronisation exists, but the UI does not show connection state, players, spectator count, or presence. |
 | Password register/login/logout | Yes | Yes | Yes | Yes | Visible and exercised; refresh cookie restores the session. |
 | Session list/revocation | Yes | Yes | Partial (`sessions()` only) | No | No account/security screen. |
@@ -83,9 +83,9 @@ Having a package in the monorepo does not imply that it is a product feature.
 - Full monorepo production build: passed.
 - Full monorepo test command across all 11 packages: passed with zero failures.
 - Full monorepo strict TypeScript lint: passed.
-- Web unit suite: 260/260 passed.
-- Web static/offline Playwright suite: 6 passed, 3 backend-harness tests skipped
-  by their documented environment gate.
+- Web unit suite: 272/272 passed.
+- Web static/offline Playwright suite (Without GAMBIT_E2E_BACKEND): 6 passed, 6 skipped.
+- Web full backend-gated Playwright suite (With GAMBIT_E2E_BACKEND=1): 12 passed, 0 skipped.
 - Dedicated real-Postgres persistence suite: 23/23 passed.
 - Dedicated real-Postgres API suite: 138/138 passed.
 - Compose smoke test through nginx `/ws`: passed.
@@ -95,8 +95,7 @@ Having a package in the monorepo does not imply that it is a product feature.
 
 ## Remaining product-critical work, in order
 
-1. Add complete game controls and game metadata/presence to make a match
-   manageable without hidden protocol calls.
+1. Add game metadata/presence to the UI to make a match manageable without hidden protocol calls. Game controls (resign, draw, abort, claim flag) are already implemented.
 2. Add production bot service + `Play bot`; the current e2e bot is not reusable
    from the website as deployed.
 3. Expose the already-built leaderboard, tournaments, passkeys and recovery

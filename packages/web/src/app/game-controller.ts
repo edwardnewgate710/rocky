@@ -19,6 +19,19 @@ import { applyMove } from '../core/mover.js';
 import type { PromotionRole } from '../core/interaction.js';
 
 /**
+ * The unified UI state for game actions, projected from authoritative server state.
+ */
+export interface GameActionState {
+  readonly isPlayer: boolean;
+  readonly connected: boolean;
+  readonly isOver: boolean;
+  readonly canAbort: boolean;
+  readonly drawOffer: 'none' | 'sent' | 'received';
+  readonly lastReject: string | null;
+  readonly pendingAction: GameSyncState['pendingAction'];
+}
+
+/**
  * Callbacks the controller invokes when the projected game state changes.
  * The consumer (e.g. `bootstrap` or a future game-view module) wires these to
  * the DOM `BoardView` and status elements.
@@ -43,6 +56,10 @@ export interface GameControllerCallbacks {
    * to set board orientation. Called once, with `null` for spectators.
    */
   onColor?: (color: WsColor | null) => void;
+  /**
+   * Called when the availability or status of game actions changes.
+   */
+  onActionState?: (state: GameActionState) => void;
 }
 
 /**
@@ -69,6 +86,7 @@ export class GameController {
   private currentMyTurn: boolean | undefined = undefined;
   private currentLastMove: { from: string; to: string } | null | undefined = undefined;
   private currentClock: { w: number; b: number } | undefined = undefined;
+  private currentActionState: GameActionState | undefined = undefined;
   private colorEmitted = false;
 
   constructor(options: GameControllerOptions) {
@@ -101,6 +119,59 @@ export class GameController {
    */
   submitMove(uci: string): { readonly uci: string; readonly clientSeq: number } | null {
     return this.gameSync.submitMove(uci);
+  }
+
+  resign(): boolean {
+    if (!this.canResign()) return false;
+    return this.gameSync.resign();
+  }
+
+  abort(): boolean {
+    if (!this.canAbort()) return false;
+    return this.gameSync.abort();
+  }
+
+  offerDraw(): boolean {
+    if (!this.canOfferDraw()) return false;
+    return this.gameSync.offerDraw();
+  }
+
+  acceptDraw(): boolean {
+    if (!this.canRespondToDraw()) return false;
+    return this.gameSync.acceptDraw();
+  }
+
+  declineDraw(): boolean {
+    if (!this.canRespondToDraw()) return false;
+    return this.gameSync.declineDraw();
+  }
+
+  claimFlag(): boolean {
+    if (!this.canClaimFlag()) return false;
+    return this.gameSync.claimFlag();
+  }
+
+  private canResign(): boolean {
+    return this.currentActionState?.isPlayer === true &&
+           this.currentActionState?.connected === true &&
+           !this.currentActionState?.isOver &&
+           this.currentActionState?.pendingAction === null;
+  }
+
+  private canAbort(): boolean {
+    return this.canResign() && this.currentActionState?.canAbort === true;
+  }
+
+  private canOfferDraw(): boolean {
+    return this.canResign() && this.currentActionState?.drawOffer === 'none';
+  }
+
+  private canRespondToDraw(): boolean {
+    return this.canResign() && this.currentActionState?.drawOffer === 'received';
+  }
+
+  private canClaimFlag(): boolean {
+    return this.canResign();
   }
 
   private handleState(state: GameSyncState): void {
@@ -178,6 +249,35 @@ export class GameController {
       if (changed) {
         this.currentLastMove = lastMove;
         this.callbacks.onLastMove(lastMove?.from ?? null, lastMove?.to ?? null);
+      }
+    }
+
+    // --- Action State ---
+    const isPlayer = state.myColor !== null;
+    const connected = state.connected;
+    const isOver = state.status?.over ?? false;
+    const canAbort = state.ply < 2;
+    const drawOffer: 'none' | 'sent' | 'received' = state.myColor === null || state.drawOffer === null
+      ? 'none'
+      : state.drawOffer === state.myColor
+        ? 'sent'
+        : 'received';
+    const lastReject = state.lastReject ? state.lastReject.message : null;
+    const pendingAction = state.pendingAction;
+
+    const actionChanged = this.currentActionState === undefined
+      || this.currentActionState.isPlayer !== isPlayer
+      || this.currentActionState.connected !== connected
+      || this.currentActionState.isOver !== isOver
+      || this.currentActionState.canAbort !== canAbort
+      || this.currentActionState.drawOffer !== drawOffer
+      || this.currentActionState.lastReject !== lastReject
+      || this.currentActionState.pendingAction !== pendingAction;
+
+    if (actionChanged) {
+      this.currentActionState = { isPlayer, connected, isOver, canAbort, drawOffer, lastReject, pendingAction };
+      if (this.callbacks.onActionState) {
+        this.callbacks.onActionState(this.currentActionState);
       }
     }
   }

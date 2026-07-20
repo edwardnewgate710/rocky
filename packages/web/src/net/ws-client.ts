@@ -104,6 +104,7 @@ export class WsClient {
     this.scheduler = options.scheduler ?? defaultScheduler;
     this.now = options.now ?? ((): number => Date.now());
     this.rng = options.rng ?? Math.random;
+
   }
 
   get state(): WsConnectionState {
