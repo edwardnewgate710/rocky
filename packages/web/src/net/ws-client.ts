@@ -145,6 +145,38 @@ export class WsClient {
     }
   }
 
+  /**
+   * The browser reported the network went offline. Drop the current socket and
+   * enter the reconnect flow immediately, rather than waiting up to a full
+   * heartbeat interval for the silent link to be noticed. Auto-reconnect stays
+   * enabled so the link recovers on its own (or on {@link reconnectNow}).
+   */
+  networkOffline(): void {
+    if (this.intentionalClose || !this.reconnect.enabled) return;
+    if (this.stateValue !== 'open' && this.stateValue !== 'connecting') return;
+    const conn = this.conn;
+    if (!conn) return;
+    // Close the socket unexpectedly (intentionalClose stays false). The close
+    // event drives handleClose, which stops the heartbeat, clears the socket,
+    // and schedules the reconnect — so we must not duplicate that work here.
+    try {
+      conn.close(4001, 'network-offline');
+    } catch {
+      /* ignore close errors */
+    }
+  }
+
+  /**
+   * The browser reported it is back online. If we are waiting on a backoff
+   * timer, retry now with a fresh attempt counter instead of sitting out the
+   * remaining delay.
+   */
+  reconnectNow(): void {
+    if (this.intentionalClose || this.stateValue === 'open' || this.stateValue === 'connecting') return;
+    this.clearReconnect();
+    this.openSocket();
+  }
+
   /** Close intentionally: cancels reconnect/heartbeat and never auto-reconnects. */
   close(code?: number, reason?: string): void {
     this.intentionalClose = true;

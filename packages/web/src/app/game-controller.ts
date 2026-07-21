@@ -13,8 +13,8 @@
  * the DOM. The concrete DOM wiring (connecting these callbacks to `BoardView`)
  * lands in a later increment.
  */
-import type { GameSync, GameSyncState } from '../net/game-sync.js';
-import type { WsColor } from '../net/ws-protocol.js';
+import type { GameSync, GameSyncState, PresenceInfo } from '../net/game-sync.js';
+import type { WsColor, Role, Variant, TimeControl } from '../net/ws-protocol.js';
 import { applyMove } from '../core/mover.js';
 import type { PromotionRole } from '../core/interaction.js';
 
@@ -29,6 +29,15 @@ export interface GameActionState {
   readonly drawOffer: 'none' | 'sent' | 'received';
   readonly lastReject: string | null;
   readonly pendingAction: GameSyncState['pendingAction'];
+}
+
+export interface GameMetadataState {
+  readonly connected: boolean;
+  readonly role: Role | null;
+  readonly myColor: WsColor | null;
+  readonly variant: Variant | null;
+  readonly timeControl: TimeControl | null;
+  readonly presence: PresenceInfo | null;
 }
 
 /**
@@ -60,6 +69,10 @@ export interface GameControllerCallbacks {
    * Called when the availability or status of game actions changes.
    */
   onActionState?: (state: GameActionState) => void;
+  /**
+   * Called when metadata or presence changes.
+   */
+  onMetadata?: (state: GameMetadataState) => void;
 }
 
 /**
@@ -87,6 +100,7 @@ export class GameController {
   private currentLastMove: { from: string; to: string } | null | undefined = undefined;
   private currentClock: { w: number; b: number } | undefined = undefined;
   private currentActionState: GameActionState | undefined = undefined;
+  private currentMetadataState: GameMetadataState | undefined = undefined;
   private colorEmitted = false;
 
   constructor(options: GameControllerOptions) {
@@ -278,6 +292,42 @@ export class GameController {
       this.currentActionState = { isPlayer, connected, isOver, canAbort, drawOffer, lastReject, pendingAction };
       if (this.callbacks.onActionState) {
         this.callbacks.onActionState(this.currentActionState);
+      }
+    }
+
+    // --- Metadata State ---
+    const tc1 = this.currentMetadataState?.timeControl ?? null;
+    const tc2 = state.snapshot?.timeControl ?? null;
+    const timeControlChanged = tc1 === null && tc2 !== null
+      || tc1 !== null && tc2 === null
+      || (tc1 !== null && tc2 !== null && (
+          tc1.kind !== tc2.kind ||
+          tc1.initialMs !== tc2.initialMs ||
+          tc1.incrementMs !== tc2.incrementMs ||
+          tc1.delayMs !== tc2.delayMs
+      ));
+
+    const metadataChanged = this.currentMetadataState === undefined
+      || this.currentMetadataState.connected !== state.connected
+      || this.currentMetadataState.role !== state.role
+      || this.currentMetadataState.myColor !== state.myColor
+      || this.currentMetadataState.variant !== (state.snapshot?.variant ?? null)
+      || timeControlChanged
+      || this.currentMetadataState.presence?.white !== state.presence?.white
+      || this.currentMetadataState.presence?.black !== state.presence?.black
+      || this.currentMetadataState.presence?.spectators !== state.presence?.spectators;
+
+    if (metadataChanged) {
+      this.currentMetadataState = {
+        connected: state.connected,
+        role: state.role,
+        myColor: state.myColor,
+        variant: state.snapshot?.variant ?? null,
+        timeControl: state.snapshot?.timeControl ?? null,
+        presence: state.presence ? { ...state.presence } : null,
+      };
+      if (this.callbacks.onMetadata) {
+        this.callbacks.onMetadata(this.currentMetadataState);
       }
     }
   }

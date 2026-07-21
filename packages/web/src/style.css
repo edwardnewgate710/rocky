@@ -219,6 +219,50 @@ body {
   cursor: pointer;
 }
 .sidebar { min-width: 0; }
+
+.metadata-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 12px;
+  background: var(--panel-strong);
+  border-radius: 6px;
+  font-size: 0.875rem;
+}
+
+.metadata-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.metadata-label {
+  color: var(--muted);
+}
+
+.metadata-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+.presence-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.presence-dot.online {
+  background-color: var(--sel);
+}
+
+.presence-dot.offline {
+  background-color: var(--muted);
+}
+
 .clock {
   display: flex;
   align-items: center;

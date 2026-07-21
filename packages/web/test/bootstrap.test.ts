@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bootstrap, extractGameId, formatClock } from '../src/app/bootstrap.js';
+import { bootstrap, extractGameId, formatClock, formatTimeControl } from '../src/app/bootstrap.js';
 import type { BootstrapDependencies } from '../src/app/bootstrap.js';
 import { GameController } from '../src/app/game-controller.js';
 import { FakeTransport, json } from './support/fake-transport.js';
@@ -86,11 +86,29 @@ function makeFakeEl(id?: string): HTMLElement {
   } as unknown as HTMLElement;
 }
 
-function makeDoc(ids: string[] = ['board', 'status', 'flip', 'theme-toggle', 'auth-status', 'auth-logout', 'auth-submit', 'auth-error', 'auth-form', 'auth-handle', 'auth-password', 'create-seek', 'game-actions', 'action-error', 'action-offer-draw', 'action-claim-flag', 'action-resign', 'action-abort', 'confirm-resign', 'confirm-resign-yes', 'confirm-resign-no', 'confirm-abort', 'confirm-abort-yes', 'confirm-abort-no', 'draw-offer-received', 'action-accept-draw', 'action-decline-draw']): Document {
+function makeDoc(ids: string[] = ['board', 'status', 'flip', 'theme-toggle', 'auth-status', 'auth-logout', 'auth-submit', 'auth-error', 'auth-form', 'auth-handle', 'auth-password', 'create-seek', 'game-actions', 'action-error', 'action-offer-draw', 'action-claim-flag', 'action-resign', 'action-abort', 'confirm-resign', 'confirm-resign-yes', 'confirm-resign-no', 'confirm-abort', 'confirm-abort-yes', 'confirm-abort-no', 'draw-offer-received', 'action-accept-draw', 'action-decline-draw', 'meta-connection', 'meta-role', 'meta-white', 'meta-white-name', 'meta-black', 'meta-black-name', 'meta-spectators', 'meta-variant', 'meta-time', 'meta-live-status']): Document {
   const elements = new Map<string, HTMLElement>();
   for (const id of ids) {
     elements.set(id, makeFakeEl(id));
   }
+
+  const metaWhite = elements.get('meta-white');
+  if (metaWhite) {
+    const dot = makeFakeEl();
+    dot.classList.add('presence-dot');
+    const txt = makeFakeEl();
+    txt.classList.add('presence-text');
+    metaWhite.querySelector = (sel: string) => sel.includes('dot') ? dot : txt;
+  }
+  const metaBlack = elements.get('meta-black');
+  if (metaBlack) {
+    const dot = makeFakeEl();
+    dot.classList.add('presence-dot');
+    const txt = makeFakeEl();
+    txt.classList.add('presence-text');
+    metaBlack.querySelector = (sel: string) => sel.includes('dot') ? dot : txt;
+  }
+
   const docEl = makeFakeEl('documentElement');
   return {
     getElementById: (id: string) => elements.get(id) ?? null,
@@ -172,6 +190,30 @@ test('formatClock formats milliseconds as M:SS', () => {
   assert.equal(formatClock(0), '0:00');
   assert.equal(formatClock(3_600_000), '60:00');
   assert.equal(formatClock(-5_000), '0:00'); // clamped to 0
+});
+
+// ── formatTimeControl ───────────────────────────────────────────────────
+
+test('formatTimeControl formats unlimited correctly', () => {
+  assert.equal(formatTimeControl({ kind: 'unlimited', initialMs: 0, incrementMs: 0, delayMs: 0 }), 'Unlimited');
+});
+
+test('formatTimeControl formats sudden_death correctly', () => {
+  assert.equal(formatTimeControl({ kind: 'sudden_death', initialMs: 30_000, incrementMs: 0, delayMs: 0 }), '30 sec');
+  assert.equal(formatTimeControl({ kind: 'sudden_death', initialMs: 60_000, incrementMs: 0, delayMs: 0 }), '1 min');
+  assert.equal(formatTimeControl({ kind: 'sudden_death', initialMs: 180_000, incrementMs: 0, delayMs: 0 }), '3 min');
+  assert.equal(formatTimeControl({ kind: 'sudden_death', initialMs: 90_000, incrementMs: 0, delayMs: 0 }), '90 sec');
+});
+
+test('formatTimeControl formats increment correctly', () => {
+  assert.equal(formatTimeControl({ kind: 'increment', initialMs: 60_000, incrementMs: 2_000, delayMs: 0 }), '1+2');
+  assert.equal(formatTimeControl({ kind: 'increment', initialMs: 30_000, incrementMs: 2_000, delayMs: 0 }), '0.5+2');
+  assert.equal(formatTimeControl({ kind: 'increment', initialMs: 180_000, incrementMs: 0, delayMs: 0 }), '3+0');
+});
+
+test('formatTimeControl formats delay correctly', () => {
+  assert.equal(formatTimeControl({ kind: 'delay', initialMs: 60_000, incrementMs: 0, delayMs: 2_000 }), '1 min delay 2');
+  assert.equal(formatTimeControl({ kind: 'delay', initialMs: 30_000, incrementMs: 0, delayMs: 2_000 }), '30 sec delay 2');
 });
 
 // ── bootstrap without game ID ───────────────────────────────────────────
@@ -614,4 +656,47 @@ test('action panel: received-draw buttons disabled while disconnected', () => {
 
   assert.equal(btnAcceptDraw.disabled, true);
   assert.equal(btnDeclineDraw.disabled, true);
+});
+
+test('game metadata: populates elements correctly', () => {
+  const { doc, socket } = setupActionPanel();
+  const metaConnectionEl = doc.getElementById('meta-connection') as HTMLElement;
+  const metaWhiteEl = doc.getElementById('meta-white') as HTMLElement;
+  const metaBlackEl = doc.getElementById('meta-black') as HTMLElement;
+  const metaSpectatorsEl = doc.getElementById('meta-spectators') as HTMLElement;
+  const metaVariantEl = doc.getElementById('meta-variant') as HTMLElement;
+  const metaTimeEl = doc.getElementById('meta-time') as HTMLElement;
+
+  // Initial connection state after setup (which sends JOINED_MSG)
+  assert.equal(metaConnectionEl.textContent, 'Connected');
+
+  // Test timeControl formatting
+  assert.equal(metaTimeEl.textContent, '1 min');
+  assert.equal(metaVariantEl.textContent, 'Standard');
+  assert.equal(metaSpectatorsEl.textContent, '—');
+
+  // Test presence state
+  socket.emit({
+    t: 'presence',
+    gameId: 'g1',
+    white: true,
+    black: false,
+    spectators: 3
+  });
+
+  const metaWhiteNameEl = doc.getElementById('meta-white-name') as HTMLElement;
+  const metaBlackNameEl = doc.getElementById('meta-black-name') as HTMLElement;
+  const metaWhiteTxt = metaWhiteEl.querySelector('.presence-text') as HTMLElement;
+  const metaBlackTxt = metaBlackEl.querySelector('.presence-text') as HTMLElement;
+
+  assert.equal(metaSpectatorsEl.textContent, '3');
+  assert.equal(metaWhiteNameEl.textContent, 'White (You)');
+  assert.equal(metaWhiteTxt.textContent, 'Online');
+  assert.equal(metaBlackNameEl.textContent, 'Black');
+  assert.equal(metaBlackTxt.textContent, 'Offline');
+
+  // Disconnect
+  socket.serverClose();
+  assert.equal(metaConnectionEl.textContent, 'Reconnecting…');
+  assert.equal(metaWhiteTxt.textContent, 'Unknown');
 });

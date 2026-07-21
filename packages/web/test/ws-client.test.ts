@@ -129,3 +129,49 @@ test('heartbeat pings while active and drops a silent socket', () => {
   assert.deepEqual(socket.closed, { code: 4000, reason: 'heartbeat timeout' });
   assert.equal(client.state, 'reconnecting'); // close triggered reconnect
 });
+
+test('networkOffline drops the open socket into reconnect without an intentional close', () => {
+  const { client, factory } = makeClient({ reconnect: { baseDelayMs: 100 } });
+  client.connect();
+  factory.last.open();
+  const socket = factory.last;
+  assert.equal(client.state, 'open');
+
+  client.networkOffline();
+  // Socket closed unexpectedly, and the client is now awaiting reconnect.
+  assert.equal(socket.closed?.code, 4001);
+  assert.equal(client.state, 'reconnecting');
+});
+
+test('networkOffline is a no-op when the socket is not open', () => {
+  const { client } = makeClient();
+  client.networkOffline(); // idle
+  assert.equal(client.state, 'idle');
+});
+
+test('reconnectNow retries immediately instead of waiting out the backoff', () => {
+  const { client, factory, scheduler } = makeClient({ reconnect: { baseDelayMs: 5000 } });
+  client.connect();
+  factory.last.open();
+
+  client.networkOffline();
+  assert.equal(client.state, 'reconnecting');
+  assert.equal(scheduler.pending, 1); // a backoff timer is armed
+  const offlineSocket = factory.last; // the socket that was just dropped
+
+  client.reconnectNow(); // browser back online → retry at once
+  assert.equal(scheduler.pending, 0); // backoff timer cleared
+  assert.notEqual(factory.last, offlineSocket, 'reconnectNow opens a fresh socket, not the dropped one');
+  factory.last.open(); // the fresh socket opens
+  assert.equal(client.state, 'open');
+});
+
+test('networkOffline does not fight an intentional close', () => {
+  const { client, factory } = makeClient();
+  client.connect();
+  factory.last.open();
+  client.close();
+  assert.equal(client.state, 'closed');
+  client.networkOffline(); // must stay closed, no reconnect
+  assert.equal(client.state, 'closed');
+});

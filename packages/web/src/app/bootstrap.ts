@@ -32,6 +32,7 @@ import type { AuthController as AuthControllerType } from './auth-controller.js'
 import type { AuthSession } from './auth-controller.js';
 import { parseRoute } from './router.js';
 import type { SeekView } from '../api/models.js';
+import type { TimeControl } from '../net/ws-protocol.js';
 
 /** Everything the bootstrap wired, returned for later increments and tests. */
 export interface Bootstrapped {
@@ -61,6 +62,26 @@ export function formatClock(ms: number): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+/**
+ * Format a time control into a human-readable string.
+ */
+export function formatTimeControl(tc: Pick<TimeControl, 'kind' | 'initialMs' | 'incrementMs' | 'delayMs'>): string {
+  if (tc.kind === 'unlimited') return 'Unlimited';
+  if (tc.kind === 'sudden_death') {
+    const sec = tc.initialMs / 1000;
+    return sec >= 60 && sec % 60 === 0 ? `${sec / 60} min` : `${sec} sec`;
+  }
+  if (tc.kind === 'increment') {
+    return `${tc.initialMs / 60000}+${tc.incrementMs / 1000}`;
+  }
+  if (tc.kind === 'delay') {
+    const sec = tc.initialMs / 1000;
+    const base = sec >= 60 && sec % 60 === 0 ? `${sec / 60} min` : `${sec} sec`;
+    return `${base} delay ${tc.delayMs / 1000}`;
+  }
+  return 'Unknown';
 }
 
 /** Injectable seams for the bootstrap. Omit any to use browser defaults. */
@@ -150,7 +171,7 @@ function renderSeeks(
 
     const info = document.createElement('span');
     info.className = 'seek-info';
-    const tc = `${Math.floor(seek.timeControl.initialMs / 60000)}+${Math.floor(seek.timeControl.incrementMs / 1000)}`;
+    const tc = formatTimeControl(seek.timeControl);
     info.textContent = `${seek.variant} · ${seek.speed} · ${tc}${seek.rated ? ' · rated' : ''}`;
 
     if (owned) {
@@ -353,6 +374,18 @@ export function bootstrap(
   const whiteClockEl = doc.getElementById('clock-white');
   const blackClockEl = doc.getElementById('clock-black');
 
+  // Game metadata
+  const metaConnectionEl = doc.getElementById('meta-connection');
+  const metaRoleEl = doc.getElementById('meta-role');
+  const metaWhiteEl = doc.getElementById('meta-white');
+  const metaWhiteNameEl = doc.getElementById('meta-white-name');
+  const metaBlackEl = doc.getElementById('meta-black');
+  const metaBlackNameEl = doc.getElementById('meta-black-name');
+  const metaSpectatorsEl = doc.getElementById('meta-spectators');
+  const metaVariantEl = doc.getElementById('meta-variant');
+  const metaTimeEl = doc.getElementById('meta-time');
+  const metaLiveStatusEl = doc.getElementById('meta-live-status');
+
   // Game action controls
   const actionsPanelEl = doc.getElementById('game-actions');
   const actionErrorEl = doc.getElementById('action-error');
@@ -406,6 +439,90 @@ export function bootstrap(
         },
         onColor: (color) => {
           if (color === 'b') board.setOrientation('black');
+        },
+        onMetadata: (state) => {
+          let liveAnnouncement = '';
+
+          if (metaConnectionEl) {
+            const connText = state.connected
+              ? 'Connected'
+              : state.role !== null
+                ? 'Reconnecting…'
+                : 'Connecting…';
+            if (metaConnectionEl.textContent !== connText) {
+              metaConnectionEl.textContent = connText;
+              liveAnnouncement += `Connection: ${connText}. `;
+            }
+          }
+
+          if (metaRoleEl) {
+            const roleText = state.role === 'white' ? 'Playing as White'
+              : state.role === 'black' ? 'Playing as Black'
+              : state.role === 'spectator' ? 'Spectating'
+              : 'Waiting…';
+            metaRoleEl.textContent = roleText;
+          }
+
+          const unknownPresence = !state.connected || !state.presence;
+
+          if (metaWhiteEl && metaWhiteNameEl) {
+            const isMe = state.myColor === 'w';
+            metaWhiteNameEl.textContent = 'White' + (isMe ? ' (You)' : '');
+            
+            const dot = metaWhiteEl.querySelector('.presence-dot');
+            const txt = metaWhiteEl.querySelector('.presence-text');
+            if (dot && txt) {
+              if (unknownPresence) {
+                dot.className = 'presence-dot offline';
+                txt.textContent = 'Unknown';
+              } else {
+                const online = state.presence!.white;
+                dot.className = `presence-dot ${online ? 'online' : 'offline'}`;
+                const newTxt = online ? 'Online' : 'Offline';
+                if (txt.textContent !== newTxt) {
+                  txt.textContent = newTxt;
+                  liveAnnouncement += `White is ${newTxt}. `;
+                }
+              }
+            }
+          }
+
+          if (metaBlackEl && metaBlackNameEl) {
+            const isMe = state.myColor === 'b';
+            metaBlackNameEl.textContent = 'Black' + (isMe ? ' (You)' : '');
+            
+            const dot = metaBlackEl.querySelector('.presence-dot');
+            const txt = metaBlackEl.querySelector('.presence-text');
+            if (dot && txt) {
+              if (unknownPresence) {
+                dot.className = 'presence-dot offline';
+                txt.textContent = 'Unknown';
+              } else {
+                const online = state.presence!.black;
+                dot.className = `presence-dot ${online ? 'online' : 'offline'}`;
+                const newTxt = online ? 'Online' : 'Offline';
+                if (txt.textContent !== newTxt) {
+                  txt.textContent = newTxt;
+                  liveAnnouncement += `Black is ${newTxt}. `;
+                }
+              }
+            }
+          }
+
+          if (metaSpectatorsEl) {
+            metaSpectatorsEl.textContent = unknownPresence ? '—' : String(state.presence!.spectators);
+          }
+
+          if (metaVariantEl && state.variant) {
+            metaVariantEl.textContent = state.variant.charAt(0).toUpperCase() + state.variant.slice(1);
+          }
+          if (metaTimeEl && state.timeControl) {
+            metaTimeEl.textContent = formatTimeControl(state.timeControl);
+          }
+
+          if (metaLiveStatusEl && liveAnnouncement) {
+            metaLiveStatusEl.textContent = liveAnnouncement.trim();
+          }
         },
         onActionState: (state) => {
           if (actionsPanelEl) actionsPanelEl.hidden = !state.isPlayer;
@@ -527,6 +644,16 @@ export function bootstrap(
     }
 
     controller.start();
+
+    // React to real browser connectivity changes: on `offline`, drop into the
+    // reconnect flow immediately (a browser going offline should show
+    // "Reconnecting…" now, not after a full heartbeat interval); on `online`,
+    // retry at once instead of waiting out the backoff.
+    if (typeof window !== 'undefined') {
+      window.addEventListener('offline', () => gameSync.networkOffline());
+      window.addEventListener('online', () => gameSync.networkOnline());
+    }
+
     if (token !== undefined) {
       gameSync.start();
     } else {

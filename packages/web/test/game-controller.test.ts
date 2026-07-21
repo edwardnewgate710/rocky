@@ -24,6 +24,7 @@ function setup() {
   const clocks: Array<[number, number]> = [];
   const statuses: string[] = [];
   const colors: Array<WsColor | null> = [];
+  const metadatas: Array<any> = [];
   const controller = new GameController({
     gameSync: sync,
     callbacks: {
@@ -32,9 +33,10 @@ function setup() {
       onClock: (w, b) => clocks.push([w, b]),
       onStatus: (text) => statuses.push(text),
       onColor: (color) => colors.push(color),
+      onMetadata: (metadata) => metadatas.push(metadata),
     },
   });
-  return { factory, scheduler, client, sync, controller, positions, turns, clocks, statuses, colors };
+  return { factory, scheduler, client, sync, controller, positions, turns, clocks, statuses, colors, metadatas };
 }
 
 function stateView(
@@ -676,6 +678,78 @@ test('action methods return false when WsClient.send fails', () => {
 
   const sent = controller.resign();
   assert.equal(sent, false);
+
+  controller.stop();
+  sync.stop();
+});
+
+test('onMetadata derives correctly and fires on changes', () => {
+  const { factory, sync, controller, metadatas } = setup();
+  controller.start();
+  sync.start();
+
+  // 1. Initial state before join: connected=false, rest=null (emitted by controller.start())
+  // 2. Open transitions to connected=true
+  factory.last.open();
+
+  assert.equal(metadatas.length, 2);
+  assert.equal(metadatas[0].connected, false);
+  assert.equal(metadatas[0].role, null);
+  assert.equal(metadatas[1].connected, true);
+
+  // 3. Join as spectator with presence
+  const validFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+  const stateWithPresence = { ...stateView(0, 'w', validFen) };
+  factory.last.emit({
+    t: 'joined', gameId: 'g1', role: 'spectator', state: stateWithPresence
+  });
+  factory.last.emit({
+    t: 'presence', gameId: 'g1', white: true, black: false, spectators: 1
+  });
+
+  assert.equal(metadatas.at(-1)!.role, 'spectator');
+  assert.equal(metadatas.at(-1)!.myColor, null);
+  assert.equal(metadatas.at(-1)!.variant, 'standard');
+  assert.deepEqual(metadatas.at(-1)!.presence, { white: true, black: false, spectators: 1 });
+
+  // 4. Move event without presence change should NOT fire onMetadata
+  const lenBeforeMove = metadatas.length;
+  factory.last.emit({
+    t: 'move', gameId: 'g1', ply: 1, uci: 'e2e4', san: 'e4', by: 'w',
+    fenHash: 'h1', clock: { w: 59_000, b: 60_000 }, serverTs: 1, legalMoves: {}
+  });
+  assert.equal(metadatas.length, lenBeforeMove, 'onMetadata should not fire when metadata state has not changed');
+
+  // 5. Presence event
+  factory.last.emit({ t: 'presence', gameId: 'g1', white: true, black: true, spectators: 2 });
+  assert.deepEqual(metadatas.at(-1)!.presence, { white: true, black: true, spectators: 2 });
+
+  controller.stop();
+  sync.stop();
+});
+
+test('onMetadata deduplicates identical timeControl objects', () => {
+  const { factory, sync, controller, metadatas } = setup();
+  controller.start();
+  sync.start();
+  factory.last.open();
+
+  const validFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+  const stateView1 = { ...stateView(0, 'w', validFen), timeControl: { initialMs: 60000, incrementMs: 0, delayMs: 0, kind: 'sudden_death' as const } };
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView1 });
+  
+  const lenBefore = metadatas.length;
+
+  const stateView2 = { ...stateView(0, 'w', validFen), timeControl: { initialMs: 60000, incrementMs: 0, delayMs: 0, kind: 'sudden_death' as const } };
+  factory.last.emit({ t: 'state', gameId: 'g1', state: stateView2 });
+
+  assert.equal(metadatas.length, lenBefore, 'Identical timeControl object should not trigger onMetadata');
+
+  // Emit a state with a different time control
+  const stateView3 = { ...stateView(0, 'w', validFen), timeControl: { initialMs: 120000, incrementMs: 0, delayMs: 0, kind: 'sudden_death' as const } };
+  factory.last.emit({ t: 'state', gameId: 'g1', state: stateView3 });
+
+  assert.equal(metadatas.length, lenBefore + 1, 'Different timeControl object should trigger onMetadata');
 
   controller.stop();
   sync.stop();

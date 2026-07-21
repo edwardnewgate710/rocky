@@ -25,6 +25,45 @@
       <section id="board" aria-label="Chess board"></section>
       <aside class="sidebar" aria-label="Game info">
         <p id="status" role="status" aria-live="polite" tabindex="-1">Your move.</p>
+
+        <section id="game-metadata" class="metadata-panel" aria-label="Game information">
+          <div id="meta-live-status" aria-live="polite" class="sr-only"></div>
+          <div class="metadata-row">
+            <span class="metadata-label">Connection</span>
+            <span id="meta-connection" class="metadata-value">Offline</span>
+          </div>
+          <div class="metadata-row">
+            <span class="metadata-label">Role</span>
+            <span id="meta-role" class="metadata-value">Waiting…</span>
+          </div>
+          <div class="metadata-row">
+            <span id="meta-white-name" class="metadata-label">White</span>
+            <span id="meta-white" class="metadata-value">
+              <span class="presence-dot offline" aria-hidden="true"></span>
+              <span class="presence-text">Offline</span>
+            </span>
+          </div>
+          <div class="metadata-row">
+            <span id="meta-black-name" class="metadata-label">Black</span>
+            <span id="meta-black" class="metadata-value">
+              <span class="presence-dot offline" aria-hidden="true"></span>
+              <span class="presence-text">Offline</span>
+            </span>
+          </div>
+          <div class="metadata-row">
+            <span class="metadata-label">Spectators</span>
+            <span id="meta-spectators" class="metadata-value">0</span>
+          </div>
+          <div class="metadata-row">
+            <span class="metadata-label">Variant</span>
+            <span id="meta-variant" class="metadata-value">-</span>
+          </div>
+          <div class="metadata-row">
+            <span class="metadata-label">Time Control</span>
+            <span id="meta-time" class="metadata-value">-</span>
+          </div>
+        </section>
+
         <div id="clock" class="clock" aria-label="Clocks">
           <div id="clock-white" class="clock-side" data-active="true">
             <span class="clock-label">White</span>

@@ -184,12 +184,16 @@ test('R2#4 e2e: two-move live loop driven by real GameAuthority', async () => {
 
 test('R2#4 e2e: resume after disconnect with real GameAuthority', async () => {
   const { authority, pubsub } = await createAuthority();
-  const { factory, sync } = setupClient('token-alice');
+  const { factory, scheduler, sync } = setupClient('token-alice');
   const oracle = new AuthoritativeMoveOracle({
     getLegalMoves: () => sync.getState().legalMoves,
   });
 
+  // Broadcasts only reach the client while its socket is live — a disconnected
+  // client misses them, which is exactly what forces a resume on rejoin.
+  let deliverToClient = true;
   pubsub.subscribe('game:g1', (msg: Broadcast) => {
+    if (!deliverToClient) return;
     const frame = encode(msg as ServerMessage);
     factory.last.emit(JSON.parse(frame));
   });
@@ -197,7 +201,8 @@ test('R2#4 e2e: resume after disconnect with real GameAuthority', async () => {
   sync.start();
   factory.last.open();
 
-  // Join.
+  // The client's handleOpen sends `join` automatically.
+  // We simulate the server handling that and sending `joined`.
   factory.last.emit({
     t: 'joined', gameId: 'g1', role: 'white', state: authority.getState('g1'),
   });
@@ -207,15 +212,35 @@ test('R2#4 e2e: resume after disconnect with real GameAuthority', async () => {
   await authority.apply('g1', 'alice', { kind: 'move', uci: 'e2e4' });
   await flush();
 
-  // Simulate disconnect + reconnect.
-  factory.last.close();
-  factory.last.open();
+  // Simulate disconnect + reconnect. The client last saw ply 1 (after 1.e4).
+  factory.last.serverClose(1006, '', false);
+  deliverToClient = false; // offline: the client misses everything from here
+  scheduler.runNext(); // trigger reconnect logic
 
-  // Server sends resumed with current authoritative state.
+  // Bob moves while the client is disconnected, advancing the authority to ply 2,
+  // so on rejoin the server's state is ahead of what the client last saw.
+  await authority.apply('g1', 'bob', { kind: 'move', uci: 'e7e5' });
+  await flush();
+
+  factory.last.open(); // Socket #2 opens; client auto-sends `join` (sent[0]).
+  deliverToClient = true;
+
+  // Server responds once with its current authoritative state (ply 2). Because
+  // the client saw ply 1 < 2, it must now actively request a `resume` for the gap.
+  factory.last.emit({
+    t: 'joined', gameId: 'g1', role: 'white', state: authority.getState('g1'),
+  });
+
+  // Assert the client genuinely emitted the resume request (not injected by us).
+  assert.deepEqual(JSON.parse(factory.last.sent[1]!), {
+    t: 'resume', gameId: 'g1', lastPly: 1,
+  });
+
+  // Only now does the server send `resumed` with the missed moves since ply 1.
   factory.last.emit({
     t: 'resumed', gameId: 'g1',
     state: authority.getState('g1'),
-    missed: authority.getMissedSince('g1', 0),
+    missed: authority.getMissedSince('g1', 1),
   });
 
   // After resume, legalMoves should be populated from the real authority's snapshot.
@@ -223,11 +248,10 @@ test('R2#4 e2e: resume after disconnect with real GameAuthority', async () => {
   assert.ok(Object.keys(lm).length > 0, 'legalMoves should be populated after resume');
 
   // The oracle should work after resume — e7 should have e5/e6 as destinations
-  // (real legal moves from the authority after 1.e4).
+  // (real legal moves from the authority after 1.e4). Wait, after e5 it's white's turn, so g1 should have f3.
   oracle.setPosition(authority.getState('g1').fen);
-  const dests = oracle.destinations('e7');
-  assert.ok(dests.includes('e5'), 'e7 should have e5 as a legal destination after resume');
-  assert.ok(dests.includes('e6'), 'e7 should have e6 as a legal destination after resume');
+  const dests = oracle.destinations('g1');
+  assert.ok(dests.includes('f3'), 'g1 should have f3 as a legal destination after resume');
 
   sync.stop();
 });

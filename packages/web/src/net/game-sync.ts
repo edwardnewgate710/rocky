@@ -116,6 +116,7 @@ export class GameSync {
   private joined = false;
   private readonly listeners = new Set<GameSyncListener>();
   private unsubscribe: (() => void) | null = null;
+  private reconnectLastPly: number | null = null;
 
   constructor(client: WsClient, options: GameSyncOptions) {
     this.client = client;
@@ -142,6 +143,16 @@ export class GameSync {
    */
   setToken(token: string): void {
     this.token = token;
+  }
+
+  /** The browser reported the network went offline — drop into reconnect now. */
+  networkOffline(): void {
+    this.client.networkOffline();
+  }
+
+  /** The browser reported it is back online — retry the connection immediately. */
+  networkOnline(): void {
+    this.client.reconnectNow();
   }
 
   /** Wire up the client and open the connection. */
@@ -224,18 +235,23 @@ export class GameSync {
 
   private handleOpen(): void {
     if (this.joined) {
-      this.client.send({ t: 'resume', gameId: this.gameId, lastPly: this.state.ply });
-    } else {
-      this.client.send({ t: 'join', gameId: this.gameId, ...(this.token !== undefined ? { token: this.token } : {}) });
+      this.reconnectLastPly = this.state.ply;
     }
+    this.client.send({ t: 'join', gameId: this.gameId, ...(this.token !== undefined ? { token: this.token } : {}) });
   }
 
   private handleMessage(msg: ServerMessage): void {
     switch (msg.t) {
-      case 'joined':
+      case 'joined': {
+        const reconnectPly = this.reconnectLastPly;
+        this.reconnectLastPly = null;
         this.joined = true;
         this.applySnapshot(msg.state, msg.role);
+        if (reconnectPly !== null && reconnectPly < msg.state.ply) {
+          this.client.send({ t: 'resume', gameId: this.gameId, lastPly: reconnectPly });
+        }
         break;
+      }
       case 'state':
         this.applySnapshot(msg.state, this.state.role);
         break;

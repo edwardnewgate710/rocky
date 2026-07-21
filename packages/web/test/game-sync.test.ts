@@ -158,7 +158,7 @@ test('ended and presence update state', () => {
   assert.deepEqual(s.status, { over: true, result: '1-0', termination: 'checkmate', winner: 'w' });
 });
 
-test('after an unexpected drop, reconnect resumes from the last ply', () => {
+test('after an unexpected drop, reconnect sends join then resumes from the last ply', () => {
   const { factory, scheduler, sync } = setup();
   sync.start();
   factory.last.open();
@@ -173,7 +173,13 @@ test('after an unexpected drop, reconnect resumes from the last ply', () => {
   factory.last.serverClose(1006, '', false);
   scheduler.runNext(); // reconnect opens socket #2
   factory.last.open();
-  assert.deepEqual(JSON.parse(factory.last.sent[0]!), { t: 'resume', gameId: 'g1', lastPly: 1 });
+  assert.deepEqual(JSON.parse(factory.last.sent[0]!), { t: 'join', gameId: 'g1', token: 'token-u1' });
+
+  // Simulate server responding to join with the current authoritative state (ply 2)
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(2, 'w') });
+  
+  // GameSync should then request missed moves since ply 1
+  assert.deepEqual(JSON.parse(factory.last.sent[1]!), { t: 'resume', gameId: 'g1', lastPly: 1 });
 });
 
 test('M5: stop unsubscribes but does NOT close the shared connection', () => {
