@@ -126,6 +126,11 @@ export class InMemoryUsersRepository implements UsersRepository {
     return this.passwords.get(userId) ?? null;
   }
 
+  /** Test-only: simulate a passwordless (passkey-only) account. */
+  dropPassword(userId: string): void {
+    this.passwords.delete(userId);
+  }
+
   async addRole(userId: string, role: Role): Promise<void> {
     const set = this.roles.get(userId) ?? new Set<Role>();
     set.add(role);

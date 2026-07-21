@@ -3,6 +3,11 @@ import * as assert from 'node:assert';
 import * as crypto from 'node:crypto';
 import { startHarness } from './helpers';
 import { parseAuthenticatorData } from '../src/auth/webauthn-crypto';
+import { DEFAULT_RATE_LIMIT } from '../src/config';
+
+// Rate limiting off: the uniformity sweep fires several login attempts back to
+// back, which would otherwise trip the per-IP/per-handle webauthn login limit.
+const NO_RATE_LIMIT = { ...DEFAULT_RATE_LIMIT, enabled: false };
 
 class FakeAuthenticator {
   private keyPair: crypto.KeyPairKeyObjectResult;
@@ -36,9 +41,10 @@ class FakeAuthenticator {
     ]);
   }
 
-  buildRegisterAuthData(rpId: string): Buffer {
+  buildRegisterAuthData(rpId: string, uv = true): Buffer {
     const rpIdHash = crypto.createHash('sha256').update(rpId).digest();
-    const flags = Buffer.from([0x41]); // UP (0x01) + AT (0x40)
+    // UP (0x01) + AT (0x40), plus UV (0x04) when the user was verified.
+    const flags = Buffer.from([uv ? 0x45 : 0x41]);
     const sc = Buffer.alloc(4);
 
     const aaguid = Buffer.alloc(16, 0);
@@ -60,9 +66,10 @@ class FakeAuthenticator {
     ]);
   }
 
-  buildLoginAuthData(rpId: string, signCount = 1): Buffer {
+  buildLoginAuthData(rpId: string, signCount = 1, uv = true): Buffer {
     const rpIdHash = crypto.createHash('sha256').update(rpId).digest();
-    const flags = Buffer.from([0x01]); // UP (0x01)
+    // UP (0x01), plus UV (0x04) when the user was verified.
+    const flags = Buffer.from([uv ? 0x05 : 0x01]);
     const sc = Buffer.alloc(4);
     sc.writeUInt32BE(signCount, 0);
     return Buffer.concat([rpIdHash, flags, sc]);
@@ -239,6 +246,122 @@ test('WebAuthn registration and login', async (t) => {
     const res1 = await harness.json('POST', '/v1/auth/webauthn/login/options', { body: { handle: 'nobody' } });
     const res2 = await harness.json('POST', '/v1/auth/webauthn/login/options', { body: { handle: 'nobody' } });
     assert.notStrictEqual(res1.body.challenge, res2.body.challenge);
+  });
+
+  await t.test('registration without the User Verification flag is rejected', async () => {
+    const uvHarness = await startHarness({ webauthn: { rpId, origins: [origin] } });
+    try {
+      const { token: uvToken } = await uvHarness.makeUser('uvreg');
+      const optRes = await uvHarness.json('POST', '/v1/auth/webauthn/register/options', { token: uvToken });
+      const uvAuth = new FakeAuthenticator();
+      const cdj = Buffer.from(JSON.stringify({ type: 'webauthn.create', challenge: optRes.body.challenge, origin }));
+      // UV flag omitted — userVerification is 'required', so this must fail.
+      const res = await uvHarness.json('POST', '/v1/auth/webauthn/register/verify', {
+        token: uvToken,
+        body: {
+          id: uvAuth.rawId, rawId: uvAuth.rawId, type: 'public-key',
+          response: {
+            clientDataJSON: cdj.toString('base64url'),
+            attestationObject: uvAuth.buildAttestationObject(uvAuth.buildRegisterAuthData(rpId, false)).toString('base64url'),
+          },
+        },
+      });
+      assert.strictEqual(res.status, 422);
+    } finally {
+      await uvHarness.close();
+    }
+  });
+
+  await t.test('login is a uniform 401 across auth failures; UV-absent assertion cannot authenticate', async () => {
+    const secHarness = await startHarness({ webauthn: { rpId, origins: [origin] }, rateLimit: NO_RATE_LIMIT });
+    try {
+      const secUser = await secHarness.makeUser('secuser');
+      const secAuth = new FakeAuthenticator();
+      // Register a real UV passkey.
+      const ro = await secHarness.json('POST', '/v1/auth/webauthn/register/options', { token: secUser.token });
+      const rcd = Buffer.from(JSON.stringify({ type: 'webauthn.create', challenge: ro.body.challenge, origin }));
+      const reg = await secHarness.json('POST', '/v1/auth/webauthn/register/verify', {
+        token: secUser.token,
+        body: {
+          id: secAuth.rawId, rawId: secAuth.rawId, type: 'public-key',
+          response: { clientDataJSON: rcd.toString('base64url'), attestationObject: secAuth.buildAttestationObject(secAuth.buildRegisterAuthData(rpId, true)).toString('base64url') },
+        },
+      });
+      assert.strictEqual(reg.status, 200);
+
+      const attempt = async (
+        opts: { signCount: number; uv?: boolean; rp?: string; tamper?: boolean; userHandle?: string },
+      ): Promise<{ status: number; body: any }> => {
+        const lo = await secHarness.json('POST', '/v1/auth/webauthn/login/options', { body: { handle: 'secuser' } });
+        const cd = Buffer.from(JSON.stringify({ type: 'webauthn.get', challenge: lo.body.challenge, origin }));
+        const ad = secAuth.buildLoginAuthData(opts.rp ?? rpId, opts.signCount, opts.uv ?? true);
+        const sig = secAuth.sign(ad, cd);
+        if (opts.tamper) sig[sig.length - 1] ^= 0x01;
+        const res = await secHarness.json('POST', '/v1/auth/webauthn/login/verify', {
+          body: {
+            id: secAuth.rawId, rawId: secAuth.rawId, type: 'public-key',
+            response: { clientDataJSON: cd.toString('base64url'), authenticatorData: ad.toString('base64url'), signature: sig.toString('base64url'), userHandle: opts.userHandle ?? secUser.userId },
+          },
+        });
+        return { status: res.status, body: res.body };
+      };
+
+      assert.strictEqual((await attempt({ signCount: 10 })).status, 200, 'valid UV login succeeds');
+      // Every credential-relevant failure funnels to the SAME 401 with an
+      // identical payload — no status-code or message oracle.
+      const failures = [
+        await attempt({ signCount: 20, uv: false }), // UV-absent
+        await attempt({ signCount: 21, rp: 'evil.example' }), // bad rpIdHash
+        await attempt({ signCount: 22, tamper: true }), // bad signature
+        await attempt({ signCount: 23, userHandle: 'not-the-owner' }), // userHandle mismatch
+        await attempt({ signCount: 1 }), // sign-count regression
+      ];
+      for (const f of failures) {
+        assert.strictEqual(f.status, 401, 'every auth failure is 401');
+      }
+      // Compare only code + message (requestId is intentionally per-request).
+      const messages = new Set(
+        failures.map((f) => `${f.body?.error?.code}|${f.body?.error?.message}`),
+      );
+      assert.strictEqual(messages.size, 1, 'all auth failures return one fixed code+message');
+
+      // The clone/replay path still records its distinct audit for defenders.
+      assert.ok(
+        secHarness.repos.audit.withAction('auth.webauthn.clone_suspected').length >= 1,
+        'sign-count regression is audited as a suspected clone',
+      );
+    } finally {
+      await secHarness.close();
+    }
+  });
+
+  await t.test('deleting the only passkey without a password set is refused (409)', async () => {
+    const delHarness = await startHarness({ webauthn: { rpId, origins: [origin] } });
+    try {
+      // makeUser creates a password-backed account, so first register a passkey,
+      // then simulate a passwordless account by deleting the password directly.
+      const delUser = await delHarness.makeUser('deluser');
+      const delAuth = new FakeAuthenticator();
+      const ro = await delHarness.json('POST', '/v1/auth/webauthn/register/options', { token: delUser.token });
+      const rcd = Buffer.from(JSON.stringify({ type: 'webauthn.create', challenge: ro.body.challenge, origin }));
+      const reg = await delHarness.json('POST', '/v1/auth/webauthn/register/verify', {
+        token: delUser.token,
+        body: {
+          id: delAuth.rawId, rawId: delAuth.rawId, type: 'public-key',
+          response: { clientDataJSON: rcd.toString('base64url'), attestationObject: delAuth.buildAttestationObject(delAuth.buildRegisterAuthData(rpId, true)).toString('base64url') },
+        },
+      });
+      assert.strictEqual(reg.status, 200);
+      const credId = reg.body.id; // base64url
+
+      // Drop the account's password so the passkey is the ONLY credential.
+      delHarness.repos.users.dropPassword(delUser.userId);
+
+      const del = await delHarness.json('DELETE', `/v1/auth/webauthn/passkeys/${credId}`, { token: delUser.token });
+      assert.strictEqual(del.status, 409, 'last passkey without a password cannot be deleted');
+    } finally {
+      await delHarness.close();
+    }
   });
 
   await t.test('malformed client data and null payloads return 422 validation errors', async () => {

@@ -343,6 +343,14 @@ export class AuthService {
     const creds = await this.repos.webauthnCredentials.listForUser(userId);
     const cred = creds.find(c => c.id.toString('hex') === credentialIdHex);
     if (!cred) throw HttpError.notFound('Passkey not found');
+    // Deleting the account's last passkey is only safe when a password remains —
+    // otherwise the user locks themselves out with no credential to sign in.
+    if (creds.length === 1) {
+      const passwordHash = await this.repos.users.getPasswordHash(userId);
+      if (!passwordHash) {
+        throw HttpError.conflict('Cannot delete your only passkey without a password set');
+      }
+    }
     await this.repos.webauthnCredentials.delete(cred.id);
     await this.audit(meta, userId, 'auth.webauthn.delete', credentialIdHex);
   }
@@ -370,7 +378,7 @@ export class AuthService {
       ],
       timeout: 60000,
       attestation: 'none',
-      authenticatorSelection: { userVerification: 'preferred', requireResidentKey: true },
+      authenticatorSelection: { userVerification: 'required', residentKey: 'preferred' },
     };
   }
 
@@ -431,6 +439,9 @@ export class AuthService {
     const expectedRpIdHash = createHash('sha256').update(this.webauthn.rpId).digest();
     if (!timingSafeEqual(parsedData.rpIdHash, expectedRpIdHash)) throw HttpError.validation('Invalid rpIdHash');
     if ((parsedData.flags & 0x01) === 0) throw HttpError.validation('User Present flag is not set');
+    // We request userVerification:'required', so a passkey registered without a
+    // verified user (biometric/PIN) must be rejected — not silently downgraded.
+    if ((parsedData.flags & 0x04) === 0) throw HttpError.validation('User Verification flag is not set');
 
     const be = (parsedData.flags & 0x08) !== 0;
     const bs = (parsedData.flags & 0x10) !== 0;
@@ -490,7 +501,7 @@ export class AuthService {
       challenge: challengeBase64,
       timeout: 60000,
       rpId: this.webauthn.rpId,
-      userVerification: 'preferred',
+      userVerification: 'required',
     };
   }
 
@@ -510,8 +521,10 @@ export class AuthService {
     const challengeHash = createHash('sha256').update(challenge).digest('hex');
     const consumed = await this.repos.webauthnLoginChallenges.consume(challengeHash, new Date(this.clock.now()));
 
+    // Every authentication failure below funnels into a single unified path
+    // and returns ONE fixed 401 payload — distinct messages or status codes
+    // would hand an attacker an oracle (e.g. credential-exists vs bad-signature).
     let isFailure = false;
-    let failReason = 'Invalid or expired challenge';
 
     if (!consumed) {
       isFailure = true;
@@ -522,7 +535,6 @@ export class AuthService {
 
     if (!credential || (consumed && credential.userId !== consumed.userId)) {
       isFailure = true;
-      failReason = 'Invalid credential';
     }
 
     const authenticatorData = strictBase64UrlDecode(response.response.authenticatorData, 'authenticatorData');
@@ -535,20 +547,28 @@ export class AuthService {
       throw HttpError.validation(errorMessage(error));
     }
 
+    // Authentication decisions (rpIdHash, User Present, User Verification, and
+    // the BE/BS flag invariant) must all funnel to ONE indistinguishable 401 —
+    // throwing a 422 here would hand an attacker an oracle distinguishing which
+    // check failed. Structural parse failures above are the only 4xx path.
     const expectedRpIdHash = createHash('sha256').update(this.webauthn.rpId).digest();
-    if (!timingSafeEqual(parsedData.rpIdHash, expectedRpIdHash)) throw HttpError.validation('Invalid rpIdHash');
-    if ((parsedData.flags & 0x01) === 0) throw HttpError.validation('User Present flag is not set');
+    if (parsedData.rpIdHash.length !== expectedRpIdHash.length
+      || !timingSafeEqual(parsedData.rpIdHash, expectedRpIdHash)) {
+      isFailure = true;
+    }
+    if ((parsedData.flags & 0x01) === 0) isFailure = true; // User Present
+    if ((parsedData.flags & 0x04) === 0) isFailure = true; // User Verification (required)
 
     const be = (parsedData.flags & 0x08) !== 0;
     const bs = (parsedData.flags & 0x10) !== 0;
-    if (bs && !be) throw HttpError.validation('Invalid flags: BS=1 but BE=0');
+    if (bs && !be) isFailure = true; // BS=1 requires BE=1
 
+    // A malformed or mismatched userHandle is an authentication failure, not a
+    // distinct 4xx — fold it into the unified path so the response stays uniform.
     if (response.response.userHandle !== undefined && response.response.userHandle !== null) {
-      if (typeof response.response.userHandle !== 'string') {
-        throw HttpError.validation('userHandle must be a string');
-      }
-      if (credential && response.response.userHandle !== credential.userId) {
-        throw HttpError.validation('userHandle mismatch');
+      if (typeof response.response.userHandle !== 'string'
+        || (credential && response.response.userHandle !== credential.userId)) {
+        isFailure = true;
       }
     }
 
@@ -561,22 +581,32 @@ export class AuthService {
 
     const isValid = verifyWebAuthnSignature(publicKeyObj, authenticatorData, clientDataJSON, signature);
 
+    // A signature-counter regression on an otherwise-valid assertion means a
+    // cloned authenticator or a replay. Fold it into the unified failure path
+    // (same 401 payload) while still recording the distinct clone audit below.
+    let cloneSuspected = false;
+    if (
+      isValid && !isFailure && consumed && consumed.userId !== null && credential
+      && (parsedData.signCount !== 0 || credential.signCount !== 0)
+      && parsedData.signCount <= credential.signCount
+    ) {
+      cloneSuspected = true;
+      isFailure = true;
+    }
+
     if (!isValid || isFailure || !consumed || consumed.userId === null) {
       if (credential) {
-        await this.audit(meta, credential.userId, 'auth.login.fail', credential.id.toString('hex'));
+        await this.audit(
+          meta,
+          credential.userId,
+          cloneSuspected ? 'auth.webauthn.clone_suspected' : 'auth.login.fail',
+          credential.id.toString('hex'),
+        );
       }
-      throw HttpError.unauthorized(failReason);
+      throw HttpError.unauthorized('Invalid credentials');
     }
 
     if (!credential) throw new Error('Unreachable: credential must exist if not failed');
-
-    if (
-      (parsedData.signCount !== 0 || credential.signCount !== 0)
-      && parsedData.signCount <= credential.signCount
-    ) {
-      await this.audit(meta, credential.userId, 'auth.webauthn.clone_suspected', credential.id.toString('hex'));
-      throw HttpError.unauthorized('Suspected cloned authenticator');
-    }
 
     try {
       await this.repos.webauthnCredentials.updateSignCount(credential.id, parsedData.signCount, new Date(this.clock.now()));

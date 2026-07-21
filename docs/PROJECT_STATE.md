@@ -4,7 +4,15 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-19 — Playable Alpha Increment 2: Production game action controls (resign, offer draw, accept/decline draw, claim flag, abort) implemented in the web UI via GameSync. Prior: Playable Alpha Increment 1: Seek Acceptance (atomic match provisioning, frontend lobby play button). Prior: M4 Identity Hardening inc 2 review hardening: strict
+_Last updated: 2026-07-19 — WebAuthn security review fixes (post-merge of ADR-0027): (1) User
+Verification is now **enforced** — options request `userVerification: 'required'` and both
+register- and login-verify reject an authenticator-data flag with UV (0x04) unset (previously
+a touch-only assertion authenticated, downgrading the guarantee); (2) login failures are now a
+single uniform 401 — rpIdHash / User-Present / User-Verification / flag-invariant checks funnel
+into the same failure path instead of throwing 422, closing a response-code oracle; (3)
+deleting an account's only passkey when no password is set is refused with 409 (lockout guard).
+Regression tests added (UV-absent register/login, uniform-401 across auth failures, last-passkey
+delete). Prior: Playable Alpha Increment 2: Production game action controls (resign, offer draw, accept/decline draw, claim flag, abort) implemented in the web UI via GameSync. Prior: Playable Alpha Increment 1: Seek Acceptance (atomic match provisioning, frontend lobby play button). Prior: M4 Identity Hardening inc 2 review hardening: strict
 typed `clientDataJSON` validation, complete authenticator-extension framing,
 signature-counter regression protection, and reusable dummy verification key. Prior: M4 Identity Hardening inc 2: WebAuthn (passkeys) support
 (ADR-0027): `webauthn_credentials` Postgres table + `WebAuthnCredentialsRepository`, auth-service logic for credential parsing/signature verification with `node:crypto` (ES256), and `POST /v1/auth/webauthn/*` endpoints with decoy flows. Prior: M4 Identity Hardening inc 1: password reset + email verification
