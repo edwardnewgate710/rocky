@@ -12,6 +12,7 @@ if (!npmCli) {
 }
 const suites = [
   ['core', ['test', '--workspace', '@chess-platform/core']],
+  ['anti-cheat', ['test', '--workspace', '@chess-platform/anti-cheat']],
   ['game', ['test', '--workspace', '@chess-platform/game']],
   ['tournament', ['test', '--workspace', '@chess-platform/tournament']],
   ['realtime-gateway', ['test', '--workspace', '@chess-platform/realtime-gateway']],
