@@ -24,6 +24,20 @@ export interface PlayerCorrelationReport {
   readonly unscored: number;
   /** Set when the sample is too small, the T1/T3 denominator too thin, or the analysis depth too shallow to trust. */
   readonly lowConfidence: boolean;
+  // --- Raw, poolable counts (numerators/denominators) ---
+  // Exposed so multiple games can be aggregated by POOLING these totals rather
+  // than averaging per-game rates (which would weight a 3-ply game like a
+  // 60-ply one). See {@link ./aggregate}.
+  /** T1 numerator: scored, non-only-move plies where the played move was #1. */
+  readonly t1Matches: number;
+  /** T3 numerator: scored, non-only-move plies where the played move was in the top 3. */
+  readonly t3Matches: number;
+  /** T1/T3 denominator: scored, non-book, non-only-move plies. */
+  readonly tRateSampleCount: number;
+  /** ACPL numerator (raw, uncapped) summed over the {@link sampleSize} plies. */
+  readonly rawCentipawnLossTotal: number;
+  /** ACPL numerator with each ply clamped to {@link ACPL_CAP}, summed over {@link sampleSize} plies. */
+  readonly cappedCentipawnLossTotal: number;
 }
 
 /**
@@ -67,6 +81,17 @@ export const LOW_CONFIDENCE_SAMPLE_MIN = 20;
 export const LOW_CONFIDENCE_TRATE_MIN = 10;
 /** Below this analysis depth, every report is low-confidence. */
 export const LOW_CONFIDENCE_DEPTH_MIN = 14;
+
+// Suspicion-band thresholds (shared with the cross-game aggregator so the
+// per-game and account-level bands can never silently diverge).
+/** `high` requires T1 at or above this. */
+export const SUSPICION_HIGH_T1_RATE = 0.7;
+/** `high` requires capped ACPL at or below this. */
+export const SUSPICION_HIGH_ACPL_CAPPED = 15;
+/** `review` requires T1 at or above this. */
+export const SUSPICION_REVIEW_T1_RATE = 0.55;
+/** `review` requires capped ACPL at or below this. */
+export const SUSPICION_REVIEW_ACPL_CAPPED = 25;
 
 export async function analyzeGame(input: AnalyzeGameInput): Promise<GameCorrelationReport> {
   const { plies, depth, evaluator } = input;
@@ -150,12 +175,27 @@ async function analyzePlayer(
 
   let suspicion: Suspicion = 'clean';
   if (!lowConfidence) {
-    if (t1Rate >= 0.70 && acplCapped <= 15) {
+    if (t1Rate >= SUSPICION_HIGH_T1_RATE && acplCapped <= SUSPICION_HIGH_ACPL_CAPPED) {
       suspicion = 'high';
-    } else if (t1Rate >= 0.55 && acplCapped <= 25) {
+    } else if (t1Rate >= SUSPICION_REVIEW_T1_RATE && acplCapped <= SUSPICION_REVIEW_ACPL_CAPPED) {
       suspicion = 'review';
     }
   }
 
-  return { suspicion, acpl, acplCapped, t1Rate, t3Rate, onlyMoveExcluded, sampleSize, unscored, lowConfidence };
+  return {
+    suspicion,
+    acpl,
+    acplCapped,
+    t1Rate,
+    t3Rate,
+    onlyMoveExcluded,
+    sampleSize,
+    unscored,
+    lowConfidence,
+    t1Matches,
+    t3Matches,
+    tRateSampleCount,
+    rawCentipawnLossTotal: totalRawCentipawnLoss,
+    cappedCentipawnLossTotal: totalCappedCentipawnLoss,
+  };
 }

@@ -28,6 +28,12 @@ test('high suspicion: perfectly matches #1 move consistently', async () => {
   assert.equal(white.t1Rate, 1);
   assert.equal(white.acpl, 0);
   assert.equal(white.suspicion, 'high');
+  // Raw poolable counts exposed for cross-game aggregation.
+  assert.equal(white.t1Matches, 25);
+  assert.equal(white.t3Matches, 25);
+  assert.equal(white.tRateSampleCount, 25);
+  assert.equal(white.rawCentipawnLossTotal, 0);
+  assert.equal(white.cappedCentipawnLossTotal, 0);
 });
 
 test('clean suspicion: weak game with large ACPL', async () => {

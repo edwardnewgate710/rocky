@@ -4,15 +4,26 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-22 — M12 Anti-Cheat Increment 1 (ADR-0029): the `@chess-platform/anti-cheat`
-pure domain package with `analyzeGame` — ACPL (raw + per-ply-capped), T1/T3 match rates,
-only-move + opening-book exclusions, `lowConfidence`, and deterministic suspicion bands
-(`clean`/`review`/`high`) over a `PositionEvaluator` port. **Review fix:** the analyzer originally
-blended both sides into one report, which would dilute a cheater's signal with the opponent's human
-moves — `analyzeGame` now splits by side and returns a per-player `{ white, black }` report (each
-`AnalyzedPly` carries its `player`), with a regression test proving a cheating side is flagged
-`high` while the human opponent stays `clean`. Pure domain, no I/O/engine/DB wiring (later
-increments). Prior: M13 Observability, Increment 1 (ADR-0028), completed in a review pass: Prior: M13 Observability, Increment 1 (ADR-0028), completed in a review pass:
+_Last updated: 2026-07-22 — M12 Anti-Cheat Increment 2 (ADR-0030): cross-game, account-level
+suspicion aggregation in `@chess-platform/anti-cheat`. `aggregatePlayer(games)` combines a player's
+per-game `PlayerCorrelationReport`s (the side the account played each game) into one
+`PlayerAggregateReport` by **pooling** raw numerators/denominators (never averaging per-game rates —
+a 3-ply game must not weigh like a 60-ply one), with sample-weighted ACPL and pooled T1/T3. Increment
+1's report now exposes those raw counts (`t1Matches`/`t3Matches`/`tRateSampleCount`/
+`rawCentipawnLossTotal`/`cappedCentipawnLossTotal`); the suspicion thresholds are shared constants so
+per-game and aggregate bands can't diverge. An aggregate confidence gate (`AGG_MIN_GAMES=3`,
+`AGG_MIN_POOLED_TRATE=40`) means one anomalous game can't flip an account while many individually
+low-confidence games can still form a confident aggregate; duplicate `gameId`s are rejected so a
+retried history read can't double-count. `flaggedGameIds` drills reviewers to the anomalous games.
+Pure domain, no I/O/DB wiring (later increment). **Review note:** the increment was reconstructed on
+current `main` — Gemini's branch had been cut from a stale `main` and built the aggregator on the
+pre-review *blended* per-game report, which would have reverted Increment 1's per-player separation
+and CodeRabbit fixes; aggregation is now correctly per-player. Prior: M12 Anti-Cheat Increment 1
+(ADR-0029): the `@chess-platform/anti-cheat` pure domain package with `analyzeGame` — ACPL (raw +
+per-ply-capped), T1/T3 match rates, only-move + opening-book exclusions, `lowConfidence`, and
+deterministic suspicion bands (`clean`/`review`/`high`) over a `PositionEvaluator` port; splits by
+side into a per-player `{ white, black }` report so a cheater isn't diluted by the opponent's human
+moves. Prior: M13 Observability, Increment 1 (ADR-0028), completed in a review pass:
 the `Logger`/`Metrics`/`traceparent` ports the router referenced were missing (branch did not
 build) — they are now implemented (dependency-free `JsonLogger`/`NullLogger`,
 `InMemoryMetrics`/`NullMetrics` with Prometheus `render()`, W3C `traceparent` parse), wired through
@@ -114,11 +125,11 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 | **M7** ✅ | `@chess-platform/ai-orchestrator` | Provider-agnostic AI orchestration: `AiProvider`/`AiOrchestrator`/`ProviderRegistry`/`RoutingStrategy`/`ResponseCache`/`RateLimiter`/`HealthTracker`/`BenchmarkRunner`; OpenAI + Anthropic adapters; engine grounding | 114 |
 | **M8** ✅ | `@chess-platform/ai-features` | 8 AI features: Move Explainer, Puzzle Generator, Mistake Predictor, Opening Explorer, Endgame Trainer, Coach, Study Partner, Voice Coach; Tournament Commentator deferred to M9 | 137 (16 key-gated) |
 | **M9** ✅ | `@chess-platform/tournament` | **Increment 1 (pure domain):** tournament aggregate with a `registration → running → finished` state machine, a `PairingStrategy` port, `RoundRobinPairing` (circle-method/Berger schedule — every pair once, one bye per player for odd N, balanced colors), and Sonneborn-Berger standings (ADR-0014). **Increment 2 (Swiss pairing):** round-by-round `PairingStrategy` port (`pairNextRound(context): Round \| null`), `SwissPairing` (deterministic Monrad/Dutch-lite — score-group pairing via a complete backtracking match that never drops a player, no rematches, best-effort color balancing, configurable round count, graceful early finish when the field is exhausted), `Tournament` aggregate auto-advances round-by-round, `TournamentConfig` discriminated union (`round_robin` / `swiss`); full FIDE Dutch deferred (ADR-0015). **Increment 3 (persistence & API):** `TournamentSnapshot`-based persistence (`toSnapshot`/`restore`), an in-memory `TournamentsRepository` adapter, and a REST API (create/list/get/register/withdraw/start/record-result/standings) with OpenAPI schemas and `tournament_director` authorization (ADR-0016). **Increment 4:** Postgres adapter `PgTournamentsRepository` + `0003_tournaments.sql`. **Increment 5 (Game lifecycle):** gameLinks in aggregate, API GameLauncher port, reconcileLaunch loop in TournamentService, and recordResultByGame (ADR-0017). **Increment 6 (Real-time integration):** AuthorityGameLauncher mapping tournament pairings to realtime GameAuthority games, TournamentResultReporter subscribing to PubSub EndedBroadcast to auto-record results, per-pairing launch-attempt counter so aborted games auto-relaunch, implemented purely via composition root (ADR-0018). **Increment 7 (Live broadcast):** `TournamentLiveView` port (api) + `TournamentBroadcaster` (composition root) multiplexing every active game's live board, `tournamentChannel` fanout of `TournamentUpdateBroadcast` to spectators, and a public `GET /v1/tournaments/:id/live` returning live boards + standings (ADR-0019). **Increment 8 (Tournament Commentator):** `TournamentCommentator` AI feature in `ai-features` providing engine-grounded live commentary on games and data-grounded narrative round recaps (ADR-0020). **Increment 9-10:** Tournament robustness, Arena domain model (ADR-0021, ADR-0022). **Increment 11:** Arena persistence and API (ADR-0023). **Increment 12:** Arena realtime game lifecycle, continuous launching, result recording, and settle on read (ADR-0024). | 35 tournament + api lifecycle |
-| **M12** 🚧 | Security hardening & Anti-cheat | **Increment 1:** CORS policy + security response headers for the API (`withSecurity` middleware — ACAO allowlist, credentials-aware, preflight short-circuit, `X-Content-Type-Options`/`Referrer-Policy`/`X-Frame-Options`/CSP/CORP/HSTS); ADR-0011 Accepted. **Increment 2:** httpOnly refresh-token cookie — API sets `HttpOnly; SameSite=Strict; Path=/v1/auth; Max-Age=<ttl>; Secure` cookie on login/refresh; refresh/logout accept cookie or body token; web stops persisting refresh token to `localStorage`; access token in memory only; ADR-0012 Accepted. **Increment 3:** Rate limiting for auth endpoints — API injects a `RateLimiter` port (`InMemoryRateLimiter` default) to protect `/v1/auth/{login,register,refresh}`, returns `429 Too Many Requests` with `Retry-After`; ADR-0013 Accepted. **Increment 4:** Anti-cheat engine-correlation analyzer (pure domain package), ACPL/T1/T3 match rates, forced-move exclusion, and suspicion banding (ADR-0029). | 77/77 (+4 inc 3) + 11 anti-cheat (inc 4) |
+| **M12** 🚧 | Security hardening & Anti-cheat | **Increment 1:** CORS policy + security response headers for the API (`withSecurity` middleware — ACAO allowlist, credentials-aware, preflight short-circuit, `X-Content-Type-Options`/`Referrer-Policy`/`X-Frame-Options`/CSP/CORP/HSTS); ADR-0011 Accepted. **Increment 2:** httpOnly refresh-token cookie — API sets `HttpOnly; SameSite=Strict; Path=/v1/auth; Max-Age=<ttl>; Secure` cookie on login/refresh; refresh/logout accept cookie or body token; web stops persisting refresh token to `localStorage`; access token in memory only; ADR-0012 Accepted. **Increment 3:** Rate limiting for auth endpoints — API injects a `RateLimiter` port (`InMemoryRateLimiter` default) to protect `/v1/auth/{login,register,refresh}`, returns `429 Too Many Requests` with `Retry-After`; ADR-0013 Accepted. **Increment 4:** Anti-cheat engine-correlation analyzer (pure domain package), ACPL/T1/T3 match rates, forced-move exclusion, and suspicion banding (ADR-0029). **Increment 5:** Cross-game, account-level suspicion aggregation — `aggregatePlayer` pools per-game per-player reports (weighted ACPL, pooled T1/T3), an aggregate confidence gate, and duplicate-game rejection (ADR-0030). | 77/77 (+4 inc 3) + 19 anti-cheat (inc 4–5) |
 | **M13** 🚧 | Observability | **Increment 1:** Hand-rolled zero-dependency JSON logger and Prometheus text metrics implementation (`InMemoryMetrics`), strictly isolated as domain ports (`Logger` / `Metrics`). W3C `traceparent` parsing in API router, injecting request context (traceId, logger). Automated HTTP route cardinalities. Gateway instrumented with metrics and logs. (ADR-0028 Accepted) | — |
 | **M14** 🚧 | Deployable services | Docker Compose local stack (inc 1), durable EventLog + Postgres (inc 2), Redis pub/sub multi-node fanout (inc 3), Kubernetes Helm chart (inc 4); Terraform/blue-green/load-test deferred | — |
 
-**Whole-repo total: 940 tests, 0 failures, across 12 packages + the gateway service** (skips: 33 = 8 Postgres-gated + 21 API-key-gated + 4 Redis-gated; `npm run test:counts` prints the live per-package breakdown). Strict TS, zero errors, lint clean. CI active — 6 jobs: build+typecheck+test on Node 22/24, Postgres integration, M6 Playwright + Lighthouse acceptance, helm lint + kubeconform, gateway service (build + Redis integration).
+**Whole-repo total: 948 tests, 0 failures, across 12 packages + the gateway service** (skips: 33 = 8 Postgres-gated + 21 API-key-gated + 4 Redis-gated; `npm run test:counts` prints the live per-package breakdown). Strict TS, zero errors, lint clean. CI active — 6 jobs: build+typecheck+test on Node 22/24, Postgres integration, M6 Playwright + Lighthouse acceptance, helm lint + kubeconform, gateway service (build + Redis integration).
 
 ## 3. Architecture summary (as-built)
 
@@ -421,3 +432,14 @@ Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
 - **Metrics**: Implemented `analyzeGame` to calculate Average Centipawn Loss (ACPL) with a 300cp cap and MATE encoding, T1/T3 match rates, and deterministic suspicion bands (`clean`, `review`, `high`).
 - **Mitigations**: Opening-book plies are excluded from *every* metric. Forced moves (only-move gap >= 200cp) are excluded from the **T1/T3 match rates only** — they still count toward ACPL and `sampleSize`, since playing the sole reasonable move is not itself suspicious but the position was still played. Applies a `lowConfidence` flag for low engine depth, small ACPL sample size, or a thin T1/T3 denominator.
 - **Hermetic tests**: Tested against deterministic `InMemoryEvaluator` fakes.
+- **Poolable counts**: The per-player report also exposes raw numerators/denominators (`t1Matches`, `t3Matches`, `tRateSampleCount`, `rawCentipawnLossTotal`, `cappedCentipawnLossTotal`) so Increment 2 can aggregate games by pooling rather than averaging rates.
+
+## M12 Anti-Cheat Increment 2 — Cross-Game Aggregation (ADR-0030)
+- **Account-level signal**: `aggregatePlayer(games)` combines a player's per-game `PlayerCorrelationReport`s (the side the account played each game) into one `PlayerAggregateReport`.
+- **Pool, never average**: T1/T3 are pooled (Σ matches ÷ Σ eligible plies) and ACPL is a sample-weighted mean (Σ loss ÷ Σ `sampleSize`) — a 3-ply game cannot weigh like a 60-ply one. A test asserts pooling differs from naive per-game averaging.
+- **Per-player, not blended**: aggregation consumes `PlayerCorrelationReport`, so a cheater is never diluted by the opponent's human moves — the same isolation as Increment 1, carried to the account level.
+- **Confidence gate**: `AGG_MIN_GAMES = 3` and `AGG_MIN_POOLED_TRATE = 40`. One anomalous game can't flip an account; many individually low-confidence games can still form a confident aggregate once pooled.
+- **Shared thresholds**: the `high`/`review` bands reuse Increment 1's exact numeric constants (imported) so per-game and aggregate bands can't diverge.
+- **Duplicate rejection**: a repeated `gameId` throws, so a retried/overlapping history read can't double-count a game and inflate confidence.
+- **Reviewer drill-down**: `flaggedGameIds` lists the games whose per-game suspicion was `review`/`high`.
+- **Reconstruction note**: the increment was rebuilt on current `main`; the original branch had been cut from a stale `main` and built the aggregator on the pre-review *blended* per-game report, which would have reverted Increment 1's per-player separation and CodeRabbit fixes.
