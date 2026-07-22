@@ -27,6 +27,7 @@ import {
 } from './http/cookie';
 import { strictObject, oneOf, optInt, optString, parseLimit, reqString } from './http/validate';
 import type { RateLimiter } from './ports/rate-limiter';
+import type { Metrics } from './ports/metrics';
 import type { ApiConfig } from './config';
 import type { Clock } from './ports/clock';
 import type { IdGenerator } from './ports/ids';
@@ -61,6 +62,7 @@ export interface RouteDeps {
   readonly tournamentRepo: TournamentsRepository;
   readonly gameLauncher: GameLauncher;
   readonly liveView: TournamentLiveView;
+  readonly metrics: Metrics;
   readonly readiness: () => Promise<void>;
 }
 
@@ -121,6 +123,21 @@ export function buildRouter(deps: RouteDeps): Router {
       cachedSpec ??= buildOpenApiDocument(router, info);
       return json(200, cachedSpec);
     },
+  );
+
+  router.get(
+    '/v1/metrics',
+    doc({
+      summary: 'Prometheus metrics exposition',
+      tags: ['meta'],
+      responses: { 200: [undefined, 'Prometheus text exposition (v0.0.4)'] },
+    }),
+    PUBLIC,
+    () => ({
+      status: 200,
+      headers: { 'Content-Type': 'text/plain; version=0.0.4' },
+      body: deps.metrics.render(),
+    }),
   );
 
   // --- Auth ----------------------------------------------------------------

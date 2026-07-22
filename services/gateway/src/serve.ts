@@ -55,7 +55,7 @@ import {
   encode,
   decode,
 } from '@chess-platform/realtime-gateway';
-import { AccessTokenService, systemClock, uuidv7Generator } from '@chess-platform/api';
+import { AccessTokenService, systemClock, uuidv7Generator, JsonLogger, InMemoryMetrics } from '@chess-platform/api';
 import type { TournamentResultReporter, LaunchInput } from '@chess-platform/api';
 import type { EventStore } from '@chess-platform/persistence';
 
@@ -63,7 +63,12 @@ import type { EventStore } from '@chess-platform/persistence';
 class SharedSecretTokenVerifier implements TokenVerifier {
   private readonly tokens: AccessTokenService;
 
-  constructor(secret: string, ttlSec: number) {
+  /**
+   * `onFailure` fires when a supplied token fails to verify. The gateway only
+   * calls `verify` when a token is present (anonymous spectators skip it), so a
+   * null result is a genuine authentication failure worth counting.
+   */
+  constructor(secret: string, ttlSec: number, private readonly onFailure: () => void = () => {}) {
     this.tokens = new AccessTokenService({
       secret,
       ttlSec,
@@ -74,7 +79,11 @@ class SharedSecretTokenVerifier implements TokenVerifier {
 
   verify(token: string): { readonly userId: string } | null {
     const identity = this.tokens.identify(token);
-    return identity ? { userId: identity.userId } : null;
+    if (!identity) {
+      this.onFailure();
+      return null;
+    }
+    return { userId: identity.userId };
   }
 }
 
@@ -98,8 +107,14 @@ async function main(): Promise<void> {
   const heartbeatIntervalMs = positiveIntEnv('WS_HEARTBEAT_INTERVAL_MS', 30_000);
   const maxRoomsPerConnection = positiveIntEnv('WS_MAX_ROOMS_PER_CONNECTION', 4);
 
+  const logger = new JsonLogger({ service: 'realtime-gateway', nodeId });
+  const metrics = new InMemoryMetrics();
+  
+  const connectionsCounter = metrics.counter('gateway_connections_opened_total');
+  const messagesCounter = metrics.counter('gateway_messages_received_total');
+  const authFailuresCounter = metrics.counter('gateway_auth_failures_total');
   if (!secret || secret.length < 32) {
-    console.error('ACCESS_TOKEN_SECRET is required and must be at least 32 bytes');
+    logger.error('ACCESS_TOKEN_SECRET is required and must be at least 32 bytes');
     process.exit(1);
   }
 
@@ -118,9 +133,9 @@ async function main(): Promise<void> {
     eventStore = pgEventStore;
     pingDatabase = async () => { await pool.query('SELECT 1'); };
     closeDatabase = async () => { await pool.end(); };
-    console.log('[realtime-gateway] durable event log: Postgres');
+    logger.info('durable event log: Postgres');
   } else {
-    console.log('[realtime-gateway] durable event log: in-memory (state lost on restart)');
+    logger.info('durable event log: in-memory (state lost on restart)');
   }
 
   // --- PubSub: Redis (multi-node) or InMemory (single-node) (M14 inc 3) ---
@@ -134,10 +149,10 @@ async function main(): Promise<void> {
     pubsub = redis.pubsub;
     closePubSub = redis.close;
     pingRedis = redis.ping;
-    console.log(`[realtime-gateway] pub/sub: Redis (nodeId=${nodeId})`);
+    logger.info(`pub/sub: Redis`);
   } else {
     pubsub = new InMemoryPubSub();
-    console.log('[realtime-gateway] pub/sub: in-memory (single-node)');
+    logger.info('pub/sub: in-memory (single-node)');
   }
 
   const authority = new GameAuthority(pubsub, () => Date.now(), store);
@@ -146,7 +161,7 @@ async function main(): Promise<void> {
   let reporter: TournamentResultReporter | undefined;
   if (process.env['TOURNAMENT_REPORTER'] === '1') {
     if (!pgPool || !eventStore) {
-      console.warn('[realtime-gateway] TOURNAMENT_REPORTER requires DATABASE_URL to be set');
+      logger.warn('TOURNAMENT_REPORTER requires DATABASE_URL to be set');
     } else {
       const { PgTournamentsRepository } = await import('@chess-platform/persistence/pg');
       const api = await import('@chess-platform/api');
@@ -171,9 +186,9 @@ async function main(): Promise<void> {
         scanIntervalMs: positiveIntEnv('TOURNAMENT_REPORTER_SCAN_MS', 30_000),
       });
       reporter.start().catch((err: unknown) => {
-        console.error('Failed to start TournamentResultReporter:', err);
+        logger.error('Failed to start TournamentResultReporter', { err: err instanceof Error ? (err.stack ?? err.message) : String(err) });
       });
-      console.log('[realtime-gateway] TournamentResultReporter is enabled');
+      logger.info('TournamentResultReporter is enabled');
     }
   }
 
@@ -210,13 +225,13 @@ async function main(): Promise<void> {
     commandConsumer = consumer;
     ownershipRegistry = registry;
     registry.startRenewal();
-    console.log(`[realtime-gateway] command routing: Redis (nodeId=${nodeId}, forwardTimeout=${cmdForwardTimeoutMs}ms, leaseTtl=${ownershipLeaseTtlSec}s)`);
+    logger.info(`command routing: Redis (forwardTimeout=${cmdForwardTimeoutMs}ms, leaseTtl=${ownershipLeaseTtlSec}s)`);
   } else {
     commandRouter = new LocalCommandRouter(authority);
-    console.log('[realtime-gateway] command routing: local (single-node)');
+    logger.info('command routing: local (single-node)');
   }
 
-  const tokenVerifier = new SharedSecretTokenVerifier(secret, ttlSec);
+  const tokenVerifier = new SharedSecretTokenVerifier(secret, ttlSec, () => authFailuresCounter.inc());
   const gateway = new RealtimeGateway(authority, pubsub, tokenVerifier, () => Date.now(), commandRouter);
 
   // --- HTTP health server ---
@@ -233,6 +248,11 @@ async function main(): Promise<void> {
       }));
       return;
     }
+    if (req.url === '/metrics') {
+      res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4' });
+      res.end(metrics.render());
+      return;
+    }
     if (req.url === '/ready') {
       void Promise.all([
         pingDatabase?.() ?? Promise.resolve(),
@@ -240,7 +260,8 @@ async function main(): Promise<void> {
       ]).then(() => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'ready', service: 'realtime-gateway' }));
-      }).catch(() => {
+      }).catch((err) => {
+        logger.warn('readiness check failed', { err: err instanceof Error ? (err.stack ?? err.message) : String(err) });
         res.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ status: 'unavailable', service: 'realtime-gateway' }));
       });
@@ -276,6 +297,8 @@ async function main(): Promise<void> {
       return;
     }
     connectionsByIp.set(ip, ipConnections + 1);
+    connectionsCounter.inc();
+    
     alive.add(ws);
     ws.on('pong', () => alive.add(ws));
     ws.on('error', () => undefined);
@@ -313,10 +336,14 @@ async function main(): Promise<void> {
             return;
           }
           const msg = decode(data.toString());
+          messagesCounter.inc();
+          
           if (!msg) {
             ws.close(1008, 'malformed client message');
             return;
           }
+          // Token verification (and thus auth-failure counting) happens inside
+          // the gateway's join handling via the wrapped TokenVerifier above.
           if (msg.t === 'join' && !joinedGames.has(msg.gameId)) {
             if (joinedGames.size >= maxRoomsPerConnection) {
               ws.close(1008, 'room limit exceeded');
@@ -346,8 +373,8 @@ async function main(): Promise<void> {
     healthServer.listen(healthPort, host, () => resolve());
   });
 
-  console.log(`[realtime-gateway] WS  listening on ws://${host}:${port}`);
-  console.log(`[realtime-gateway] Health on http://${host}:${healthPort}/health`);
+  logger.info(`WS listening on ws://${host}:${port}`);
+  logger.info(`Health on http://${host}:${healthPort}/health`);
 
   const heartbeat = setInterval(() => {
     for (const client of wss.clients) {
@@ -369,7 +396,7 @@ async function main(): Promise<void> {
     shuttingDown = true;
     clearInterval(heartbeat);
     reporter?.stop();
-    console.log('Shutdown signal received — closing');
+    logger.info('Shutdown signal received — closing');
     for (const client of wss.clients) {
       client.terminate();
     }
@@ -392,6 +419,7 @@ async function main(): Promise<void> {
 }
 
 void main().catch((err: unknown) => {
+  // Use console.error here as we might not have initialized the logger yet
   console.error('Failed to start realtime gateway:', err);
   process.exit(1);
 });

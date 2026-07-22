@@ -26,6 +26,10 @@ import {
 } from '@chess-platform/persistence/pg';
 import { ConsoleEmailSender } from './ports/email';
 import type { EmailSender } from './ports/email';
+import { JsonLogger } from './ports/logger';
+import type { Logger, LogLevel } from './ports/logger';
+import { InMemoryMetrics } from './ports/metrics';
+import type { Metrics } from './ports/metrics';
 import { ScryptPasswordHasher } from './auth/password';
 import type { PasswordHasher } from './auth/password';
 import { AccessTokenService } from './auth/tokens';
@@ -104,6 +108,14 @@ export interface PgBootstrapOptions {
   readonly gameLauncher?: GameLauncher;
   readonly liveView?: TournamentLiveView;
   readonly emailSender?: EmailSender;
+  readonly logger?: Logger;
+  readonly metrics?: Metrics;
+}
+
+/** Resolve the log level from `LOG_LEVEL`, defaulting to `info`. */
+function resolveLogLevel(): LogLevel {
+  const raw = (process.env['LOG_LEVEL'] ?? 'info').toLowerCase();
+  return raw === 'debug' || raw === 'info' || raw === 'warn' || raw === 'error' ? raw : 'info';
 }
 
 /** Build the {@link ApiDependencies} bundle backed by Postgres. */
@@ -140,6 +152,10 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     gameLauncher,
     liveView: options.liveView ?? new DurableTournamentLiveView(tournamentRepo, eventStore),
     emailSender: options.emailSender ?? new ConsoleEmailSender(),
+    // Production observability (M13): structured logs to stdout + a scrape
+    // registry backing GET /v1/metrics.
+    logger: options.logger ?? new JsonLogger({ service: 'api' }, { level: resolveLogLevel() }),
+    metrics: options.metrics ?? new InMemoryMetrics(),
     readiness: async () => {
       await pool.query('SELECT 1');
     },

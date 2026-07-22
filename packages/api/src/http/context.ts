@@ -9,6 +9,7 @@
 
 import type { IncomingHttpHeaders } from 'node:http';
 import type { Role } from '@chess-platform/persistence';
+import type { Logger } from '../ports/logger';
 
 /** The authenticated caller, resolved from a verified access token. */
 export interface Identity {
@@ -31,6 +32,10 @@ export interface RequestContext {
   readonly body: unknown;
   /** Correlation id echoed in responses and written to the audit log. */
   readonly requestId: string;
+  /** W3C trace-id (adopted from `traceparent` or freshly minted). */
+  readonly traceId: string;
+  /** Per-request logger bound with `{ requestId, traceId, method, path }`. */
+  readonly logger: Logger;
   readonly ip: string | null;
   readonly userAgent: string | null;
   /** Present only after authentication middleware resolves a valid token. */

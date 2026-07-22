@@ -109,7 +109,37 @@ test('the incoming X-Request-Id is echoed back', async () => {
     const res = await h.json('GET', '/v1/health', { headers: { 'x-request-id': 'trace-123' } });
     assert.equal(res.status, 200);
     assert.equal(res.headers.get('x-request-id'), 'trace-123');
+    assert.ok(res.headers.get('trace-id'));
     assert.equal(res.body.status, 'ok');
+  } finally {
+    await h.close();
+  }
+});
+
+test('HTTP metrics use route patterns to bound cardinality', async () => {
+  const h = await startHarness();
+  try {
+    await h.json('GET', '/v1/users/alice');
+    await h.json('GET', '/v1/users/bob');
+    const res = await fetch(`${h.baseUrl}/v1/metrics`);
+    const text = await res.text();
+    // One metric line for both requests
+    if (!text.includes('http_requests_total{method="GET",route="/v1/users/:handle",status="404"} 2')) {
+      throw new Error(`Metric not found in:\n${text}`);
+    }
+  } finally {
+    await h.close();
+  }
+});
+
+test('/v1/ready returns 503 if readiness throws', async () => {
+  const h = await startHarness({}, {
+    readiness: async () => { throw new Error('db down'); }
+  });
+  try {
+    const res = await h.json('GET', '/v1/ready');
+    assert.equal(res.status, 503);
+    assert.equal(res.body.error.code, 'service_unavailable');
   } finally {
     await h.close();
   }

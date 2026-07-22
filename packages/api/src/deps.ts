@@ -29,6 +29,8 @@ import type { ApiConfig } from './config';
 import type { GameLauncher } from './tournament/launcher';
 import type { TournamentLiveView } from './tournament/live-view';
 import type { EmailSender } from './ports/email';
+import type { Logger } from './ports/logger';
+import type { Metrics } from './ports/metrics';
 
 /** The full set of repositories the API consumes. */
 export interface Repositories {
@@ -57,6 +59,10 @@ export interface ApiDependencies {
   readonly gameLauncher: GameLauncher;
   readonly liveView: TournamentLiveView;
   readonly emailSender: EmailSender;
+  /** Structured logger (M13). Defaults to a silent {@link NullLogger}. */
+  readonly logger?: Logger;
+  /** Metrics registry + scrape target (M13). Defaults to {@link InMemoryMetrics}. */
+  readonly metrics?: Metrics;
   /** Production dependency check used by the readiness endpoint. */
   readonly readiness?: () => Promise<void>;
 }

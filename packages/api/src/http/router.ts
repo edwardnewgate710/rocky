@@ -14,6 +14,9 @@ import { HttpError } from './errors';
 import { readJsonBody, DEFAULT_MAX_BODY_BYTES } from './body';
 import type { Handler, HandlerResult, Identity, RequestContext } from './context';
 import type { RouteDoc } from '../openapi/types';
+import type { Logger } from '../ports/logger';
+import type { Metrics } from '../ports/metrics';
+import { parseTraceparent, generateTraceId } from './traceparent';
 
 /** HTTP methods the router dispatches. */
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -54,9 +57,28 @@ export interface RouterRuntime {
   readonly trustProxy?: boolean;
   /** Sink for uncaught (non-HttpError) failures; defaults to `console.error`. */
   readonly onInternalError?: (err: unknown, requestId: string) => void;
+  readonly logger: Logger;
+  readonly metrics: Metrics;
 }
 
 const METHODS_WITH_BODY = new Set<HttpMethod>(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/** Known HTTP methods, plus HEAD/OPTIONS which reach the router before matching. */
+const KNOWN_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']);
+
+/** Latency histogram buckets (seconds) shared by every request path. */
+const LATENCY_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10];
+
+/**
+ * Bound metric-label cardinality: `req.method` is client-controlled, so an
+ * attacker could otherwise mint an unbounded number of `method="…"` series on
+ * the failure path. Map any unrecognized token to `OTHER`.
+ */
+function normalizeMethod(method: string | undefined): string {
+  if (method === undefined) return 'OTHER';
+  const upper = method.toUpperCase();
+  return KNOWN_METHODS.has(upper) ? upper : 'OTHER';
+}
 
 function splitPath(path: string): string[] {
   return path.split('/').filter((s) => s.length > 0);
@@ -157,6 +179,13 @@ export class Router {
   ): Promise<void> {
     const requestId = headerString(req.headers['x-request-id']) ?? runtime.newRequestId();
     res.setHeader('X-Request-Id', requestId);
+    
+    const parsedTrace = parseTraceparent(headerString(req.headers['traceparent']));
+    const traceId = parsedTrace?.traceId ?? generateTraceId();
+    res.setHeader('trace-id', traceId); // Echo trace-id on response
+
+    const startMs = Date.now();
+    let resolvedRoutePath = 'unknown';
 
     try {
       const host = headerString(req.headers.host) ?? 'localhost';
@@ -172,6 +201,7 @@ export class Router {
         throw HttpError.notFound(`no route for ${method} ${url.pathname}`);
       }
       const { route, params } = matched;
+      resolvedRoutePath = route.path;
 
       const body = METHODS_WITH_BODY.has(route.method)
         ? await readJsonBody(req, maxBody)
@@ -187,6 +217,8 @@ export class Router {
         if (!permitted) throw HttpError.forbidden();
       }
 
+      const logger = runtime.logger.child({ requestId, traceId, method, path: route.path });
+
       const ctx: RequestContext = {
         method: route.method,
         path: url.pathname,
@@ -195,6 +227,8 @@ export class Router {
         headers: req.headers,
         body,
         requestId,
+        traceId,
+        logger,
         ip: clientIp(req, runtime.trustProxy ?? false),
         userAgent: headerString(req.headers['user-agent']) ?? null,
         auth,
@@ -202,8 +236,22 @@ export class Router {
 
       const result = await route.handler(ctx);
       writeResult(res, result);
+
+      const durationMs = Date.now() - startMs;
+      logger.info('request completed', { status: result.status, durationMs });
+      runtime.metrics.counter('http_requests_total', { method, route: route.path, status: String(result.status) }).inc();
+      runtime.metrics.histogram('http_request_duration_seconds', LATENCY_BUCKETS, { route: route.path }).observe(durationMs / 1000);
     } catch (err) {
+      const durationMs = Date.now() - startMs;
+      const reqPath = req.url ? req.url.split('?')[0] ?? '/' : '/';
+      // req.method is client-controlled here; normalize before it becomes a label.
+      const method = normalizeMethod(req.method);
+      const logger = runtime.logger.child({ requestId, traceId, method, path: reqPath });
+
       if (err instanceof HttpError) {
+        logger[err.status >= 500 ? 'error' : 'warn']('request failed', { status: err.status, durationMs, code: err.code, err: err.message });
+        runtime.metrics.counter('http_requests_total', { method, route: resolvedRoutePath, status: String(err.status) }).inc();
+        runtime.metrics.histogram('http_request_duration_seconds', LATENCY_BUCKETS, { route: resolvedRoutePath }).observe(durationMs / 1000);
         writeResult(res, {
           status: err.status,
           headers: err.headers,
@@ -218,6 +266,11 @@ export class Router {
         });
         return;
       }
+      
+      logger.error('internal server error', { status: 500, durationMs, err: err instanceof Error ? err.stack ?? err.message : String(err) });
+      runtime.metrics.counter('http_requests_total', { method, route: resolvedRoutePath, status: '500' }).inc();
+      runtime.metrics.histogram('http_request_duration_seconds', LATENCY_BUCKETS, { route: resolvedRoutePath }).observe(durationMs / 1000);
+
       onInternal(err, requestId);
       writeResult(res, {
         status: 500,
@@ -236,9 +289,22 @@ function writeResult(res: ServerResponse, result: HandlerResult): void {
     res.end();
     return;
   }
-  const payload = JSON.stringify(result.body);
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  res.setHeader('Content-Length', Buffer.byteLength(payload));
+  if (typeof result.body === 'string') {
+    const payload = Buffer.from(result.body, 'utf-8');
+    if (!res.hasHeader('content-type')) {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    }
+    res.setHeader('Content-Length', payload.byteLength);
+    res.writeHead(result.status);
+    res.end(payload);
+    return;
+  }
+
+  const payload = Buffer.from(JSON.stringify(result.body), 'utf-8');
+  if (!res.hasHeader('content-type')) {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  }
+  res.setHeader('Content-Length', payload.byteLength);
   res.writeHead(result.status);
   res.end(payload);
 }

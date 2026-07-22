@@ -17,6 +17,8 @@ import type { Identity } from './http/context';
 import { Router } from './http/router';
 import { withSecurity } from './http/security';
 import { buildRouter } from './routes';
+import { NullLogger } from './ports/logger';
+import { InMemoryMetrics } from './ports/metrics';
 import type { OpenApiDocument, OpenApiInfo } from './openapi/spec';
 import { buildOpenApiDocument } from './openapi/spec';
 
@@ -49,6 +51,12 @@ const DEFAULT_INFO: OpenApiInfo = {
 export function createApiServer(deps: ApiDependencies, options: ApiServerOptions = {}): ApiServer {
   const info: OpenApiInfo = { ...DEFAULT_INFO, ...options.info };
 
+  // Observability (M13): one metrics registry is shared between the per-request
+  // recorder (RouterRuntime) and the /v1/metrics render route so both see the
+  // same series. Logger defaults to silent; production roots inject a JsonLogger.
+  const logger = deps.logger ?? new NullLogger();
+  const metrics = deps.metrics ?? new InMemoryMetrics();
+
   const auth = new AuthService({
     repos: deps.repos,
     hasher: deps.hasher,
@@ -72,6 +80,7 @@ export function createApiServer(deps: ApiDependencies, options: ApiServerOptions
     tournamentRepo: deps.tournamentRepo,
     gameLauncher: deps.gameLauncher,
     liveView: deps.liveView,
+    metrics,
     readiness: deps.readiness ?? (() => Promise.resolve()),
   });
 
@@ -89,6 +98,8 @@ export function createApiServer(deps: ApiDependencies, options: ApiServerOptions
     maxBodyBytes: deps.config.maxBodyBytes,
     trustProxy: deps.config.trustProxy,
     newRequestId: () => deps.ids.next(),
+    logger,
+    metrics,
   });
 
   // Wrap the router listener with security headers and CORS enforcement.

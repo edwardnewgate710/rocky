@@ -20,6 +20,7 @@ import { createApiServer } from '../src/server';
 import type { ApiServer } from '../src/server';
 import { InMemoryGameLauncher } from '../src/tournament/launcher';
 import { InMemoryEmailSender } from '../src/ports/email';
+import type { Logger } from '../src/ports/logger';
 
 export const TEST_SECRET = 'test-access-token-secret-0123456789abcdef';
 export const START_MS = 1_700_000_000_000;
@@ -51,7 +52,18 @@ export interface Harness {
   close(): Promise<void>;
 }
 
-export async function startHarness(config: ApiConfigInput = {}): Promise<Harness> {
+/** Extra server dependencies a test may override (beyond the config). */
+export interface HarnessOptions {
+  /** Readiness probe backing `/v1/ready`; default resolves (healthy). */
+  readonly readiness?: () => Promise<void>;
+  /** Structured logger; inject a capturing one to assert on log output. */
+  readonly logger?: Logger;
+}
+
+export async function startHarness(
+  config: ApiConfigInput = {},
+  harnessOptions: HarnessOptions = {},
+): Promise<Harness> {
   const clock = new ManualClock(START_MS);
   const ids = uuidv7Generator;
   const resolved = resolveConfig({
@@ -74,7 +86,12 @@ export async function startHarness(config: ApiConfigInput = {}): Promise<Harness
   const gameLauncher = new InMemoryGameLauncher(ids);
   const liveView = { activeGames: () => [] };
   const emailSender = new InMemoryEmailSender();
-  const server = createApiServer({ repos, hasher, tokens, clock, ids, rateLimiter, tournamentRepo, gameLauncher, liveView, emailSender, config: resolved });
+  const server = createApiServer({
+    repos, hasher, tokens, clock, ids, rateLimiter, tournamentRepo, gameLauncher, liveView, emailSender,
+    config: resolved,
+    ...(harnessOptions.readiness ? { readiness: harnessOptions.readiness } : {}),
+    ...(harnessOptions.logger ? { logger: harnessOptions.logger } : {}),
+  });
   let http: Server;
   let port: number;
   do {

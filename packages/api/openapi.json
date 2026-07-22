@@ -106,6 +106,30 @@
         }
       }
     },
+    "/v1/metrics": {
+      "get": {
+        "summary": "Prometheus metrics exposition",
+        "tags": [
+          "meta"
+        ],
+        "operationId": "get_v1_metrics",
+        "responses": {
+          "200": {
+            "description": "Prometheus text exposition (v0.0.4)"
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/auth/register": {
       "post": {
         "summary": "Register a new account",
