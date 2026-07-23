@@ -1,7 +1,7 @@
 {
   "name": "@chess-platform/anti-cheat",
   "version": "0.1.0",
-  "description": "Pure deterministic engine-correlation anti-cheat analyzer.",
+  "description": "Pure deterministic anti-cheat analyzers: engine-correlation scoring and behavioral bot detection.",
   "license": "AGPL-3.0-or-later",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

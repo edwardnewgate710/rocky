@@ -4,7 +4,9 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-23 — M12 Anti-Cheat Increment 7 (ADR-0035): Automated auto-analysis worker (`gamesEndedChannel` fan-out in `@chess-platform/realtime-gateway`, single-owner authority broadcast, `AntiCheatAutoAnalyzer` worker in `@chess-platform/api` with dedup, at-least-once safety, crash-safe error handling, and drain hook)._
+_Last updated: 2026-07-23 — M12 Bot Detection Increment 1 (ADR-0036): Pure domain behavioral move-time analyzer (`analyzeBotBehavior` in `@chess-platform/anti-cheat`, `TimedMove` timing interface, mean/stdev move time, coefficient of variation, near-instant move fraction, lowConfidence gate, and deterministic suspicion banding)._
+
+Prior: M12 Anti-Cheat Increment 7 (ADR-0035): Automated auto-analysis worker (`gamesEndedChannel` fan-out in `@chess-platform/realtime-gateway`, single-owner authority broadcast, `AntiCheatAutoAnalyzer` worker in `@chess-platform/api` with dedup, at-least-once safety, crash-safe error handling, and drain hook).
 
 Prior: M12 Anti-Cheat Increment 6 (ADR-0034): On-demand analysis-trigger pipeline (`FinishedGameSource` port + `EventStoreGameSource` adapter, `AntiCheatAnalysisService` application service, and `POST /v1/moderation/anti-cheat/games/:gameId/analyze` endpoint, audited and `MODERATION`-gated, 503 when unconfigured).
 
@@ -480,4 +482,13 @@ Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
 - **Crash Safety & Idempotency**: Analysis rejections trigger `onError` (or `console.error`) and remove the game ID from `seen` so subsequent re-broadcasts can retry. The pubsub message handler never throws, preventing host crashes. Upserts in `AntiCheatAnalysisService` guarantee idempotent report storage.
 - **Package Exports**: Exported `AntiCheatAutoAnalyzer`, `AntiCheatAnalysisService`, and `EventStoreGameSource` from `@chess-platform/api` root index.
 - **Hermetic Test Suite**: Added `packages/api/test/anti-cheat-auto-analyzer.test.ts` covering end-to-end auto-analysis, crash-safety/error handling, deduplication, non-ended message filtering, and `stop()` cleanup.
+
+## M12 Bot Detection Increment 1 — Behavioral Move-Time Analyzer (ADR-0036)
+- **Pure Domain Analyzer**: Added `analyzeBotBehavior` in `@chess-platform/anti-cheat` (`packages/anti-cheat/src/bot-behavior.ts`) to analyze move-time distributions for a single player in one game.
+- **Timing Interface**: Defined `TimedMove` interface with move duration `ms` and opening-book flag `isBook`.
+- **Metrics & Signals**: Computes `meanMs`, population standard deviation `stdevMs`, `coefficientOfVariation` (`stdev / mean`), near-instant move count `instantMoves` (`ms <= 150`), and `instantFraction`.
+- **Confidence Gate & Suspicion Banding**: Low confidence gate (`sampleSize < 10`) forces report to `clean`. Confident reports take the max suspicion band between CV band (`<= 0.25` -> `high`, `<= 0.5` -> `review`) and near-instant band (`>= 0.9` -> `high`, `>= 0.7` -> `review`).
+- **Human Moderation Screening**: Serves strictly as a screening signal for human review queues, never auto-banning (per ARCHITECTURE §7).
+- **Hermetic Tests**: Unit test suite in `packages/anti-cheat/test/bot-behavior.test.ts` covering uniform bots, human pacing, low confidence gating, book exclusions, empty input, numeric accuracy, and review bands.
+
 
