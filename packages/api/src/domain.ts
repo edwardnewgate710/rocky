@@ -46,6 +46,22 @@ export const SEEK_COLORS: readonly SeekColor[] = ['white', 'black', 'random'];
 /** Handles: 3–30 chars, alphanumerics plus `_` and `-`. */
 export const HANDLE_PATTERN = /^[A-Za-z0-9_-]{3,30}$/;
 
+/** RFC-4122 UUID (any version/variant), the shape of every id column in the schema. */
+export const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Validate that a path/param value is a well-formed UUID. Rejects malformed ids
+ * with a 422 at the edge, before they reach a `UUID` column where the driver
+ * would otherwise raise an opaque cast error (surfacing as a 500).
+ */
+export function parseUuid(value: string, key = 'id'): string {
+  if (!UUID_PATTERN.test(value)) {
+    throw HttpError.validation(`"${key}" must be a UUID`, { [key]: 'must be a UUID' });
+  }
+  return value;
+}
+
 /** Parse a variant code from an arbitrary string. */
 export function parseVariant(value: string, key = 'variant'): Variant {
   return oneOf(value, VARIANTS, key);

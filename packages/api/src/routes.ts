@@ -13,7 +13,7 @@ import { AuthService } from './auth/service';
 import type { RequestMeta } from './auth/service';
 import type { Repositories } from './deps';
 import { Game, classifySpeed } from '@chess-platform/game';
-import { parseRole, parseSeekColor, parseTimeControl, parseVariant, VARIANTS, HANDLE_PATTERN } from './domain';
+import { parseRole, parseSeekColor, parseTimeControl, parseUuid, parseVariant, VARIANTS, HANDLE_PATTERN } from './domain';
 import { HttpError } from './http/errors';
 import { json, noContent } from './http/context';
 import type { RequestContext } from './http/context';
@@ -31,7 +31,10 @@ import type { Metrics } from './ports/metrics';
 import type { ApiConfig } from './config';
 import type { Clock } from './ports/clock';
 import type { IdGenerator } from './ports/ids';
+import { aggregatePlayer } from '@chess-platform/anti-cheat';
 import {
+  antiCheatAggregateView,
+  antiCheatGameReportView,
   gameSummaryView,
   leaderboardEntry,
   publicUser,
@@ -69,6 +72,7 @@ export interface RouteDeps {
 const PUBLIC: AuthPolicy = { required: false };
 const AUTHED: AuthPolicy = { required: true };
 const ADMIN: AuthPolicy = { required: true, anyRole: ['admin'] };
+const MODERATION: AuthPolicy = { required: true, anyRole: ['moderator', 'admin'] };
 
 const DEFAULT_LEADERBOARD_LIMIT = 50;
 const MAX_LEADERBOARD_LIMIT = 200;
@@ -591,6 +595,73 @@ export function buildRouter(deps: RouteDeps): Router {
         at: clock.now(),
       });
       return noContent();
+    },
+  );
+
+  // --- Moderation / Anti-Cheat ---------------------------------------------
+  router.get(
+    '/v1/moderation/anti-cheat/players/:playerId',
+    doc({
+      summary: 'View anti-cheat aggregate report for a player',
+      security: 'bearer',
+      params: [pathParam('playerId', 'Target player ID (UUID)')],
+      tags: ['moderation', 'anti-cheat'],
+      responses: {
+        200: ['AntiCheatAggregateView', 'Aggregated report'],
+        422: ['Error', 'Malformed player ID'],
+      },
+    }),
+    MODERATION,
+    async (ctx) => {
+      const actor = requireAuth(ctx);
+      const playerId = parseUuid(ctx.params['playerId']!, 'playerId');
+      // Audit the access attempt before reading report data, so a moderator
+      // can never see a report without a guaranteed audit row for it (ADR-0033).
+      await repos.audit.record({
+        actorId: actor.userId,
+        action: 'anti_cheat.aggregate.view',
+        target: playerId,
+        requestId: ctx.requestId,
+        ip: ctx.ip,
+        userAgent: ctx.userAgent,
+        at: clock.now(),
+      });
+      const stored = await repos.antiCheat.listByPlayer(playerId);
+      const report = aggregatePlayer(stored.map((r) => ({ gameId: r.gameId, report: r.report })));
+      return json(200, antiCheatAggregateView(playerId, report));
+    },
+  );
+
+  router.get(
+    '/v1/moderation/anti-cheat/players/:playerId/games',
+    doc({
+      summary: 'List per-game anti-cheat reports for a player',
+      security: 'bearer',
+      params: [pathParam('playerId', 'Target player ID (UUID)'), limitParam()],
+      tags: ['moderation', 'anti-cheat'],
+      responses: {
+        200: ['AntiCheatGameReportList', 'List of per-game reports'],
+        422: ['Error', 'Malformed player ID'],
+      },
+    }),
+    MODERATION,
+    async (ctx) => {
+      const actor = requireAuth(ctx);
+      const playerId = parseUuid(ctx.params['playerId']!, 'playerId');
+      const limit = parseLimit(ctx.query, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+      // Audit the access attempt before reading report data, so a moderator
+      // can never see a report without a guaranteed audit row for it (ADR-0033).
+      await repos.audit.record({
+        actorId: actor.userId,
+        action: 'anti_cheat.games.view',
+        target: playerId,
+        requestId: ctx.requestId,
+        ip: ctx.ip,
+        userAgent: ctx.userAgent,
+        at: clock.now(),
+      });
+      const stored = await repos.antiCheat.listByPlayer(playerId);
+      return json(200, stored.slice(0, limit).map(antiCheatGameReportView));
     },
   );
 

@@ -40,6 +40,7 @@
     "node": ">=22"
   },
   "dependencies": {
+    "@chess-platform/anti-cheat": "file:../anti-cheat",
     "@chess-platform/core": "file:../chess-core",
     "@chess-platform/game": "file:../game",
     "@chess-platform/persistence": "file:../persistence",

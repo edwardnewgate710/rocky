@@ -27,6 +27,7 @@ import type { IdGenerator } from './ports/ids';
 import type { RateLimiter } from './ports/rate-limiter';
 import type { ApiConfig } from './config';
 import type { GameLauncher } from './tournament/launcher';
+import type { AntiCheatReportRepository } from '@chess-platform/anti-cheat';
 import type { TournamentLiveView } from './tournament/live-view';
 import type { EmailSender } from './ports/email';
 import type { Logger } from './ports/logger';
@@ -44,6 +45,7 @@ export interface Repositories {
   readonly webauthnCredentials: WebAuthnCredentialsRepository;
   readonly webauthnLoginChallenges: WebAuthnLoginChallengesRepository;
   readonly seekAcceptor: SeekAcceptor;
+  readonly antiCheat: AntiCheatReportRepository;
 }
 
 /** Everything `createApiServer` needs to construct the service. */

@@ -1101,6 +1101,172 @@
         }
       }
     },
+    "/v1/moderation/anti-cheat/players/{playerId}": {
+      "get": {
+        "summary": "View anti-cheat aggregate report for a player",
+        "tags": [
+          "moderation",
+          "anti-cheat"
+        ],
+        "operationId": "get_v1_moderation_anti_cheat_players_by_playerId",
+        "responses": {
+          "200": {
+            "description": "Aggregated report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiCheatAggregateView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Malformed player ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "playerId",
+            "in": "path",
+            "required": true,
+            "description": "Target player ID (UUID)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/moderation/anti-cheat/players/{playerId}/games": {
+      "get": {
+        "summary": "List per-game anti-cheat reports for a player",
+        "tags": [
+          "moderation",
+          "anti-cheat"
+        ],
+        "operationId": "get_v1_moderation_anti_cheat_players_by_playerId_games",
+        "responses": {
+          "200": {
+            "description": "List of per-game reports",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiCheatGameReportList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Malformed player ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "playerId",
+            "in": "path",
+            "required": true,
+            "description": "Target player ID (UUID)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum number of results.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
     "/v1/leaderboard/{variant}": {
       "get": {
         "summary": "Top players for a variant",
@@ -3799,6 +3965,170 @@
               }
             }
           }
+        }
+      },
+      "AntiCheatPlayerReport": {
+        "type": "object",
+        "required": [
+          "suspicion",
+          "acpl",
+          "acplCapped",
+          "t1Rate",
+          "t3Rate",
+          "onlyMoveExcluded",
+          "sampleSize",
+          "unscored",
+          "lowConfidence",
+          "t1Matches",
+          "t3Matches",
+          "tRateSampleCount",
+          "rawCentipawnLossTotal",
+          "cappedCentipawnLossTotal"
+        ],
+        "properties": {
+          "suspicion": {
+            "type": "string",
+            "enum": [
+              "clean",
+              "review",
+              "high"
+            ]
+          },
+          "acpl": {
+            "type": "number"
+          },
+          "acplCapped": {
+            "type": "number"
+          },
+          "t1Rate": {
+            "type": "number"
+          },
+          "t3Rate": {
+            "type": "number"
+          },
+          "onlyMoveExcluded": {
+            "type": "integer"
+          },
+          "sampleSize": {
+            "type": "integer"
+          },
+          "unscored": {
+            "type": "integer"
+          },
+          "lowConfidence": {
+            "type": "boolean"
+          },
+          "t1Matches": {
+            "type": "integer"
+          },
+          "t3Matches": {
+            "type": "integer"
+          },
+          "tRateSampleCount": {
+            "type": "integer"
+          },
+          "rawCentipawnLossTotal": {
+            "type": "number"
+          },
+          "cappedCentipawnLossTotal": {
+            "type": "number"
+          }
+        }
+      },
+      "AntiCheatGameReportView": {
+        "type": "object",
+        "required": [
+          "gameId",
+          "playerId",
+          "color",
+          "report"
+        ],
+        "properties": {
+          "gameId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "playerId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "color": {
+            "type": "string",
+            "enum": [
+              "white",
+              "black"
+            ]
+          },
+          "report": {
+            "$ref": "#/components/schemas/AntiCheatPlayerReport"
+          }
+        }
+      },
+      "AntiCheatAggregateView": {
+        "type": "object",
+        "required": [
+          "playerId",
+          "suspicion",
+          "gamesAnalyzed",
+          "pooledSampleSize",
+          "pooledTRateSampleCount",
+          "acpl",
+          "acplCapped",
+          "t1Rate",
+          "t3Rate",
+          "lowConfidence",
+          "flaggedGameIds"
+        ],
+        "properties": {
+          "playerId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "suspicion": {
+            "type": "string",
+            "enum": [
+              "clean",
+              "review",
+              "high"
+            ]
+          },
+          "gamesAnalyzed": {
+            "type": "integer"
+          },
+          "pooledSampleSize": {
+            "type": "integer"
+          },
+          "pooledTRateSampleCount": {
+            "type": "integer"
+          },
+          "acpl": {
+            "type": "number"
+          },
+          "acplCapped": {
+            "type": "number"
+          },
+          "t1Rate": {
+            "type": "number"
+          },
+          "t3Rate": {
+            "type": "number"
+          },
+          "lowConfidence": {
+            "type": "boolean"
+          },
+          "flaggedGameIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
+      "AntiCheatGameReportList": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/AntiCheatGameReportView"
         }
       }
     }

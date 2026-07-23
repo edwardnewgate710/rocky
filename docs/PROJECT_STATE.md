@@ -4,7 +4,9 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-23 — M12 Anti-Cheat Increment 4 (ADR-0032): AntiCheatService and AntiCheatReportRepository port with an in-memory adapter. The pure orchestration composes earlier increments into a usable flow: analyzing a game, saving both players' reports atomically via `saveBatch` keyed by `(playerId, gameId)` for idempotency, and fetching reports to aggregate an account-level signal._
+_Last updated: 2026-07-23 — M12 Anti-Cheat Increment 5 (ADR-0033): Postgres persistence (`anti_cheat_reports` table, `PgAntiCheatReportRepository` with atomic `saveBatch` transactions and `(player_id, game_id)` upsert) and read-only moderation REST API (`GET /v1/moderation/anti-cheat/players/:playerId` and `GET /v1/moderation/anti-cheat/players/:playerId/games`, audited, `moderator`/`admin`-gated)._
+
+Prior: M12 Anti-Cheat Increment 4 (ADR-0032): AntiCheatService and AntiCheatReportRepository port with an in-memory adapter. The pure orchestration composes earlier increments into a usable flow: analyzing a game, saving both players' reports atomically via `saveBatch` keyed by `(playerId, gameId)` for idempotency, and fetching reports to aggregate an account-level signal.
 
 Prior: M12 Anti-Cheat Increment 3 (ADR-0031): EngineBackedEvaluator adapter bridging the pure anti-cheat domain to the real @chess-platform/engine. Adds extractPlies to parse full games, negates resulting position evaluation to price sub-optimal moves, and safely handles terminal positions. Prior: M12 Anti-Cheat Increment 2 (ADR-0030): cross-game, account-level
 suspicion aggregation in `@chess-platform/anti-cheat`. `aggregatePlayer(games)` combines a player's
@@ -451,3 +453,12 @@ Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
 - **Pure Orchestration**: The service orchestrates analyzing a game, saving reports for both players, and aggregating a player's history. It depends only on injected ports, keeping the domain logic pure and independent of specific persistence or engine implementations.
 - **Idempotency Guarantee**: Reports are stored keyed by `(playerId, gameId)`. `InMemoryAntiCheatReportRepository` uses a nested map (`playerId` -> `gameId` -> `report`). This ensures re-analyzing a game replaces the prior record rather than appending a duplicate, so `aggregatePlayer`'s duplicate game guard will never trip. Both players' reports are persisted atomically via `saveBatch`.
 - **Deferred Storage**: Postgres implementation and moderation REST APIs are deferred to a later increment, proving the domain patterns fully in-memory first.
+
+## M12 Anti-Cheat Increment 5 — Postgres Persistence & Moderation REST API (ADR-0033)
+- **Postgres Schema**: Migration `0010_anti_cheat_reports.sql` creates table `anti_cheat_reports` storing `player_id`, `game_id`, `color`, and `report` JSONB with `PRIMARY KEY (player_id, game_id)`. Opaque IDs without foreign keys preserve analytical records independently of user/game row lifecycles.
+- **Repository Implementation**: `PgAntiCheatReportRepository` in `@chess-platform/persistence` implements `AntiCheatReportRepository`. `saveBatch` persists white and black reports in one atomic transaction (`BEGIN` ... `COMMIT` / `ROLLBACK`). Upserts replace existing reports on `(player_id, game_id)` conflict for idempotency.
+- **Moderation REST API**: Added `GET /v1/moderation/anti-cheat/players/:playerId` (account aggregate) and `GET /v1/moderation/anti-cheat/players/:playerId/games` (per-game history) to `@chess-platform/api`, gated by policy `MODERATION` (`moderator` or `admin` role). Both endpoints record audit entries (`anti_cheat.aggregate.view` / `anti_cheat.games.view`).
+- **OpenAPI Document**: Updated OpenAPI 3.1 specification committed to `packages/api/openapi.json` with new component schemas (`AntiCheatPlayerReport`, `AntiCheatGameReportView`, `AntiCheatAggregateView`, `AntiCheatGameReportList`) and route definitions.
+- **Root Build Pipeline**: Moved `@chess-platform/engine` and `@chess-platform/anti-cheat` ahead of `@chess-platform/persistence` and `@chess-platform/api` in root `package.json` `build`, `test`, and `lint` scripts to reflect the new package dependency graph.
+- **Next Steps**: Increment 6 will implement the automated analysis trigger pipeline (game history -> plies -> engine -> report generation).
+

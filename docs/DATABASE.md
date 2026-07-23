@@ -318,11 +318,27 @@ audit_log(
 `request_id`/`trace_id` are populated from the API request context so an audit row
 can be joined to logs/traces (M13 OpenTelemetry) for end-to-end debugging.
 
-### 4.5 Reserved for later milestones
+### 4.5 Anti-Cheat Reports
+
+```sql
+anti_cheat_reports(
+  player_id  UUID NOT NULL,
+  game_id    UUID NOT NULL,
+  color      TEXT NOT NULL CHECK (color IN ('white', 'black')),
+  report     JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (player_id, game_id)
+);
+```
+
+Analytical anti-cheat records store per-player engine-correlation reports. No foreign keys are attached to `player_id` or `game_id` so reports survive independently of user/game row lifecycles. Composite PK `(player_id, game_id)` indexes `player_id` as prefix for `listByPlayer` queries.
+
+### 4.6 Reserved for later milestones
 
 Created only when their milestone lands (listed for design coherence):
-`tournaments*`, `studies*`, `follows`, `friends`, `messages`, `puzzles`,
-`openings(embedding vector)` (M11 pgvector), `anti_cheat_signals` (M12).
+`studies*`, `follows`, `friends`, `messages`, `puzzles`,
+`openings(embedding vector)` (M11 pgvector).
 
 **Secrets never stored in plaintext:** passwords are argon2id **encoded strings**
 (salt + params embedded); refresh tokens are stored only as hashes; `email_hash`

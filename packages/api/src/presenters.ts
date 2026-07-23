@@ -14,6 +14,12 @@ import type {
   SessionRow,
   UserRow,
 } from '@chess-platform/persistence';
+import type {
+  PlayerCorrelationReport,
+  PlayerAggregateReport,
+  StoredPlayerReport,
+  Suspicion,
+} from '@chess-platform/anti-cheat';
 import { classifySpeed } from '@chess-platform/game';
 
 /** Public user view (safe for any caller). */
@@ -157,6 +163,59 @@ export function gameSummaryView(row: GameSummaryRow): GameSummaryView {
     plyCount: row.plyCount,
     startedAt: row.startedAt.toISOString(),
     endedAt: row.endedAt ? row.endedAt.toISOString() : null,
+  };
+}
+
+/** View of an account-level aggregated anti-cheat report. */
+export interface AntiCheatAggregateView {
+  readonly playerId: string;
+  readonly suspicion: Suspicion;
+  readonly gamesAnalyzed: number;
+  readonly pooledSampleSize: number;
+  readonly pooledTRateSampleCount: number;
+  readonly acpl: number;
+  readonly acplCapped: number;
+  readonly t1Rate: number;
+  readonly t3Rate: number;
+  readonly lowConfidence: boolean;
+  readonly flaggedGameIds: string[];
+}
+
+export function antiCheatAggregateView(
+  playerId: string,
+  r: PlayerAggregateReport,
+): AntiCheatAggregateView {
+  return {
+    playerId,
+    suspicion: r.suspicion,
+    gamesAnalyzed: r.gamesAnalyzed,
+    pooledSampleSize: r.pooledSampleSize,
+    pooledTRateSampleCount: r.pooledTRateSampleCount,
+    acpl: r.acpl,
+    acplCapped: r.acplCapped,
+    t1Rate: r.t1Rate,
+    t3Rate: r.t3Rate,
+    lowConfidence: r.lowConfidence,
+    flaggedGameIds: [...r.flaggedGameIds],
+  };
+}
+
+/** View of a per-game stored player anti-cheat report. */
+export interface AntiCheatGameReportView {
+  readonly gameId: string;
+  readonly playerId: string;
+  readonly color: 'white' | 'black';
+  readonly report: PlayerCorrelationReport;
+}
+
+export function antiCheatGameReportView(
+  s: StoredPlayerReport,
+): AntiCheatGameReportView {
+  return {
+    gameId: s.gameId,
+    playerId: s.playerId,
+    color: s.color,
+    report: s.report,
   };
 }
 

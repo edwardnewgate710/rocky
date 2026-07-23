@@ -8,3 +8,5 @@ export * from './pool';
 export * from './migrate';
 export * from './event-store';
 export * from './repositories';
+export * from './anti-cheat';
+
