@@ -44,7 +44,7 @@ chess-platform/
 │   ├── web/                # ✅ Web frontend: lobby, board UI, live game play, PWA, a11y
 │   ├── e2e-harness/        # ✅ In-process backend harness for Playwright acceptance
 │   ├── tournament/         # ✅ Round-robin, Swiss, and Arena tournament domain
-│   ├── anti-cheat/         # ✅ Engine-correlation analysis (ACPL, T1/T3, per-player suspicion, cross-game aggregation)
+│   ├── anti-cheat/         # ✅ Engine-correlation analysis (ACPL, T1/T3, per-player suspicion, cross-game aggregation, service orchestration)
 │   ├── ai-orchestrator/    # ✅ AI provider routing, failover, caching, grounding
 │   └── ai-features/        # ✅ Coach, puzzles, explanations, commentator (9 features)
 ├── docs/
