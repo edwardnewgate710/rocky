@@ -2,6 +2,7 @@ import test from 'node:test';
 import * as assert from 'node:assert/strict';
 import {
   analyzeBotBehavior,
+  behaviorSuspicion,
   BOT_MIN_SAMPLE_SIZE,
   INSTANT_MOVE_MS,
   CV_HIGH,
@@ -22,6 +23,8 @@ test('uniform and instant bot: high suspicion, low CV, high instantFraction', ()
   assert.equal(report.coefficientOfVariation, 0);
   assert.equal(report.instantMoves, 12);
   assert.equal(report.instantFraction, 1.0);
+  assert.equal(report.sumMs, 600);
+  assert.equal(report.sumSqMs, 30000);
   assert.equal(report.suspicion, 'high');
 });
 
@@ -75,6 +78,8 @@ test('empty input: returns documented all-zero clean lowConfidence report', () =
   assert.equal(report.coefficientOfVariation, 0);
   assert.equal(report.instantMoves, 0);
   assert.equal(report.instantFraction, 0);
+  assert.equal(report.sumMs, 0);
+  assert.equal(report.sumSqMs, 0);
   assert.equal(report.lowConfidence, true);
 });
 
@@ -96,6 +101,8 @@ test('statistic correctness: exact math for small hand-computable set', () => {
   );
   assert.equal(report.instantMoves, 1);
   assert.equal(report.instantFraction, 0.5);
+  assert.equal(report.sumMs, 400);
+  assert.equal(report.sumSqMs, 100000);
   assert.equal(report.lowConfidence, true);
   assert.equal(report.suspicion, 'clean'); // lowConfidence forces clean
 });
@@ -136,4 +143,18 @@ test('review band: instantFraction in review range with high CV produces review 
   assert.equal(report.instantFraction, 0.7);
   assert.ok(report.coefficientOfVariation > CV_REVIEW);
   assert.equal(report.suspicion, 'review');
+});
+
+test('behaviorSuspicion helper direct assertions', () => {
+  assert.equal(behaviorSuspicion(0.2, 0.0), 'high');
+  assert.equal(behaviorSuspicion(0.4, 0.0), 'review');
+  assert.equal(behaviorSuspicion(0.6, 0.0), 'clean');
+
+  assert.equal(behaviorSuspicion(0.6, 0.95), 'high');
+  assert.equal(behaviorSuspicion(0.6, 0.75), 'review');
+  assert.equal(behaviorSuspicion(0.6, 0.5), 'clean');
+
+  // Max severity takes precedent
+  assert.equal(behaviorSuspicion(0.4, 0.95), 'high');
+  assert.equal(behaviorSuspicion(0.2, 0.75), 'high');
 });

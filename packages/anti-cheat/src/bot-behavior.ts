@@ -32,6 +32,10 @@ export interface BotBehaviorReport {
   readonly instantMoves: number;
   /** instantMoves / sampleSize; a HIGH fraction of near-instant replies is bot-like. 0 for empty. */
   readonly instantFraction: number;
+  /** Σ move time (ms) over the sample — a poolable numerator for cross-game aggregation. */
+  readonly sumMs: number;
+  /** Σ (move time)² (ms²) over the sample — poolable numerator for pooled variance. */
+  readonly sumSqMs: number;
   /** Set when the sample is too small to trust an escalation — the report then stays `clean`. */
   readonly lowConfidence: boolean;
 }
@@ -67,6 +71,32 @@ function suspicionRank(s: Suspicion): number {
 }
 
 /**
+ * Map behavioral move-time metrics to a suspicion band: the MORE severe of the
+ * coefficient-of-variation band and the near-instant-reply band (high>review>clean).
+ * Does NOT apply the low-confidence gate — the caller does.
+ */
+export function behaviorSuspicion(
+  coefficientOfVariation: number,
+  instantFraction: number,
+): Suspicion {
+  let cvBand: Suspicion = 'clean';
+  if (coefficientOfVariation <= CV_HIGH) {
+    cvBand = 'high';
+  } else if (coefficientOfVariation <= CV_REVIEW) {
+    cvBand = 'review';
+  }
+
+  let instantBand: Suspicion = 'clean';
+  if (instantFraction >= INSTANT_FRACTION_HIGH) {
+    instantBand = 'high';
+  } else if (instantFraction >= INSTANT_FRACTION_REVIEW) {
+    instantBand = 'review';
+  }
+
+  return suspicionRank(cvBand) >= suspicionRank(instantBand) ? cvBand : instantBand;
+}
+
+/**
  * Analyzes a player's per-move timings for a single game to compute behavioral bot signals.
  *
  * Deterministic pure function: no I/O, no mutation of input.
@@ -85,11 +115,14 @@ export function analyzeBotBehavior(moves: readonly TimedMove[]): BotBehaviorRepo
       coefficientOfVariation: 0,
       instantMoves: 0,
       instantFraction: 0,
+      sumMs: 0,
+      sumSqMs: 0,
       lowConfidence: true,
     };
   }
 
   const sumMs = sampleMoves.reduce((acc, m) => acc + m.ms, 0);
+  const sumSqMs = sampleMoves.reduce((acc, m) => acc + m.ms * m.ms, 0);
   const meanMs = sumMs / sampleSize;
 
   const populationVariance =
@@ -103,26 +136,9 @@ export function analyzeBotBehavior(moves: readonly TimedMove[]): BotBehaviorRepo
 
   const lowConfidence = sampleSize < BOT_MIN_SAMPLE_SIZE;
 
-  let suspicion: Suspicion = 'clean';
-
-  if (!lowConfidence) {
-    let cvBand: Suspicion = 'clean';
-    if (coefficientOfVariation <= CV_HIGH) {
-      cvBand = 'high';
-    } else if (coefficientOfVariation <= CV_REVIEW) {
-      cvBand = 'review';
-    }
-
-    let instantBand: Suspicion = 'clean';
-    if (instantFraction >= INSTANT_FRACTION_HIGH) {
-      instantBand = 'high';
-    } else if (instantFraction >= INSTANT_FRACTION_REVIEW) {
-      instantBand = 'review';
-    }
-
-    suspicion =
-      suspicionRank(cvBand) >= suspicionRank(instantBand) ? cvBand : instantBand;
-  }
+  const suspicion: Suspicion = lowConfidence
+    ? 'clean'
+    : behaviorSuspicion(coefficientOfVariation, instantFraction);
 
   return {
     suspicion,
@@ -132,6 +148,8 @@ export function analyzeBotBehavior(moves: readonly TimedMove[]): BotBehaviorRepo
     coefficientOfVariation,
     instantMoves,
     instantFraction,
+    sumMs,
+    sumSqMs,
     lowConfidence,
   };
 }

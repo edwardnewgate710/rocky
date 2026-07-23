@@ -4,7 +4,9 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-23 — M12 Bot Detection Increment 1 (ADR-0036): Pure domain behavioral move-time analyzer (`analyzeBotBehavior` in `@chess-platform/anti-cheat`, `TimedMove` timing interface, mean/stdev move time, coefficient of variation, near-instant move fraction, lowConfidence gate, and deterministic suspicion banding)._
+_Last updated: 2026-07-23 — M12 Bot Detection Increment 2 (ADR-0037): Cross-game behavioral aggregation (`aggregateBotBehavior` in `@chess-platform/anti-cheat`, `BotAggregateInput`, `BotAggregateReport`, pooled mean/stdev/CV/instantFraction, lowConfidence gate, duplicate game rejection, shared `behaviorSuspicion` banding, and `sumMs`/`sumSqMs` raw poolable moments)._
+
+Prior: M12 Bot Detection Increment 1 (ADR-0036): Pure domain behavioral move-time analyzer (`analyzeBotBehavior` in `@chess-platform/anti-cheat`, `TimedMove` timing interface, mean/stdev move time, coefficient of variation, near-instant move fraction, lowConfidence gate, and deterministic suspicion banding).
 
 Prior: M12 Anti-Cheat Increment 7 (ADR-0035): Automated auto-analysis worker (`gamesEndedChannel` fan-out in `@chess-platform/realtime-gateway`, single-owner authority broadcast, `AntiCheatAutoAnalyzer` worker in `@chess-platform/api` with dedup, at-least-once safety, crash-safe error handling, and drain hook).
 
@@ -490,5 +492,15 @@ Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
 - **Confidence Gate & Suspicion Banding**: Low confidence gate (`sampleSize < 10`) forces report to `clean`. Confident reports take the max suspicion band between CV band (`<= 0.25` -> `high`, `<= 0.5` -> `review`) and near-instant band (`>= 0.9` -> `high`, `>= 0.7` -> `review`).
 - **Human Moderation Screening**: Serves strictly as a screening signal for human review queues, never auto-banning (per ARCHITECTURE §7).
 - **Hermetic Tests**: Unit test suite in `packages/anti-cheat/test/bot-behavior.test.ts` covering uniform bots, human pacing, low confidence gating, book exclusions, empty input, numeric accuracy, and review bands.
+
+## M12 Bot Detection Increment 2 — Cross-Game Aggregation (ADR-0037)
+- **Account-Level Behavioral Aggregation**: Added `aggregateBotBehavior` in `@chess-platform/anti-cheat` (`packages/anti-cheat/src/bot-aggregate.ts`) to combine an account's per-game `BotBehaviorReport`s into a single `BotAggregateReport`.
+- **Pool Raw Moments, Never Average**: Extended `BotBehaviorReport` with raw poolable moments `sumMs` (Σ ms) and `sumSqMs` (Σ ms²). Aggregation pools raw timing sums across games (`pooledMeanMs`, `pooledStdevMs`, `pooledCoefficientOfVariation`, `pooledInstantFraction`) rather than averaging per-game rates, avoiding skew from short games.
+- **Aggregate Confidence Gate**: Enforces `BOT_AGG_MIN_GAMES = 3` and `BOT_AGG_MIN_POOLED_SAMPLE = 40`. Aggregates with fewer games or smaller pooled move samples set `lowConfidence: true` and remain `clean`.
+- **Shared Suspicion Banding**: Extracted `behaviorSuspicion` as a shared pure helper in `bot-behavior.ts` used by both `analyzeBotBehavior` and `aggregateBotBehavior`, guaranteeing per-game and account-level thresholds cannot diverge.
+- **Duplicate Rejection**: Rejects duplicate `gameId`s with a thrown `Error` to prevent double-counting game history.
+- **Reviewer Drill-Down**: Surfaces `flaggedGameIds` listing games whose per-game suspicion was `review` or `high`.
+- **Hermetic Tests**: Unit test suite in `packages/anti-cheat/test/bot-aggregate.test.ts` covering pooling vs averaging, confidence gates, confident escalation, duplicate rejection, flagged game collection, empty inputs, and exact pooled statistics math.
+
 
 
