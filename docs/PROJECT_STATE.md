@@ -4,7 +4,9 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-23 — M12 Anti-Cheat Increment 6 (ADR-0034): On-demand analysis-trigger pipeline (`FinishedGameSource` port + `EventStoreGameSource` adapter, `AntiCheatAnalysisService` application service, and `POST /v1/moderation/anti-cheat/games/:gameId/analyze` endpoint, audited and `MODERATION`-gated, 503 when unconfigured)._
+_Last updated: 2026-07-23 — M12 Anti-Cheat Increment 7 (ADR-0035): Automated auto-analysis worker (`gamesEndedChannel` fan-out in `@chess-platform/realtime-gateway`, single-owner authority broadcast, `AntiCheatAutoAnalyzer` worker in `@chess-platform/api` with dedup, at-least-once safety, crash-safe error handling, and drain hook)._
+
+Prior: M12 Anti-Cheat Increment 6 (ADR-0034): On-demand analysis-trigger pipeline (`FinishedGameSource` port + `EventStoreGameSource` adapter, `AntiCheatAnalysisService` application service, and `POST /v1/moderation/anti-cheat/games/:gameId/analyze` endpoint, audited and `MODERATION`-gated, 503 when unconfigured).
 
 Prior: M12 Anti-Cheat Increment 5 (ADR-0033): Postgres persistence (`anti_cheat_reports` table, `PgAntiCheatReportRepository` with atomic `saveBatch` transactions and `(player_id, game_id)` upsert) and read-only moderation REST API (`GET /v1/moderation/anti-cheat/players/:playerId` and `GET /v1/moderation/anti-cheat/players/:playerId/games`, audited, `moderator`/`admin`-gated).
 
@@ -470,3 +472,12 @@ Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
 - **Engine Gating & Wiring**: Production bootstrap (`createPgDependencies`) env-gates `AntiCheatAnalysisService` behind `PgBootstrapOptions.analysisProvider`. Test harness (`startHarness`) wires a deterministic fake evaluator for hermetic integration testing.
 - **OpenAPI Document**: Updated OpenAPI 3.1 specification committed to `packages/api/openapi.json` with new component schemas (`AnalyzeGameRequest`, `AntiCheatGameAnalysisView`) and route documentation.
 - **Automated Worker Deferred**: Automated background/PubSub auto-analysis worker deferred to Increment 7.
+
+## M12 Anti-Cheat Increment 7 — Automated Auto-Analysis Worker (ADR-0035)
+- **Global Game-Ended Channel**: Added `gamesEndedChannel()` (`games:ended`) to `@chess-platform/realtime-gateway` and exported it from the package root.
+- **Authority Fan-Out**: Updated `GameAuthority` publish loop to fan out terminal `EndedBroadcast` messages to `gamesEndedChannel()`. Because each live game has a single authority owner (ADR-0010), each game's completion is published to `gamesEndedChannel()` exactly once.
+- **Auto-Analysis Worker**: Implemented `AntiCheatAutoAnalyzer` in `@chess-platform/api` (`packages/api/src/anti-cheat/auto-analyzer.ts`). Subscribes to `gamesEndedChannel()`, deduplicates seen game IDs, tracks background analysis promises in an `inFlight` set, and provides a `drain()` hook for deterministic testing.
+- **Crash Safety & Idempotency**: Analysis rejections trigger `onError` (or `console.error`) and remove the game ID from `seen` so subsequent re-broadcasts can retry. The pubsub message handler never throws, preventing host crashes. Upserts in `AntiCheatAnalysisService` guarantee idempotent report storage.
+- **Package Exports**: Exported `AntiCheatAutoAnalyzer`, `AntiCheatAnalysisService`, and `EventStoreGameSource` from `@chess-platform/api` root index.
+- **Hermetic Test Suite**: Added `packages/api/test/anti-cheat-auto-analyzer.test.ts` covering end-to-end auto-analysis, crash-safety/error handling, deduplication, non-ended message filtering, and `stop()` cleanup.
+

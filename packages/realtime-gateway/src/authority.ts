@@ -22,7 +22,7 @@ import type { Color, Position } from '@chess-platform/core';
 import type { CreateGameParams } from '@chess-platform/game';
 import { InMemoryEventLog, type EventLog } from './event-log';
 import type { LegalMoves, StateView, MoveBroadcast, EndedBroadcast } from './protocol';
-import { gameChannel, type PubSub } from './pubsub';
+import { gameChannel, gamesEndedChannel, type PubSub } from './pubsub';
 
 /** A command an authenticated player may issue against a game. */
 export type Command =
@@ -346,7 +346,10 @@ export class GameAuthority {
     // Publish only after state is durably committed, so a subscriber can never
     // observe a broadcast for a state the authority has not persisted.
     const broadcasts = pending.map((e) => e.msg);
-    for (const msg of broadcasts) this.pubsub.publish(gameChannel(gameId), msg);
+    for (const msg of broadcasts) {
+      this.pubsub.publish(gameChannel(gameId), msg);
+      if (msg.t === 'ended') this.pubsub.publish(gamesEndedChannel(), msg);
+    }
 
     return { events: result.events, broadcasts, state: this.viewOf(rec.game) };
   }

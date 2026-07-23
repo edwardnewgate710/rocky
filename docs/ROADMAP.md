@@ -530,7 +530,7 @@ Engine-correlation scoring, bot detection, fraud/DDoS, audit, pen-test pass.
 **Increments 1–3 complete:** CORS policy + security response headers
 (ADR-0011), httpOnly refresh-token cookie (ADR-0012), rate limiting for
 sensitive auth endpoints with a durable Postgres bucket store (ADR-0013).
-**Anti-cheat Increments 1–6 complete:** pure domain engine-correlation scoring (ADR-0029), per-player account-level aggregation (ADR-0030), `EngineBackedEvaluator` adapter (ADR-0031), `AntiCheatService`/`AntiCheatReportRepository` ports (ADR-0032), Postgres persistence with atomic `saveBatch` transactions and read-only moderation REST API (ADR-0033), and on-demand analysis-trigger pipeline (ADR-0034). Automated background trigger (inc 7), bot detection, and the pen-test pass remain.
+**Anti-cheat Increments 1–7 complete:** pure domain engine-correlation scoring (ADR-0029), per-player account-level aggregation (ADR-0030), `EngineBackedEvaluator` adapter (ADR-0031), `AntiCheatService`/`AntiCheatReportRepository` ports (ADR-0032), Postgres persistence with atomic `saveBatch` transactions and read-only moderation REST API (ADR-0033), on-demand analysis-trigger pipeline (ADR-0034), and automated auto-analysis worker (ADR-0035). Bot detection and the pen-test pass remain.
 
 ## ⬜ Milestone 13 — Observability & SRE
 

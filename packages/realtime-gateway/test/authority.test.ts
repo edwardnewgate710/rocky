@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { TimeControl } from '@chess-platform/game';
 import { GameAuthority, AuthorityError } from '../src/authority';
-import { InMemoryPubSub, gameChannel } from '../src/pubsub';
+import { InMemoryPubSub, gameChannel, gamesEndedChannel } from '../src/pubsub';
 import type { Broadcast } from '../src/protocol';
 
 const TC: TimeControl = { initialMs: 300_000, incrementMs: 3_000, delayMs: 0, kind: 'increment' };
@@ -165,6 +165,21 @@ test('resignation ends the game and broadcasts a terminal event', async () => {
   }
   assert.equal(authority.getState('g1').status.over, true);
   assert.ok(got.some((b) => b.t === 'ended'));
+});
+
+test('terminal event is published to gamesEndedChannel', async () => {
+  const { authority, pubsub } = await setup();
+  const gotGlobal: Broadcast[] = [];
+  pubsub.subscribe(gamesEndedChannel(), (m) => gotGlobal.push(m));
+  await authority.apply('g1', 'bob', { kind: 'resign' });
+  assert.equal(gotGlobal.length, 1);
+  const ended = gotGlobal[0]!;
+  assert.equal(ended.t, 'ended');
+  if (ended.t === 'ended') {
+    assert.equal(ended.gameId, 'g1');
+    assert.equal(ended.result, '1-0');
+    assert.equal(ended.termination, 'resignation');
+  }
 });
 
 test('getMissedSince returns only broadcasts after the given ply', async () => {

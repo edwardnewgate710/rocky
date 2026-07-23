@@ -36,6 +36,13 @@ export function tournamentChannel(tournamentId: string): string {
   return `tournament:${tournamentId}`;
 }
 
+/** Global channel carrying every game's terminal `ended` broadcast, for
+ *  cross-cutting consumers (e.g. anti-cheat auto-analysis) that must observe
+ *  all finished games without subscribing per game. */
+export function gamesEndedChannel(): string {
+  return 'games:ended';
+}
+
 /** In-process {@link PubSub}. Synchronous delivery, deterministic ordering. */
 export class InMemoryPubSub implements PubSub {
   private readonly channels = new Map<string, Set<(msg: Broadcast) => void>>();
