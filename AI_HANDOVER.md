@@ -36,11 +36,11 @@ dependency-free domain packages** tested with the built-in `node --test` runner.
 | M7 | `@chess-platform/ai-orchestrator` | ✅ AI routing/failover/caching + engine-grounded prompts | 117 (2 key-gated) |
 | M8 | `@chess-platform/ai-features` | ✅ 9 features (Move Explanation → Tournament Commentator) | 140 (16 key-gated) |
 | M9 | `@chess-platform/tournament` (+ api/realtime integration) | ✅ round-robin, Swiss, and Arena formats; persistence + REST API; durable game launcher; realtime result recording (production reporter hosted by the gateway behind `TOURNAMENT_REPORTER=1`, with optimistic-concurrency CAS on tournament saves — inc 13, ADR-0025); live broadcast (ADR-0014 → ADR-0025) | 49 |
-| M12 | api security & anti-cheat | 🚧 **increments 1–3 complete:** CORS + security headers (ADR-0011) · httpOnly refresh cookie (ADR-0012) · auth rate limiting w/ Postgres buckets (ADR-0013) · **anti-cheat inc 1–2:** engine-correlation analyzer (ADR-0029) + cross-game aggregation (ADR-0030) | 19 (anti-cheat) |
+| M12 | api security & anti-cheat | 🚧 **increments 1–3 complete:** CORS + security headers (ADR-0011) · httpOnly refresh cookie (ADR-0012) · auth rate limiting w/ Postgres buckets (ADR-0013) · **anti-cheat inc 1–3:** engine-correlation analyzer (ADR-0029) + cross-game aggregation (ADR-0030) + engine adapter (ADR-0031) | 27 (anti-cheat) |
 | M13 | `@chess-platform/api` + `services/gateway` | 🚧 **inc 1 complete:** dependency-free `Logger`/`Metrics` ports + `traceparent` correlation; structured JSON logs, Prometheus `/v1/metrics` & gateway `/metrics`, real readiness; PII/cardinality-safe (ADR-0028) | — |
 | **M14** | compose + `services/gateway` + `deploy/helm` | 🚧 **increments 1–4 complete:** local compose stack · durable game authority (write-through `EventLog` → Postgres, evict/rehydrate) · Redis pub/sub multi-node fanout (ADR-0008) · Helm chart + kubeconform CI gate (ADR-0009) · threefold-repetition fix (en-passant legality in repetition key) | 4 (Redis-gated) |
 
-**Whole repo: 948 total tests, 0 failures** (skips: 33 = 8 Postgres-gated + 21
+**Whole repo: 956 total tests, 0 failures** (skips: 33 = 8 Postgres-gated + 21
 API-key-gated + 4 Redis-gated — run `npm run test:counts` for the live per-package
 breakdown). Strict TS, lint clean. **CI is active** (`.github/workflows/ci.yml`, 6 jobs:
 build+typecheck+test on Node 22/24, Postgres integration, M6 Playwright+Lighthouse acceptance,

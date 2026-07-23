@@ -5,6 +5,20 @@
   "license": "AGPL-3.0-or-later",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./engine": {
+      "types": "./dist/engine.d.ts",
+      "require": "./dist/engine.js",
+      "import": "./dist/engine.js",
+      "default": "./dist/engine.js"
+    }
+  },
   "files": [
     "dist",
     "src"
@@ -24,7 +38,8 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@chess-platform/core": "file:../chess-core"
+    "@chess-platform/core": "file:../chess-core",
+    "@chess-platform/engine": "file:../engine"
   },
   "devDependencies": {
     "typescript": "^5.5.0",
