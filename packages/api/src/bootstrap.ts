@@ -50,6 +50,10 @@ import type { GameLauncher } from './tournament/launcher';
 import type { TournamentLiveView } from './tournament/live-view';
 import { DurableGameLauncher } from './tournament/durable-launcher';
 import { DurableTournamentLiveView } from './tournament/durable-live-view';
+import type { AnalysisProvider } from '@chess-platform/engine';
+import { EngineBackedEvaluator } from '@chess-platform/anti-cheat/engine';
+import { AntiCheatAnalysisService } from './anti-cheat/analysis-service';
+import { EventStoreGameSource } from './anti-cheat/source';
 
 /** Postgres-backed {@link AuditRepository} writing to the `audit_log` table. */
 export class PgAuditRepository implements AuditRepository {
@@ -110,6 +114,7 @@ export interface PgBootstrapOptions {
   readonly gameLauncher?: GameLauncher;
   readonly liveView?: TournamentLiveView;
   readonly emailSender?: EmailSender;
+  readonly analysisProvider?: AnalysisProvider;
   readonly logger?: Logger;
   readonly metrics?: Metrics;
 }
@@ -142,8 +147,16 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
   const tournamentRepo = options.tournamentRepo ?? new PgTournamentsRepository(pool);
   const eventStore = new PostgresEventStore(pool);
   const gameLauncher = options.gameLauncher ?? new DurableGameLauncher(eventStore, clock);
+  const repos = createPgRepositories(pool, ids);
+  const antiCheatAnalysis = options.analysisProvider
+    ? new AntiCheatAnalysisService(
+        new EventStoreGameSource(eventStore),
+        (variant) => new EngineBackedEvaluator(options.analysisProvider!, variant),
+        repos.antiCheat,
+      )
+    : undefined;
   const deps: ApiDependencies = {
-    repos: createPgRepositories(pool, ids),
+    repos,
     hasher,
     tokens,
     clock,
@@ -154,6 +167,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     gameLauncher,
     liveView: options.liveView ?? new DurableTournamentLiveView(tournamentRepo, eventStore),
     emailSender: options.emailSender ?? new ConsoleEmailSender(),
+    ...(antiCheatAnalysis ? { antiCheatAnalysis } : {}),
     // Production observability (M13): structured logs to stdout + a scrape
     // registry backing GET /v1/metrics.
     logger: options.logger ?? new JsonLogger({ service: 'api' }, { level: resolveLogLevel() }),

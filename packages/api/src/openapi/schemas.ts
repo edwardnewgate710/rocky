@@ -667,4 +667,21 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     type: 'array',
     items: { $ref: '#/components/schemas/AntiCheatGameReportView' },
   },
+
+  AnalyzeGameRequest: {
+    type: 'object',
+    properties: {
+      depth: { type: 'integer', minimum: 8, maximum: 30 },
+    },
+    additionalProperties: false,
+  },
+
+  AntiCheatGameAnalysisView: {
+    type: 'object',
+    required: ['white', 'black'],
+    properties: {
+      white: { $ref: '#/components/schemas/AntiCheatPlayerReport' },
+      black: { $ref: '#/components/schemas/AntiCheatPlayerReport' },
+    },
+  },
 };

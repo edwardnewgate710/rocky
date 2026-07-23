@@ -61,7 +61,7 @@ function operationFor(route: RouteDef): Record<string, unknown> {
     }));
   }
   if (doc.requestSchema) {
-    op['requestBody'] = { required: true, ...bodyRef(doc.requestSchema) };
+    op['requestBody'] = { required: doc.requestBodyRequired ?? true, ...bodyRef(doc.requestSchema) };
   }
   return op;
 }

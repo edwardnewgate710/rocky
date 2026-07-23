@@ -32,9 +32,11 @@ import type { ApiConfig } from './config';
 import type { Clock } from './ports/clock';
 import type { IdGenerator } from './ports/ids';
 import { aggregatePlayer } from '@chess-platform/anti-cheat';
+import { NoEngineForVariantError } from '@chess-platform/engine';
 import {
   antiCheatAggregateView,
   antiCheatGameReportView,
+  antiCheatGameAnalysisView,
   gameSummaryView,
   leaderboardEntry,
   publicUser,
@@ -52,6 +54,7 @@ import type { OpenApiDocument, OpenApiInfo } from './openapi/spec';
 import type { RouteDoc } from './openapi/types';
 import type { GameLauncher } from './tournament/launcher';
 import type { TournamentLiveView } from './tournament/live-view';
+import type { AntiCheatAnalysisService } from './anti-cheat/analysis-service';
 
 /** Collaborators the route handlers need. */
 export interface RouteDeps {
@@ -67,6 +70,7 @@ export interface RouteDeps {
   readonly liveView: TournamentLiveView;
   readonly metrics: Metrics;
   readonly readiness: () => Promise<void>;
+  readonly antiCheatAnalysis?: AntiCheatAnalysisService;
 }
 
 const PUBLIC: AuthPolicy = { required: false };
@@ -665,6 +669,58 @@ export function buildRouter(deps: RouteDeps): Router {
     },
   );
 
+  router.post(
+    '/v1/moderation/anti-cheat/games/:gameId/analyze',
+    doc({
+      summary: 'Trigger anti-cheat analysis for a finished game',
+      security: 'bearer',
+      params: [pathParam('gameId', 'Target game ID (UUID)')],
+      tags: ['moderation', 'anti-cheat'],
+      requestSchema: 'AnalyzeGameRequest',
+      requestBodyRequired: false,
+      responses: {
+        200: ['AntiCheatGameAnalysisView', 'Per-player reports'],
+        404: ['Error', 'No finished game'],
+        422: ['Error', 'Malformed id or depth'],
+        503: ['Error', 'Engine not configured or unavailable for the variant'],
+      },
+    }),
+    MODERATION,
+    async (ctx) => {
+      const actor = requireAuth(ctx);
+      const gameId = parseUuid(ctx.params['gameId']!, 'gameId');
+      const body = strictObject(ctx.body ?? {}, ['depth']);
+      const depth = optInt(body, 'depth', { min: 8, max: 30 });
+      if (!deps.antiCheatAnalysis) {
+        throw HttpError.unavailable('anti-cheat analysis engine is not configured');
+      }
+      await repos.audit.record({
+        actorId: actor.userId,
+        action: 'anti_cheat.analyze',
+        target: gameId,
+        requestId: ctx.requestId,
+        ip: ctx.ip,
+        userAgent: ctx.userAgent,
+        at: clock.now(),
+      });
+      let report;
+      try {
+        report = await deps.antiCheatAnalysis.analyzeAndStore(gameId, { depth });
+      } catch (err) {
+        // No engine is registered for the game's variant — a configuration gap,
+        // not a client error. Degrade to 503 instead of a 500.
+        if (err instanceof NoEngineForVariantError) {
+          throw HttpError.unavailable('anti-cheat analysis engine is unavailable for this variant');
+        }
+        throw err;
+      }
+      if (!report) {
+        throw HttpError.notFound('no finished game with that id');
+      }
+      return json(200, antiCheatGameAnalysisView(report));
+    },
+  );
+
   // --- Ratings / leaderboard ----------------------------------------------
   router.get(
     '/v1/leaderboard/:variant',
@@ -1237,6 +1293,7 @@ interface DocSpec {
   description?: string;
   security?: 'bearer';
   requestSchema?: string;
+  requestBodyRequired?: boolean;
   params?: RouteDoc['params'];
   responses: Record<number, [string | undefined, string]>;
 }
@@ -1252,6 +1309,7 @@ function doc(spec: DocSpec): RouteDoc {
     security: spec.security ?? 'none',
     ...(spec.description ? { description: spec.description } : {}),
     ...(spec.requestSchema ? { requestSchema: spec.requestSchema } : {}),
+    ...(spec.requestBodyRequired !== undefined ? { requestBodyRequired: spec.requestBodyRequired } : {}),
     ...(spec.params ? { params: spec.params } : {}),
     responses,
   };

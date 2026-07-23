@@ -1267,6 +1267,114 @@
         ]
       }
     },
+    "/v1/moderation/anti-cheat/games/{gameId}/analyze": {
+      "post": {
+        "summary": "Trigger anti-cheat analysis for a finished game",
+        "tags": [
+          "moderation",
+          "anti-cheat"
+        ],
+        "operationId": "post_v1_moderation_anti_cheat_games_by_gameId_analyze",
+        "responses": {
+          "200": {
+            "description": "Per-player reports",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiCheatGameAnalysisView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No finished game",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Malformed id or depth",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Engine not configured or unavailable for the variant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "gameId",
+            "in": "path",
+            "required": true,
+            "description": "Target game ID (UUID)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalyzeGameRequest"
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/leaderboard/{variant}": {
       "get": {
         "summary": "Top players for a variant",
@@ -4129,6 +4237,32 @@
         "type": "array",
         "items": {
           "$ref": "#/components/schemas/AntiCheatGameReportView"
+        }
+      },
+      "AnalyzeGameRequest": {
+        "type": "object",
+        "properties": {
+          "depth": {
+            "type": "integer",
+            "minimum": 8,
+            "maximum": 30
+          }
+        },
+        "additionalProperties": false
+      },
+      "AntiCheatGameAnalysisView": {
+        "type": "object",
+        "required": [
+          "white",
+          "black"
+        ],
+        "properties": {
+          "white": {
+            "$ref": "#/components/schemas/AntiCheatPlayerReport"
+          },
+          "black": {
+            "$ref": "#/components/schemas/AntiCheatPlayerReport"
+          }
         }
       }
     }

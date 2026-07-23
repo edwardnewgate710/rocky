@@ -42,6 +42,7 @@
   "dependencies": {
     "@chess-platform/anti-cheat": "file:../anti-cheat",
     "@chess-platform/core": "file:../chess-core",
+    "@chess-platform/engine": "file:../engine",
     "@chess-platform/game": "file:../game",
     "@chess-platform/persistence": "file:../persistence",
     "@chess-platform/realtime-gateway": "file:../realtime-gateway",

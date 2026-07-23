@@ -20,6 +20,10 @@ import { createApiServer } from '../src/server';
 import type { ApiServer } from '../src/server';
 import { InMemoryGameLauncher } from '../src/tournament/launcher';
 import { InMemoryEmailSender } from '../src/ports/email';
+import { InMemoryEventStore } from '@chess-platform/persistence';
+import type { PositionEvaluator } from '@chess-platform/anti-cheat';
+import { AntiCheatAnalysisService } from '../src/anti-cheat/analysis-service';
+import { EventStoreGameSource } from '../src/anti-cheat/source';
 import type { Logger } from '../src/ports/logger';
 
 export const TEST_SECRET = 'test-access-token-secret-0123456789abcdef';
@@ -39,6 +43,7 @@ export interface Harness {
   readonly server: ApiServer;
   readonly repos: InMemoryRepositories;
   readonly tournamentRepo: InMemoryTournamentsRepository;
+  readonly antiCheatEventStore: InMemoryEventStore;
   readonly clock: ManualClock;
   readonly tokens: AccessTokenService;
   readonly emailSender: InMemoryEmailSender;
@@ -58,6 +63,10 @@ export interface HarnessOptions {
   readonly readiness?: () => Promise<void>;
   /** Structured logger; inject a capturing one to assert on log output. */
   readonly logger?: Logger;
+  /** Pass true to simulate a server constructed without an anti-cheat analysis service. */
+  readonly withoutAntiCheatAnalysis?: boolean;
+  /** Override the anti-cheat evaluator (e.g. to make it throw) for edge-case tests. */
+  readonly antiCheatEvaluator?: PositionEvaluator;
 }
 
 export async function startHarness(
@@ -86,9 +95,28 @@ export async function startHarness(
   const gameLauncher = new InMemoryGameLauncher(ids);
   const liveView = { activeGames: () => [] };
   const emailSender = new InMemoryEmailSender();
+  const fakeEvaluator: PositionEvaluator = {
+    evaluate: (_fen, playedUci) => ({
+      topMoves: [
+        { uci: playedUci, cp: 30 },
+        { uci: '0000', cp: 10 },
+      ],
+      playedCp: 30,
+    }),
+  };
+  const antiCheatEventStore = new InMemoryEventStore();
+  const antiCheatEvaluator = harnessOptions.antiCheatEvaluator ?? fakeEvaluator;
+  const antiCheatAnalysis = harnessOptions.withoutAntiCheatAnalysis
+    ? undefined
+    : new AntiCheatAnalysisService(
+        new EventStoreGameSource(antiCheatEventStore),
+        () => antiCheatEvaluator,
+        repos.antiCheat,
+      );
   const server = createApiServer({
     repos, hasher, tokens, clock, ids, rateLimiter, tournamentRepo, gameLauncher, liveView, emailSender,
     config: resolved,
+    ...(antiCheatAnalysis ? { antiCheatAnalysis } : {}),
     ...(harnessOptions.readiness ? { readiness: harnessOptions.readiness } : {}),
     ...(harnessOptions.logger ? { logger: harnessOptions.logger } : {}),
   });
@@ -105,6 +133,7 @@ export async function startHarness(
     server,
     repos,
     tournamentRepo,
+    antiCheatEventStore,
     clock,
     tokens,
     emailSender,

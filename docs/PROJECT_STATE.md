@@ -4,7 +4,9 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-23 — M12 Anti-Cheat Increment 5 (ADR-0033): Postgres persistence (`anti_cheat_reports` table, `PgAntiCheatReportRepository` with atomic `saveBatch` transactions and `(player_id, game_id)` upsert) and read-only moderation REST API (`GET /v1/moderation/anti-cheat/players/:playerId` and `GET /v1/moderation/anti-cheat/players/:playerId/games`, audited, `moderator`/`admin`-gated)._
+_Last updated: 2026-07-23 — M12 Anti-Cheat Increment 6 (ADR-0034): On-demand analysis-trigger pipeline (`FinishedGameSource` port + `EventStoreGameSource` adapter, `AntiCheatAnalysisService` application service, and `POST /v1/moderation/anti-cheat/games/:gameId/analyze` endpoint, audited and `MODERATION`-gated, 503 when unconfigured)._
+
+Prior: M12 Anti-Cheat Increment 5 (ADR-0033): Postgres persistence (`anti_cheat_reports` table, `PgAntiCheatReportRepository` with atomic `saveBatch` transactions and `(player_id, game_id)` upsert) and read-only moderation REST API (`GET /v1/moderation/anti-cheat/players/:playerId` and `GET /v1/moderation/anti-cheat/players/:playerId/games`, audited, `moderator`/`admin`-gated).
 
 Prior: M12 Anti-Cheat Increment 4 (ADR-0032): AntiCheatService and AntiCheatReportRepository port with an in-memory adapter. The pure orchestration composes earlier increments into a usable flow: analyzing a game, saving both players' reports atomically via `saveBatch` keyed by `(playerId, gameId)` for idempotency, and fetching reports to aggregate an account-level signal.
 
@@ -460,5 +462,11 @@ Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
 - **Moderation REST API**: Added `GET /v1/moderation/anti-cheat/players/:playerId` (account aggregate) and `GET /v1/moderation/anti-cheat/players/:playerId/games` (per-game history) to `@chess-platform/api`, gated by policy `MODERATION` (`moderator` or `admin` role). Both endpoints record audit entries (`anti_cheat.aggregate.view` / `anti_cheat.games.view`).
 - **OpenAPI Document**: Updated OpenAPI 3.1 specification committed to `packages/api/openapi.json` with new component schemas (`AntiCheatPlayerReport`, `AntiCheatGameReportView`, `AntiCheatAggregateView`, `AntiCheatGameReportList`) and route definitions.
 - **Root Build Pipeline**: Moved `@chess-platform/engine` and `@chess-platform/anti-cheat` ahead of `@chess-platform/persistence` and `@chess-platform/api` in root `package.json` `build`, `test`, and `lint` scripts to reflect the new package dependency graph.
-- **Next Steps**: Increment 6 will implement the automated analysis trigger pipeline (game history -> plies -> engine -> report generation).
+- **Next Steps**: The on-demand analysis pipeline landed in Increment 6 (below); the automated background/PubSub trigger is deferred to Increment 7.
 
+## M12 Anti-Cheat Increment 6 — On-Demand Analysis Pipeline (ADR-0034)
+- **Application Services**: Added `FinishedGameSource` interface and `EventStoreGameSource` adapter in `@chess-platform/api` to load historical events, reconstruct games via `Game.fromEvents`, and validate finished status and player presence. Implemented `AntiCheatAnalysisService` composing `FinishedGameSource`, `extractPlies`, evaluator factory, and `AntiCheatService.analyzeAndStore`.
+- **Moderation REST Endpoint**: Added `POST /v1/moderation/anti-cheat/games/:gameId/analyze` to `@chess-platform/api`, gated by policy `MODERATION`. Parses optional `depth` parameter `[8, 30]`, records audit entry (`anti_cheat.analyze`), runs analysis, and returns `AntiCheatGameAnalysisView` (`{ white, black }`). Returns 503 if engine is not configured.
+- **Engine Gating & Wiring**: Production bootstrap (`createPgDependencies`) env-gates `AntiCheatAnalysisService` behind `PgBootstrapOptions.analysisProvider`. Test harness (`startHarness`) wires a deterministic fake evaluator for hermetic integration testing.
+- **OpenAPI Document**: Updated OpenAPI 3.1 specification committed to `packages/api/openapi.json` with new component schemas (`AnalyzeGameRequest`, `AntiCheatGameAnalysisView`) and route documentation.
+- **Automated Worker Deferred**: Automated background/PubSub auto-analysis worker deferred to Increment 7.

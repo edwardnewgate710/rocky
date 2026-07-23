@@ -51,6 +51,8 @@ export interface RouteDoc {
   readonly params?: readonly DocParam[];
   /** Component name for the request body schema, if the operation accepts one. */
   readonly requestSchema?: string;
+  /** Whether the request body is required. Defaults to `true` when a `requestSchema` is present. */
+  readonly requestBodyRequired?: boolean;
   readonly responses: Readonly<Record<number, DocResponse>>;
 }
 

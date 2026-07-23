@@ -32,6 +32,7 @@ import type { TournamentLiveView } from './tournament/live-view';
 import type { EmailSender } from './ports/email';
 import type { Logger } from './ports/logger';
 import type { Metrics } from './ports/metrics';
+import type { AntiCheatAnalysisService } from './anti-cheat/analysis-service';
 
 /** The full set of repositories the API consumes. */
 export interface Repositories {
@@ -61,6 +62,7 @@ export interface ApiDependencies {
   readonly gameLauncher: GameLauncher;
   readonly liveView: TournamentLiveView;
   readonly emailSender: EmailSender;
+  readonly antiCheatAnalysis?: AntiCheatAnalysisService;
   /** Structured logger (M13). Defaults to a silent {@link NullLogger}. */
   readonly logger?: Logger;
   /** Metrics registry + scrape target (M13). Defaults to {@link InMemoryMetrics}. */

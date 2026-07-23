@@ -16,6 +16,7 @@ import type {
 } from '@chess-platform/persistence';
 import type {
   PlayerCorrelationReport,
+  GameCorrelationReport,
   PlayerAggregateReport,
   StoredPlayerReport,
   Suspicion,
@@ -216,6 +217,20 @@ export function antiCheatGameReportView(
     playerId: s.playerId,
     color: s.color,
     report: s.report,
+  };
+}
+
+export interface AntiCheatGameAnalysisView {
+  readonly white: PlayerCorrelationReport;
+  readonly black: PlayerCorrelationReport;
+}
+
+export function antiCheatGameAnalysisView(
+  report: GameCorrelationReport,
+): AntiCheatGameAnalysisView {
+  return {
+    white: report.white,
+    black: report.black,
   };
 }
 
