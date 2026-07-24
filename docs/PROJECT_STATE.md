@@ -4,9 +4,18 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-24 — M11 Search Increment 3: natural-language query normalization (parseNaturalQuery) (ADR-0051)._
+_Last updated: 2026-07-24 — M11 Search Increment 4: async SearchRepository port (ADR-0052)._
 
-## M11 Search Increment 3 — Natural-language query normalization (parseNaturalQuery)
+## M11 Search Increment 4 — Async SearchRepository port (ADR-0052)
+
+Async `SearchRepository` port and in-memory adapter signatures in `@chess-platform/search` (ADR-0052):
+- **SearchRepository Port**: Updated interface methods to return Promises (`index`, `indexAll`, `remove`, `clear`, `size`, `query`) enabling future I/O-backed adapters (Postgres full-text and pgvector semantic search) to perform async operations.
+- **InMemorySearchRepository Adapter**: Updated method implementations to `async`, returning resolved Promises with unchanged Map-backed storage, query evaluation, and pagination semantics.
+- **Contracts Unchanged**: `SearchOptions` and `SearchPage` data contracts remain unchanged; no consumers outside `@chess-platform/search` were affected.
+- Detailed in `docs/adr/0052-async-search-repository.md`.
+
+Prior: M11 Search Increment 3 — Natural-language query normalization (parseNaturalQuery) (ADR-0051)
+
 
 Bounded, rule-based natural language query normalizer in `@chess-platform/search` (ADR-0051):
 - **Normalizer (`parseNaturalQuery`)**: `parseNaturalQuery(input: string): SearchQuery` layers on `parseSearchQuery(input)` (preserving explicit `field:value` filters and quoted `"phrases"` intact), promotes recognized chess vocabulary words among bare terms into non-negated filters, drops stop words, and deduplicates filters by `(field, value, negated)` preserving first-occurrence order.

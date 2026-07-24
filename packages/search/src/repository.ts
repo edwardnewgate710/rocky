@@ -19,50 +19,51 @@ export interface SearchPage {
 }
 
 /**
- * A stateful, queryable index of SearchableDocuments. Adapters (in-memory here; Postgres full-text and
- * pgvector semantic in later M11 increments) implement this port.
+ * A stateful, queryable index of SearchableDocuments. The port is async so I/O-backed adapters
+ * (Postgres full-text and pgvector semantic in later M11 increments) can perform I/O operations;
+ * the in-memory adapter satisfies it trivially.
  */
 export interface SearchRepository {
   /** Insert or replace the document with this id (upsert by id). */
-  index(document: SearchableDocument): void;
+  index(document: SearchableDocument): Promise<void>;
   /** Upsert many documents. */
-  indexAll(documents: readonly SearchableDocument[]): void;
+  indexAll(documents: readonly SearchableDocument[]): Promise<void>;
   /** Remove a document by id; returns true iff a document was present and removed. */
-  remove(id: string): boolean;
+  remove(id: string): Promise<boolean>;
   /** Remove all documents. */
-  clear(): void;
+  clear(): Promise<void>;
   /** Number of documents currently indexed. */
-  size(): number;
+  size(): Promise<number>;
   /** Run a query over the whole index and return the requested page (with the total hit count). */
-  query(query: SearchQuery, options?: SearchOptions): SearchPage;
+  query(query: SearchQuery, options?: SearchOptions): Promise<SearchPage>;
 }
 
 export class InMemorySearchRepository implements SearchRepository {
   private readonly docs = new Map<string, SearchableDocument>();
 
-  index(document: SearchableDocument): void {
+  async index(document: SearchableDocument): Promise<void> {
     this.docs.set(document.id, document);
   }
 
-  indexAll(documents: readonly SearchableDocument[]): void {
+  async indexAll(documents: readonly SearchableDocument[]): Promise<void> {
     for (const doc of documents) {
       this.docs.set(doc.id, doc);
     }
   }
 
-  remove(id: string): boolean {
+  async remove(id: string): Promise<boolean> {
     return this.docs.delete(id);
   }
 
-  clear(): void {
+  async clear(): Promise<void> {
     this.docs.clear();
   }
 
-  size(): number {
+  async size(): Promise<number> {
     return this.docs.size;
   }
 
-  query(query: SearchQuery, options?: SearchOptions): SearchPage {
+  async query(query: SearchQuery, options?: SearchOptions): Promise<SearchPage> {
     const allHits = search(query, Array.from(this.docs.values()));
     const total = allHits.length;
 
@@ -77,3 +78,4 @@ export class InMemorySearchRepository implements SearchRepository {
     return { total, results };
   }
 }
+
