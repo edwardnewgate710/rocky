@@ -17,8 +17,9 @@ This increment closes that gap by introducing a lightweight, dependency-free `Tr
 1. **Dependency-free `Tracer` / `Span` Port in `@chess-platform/api`.**
    - No `@opentelemetry/*` SDK or native C++ dependencies are added. The tracing ports and adapters reside in `@chess-platform/api` (a service package), leaving domain packages dependency-free.
    - Core interfaces: `SpanKind` (`server` | `client` | `internal`), `SpanStatus` (`unset` | `ok` | `error`), `SpanAttributeValue` (`string` | `number` | `boolean`), `SpanAttributes`, `Span`, `SpanData`, `StartSpanOptions`, `Tracer`, and `SpanSink`.
-   - `NullTracer` returns a no-op span (`spanId` = `'0000000000000000'`) with zero allocations and no-op mutation/ending.
-   - `RecordingTracer` evaluates a sampler on `startSpan`. If sampled, it allocates a recording span, assigns a 16-hex `spanId` (via `generateSpanId`), tracks attributes and status, and on idempotent `end()` computes `durationMs` and calls `sink(spanData)` exactly once.
+   - Every span — recording or not — carries a valid 16-hex `spanId` and a `sampled` flag, so an unsampled request (or `NullTracer`) still propagates a well-formed outbound `traceparent` (`parseTraceparent` rejects all-zero parent ids).
+   - `NullTracer` mints a fresh valid `spanId` per span, reports `sampled = false`, and no-ops mutation/ending (no recording).
+   - `RecordingTracer` always mints a 16-hex `spanId` (via `generateSpanId`), then evaluates a sampler. If sampled, it returns a recording span (`sampled = true`) that tracks attributes/status and on idempotent `end()` computes `durationMs` and calls `sink(spanData)` exactly once; the sink call is **best-effort** — a throwing sink is swallowed so an export/log failure never escapes into the request path (where the response may already be written). If not sampled, it returns a no-op span that still carries the valid `spanId` with `sampled = false`.
    - `InMemorySpanRecorder` provides a bounded ring-buffer sink (default capacity 1000, oldest dropped on overflow) for testing and introspection.
 
 2. **Sampling Seam.**
@@ -28,7 +29,7 @@ This increment closes that gap by introducing a lightweight, dependency-free `Tr
 3. **Server Request Span Lifecycle & Propagation in `Router`.**
    - Each HTTP request creates an `http.server` span with `traceId`, `parentId` (from inbound `traceparent`), `kind = 'server'`, and initial attribute `http.route = route.path` (or `resolvedRoutePath` on early failure).
    - Outbound trace propagation adds a W3C `traceparent` header `00-<traceId>-<spanId>-<flags>` alongside the legacy `trace-id` header.
-   - The propagated sampled flag (`outboundSampled`) defaults to `inboundSampled ?? true` to align outbound context propagation with the always-on production sampling default.
+   - The outbound `traceparent` sampled flag reflects the tracer's RESOLVED decision (`span.sampled`), so a trace the sampler rejected is never advertised as sampled to downstream services. With the always-on production default this is `01`; a `probabilitySampler` that drops a root trace propagates `00`.
    - On completion (success, handled `HttpError`, or internal 500), the router sets `http.status_code`, sets span status to `'error'` for status >= 500 and `'ok'` for status < 500, and calls `span.end()`.
 
 4. **Production Default: Spans to Structured Logs.**

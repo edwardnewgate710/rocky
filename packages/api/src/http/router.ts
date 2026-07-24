@@ -187,7 +187,6 @@ export class Router {
     res.setHeader('trace-id', traceId); // Echo trace-id on response
 
     const inboundSampled = parsedTrace ? isSampled(parsedTrace.flags) : undefined;
-    const outboundSampled = inboundSampled ?? true;
 
     const method = normalizeMethod(req.method);
 
@@ -199,9 +198,11 @@ export class Router {
       attributes: { 'http.method': method },
     });
 
+    // Propagate the tracer's RESOLVED sampling decision, not a default — a trace
+    // the sampler rejected must not be advertised as sampled to downstream services.
     res.setHeader(
       'traceparent',
-      formatTraceparent({ traceId, spanId: span.spanId, sampled: outboundSampled }),
+      formatTraceparent({ traceId, spanId: span.spanId, sampled: span.sampled }),
     );
 
     const startMs = Date.now();

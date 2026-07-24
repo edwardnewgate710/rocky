@@ -24,7 +24,10 @@ export interface Span {
   setAttribute(key: string, value: SpanAttributeValue): void;
   setStatus(status: SpanStatus): void;
   end(): void;
+  /** Span id used for outbound `traceparent` propagation — always a valid 16-hex id. */
   readonly spanId: string;
+  /** Whether this span is recorded/sampled — drives the outbound sampled flag. */
+  readonly sampled: boolean;
 }
 
 export interface SpanData {
@@ -87,24 +90,35 @@ export function probabilitySampler(ratio: number): Sampler {
   };
 }
 
+/**
+ * A span that records nothing but still carries a valid propagation id, so an
+ * unsampled request (or the {@link NullTracer}) can still be a well-formed
+ * parent in an outbound `traceparent` — `parseTraceparent` rejects all-zero ids.
+ */
 class NoOpSpan implements Span {
-  readonly spanId = '0000000000000000';
+  readonly sampled = false;
+  constructor(readonly spanId: string) {}
   setAttribute(_key: string, _value: SpanAttributeValue): void {}
   setStatus(_status: SpanStatus): void {}
   end(): void {}
 }
 
-const NOOP_SPAN = new NoOpSpan();
-
-/** No-op tracer for silent default operation. */
+/** No-op tracer for silent default operation; still mints valid propagation ids. */
 export class NullTracer implements Tracer {
+  private readonly generateSpanId: () => string;
+
+  constructor(generateSpanId: () => string = defaultGenerateSpanId) {
+    this.generateSpanId = generateSpanId;
+  }
+
   startSpan(_name: string, _options: StartSpanOptions): Span {
-    return NOOP_SPAN;
+    return new NoOpSpan(this.generateSpanId());
   }
 }
 
 class RecordingSpan implements Span {
   readonly spanId: string;
+  readonly sampled = true;
   private readonly name: string;
   private readonly traceId: string;
   private readonly parentId: string | null;
@@ -159,7 +173,14 @@ class RecordingSpan implements Span {
       durationMs,
       attributes: { ...this.attributes },
     };
-    this.sink(spanData);
+    // Export is best-effort: a throwing sink (e.g. a failing log write) must
+    // never escape end() into the request path, where the response may already
+    // have been written and a second write would be attempted.
+    try {
+      this.sink(spanData);
+    } catch {
+      /* swallow — tracing export failures never break the request */
+    }
   }
 }
 
@@ -185,16 +206,18 @@ export class RecordingTracer implements Tracer {
   }
 
   startSpan(name: string, options: StartSpanOptions): Span {
+    // Always mint a valid span id so an unsampled request still propagates a
+    // well-formed `traceparent` (all-zero parent ids are rejected downstream).
+    const spanId = this.generateSpanId();
     const isSampled = this.sampler({
       traceId: options.traceId,
       parentSampled: options.sampledFlag,
     });
 
     if (!isSampled) {
-      return NOOP_SPAN;
+      return new NoOpSpan(spanId);
     }
 
-    const spanId = this.generateSpanId();
     return new RecordingSpan(name, options, spanId, this.sink, this.now);
   }
 }

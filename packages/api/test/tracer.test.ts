@@ -112,12 +112,46 @@ test('InMemorySpanRecorder ring buffer capacity and clear', () => {
   assert.equal(recorder.spans().length, 0);
 });
 
-test('NullTracer is safe, silent, and returns stable no-op spanId', () => {
-  const tracer = new NullTracer();
+test('NullTracer mints a valid propagation id, is silent, and reports not sampled', () => {
+  const tracer = new NullTracer(() => 'aabbccddeeff0011');
   const span = tracer.startSpan('null.span', { traceId: '4bf92f3577b34da6a3ce929d0e0e4736' });
-  assert.equal(span.spanId, '0000000000000000');
+  // A valid 16-hex, non-all-zero id so the outbound traceparent parses downstream.
+  assert.match(span.spanId, /^[0-9a-f]{16}$/);
+  assert.notEqual(span.spanId, '0000000000000000');
+  assert.equal(span.sampled, false);
   span.setAttribute('a', 'b');
   span.setStatus('error');
+  assert.doesNotThrow(() => span.end());
+});
+
+test('unsampled RecordingTracer span still has a valid non-zero propagation id and is not sampled', () => {
+  const spans: SpanData[] = [];
+  const tracer = new RecordingTracer({
+    sink: (s) => spans.push(s),
+    sampler: probabilitySampler(0),
+    generateSpanId: () => '1234abcd5678ef90',
+  });
+  const span = tracer.startSpan('http.server', { traceId: '4bf92f3577b34da6a3ce929d0e0e4736' });
+  assert.equal(span.spanId, '1234abcd5678ef90');
+  assert.notEqual(span.spanId, '0000000000000000');
+  assert.equal(span.sampled, false);
+  span.end();
+  assert.equal(spans.length, 0); // not recorded
+});
+
+test('sampled RecordingTracer span reports sampled=true', () => {
+  const tracer = new RecordingTracer({ sink: () => {}, sampler: probabilitySampler(1) });
+  const span = tracer.startSpan('http.server', { traceId: '4bf92f3577b34da6a3ce929d0e0e4736' });
+  assert.equal(span.sampled, true);
+});
+
+test('RecordingSpan.end swallows a throwing sink so export stays off the request path', () => {
+  const tracer = new RecordingTracer({
+    sink: () => {
+      throw new Error('sink boom');
+    },
+  });
+  const span = tracer.startSpan('http.server', { traceId: '4bf92f3577b34da6a3ce929d0e0e4736' });
   assert.doesNotThrow(() => span.end());
 });
 
