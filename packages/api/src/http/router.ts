@@ -16,7 +16,8 @@ import type { Handler, HandlerResult, Identity, RequestContext } from './context
 import type { RouteDoc } from '../openapi/types';
 import type { Logger } from '../ports/logger';
 import type { Metrics } from '../ports/metrics';
-import { parseTraceparent, generateTraceId } from './traceparent';
+import type { Tracer } from '../ports/tracer';
+import { parseTraceparent, generateTraceId, formatTraceparent, isSampled } from './traceparent';
 
 /** HTTP methods the router dispatches. */
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -59,6 +60,7 @@ export interface RouterRuntime {
   readonly onInternalError?: (err: unknown, requestId: string) => void;
   readonly logger: Logger;
   readonly metrics: Metrics;
+  readonly tracer: Tracer;
 }
 
 const METHODS_WITH_BODY = new Set<HttpMethod>(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -184,13 +186,30 @@ export class Router {
     const traceId = parsedTrace?.traceId ?? generateTraceId();
     res.setHeader('trace-id', traceId); // Echo trace-id on response
 
+    const inboundSampled = parsedTrace ? isSampled(parsedTrace.flags) : undefined;
+    const outboundSampled = inboundSampled ?? true;
+
+    const method = normalizeMethod(req.method);
+
+    const span = runtime.tracer.startSpan('http.server', {
+      traceId,
+      parentId: parsedTrace?.parentId,
+      kind: 'server',
+      sampledFlag: inboundSampled,
+      attributes: { 'http.method': method },
+    });
+
+    res.setHeader(
+      'traceparent',
+      formatTraceparent({ traceId, spanId: span.spanId, sampled: outboundSampled }),
+    );
+
     const startMs = Date.now();
     let resolvedRoutePath = 'unknown';
 
     try {
       const host = headerString(req.headers.host) ?? 'localhost';
       const url = new URL(req.url ?? '/', `http://${host}`);
-      const method = (req.method ?? 'GET').toUpperCase();
 
       const matched = this.match(method, url.pathname);
       if ('allow' in matched) {
@@ -202,6 +221,7 @@ export class Router {
       }
       const { route, params } = matched;
       resolvedRoutePath = route.path;
+      span.setAttribute('http.route', route.path);
 
       const body = METHODS_WITH_BODY.has(route.method)
         ? await readJsonBody(req, maxBody)
@@ -241,17 +261,23 @@ export class Router {
       logger.info('request completed', { status: result.status, durationMs });
       runtime.metrics.counter('http_requests_total', { method, route: route.path, status: String(result.status) }).inc();
       runtime.metrics.histogram('http_request_duration_seconds', LATENCY_BUCKETS, { route: route.path }).observe(durationMs / 1000);
+      span.setAttribute('http.status_code', result.status);
+      span.setStatus(result.status >= 500 ? 'error' : 'ok');
+      span.end();
     } catch (err) {
       const durationMs = Date.now() - startMs;
       const reqPath = req.url ? req.url.split('?')[0] ?? '/' : '/';
-      // req.method is client-controlled here; normalize before it becomes a label.
-      const method = normalizeMethod(req.method);
       const logger = runtime.logger.child({ requestId, traceId, method, path: reqPath });
 
       if (err instanceof HttpError) {
         logger[err.status >= 500 ? 'error' : 'warn']('request failed', { status: err.status, durationMs, code: err.code, err: err.message });
         runtime.metrics.counter('http_requests_total', { method, route: resolvedRoutePath, status: String(err.status) }).inc();
         runtime.metrics.histogram('http_request_duration_seconds', LATENCY_BUCKETS, { route: resolvedRoutePath }).observe(durationMs / 1000);
+        span.setAttribute('http.route', resolvedRoutePath);
+        span.setAttribute('http.status_code', err.status);
+        span.setStatus(err.status >= 500 ? 'error' : 'ok');
+        span.end();
+
         writeResult(res, {
           status: err.status,
           headers: err.headers,
@@ -270,6 +296,10 @@ export class Router {
       logger.error('internal server error', { status: 500, durationMs, err: err instanceof Error ? err.stack ?? err.message : String(err) });
       runtime.metrics.counter('http_requests_total', { method, route: resolvedRoutePath, status: '500' }).inc();
       runtime.metrics.histogram('http_request_duration_seconds', LATENCY_BUCKETS, { route: resolvedRoutePath }).observe(durationMs / 1000);
+      span.setAttribute('http.route', resolvedRoutePath);
+      span.setAttribute('http.status_code', 500);
+      span.setStatus('error');
+      span.end();
 
       onInternal(err, requestId);
       writeResult(res, {

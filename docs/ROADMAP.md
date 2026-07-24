@@ -537,9 +537,11 @@ sensitive auth endpoints with a durable Postgres bucket store (ADR-0013).
 
 
 
-## ⬜ Milestone 13 — Observability & SRE
+## 🚧 Milestone 13 — Observability & SRE
 
 OpenTelemetry, Prometheus, Grafana, alerting, SLOs, runbooks, chaos tests.
+- **Increment 1 complete (ADR-0028):** Zero-dependency `Logger` (`JsonLogger`) & `Metrics` (`InMemoryMetrics`) ports, Prometheus text exposition (`GET /v1/metrics`), W3C `traceparent` parsing, bounded HTTP route metric labels, PII redaction.
+- **Increment 2 complete (ADR-0045):** Dependency-free `Tracer` / `Span` port (`NullTracer`, `RecordingTracer`, `InMemorySpanRecorder`), `http.server` span emission in `router.ts`, `alwaysOnSampler` and `probabilitySampler`, outbound W3C `traceparent` header propagation, and structured log span emission in production.
 
 ## 🚧 Milestone 14 — Deployment & scale
 

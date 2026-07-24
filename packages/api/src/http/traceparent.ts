@@ -1,10 +1,10 @@
 /**
  * @packageDocumentation
  * Minimal W3C Trace Context propagation (M13 observability). Hand-rolled parse
- * of the `traceparent` header — `version-traceid-spanid-flags` — with strict
+ * and format of the `traceparent` header — `version-traceid-spanid-flags` — with strict
  * hex/length validation. We adopt an inbound trace-id when valid and otherwise
- * mint a fresh one; span export and sampling are out of scope for this
- * increment (ids are propagated, not exported).
+ * mint a fresh one. Spans are recorded and trace context is propagated outbound;
+ * only OTLP/collector export remains deferred.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -38,3 +38,24 @@ export function parseTraceparent(header: string | undefined): Traceparent | null
 export function generateTraceId(): string {
   return randomBytes(16).toString('hex');
 }
+
+/** Mint a fresh 8-byte (64-bit) span-id as 16 lowercase hex chars. */
+export function generateSpanId(): string {
+  return randomBytes(8).toString('hex');
+}
+
+/** Format an outbound W3C traceparent header string. */
+export function formatTraceparent(input: {
+  readonly traceId: string;
+  readonly spanId: string;
+  readonly sampled: boolean;
+}): string {
+  const flags = input.sampled ? '01' : '00';
+  return `00-${input.traceId}-${input.spanId}-${flags}`;
+}
+
+/** Check if the W3C traceparent flags indicate sampled (low bit set). */
+export function isSampled(flags: string): boolean {
+  return (parseInt(flags, 16) & 0x01) === 1;
+}
+

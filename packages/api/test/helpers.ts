@@ -26,6 +26,7 @@ import { AntiCheatAnalysisService } from '../src/anti-cheat/analysis-service';
 import { EventStoreGameSource } from '../src/anti-cheat/source';
 import { EventStoreBotTimingSource } from '../src/bot-detection/source';
 import type { Logger } from '../src/ports/logger';
+import type { Tracer } from '../src/ports/tracer';
 
 
 export const TEST_SECRET = 'test-access-token-secret-0123456789abcdef';
@@ -65,6 +66,8 @@ export interface HarnessOptions {
   readonly readiness?: () => Promise<void>;
   /** Structured logger; inject a capturing one to assert on log output. */
   readonly logger?: Logger;
+  /** Tracer; inject a capturing one to assert on span emission. */
+  readonly tracer?: Tracer;
   /** Pass true to simulate a server constructed without an anti-cheat analysis service. */
   readonly withoutAntiCheatAnalysis?: boolean;
   /** Override the anti-cheat evaluator (e.g. to make it throw) for edge-case tests. */
@@ -122,6 +125,7 @@ export async function startHarness(
     ...(antiCheatAnalysis ? { antiCheatAnalysis } : {}),
     ...(harnessOptions.readiness ? { readiness: harnessOptions.readiness } : {}),
     ...(harnessOptions.logger ? { logger: harnessOptions.logger } : {}),
+    ...(harnessOptions.tracer ? { tracer: harnessOptions.tracer } : {}),
   });
   let http: Server;
   let port: number;

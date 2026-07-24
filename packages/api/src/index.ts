@@ -44,6 +44,7 @@ export * from './ports/in-memory-rate-limiter';
 export * from './ports/email';
 export * from './ports/logger';
 export * from './ports/metrics';
+export * from './ports/tracer';
 
 export * from './http/errors';
 export * from './http/context';
