@@ -20,6 +20,12 @@ export class AntiCheatService {
   ) {}
 
   async analyzeAndStore(input: AnalyzeAndStoreInput): Promise<GameCorrelationReport> {
+    if (input.players.white === input.players.black) {
+      throw new Error(
+        `AntiCheatService.analyzeAndStore: white and black must be different players (got "${input.players.white}" for both)`,
+      );
+    }
+
     const report = await analyzeGame({
       plies: input.plies,
       depth: input.depth,

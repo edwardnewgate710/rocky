@@ -330,9 +330,10 @@ anti_cheat_reports(
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (player_id, game_id)
 );
+CREATE INDEX anti_cheat_reports_player_created_idx ON anti_cheat_reports (player_id, created_at, game_id);
 ```
 
-Analytical anti-cheat records store per-player engine-correlation reports. No foreign keys are attached to `player_id` or `game_id` so reports survive independently of user/game row lifecycles. Composite PK `(player_id, game_id)` indexes `player_id` as prefix for `listByPlayer` queries.
+Analytical anti-cheat records store per-player engine-correlation reports. No foreign keys are attached to `player_id` or `game_id` so reports survive independently of user/game row lifecycles. Composite PK `(player_id, game_id)` indexes `player_id` as prefix for `listByPlayer` queries; the `(player_id, created_at, game_id)` index supports `listByPlayer`'s `ORDER BY created_at ASC, game_id ASC` — `game_id` is the tie-breaker so pagination is deterministic (records from one `saveBatch` share `created_at`, since `now()` is fixed per transaction).
 
 ### 4.6 Bot Detection Reports
 

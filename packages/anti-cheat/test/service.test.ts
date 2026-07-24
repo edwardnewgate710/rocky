@@ -128,4 +128,29 @@ describe('AntiCheatReportRepository & AntiCheatService', () => {
     assert.equal(p2Reports.find(r => r.gameId === 'g1')!.color, 'black');
     assert.equal(p2Reports.find(r => r.gameId === 'g2')!.color, 'white');
   });
+
+  it('rejects a game whose two player IDs are identical (would silently drop one report)', async () => {
+    const evaluator = new InMemoryEvaluator();
+    evaluator.set('fen-1', {
+      topMoves: [
+        { uci: 'e2e4', cp: 50 },
+        { uci: 'd2d4', cp: 0 },
+      ],
+    });
+    const repo = new InMemoryAntiCheatReportRepository();
+    const service = new AntiCheatService(evaluator, repo);
+
+    await assert.rejects(
+      () =>
+        service.analyzeAndStore({
+          gameId: 'g-self',
+          players: { white: 'same-id', black: 'same-id' },
+          plies: [{ fen: 'fen-1', playedUci: 'e2e4', player: 'white' }],
+          depth: 18,
+        }),
+      /must be different players/,
+    );
+
+    assert.deepEqual(await repo.listByPlayer('same-id'), []);
+  });
 });

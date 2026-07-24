@@ -4,9 +4,9 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-24 — M12 Bot Detection Increment 6 (ADR-0041): Automatic auto-analysis worker and gateway hosting for bot detection (BotAnalysisService, BotAutoAnalyzer, refactored analyze route, serve.ts BOT_AUTO_ANALYZE=1 hosting block)._
+_Last updated: 2026-07-24 — M12 Anti-Cheat Correctness Hardening (ADR-0042): Engine-correlation anti-cheat parallel correctness bugs fixed (white === black player ID check in AntiCheatService.analyzeAndStore and deterministic listByPlayer ordering via game_id tie-breaker + migration 0012)._
 
-Prior: M12 Bot Detection Increment 5 (ADR-0040): Postgres persistence and moderation REST API (read + on-demand analyze) for bot detection (bot_reports table, PgBotBehaviorReportRepository, EventStoreBotTimingSource, BotDetectionService, read endpoints, and on-demand analyze endpoint).
+Prior: M12 Bot Detection Increment 6 (ADR-0041): Automatic auto-analysis worker and gateway hosting for bot detection (BotAnalysisService, BotAutoAnalyzer, refactored analyze route, serve.ts BOT_AUTO_ANALYZE=1 hosting block).
 
 Prior: M12 Bot Detection Increment 4 (ADR-0039): Bot detection service and report repository (`BotDetectionService` & `BotBehaviorReportRepository` with `InMemoryBotBehaviorReportRepository` in `@chess-platform/anti-cheat`, `AnalyzeBotAndStoreInput`, `GameBotReport`, idempotent `(playerId, gameId)` nested-map upsert, `analyzeAndStore` and `aggregatePlayer` composition).
 
@@ -541,6 +541,11 @@ Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
 - **Gateway Process Hosting**: Hosted `BotAutoAnalyzer` in `services/gateway/src/serve.ts` behind optional environment variable `BOT_AUTO_ANALYZE === '1'`. Requires `DATABASE_URL` (instantiates `PgBotBehaviorReportRepository` and `EventStoreBotTimingSource`). Requires no engine process. Stop hook wired into graceful shutdown.
 - **Package Exports & Documentation**: Exported bot detection source, analysis service, and auto-analyzer from `@chess-platform/api` index. Documented ADR-0041 and updated roadmap.
 - **Hermetic Tests**: Added unit test suite in `packages/api/test/bot-detection-auto-analyzer.test.ts` covering end-to-end auto-analysis, crash-safety and contained error hooks, retry on re-broadcast, deduplication, and subscriber filtering/cleanup.
+
+## M12 Anti-Cheat Correctness Hardening (ADR-0042)
+- **Identical Player ID Validation**: `AntiCheatService.analyzeAndStore` now throws an error if `input.players.white === input.players.black`, preventing silent record overwrites in composite PK `(player_id, game_id)` storage.
+- **Deterministic Repository Ordering**: Updated `PgAntiCheatReportRepository.listByPlayer` SQL to `ORDER BY created_at ASC, game_id ASC` with `game_id` tie-breaker. Added migration `0012_anti_cheat_reports_index.sql` replacing index with `(player_id, created_at, game_id)` for index-backed deterministic pagination.
+- **Documentation & Parity**: Updated `docs/DATABASE.md` §4.5, `docs/ROADMAP.md`, and added `docs/adr/0042-anticheat-correctness-hardening.md`.
 
 
 

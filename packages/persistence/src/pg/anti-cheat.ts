@@ -71,7 +71,7 @@ export class PgAntiCheatReportRepository implements AntiCheatReportRepository {
   async listByPlayer(playerId: string): Promise<readonly StoredPlayerReport[]> {
     const res = await this.pool.query<AntiCheatReportDbRow>(
       `SELECT game_id, player_id, color, report, created_at, updated_at FROM anti_cheat_reports
-       WHERE player_id = $1 ORDER BY created_at ASC`,
+       WHERE player_id = $1 ORDER BY created_at ASC, game_id ASC`,
       [playerId],
     );
     return res.rows.map(toStoredPlayerReport);
