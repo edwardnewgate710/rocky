@@ -4,9 +4,18 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-24 — M11 Search Increment 2: SearchRepository port + in-memory adapter (paginated stateful index) (ADR-0050)._
+_Last updated: 2026-07-24 — M11 Search Increment 3: natural-language query normalization (parseNaturalQuery) (ADR-0051)._
 
-## M11 Search Increment 2 — SearchRepository port + in-memory adapter
+## M11 Search Increment 3 — Natural-language query normalization (parseNaturalQuery)
+
+Bounded, rule-based natural language query normalizer in `@chess-platform/search` (ADR-0051):
+- **Normalizer (`parseNaturalQuery`)**: `parseNaturalQuery(input: string): SearchQuery` layers on `parseSearchQuery(input)` (preserving explicit `field:value` filters and quoted `"phrases"` intact), promotes recognized chess vocabulary words among bare terms into non-negated filters, drops stop words, and deduplicates filters by `(field, value, negated)` preserving first-occurrence order.
+- **Vocabulary & Stop Words**: `NATURAL_VOCABULARY` maps recognized terms to structured filters (variants: `blitz`, `bullet`, `rapid`, `classical`, `chess960`/`960`, `atomic`, `crazyhouse`, `horde`, `antichess`; colors: `white`, `black`; results: `win`/`won`/`wins`/`winning`, `loss`/`lost`/`losses`/`lose`, `draw`/`draws`/`drew`/`drawn`/`tie`/`tied`); `NATURAL_STOP_WORDS` drops 27 filler words carrying no search signal.
+- **Pure & Total**: Operates strictly in memory without I/O or external dependencies, returning a structured `SearchQuery` consumable by existing matchers and repositories.
+- **Deferred**: Semantic vector embeddings and LLM-based query understanding deferred to later M11 increments.
+- Detailed in `docs/adr/0051-natural-query-normalization.md`.
+
+Prior: M11 Search Increment 2 — SearchRepository port + in-memory adapter (ADR-0050)
 
 Stateful repository abstraction and in-memory adapter in `@chess-platform/search` (ADR-0050):
 - **SearchRepository Port**: `SearchRepository` interface with `index(document)`, `indexAll(documents)`, `remove(id)`, `clear()`, `size()`, and `query(query, options)`.
