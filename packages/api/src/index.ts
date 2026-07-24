@@ -47,6 +47,7 @@ export * from './ports/metrics';
 export * from './ports/tracer';
 export * from './ports/span-export';
 export * from './ports/otlp-span-exporter';
+export * from './ports/batch-span-processor';
 
 export * from './http/errors';
 export * from './http/context';

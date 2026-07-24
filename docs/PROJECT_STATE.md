@@ -4,11 +4,20 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-24 — M13 Increment 3: span export seam + OTLP/JSON exporter (ADR-0046)._
+_Last updated: 2026-07-24 — M13 Increment 4: BatchSpanProcessor (buffered, batched span export) (ADR-0047)._
 
-## M13 Increment 3 — span export seam + OTLP/JSON exporter
+## M13 Increment 4 — BatchSpanProcessor (buffered, batched span export)
 
-Span export abstraction, reusable `LoggingSpanExporter`, fan-out `MultiSpanExporter`, pure `toResourceSpans` OTLP/JSON payload builder, and `OtlpJsonSpanExporter` over an injectable `SpanTransport` in `@chess-platform/api` (ADR-0046):
+Buffered and batched span export decorator `BatchSpanProcessor` in `@chess-platform/api` (ADR-0047):
+- **BatchSpanProcessor**: Decorator implementing `SpanExporter` in `src/ports/batch-span-processor.ts` buffering finished spans and flushing them in batches of size `maxExportBatchSize` (default: 512).
+- **Scheduler Seam & Periodic Flush**: Periodic flush every `scheduledDelayMillis` (default: 5000ms) to bound span loss window; `Scheduler` seam with `intervalScheduler` default (unref'd `setInterval`) and manual scheduler test helper.
+- **Bounded Queue**: Bounded by `maxQueueSize` (default: 2048). Drops oldest spans on overflow and increments `droppedSpans` counter.
+- **Lifecycle & Containment**: `forceFlush()` drains queue in batch chunks; `shutdown()` cancels scheduled task and force-flushes (idempotent); downstream export exceptions are contained.
+- **Bootstrap Wiring**: In production `bootstrap.ts`, wraps ONLY `OtlpJsonSpanExporter` inside `MultiSpanExporter` when `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is set. Logging export stays direct per-span.
+- **Deferred**: Retries remain deferred (sync `void` `export` contract cannot signal failure).
+- Detailed in `docs/adr/0047-batch-span-processor.md` and `docs/OBSERVABILITY.md`.
+
+Prior: M13 Increment 3 — span export seam + OTLP/JSON exporter (ADR-0046): Span export abstraction, reusable `LoggingSpanExporter`, fan-out `MultiSpanExporter`, pure `toResourceSpans` OTLP/JSON payload builder, and `OtlpJsonSpanExporter` over an injectable `SpanTransport` in `@chess-platform/api`.
 - **Exporter Seam**: `SpanExporter` port (`export(spans: readonly SpanData[]): void`) in `src/ports/span-export.ts` with best-effort, non-blocking contract.
 - **Whitelisting**: Exported `pickBoundedAttrs` and `BOUNDED_SPAN_ATTRS` (`http.method`, `http.route`, `http.status_code`) as single source of truth; removed bootstrap local copy.
 - **Exporters**: `LoggingSpanExporter` (same structured JSON log output as inc 2), `MultiSpanExporter` (composite fan-out with try/catch error containment), and `spanSinkFromExporter` adapter.

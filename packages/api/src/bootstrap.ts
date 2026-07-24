@@ -40,6 +40,7 @@ import {
   FetchSpanTransport,
   resolveOtlpTracesEndpoint,
 } from './ports/otlp-span-exporter';
+import { BatchSpanProcessor } from './ports/batch-span-processor';
 import { ScryptPasswordHasher } from './auth/password';
 
 import type { PasswordHasher } from './auth/password';
@@ -180,11 +181,13 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
   const exporter = otlpTracesUrl
     ? new MultiSpanExporter([
         logExporter,
-        new OtlpJsonSpanExporter(new FetchSpanTransport(otlpTracesUrl), {
-          serviceName: 'api',
-          scopeName: '@chess-platform/api',
-          scopeVersion: '0.1.0',
-        }),
+        new BatchSpanProcessor(
+          new OtlpJsonSpanExporter(new FetchSpanTransport(otlpTracesUrl), {
+            serviceName: 'api',
+            scopeName: '@chess-platform/api',
+            scopeVersion: '0.1.0',
+          }),
+        ),
       ])
     : logExporter;
   const tracer =
