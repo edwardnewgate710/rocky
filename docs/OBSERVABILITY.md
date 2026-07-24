@@ -45,6 +45,13 @@ Metrics are exposed in standard Prometheus text format (`v0.0.4`) at `GET /v1/me
 - `http_requests_total` (counter): Count of HTTP requests labeled by `method`, `route` (pattern), and `status`.
 - `http_request_duration_seconds` (histogram): Request latency in seconds bucketed across standard intervals (`0.005s` to `10s`), labeled by `route`.
 
+### Span Export Pipeline
+When OTLP export is enabled, `BatchSpanProcessor` self-instruments by emitting unlabelled Prometheus counters to `GET /v1/metrics`:
+- `span_export_received_total` (counter): Spans accepted into the pipeline.
+- `span_export_dropped_total` (counter): Spans dropped due to queue overflow eviction or post-shutdown exports.
+- `span_export_exported_total` (counter): Spans handed to the downstream exporter (in batches).
+- `span_export_batches_total` (counter): Batches dispatched to the downstream exporter.
+
 ### Cardinality Discipline
 - **Route Patterns**: HTTP routes are labeled by parameterized pattern (e.g. `/v1/users/:handle`), never concrete values like `/v1/users/alice`.
 - **Method Normalization**: on every request path, the HTTP method is normalized to a known verb or `OTHER` before it becomes a metric label or span attribute, so an unrecognized or custom method cannot inflate cardinality.
@@ -75,6 +82,6 @@ Metrics are exposed in standard Prometheus text format (`v0.0.4`) at `GET /v1/me
   - `OtlpJsonSpanExporter`: Serializes spans into standard OTLP/JSON trace payloads (`OtlpTracesPayload`) with nanosecond BigInt timestamps, mapped enums, and typed attribute values (`stringValue`, `intValue`, `boolValue`, `doubleValue`), sending via an injectable `SpanTransport`.
   - `MultiSpanExporter`: Composite exporter that fans out span batches to multiple child exporters, containing individual exporter failures so one failing transport does not block others.
 - **OTLP Endpoint Gate**: Configured via `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (used verbatim) or the generic `OTEL_EXPORTER_OTLP_ENDPOINT` (a base URL onto which `/v1/traces` is appended per the OTLP/HTTP spec). When either resolves, production bootstrap combines `LoggingSpanExporter` and the (batched) `OtlpJsonSpanExporter` via `MultiSpanExporter`. When neither is set, `LoggingSpanExporter` is used exclusively.
-- **Span Processor (`BatchSpanProcessor`)**: OTLP span export is batched by `BatchSpanProcessor` (decorating `OtlpJsonSpanExporter` in production `bootstrap.ts`). Defaults to `maxQueueSize = 2048`, `maxExportBatchSize = 512`, and periodic flush delay `scheduledDelayMillis = 5000` via an unref'd `intervalScheduler`. Logging export stays direct and per-span. Queue overflow drops oldest spans and increments `droppedSpans`. `shutdown()` drains remaining queue contents and cancels periodic tasks.
+- **Span Processor (`BatchSpanProcessor`)**: OTLP span export is batched by `BatchSpanProcessor` (decorating `OtlpJsonSpanExporter` in production `bootstrap.ts`). Defaults to `maxQueueSize = 2048`, `maxExportBatchSize = 512`, and periodic flush delay `scheduledDelayMillis = 5000` via an unref'd `intervalScheduler`. Logging export stays direct and per-span. Queue overflow drops oldest spans and increments `droppedSpans`. `shutdown()` drains remaining queue contents and cancels periodic tasks. The processor is self-instrumented: when `metrics` is provided (as in `bootstrap.ts`), it emits unlabelled Prometheus counters (`span_export_received_total`, `span_export_dropped_total`, `span_export_exported_total`, `span_export_batches_total`) for scraping at `GET /v1/metrics`.
 - **Deferred**: Export retries remain deferred (sync `void` `export` contract).
 

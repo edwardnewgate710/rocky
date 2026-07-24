@@ -4,18 +4,27 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-24 — M13 Increment 4: BatchSpanProcessor (buffered, batched span export) (ADR-0047)._
+_Last updated: 2026-07-24 — M13 Increment 5: span-export pipeline self-instrumentation (metrics) (ADR-0048)._
 
-## M13 Increment 4 — BatchSpanProcessor (buffered, batched span export)
+## M13 Increment 5 — span-export pipeline self-instrumentation (metrics)
 
-Buffered and batched span export decorator `BatchSpanProcessor` in `@chess-platform/api` (ADR-0047):
+Self-observing span export pipeline in `@chess-platform/api` (ADR-0048):
+- **BatchSpanProcessor Self-Instrumentation**: Emits Prometheus counters via `metrics?: Metrics` in `BatchSpanProcessorOptions` to surface pipeline health at `GET /v1/metrics`.
+- **Counters**: `span_export_received_total` (spans accepted), `span_export_dropped_total` (spans evicted on overflow + post-shutdown drops), `span_export_exported_total` (spans dispatched downstream), and `span_export_batches_total` (batches dispatched downstream).
+- **Cardinality Discipline**: Counters carry NO labels (cardinality and PII safe).
+- **Dropped Count Agreement**: `span_export_dropped_total` and `processor.droppedSpans` stay in exact agreement.
+- **Bootstrap Wiring**: In production `bootstrap.ts`, passes the shared `metrics` instance to `BatchSpanProcessor` on the OTLP path.
+- **Deferred**: True export-FAILURE counters + retries remain deferred to the async-exporter increment (synchronous `void` export cannot confirm collector receipt).
+- Detailed in `docs/adr/0048-span-export-metrics.md` and `docs/OBSERVABILITY.md`.
+
+Prior: M13 Increment 4 — BatchSpanProcessor (buffered, batched span export) (ADR-0047): Buffered and batched span export decorator `BatchSpanProcessor` in `@chess-platform/api` (ADR-0047):
 - **BatchSpanProcessor**: Decorator implementing `SpanExporter` in `src/ports/batch-span-processor.ts` buffering finished spans and flushing them in batches of size `maxExportBatchSize` (default: 512).
 - **Scheduler Seam & Periodic Flush**: Periodic flush every `scheduledDelayMillis` (default: 5000ms) to bound span loss window; `Scheduler` seam with `intervalScheduler` default (unref'd `setInterval`) and manual scheduler test helper.
 - **Bounded Queue**: Bounded by `maxQueueSize` (default: 2048). Drops oldest spans on overflow and increments `droppedSpans` counter.
 - **Lifecycle & Containment**: `forceFlush()` drains queue in batch chunks; `shutdown()` cancels scheduled task and force-flushes (idempotent); downstream export exceptions are contained.
 - **Bootstrap Wiring**: In production `bootstrap.ts`, wraps ONLY `OtlpJsonSpanExporter` inside `MultiSpanExporter` when `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is set. Logging export stays direct per-span.
 - **Deferred**: Retries remain deferred (sync `void` `export` contract cannot signal failure).
-- Detailed in `docs/adr/0047-batch-span-processor.md` and `docs/OBSERVABILITY.md`.
+- **Detailed in `docs/adr/0047-batch-span-processor.md` and `docs/OBSERVABILITY.md`.**
 
 Prior: M13 Increment 3 — span export seam + OTLP/JSON exporter (ADR-0046): Span export abstraction, reusable `LoggingSpanExporter`, fan-out `MultiSpanExporter`, pure `toResourceSpans` OTLP/JSON payload builder, and `OtlpJsonSpanExporter` over an injectable `SpanTransport` in `@chess-platform/api`.
 - **Exporter Seam**: `SpanExporter` port (`export(spans: readonly SpanData[]): void`) in `src/ports/span-export.ts` with best-effort, non-blocking contract.

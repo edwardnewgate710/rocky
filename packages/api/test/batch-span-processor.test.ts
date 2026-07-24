@@ -7,6 +7,7 @@ import {
   intervalScheduler,
 } from '../src/ports/batch-span-processor';
 import { spanSinkFromExporter } from '../src/ports/span-export';
+import { InMemoryMetrics } from '../src/ports/metrics';
 
 function makeManualScheduler() {
   let scheduled: (() => void) | null = null;
@@ -330,3 +331,87 @@ test('intervalScheduler returns a ScheduledTask with cancel function', () => {
   assert.equal(typeof task.cancel, 'function');
   assert.doesNotThrow(() => task.cancel());
 });
+
+test('BatchSpanProcessor records received, exported, and batches metrics when provided', () => {
+  const { scheduler } = makeManualScheduler();
+  const batches: SpanData[][] = [];
+  const downstream: SpanExporter = { export: (s) => batches.push([...s]) };
+  const metrics = new InMemoryMetrics();
+
+  const processor = new BatchSpanProcessor(downstream, {
+    maxExportBatchSize: 2,
+    scheduler,
+    metrics,
+  });
+
+  processor.export([makeSpan('s1'), makeSpan('s2'), makeSpan('s3')]);
+  processor.forceFlush();
+
+  const rendered = metrics.render();
+  assert.match(rendered, /^span_export_received_total 3$/m);
+  assert.match(rendered, /^span_export_exported_total 3$/m);
+  assert.match(rendered, /^span_export_batches_total 2$/m);
+});
+
+test('BatchSpanProcessor records dropped metrics on queue overflow', () => {
+  const { scheduler } = makeManualScheduler();
+  const batches: SpanData[][] = [];
+  const downstream: SpanExporter = { export: (s) => batches.push([...s]) };
+  const metrics = new InMemoryMetrics();
+
+  const processor = new BatchSpanProcessor(downstream, {
+    maxQueueSize: 2,
+    maxExportBatchSize: 100,
+    scheduler,
+    metrics,
+  });
+
+  processor.export([makeSpan('s1'), makeSpan('s2'), makeSpan('s3')]);
+
+  assert.equal(processor.droppedSpans, 1);
+  const rendered = metrics.render();
+  assert.match(rendered, /^span_export_dropped_total 1$/m);
+});
+
+test('BatchSpanProcessor records dropped metrics on post-shutdown export', () => {
+  const { scheduler } = makeManualScheduler();
+  const batches: SpanData[][] = [];
+  const downstream: SpanExporter = { export: (s) => batches.push([...s]) };
+  const metrics = new InMemoryMetrics();
+
+  const processor = new BatchSpanProcessor(downstream, {
+    maxExportBatchSize: 5,
+    scheduler,
+    metrics,
+  });
+
+  processor.export([makeSpan('s1')]);
+  processor.forceFlush();
+  processor.shutdown();
+
+  processor.export([makeSpan('s2'), makeSpan('s3')]);
+
+  assert.equal(processor.droppedSpans, 2);
+  const rendered = metrics.render();
+  assert.match(rendered, /^span_export_dropped_total 2$/m);
+});
+
+test('BatchSpanProcessor operates without throwing when no metrics registry is provided', () => {
+  const { scheduler } = makeManualScheduler();
+  const batches: SpanData[][] = [];
+  const downstream: SpanExporter = { export: (s) => batches.push([...s]) };
+
+  const processor = new BatchSpanProcessor(downstream, {
+    maxQueueSize: 2,
+    maxExportBatchSize: 2,
+    scheduler,
+  });
+
+  assert.doesNotThrow(() => {
+    processor.export([makeSpan('s1'), makeSpan('s2'), makeSpan('s3')]);
+    processor.forceFlush();
+    processor.shutdown();
+    processor.export([makeSpan('s4')]);
+  });
+});
+

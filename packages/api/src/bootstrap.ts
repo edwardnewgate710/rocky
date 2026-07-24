@@ -187,6 +187,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
             scopeName: '@chess-platform/api',
             scopeVersion: '0.1.0',
           }),
+          { metrics },
         ),
       ])
     : logExporter;

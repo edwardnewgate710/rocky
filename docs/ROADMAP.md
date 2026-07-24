@@ -544,6 +544,7 @@ OpenTelemetry, Prometheus, Grafana, alerting, SLOs, runbooks, chaos tests.
 - **Increment 2 complete (ADR-0045):** Dependency-free `Tracer` / `Span` port (`NullTracer`, `RecordingTracer`, `InMemorySpanRecorder`), `http.server` span emission in `router.ts`, `alwaysOnSampler` and `probabilitySampler`, outbound W3C `traceparent` header propagation, and structured log span emission in production.
 - **Increment 3 complete (ADR-0046):** `SpanExporter` seam, `LoggingSpanExporter`, `MultiSpanExporter` composite fan-out, pure `toResourceSpans` OTLP/JSON mapping, `OtlpJsonSpanExporter` with `SpanTransport`, `OTEL_EXPORTER_OTLP_ENDPOINT` environment gate, and `FetchSpanTransport` boundary adapter.
 - **Increment 4 complete (ADR-0047):** `BatchSpanProcessor` decorator buffering finished spans and exporting in batches (`maxQueueSize = 2048`, `maxExportBatchSize = 512`, 5s flush delay), `Scheduler` seam with unref'd `intervalScheduler` default, bounded queue with oldest-drop policy and drop counter, wrapping OTLP exporter in bootstrap.
+- **Increment 5 complete (ADR-0048):** Span-export pipeline self-instrumentation (`BatchSpanProcessor` emits `span_export_received_total`, `span_export_dropped_total`, `span_export_exported_total`, and `span_export_batches_total` counters to `InMemoryMetrics` for scraping at `GET /v1/metrics`).
 
 ## 🚧 Milestone 14 — Deployment & scale
 

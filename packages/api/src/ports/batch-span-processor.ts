@@ -20,6 +20,7 @@
 
 import type { SpanData } from './tracer';
 import type { SpanExporter } from './span-export';
+import type { Metrics, Counter } from './metrics';
 
 export interface ScheduledTask {
   cancel(): void;
@@ -43,6 +44,8 @@ export interface BatchSpanProcessorOptions {
   maxExportBatchSize?: number;
   scheduledDelayMillis?: number;
   scheduler?: Scheduler;
+  /** Optional metrics registry; when provided, the processor emits span-export counters for scraping at `/v1/metrics`. */
+  metrics?: Metrics;
 }
 
 const DEFAULT_MAX_QUEUE_SIZE = 2048;
@@ -60,10 +63,21 @@ export class BatchSpanProcessor implements SpanExporter {
   private readonly scheduler: Scheduler;
   private readonly task: ScheduledTask;
 
+  private readonly receivedCounter?: Counter;
+  private readonly droppedCounter?: Counter;
+  private readonly exportedCounter?: Counter;
+  private readonly batchesCounter?: Counter;
+
   constructor(
     private readonly downstream: SpanExporter,
     options?: BatchSpanProcessorOptions,
   ) {
+    if (options?.metrics) {
+      this.receivedCounter = options.metrics.counter('span_export_received_total');
+      this.droppedCounter = options.metrics.counter('span_export_dropped_total');
+      this.exportedCounter = options.metrics.counter('span_export_exported_total');
+      this.batchesCounter = options.metrics.counter('span_export_batches_total');
+    }
     const rawMaxQueueSize = options?.maxQueueSize ?? DEFAULT_MAX_QUEUE_SIZE;
     const rawMaxExportBatchSize = options?.maxExportBatchSize ?? DEFAULT_MAX_EXPORT_BATCH_SIZE;
 
@@ -86,8 +100,11 @@ export class BatchSpanProcessor implements SpanExporter {
   export(spans: readonly SpanData[]): void {
     if (this.shuttingDown) {
       this.droppedCount += spans.length;
+      this.droppedCounter?.inc(spans.length);
       return;
     }
+
+    this.receivedCounter?.inc(spans.length);
 
     // Enforce the bound incrementally so a single large export() never allocates
     // past maxQueueSize: push one, evict the oldest if over cap.
@@ -96,6 +113,7 @@ export class BatchSpanProcessor implements SpanExporter {
       if (this.queue.length > this.maxQueueSize) {
         this.queue.shift();
         this.droppedCount += 1;
+        this.droppedCounter?.inc(1);
       }
     }
 
@@ -107,6 +125,8 @@ export class BatchSpanProcessor implements SpanExporter {
   private exportBatch(n: number): void {
     const batch = this.queue.splice(0, n);
     if (batch.length === 0) return;
+    this.exportedCounter?.inc(batch.length);
+    this.batchesCounter?.inc(1);
     try {
       this.downstream.export(batch);
     } catch {
