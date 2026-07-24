@@ -33,6 +33,8 @@
  *   re-scans running tournaments for games launched by other processes.
  * - `BOT_AUTO_ANALYZE` (optional, "1" to enable) — hosts the bot-detection
  *   auto-analyzer in this process; requires `DATABASE_URL`; needs no engine.
+ * - `ANTICHEAT_AUTO_ANALYZE` (optional, "1" to enable) — hosts the anti-cheat
+ *   auto-analyzer; requires `DATABASE_URL` and an engine binary (`STOCKFISH_PATH`).
 
  *
  * Durable event log: ADR-0007 (M14 inc 2).
@@ -213,6 +215,32 @@ async function main(): Promise<void> {
       worker.start();
       botAutoAnalyzer = worker;
       logger.info('BotAutoAnalyzer is enabled');
+    }
+  }
+
+  // --- Anti-Cheat Auto-Analyzer (M12 inc 8, ADR-0043) ---
+  let antiCheatAutoAnalyzer: { stop(): void } | undefined;
+  let antiCheatEngine: { shutdown(options?: { deadlineMs?: number }): Promise<void> } | undefined;
+  if (process.env['ANTICHEAT_AUTO_ANALYZE'] === '1') {
+    if (!pgPool || !eventStore) {
+      logger.warn('ANTICHEAT_AUTO_ANALYZE requires DATABASE_URL to be set');
+    } else {
+      const { PgAntiCheatReportRepository } = await import('@chess-platform/persistence/pg');
+      const api = await import('@chess-platform/api');
+
+      const engine = api.createEngineProviderFromEnv();
+      if (!engine) {
+        logger.warn('ANTICHEAT_AUTO_ANALYZE requires an engine binary (set STOCKFISH_PATH)');
+      } else {
+        const source = new api.EventStoreGameSource(eventStore);
+        const repo = new PgAntiCheatReportRepository(pgPool);
+        const service = api.createEngineBackedAnalysisService(source, engine, repo);
+        const worker = new api.AntiCheatAutoAnalyzer(pubsub, service);
+        worker.start();
+        antiCheatAutoAnalyzer = worker;
+        antiCheatEngine = engine;
+        logger.info('AntiCheatAutoAnalyzer is enabled');
+      }
     }
   }
 
@@ -422,12 +450,19 @@ async function main(): Promise<void> {
     clearInterval(heartbeat);
     reporter?.stop();
     botAutoAnalyzer?.stop();
+    antiCheatAutoAnalyzer?.stop();
+    // Start engine (subprocess) shutdown now so it runs concurrently with the
+    // socket drain, but await it below before process.exit so cleanup can't be cut short.
+    const engineShutdown = antiCheatEngine?.shutdown().catch((err: unknown) =>
+      logger.error('AntiCheat engine shutdown failed', { err: err instanceof Error ? (err.stack ?? err.message) : String(err) }),
+    );
     logger.info('Shutdown signal received — closing');
     for (const client of wss.clients) {
       client.terminate();
     }
     wss.close(() => {
       healthServer.close(async () => {
+        await engineShutdown; // ensure engine subprocesses are cleaned up before exit
         if (commandConsumer) commandConsumer.stop();
         if (ownershipRegistry) {
           ownershipRegistry.stopRenewal();

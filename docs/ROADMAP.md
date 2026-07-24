@@ -533,6 +533,7 @@ sensitive auth endpoints with a durable Postgres bucket store (ADR-0013).
 **Anti-cheat Increments 1–7 complete:** pure domain engine-correlation scoring (ADR-0029), per-player account-level aggregation (ADR-0030), `EngineBackedEvaluator` adapter (ADR-0031), `AntiCheatService`/`AntiCheatReportRepository` ports (ADR-0032), Postgres persistence with atomic `saveBatch` transactions and read-only moderation REST API (ADR-0033), on-demand analysis-trigger pipeline (ADR-0034), and automated auto-analysis worker (ADR-0035).
 **Bot Detection Increments 1–6 complete:** pure domain behavioral move-time analyzer (ADR-0036), cross-game behavioral aggregation (ADR-0037), move-timing extraction (ADR-0038), service + report repository (ADR-0039), Postgres persistence + moderation REST API (ADR-0040), and automatic auto-analysis worker + gateway hosting (ADR-0041). Bot detection is now feature-complete; the pen-test pass remains.
 **Anti-Cheat Correctness Hardening complete (ADR-0042):** engine-correlation correctness follow-ups landed (identical white/black player ID guard in `AntiCheatService.analyzeAndStore` and deterministic `listByPlayer` ordering via `game_id` tie-breaker + migration `0012`).
+**Anti-Cheat Increment 8 complete (ADR-0043):** anti-cheat auto-analyzer gateway hosting with a real engine landed (`createEngineProviderFromEnv`, `createEngineBackedAnalysisService`, `serve.ts` `ANTICHEAT_AUTO_ANALYZE=1` hosting block and graceful engine shutdown). Anti-cheat is now fully production-hostable end-to-end.
 
 
 

@@ -4,7 +4,9 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-24 — M12 Anti-Cheat Correctness Hardening (ADR-0042): Engine-correlation anti-cheat parallel correctness bugs fixed (white === black player ID check in AntiCheatService.analyzeAndStore and deterministic listByPlayer ordering via game_id tie-breaker + migration 0012)._
+_Last updated: 2026-07-24 — M12 Anti-Cheat Increment 8 (ADR-0043): Production engine wiring and gateway hosting for anti-cheat auto-analyzer (createEngineProviderFromEnv, createEngineBackedAnalysisService, serve.ts ANTICHEAT_AUTO_ANALYZE=1 hosting block and graceful engine shutdown)._
+
+Prior: M12 Anti-Cheat Correctness Hardening (ADR-0042): Engine-correlation anti-cheat parallel correctness bugs fixed (white === black player ID check in AntiCheatService.analyzeAndStore and deterministic listByPlayer ordering via game_id tie-breaker + migration 0012).
 
 Prior: M12 Bot Detection Increment 6 (ADR-0041): Automatic auto-analysis worker and gateway hosting for bot detection (BotAnalysisService, BotAutoAnalyzer, refactored analyze route, serve.ts BOT_AUTO_ANALYZE=1 hosting block).
 
@@ -546,6 +548,13 @@ Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
 - **Identical Player ID Validation**: `AntiCheatService.analyzeAndStore` now throws an error if `input.players.white === input.players.black`, preventing silent record overwrites in composite PK `(player_id, game_id)` storage.
 - **Deterministic Repository Ordering**: Updated `PgAntiCheatReportRepository.listByPlayer` SQL to `ORDER BY created_at ASC, game_id ASC` with `game_id` tie-breaker. Added migration `0012_anti_cheat_reports_index.sql` replacing index with `(player_id, created_at, game_id)` for index-backed deterministic pagination.
 - **Documentation & Parity**: Updated `docs/DATABASE.md` §4.5, `docs/ROADMAP.md`, and added `docs/adr/0042-anticheat-correctness-hardening.md`.
+
+## M12 Anti-Cheat Increment 8 — Production Engine Wiring & Gateway Hosting (ADR-0043)
+- **Engine Provider Factories**: Added `createEngineProviderFromEnv()` (reads `STOCKFISH_PATH`, instantiates `EngineManager` lazily or returns `undefined`) and `createEngineBackedAnalysisService(source, provider, repository)` in `packages/api/src/anti-cheat/engine-provider.ts`, re-exported from `@chess-platform/api`.
+- **Gateway Process Hosting**: Hosted `AntiCheatAutoAnalyzer` in `services/gateway/src/serve.ts` behind `ANTICHEAT_AUTO_ANALYZE === '1'`. Requires `DATABASE_URL` (for `PgAntiCheatReportRepository` and `EventStoreGameSource`) and an engine binary (`STOCKFISH_PATH`). Logs clear warnings if either requirement is missing.
+- **Graceful Subprocess Shutdown**: Integrated `antiCheatAutoAnalyzer?.stop()` and engine pool shutdown (`antiCheatEngine.shutdown()`) into the gateway's `SIGINT`/`SIGTERM` shutdown handler.
+- **Documentation**: Added `docs/adr/0043-anticheat-engine-hosting.md` and updated `docs/ROADMAP.md` and `docs/PROJECT_STATE.md`.
+- **Hermetic Tests**: Added unit test suite in `packages/api/test/anti-cheat-engine-provider.test.ts` testing environment variable reading and end-to-end anti-cheat analysis/storage using a fake `AnalysisProvider`.
 
 
 

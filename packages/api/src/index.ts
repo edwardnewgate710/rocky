@@ -25,6 +25,7 @@ export * from './tournament/reporter';
 export * from './anti-cheat/source';
 export * from './anti-cheat/analysis-service';
 export * from './anti-cheat/auto-analyzer';
+export * from './anti-cheat/engine-provider';
 export * from './bot-detection/source';
 export * from './bot-detection/analysis-service';
 export * from './bot-detection/auto-analyzer';
