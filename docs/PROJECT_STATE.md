@@ -4,9 +4,20 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-24 — M11 Search Increment 4: async SearchRepository port (ADR-0052)._
+_Last updated: 2026-07-24 — M11 Search Increment 5: Postgres full-text adapter (PgSearchRepository) (ADR-0053)._
 
-## M11 Search Increment 4 — Async SearchRepository port (ADR-0052)
+## M11 Search Increment 5 — Postgres full-text adapter (PgSearchRepository) (ADR-0053)
+
+Durable Postgres full-text adapter `PgSearchRepository` in `@chess-platform/persistence` implementing `SearchRepository` (ADR-0053):
+- **Schema & Migration (`0013_search_documents.sql`)**: `search_documents` table with `id TEXT PRIMARY KEY`, `text TEXT`, `fields JSONB`, and stored generated `tsv tsvector` using `'simple'` configuration, with GIN indexes on `tsv` and `fields`.
+- **`PgSearchRepository` Adapter**: Implements `SearchRepository` (`index`, `indexAll` with atomic transaction, `remove`, `clear`, `size`, `query`) in `@chess-platform/persistence/pg`.
+- **Parameterized Query Building**: Query translator converting terms via `plainto_tsquery('simple', $N)` and phrases via `phraseto_tsquery('simple', $N)`, combined with `&&`. Case-insensitive field filters using `lower(fields->>$N) = lower($M)` or `IS DISTINCT FROM` for negation. All user inputs passed as SQL bound parameters ($1, $2, ...) ensuring zero SQL injection.
+- **Scoring & Pagination**: `ts_rank(tsv, tsquery)` scoring when text terms/phrases exist (0 otherwise for filter-only/empty queries ordered `id ASC`), separate total count query before appending `LIMIT` / `OFFSET`.
+- **Integration Testing**: Ephemeral Postgres integration test (`search.integration.test.ts`) covering index, query, upsert, remove, field filters, negation, and pagination, cleanly skipping when `DATABASE_URL` is unset.
+- **Deferred**: pgvector semantic vector search adapter and REST/GraphQL API integration deferred to later M11 increments.
+- Detailed in `docs/adr/0053-pg-search-repository.md` and `docs/DATABASE.md`.
+
+Prior: M11 Search Increment 4 — Async SearchRepository port (ADR-0052)
 
 Async `SearchRepository` port and in-memory adapter signatures in `@chess-platform/search` (ADR-0052):
 - **SearchRepository Port**: Updated interface methods to return Promises (`index`, `indexAll`, `remove`, `clear`, `size`, `query`) enabling future I/O-backed adapters (Postgres full-text and pgvector semantic search) to perform async operations.

@@ -527,6 +527,7 @@ natural-language query parsing.
 - **Increment 2 complete (ADR-0050):** `SearchRepository` port + in-memory paginated adapter (`InMemorySearchRepository`, `SearchOptions`, `SearchPage`).
 - **Increment 3 complete (ADR-0051):** natural-language query normalization (`parseNaturalQuery`, `NATURAL_VOCABULARY`, `NATURAL_STOP_WORDS`).
 - **Increment 4 complete (ADR-0052):** async `SearchRepository` port (`Promise`-returning signatures) enabling I/O-backed adapters (Postgres full-text search) to implement the interface.
+- **Increment 5 complete (ADR-0053):** Postgres full-text adapter `PgSearchRepository` in `@chess-platform/persistence` (`/pg` subpath) + migration `0013_search_documents.sql` (`tsvector` 'simple' column + GIN index, jsonb field filters, parameterized SQL queries, `ts_rank` scoring).
 
 
 

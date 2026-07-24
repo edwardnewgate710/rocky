@@ -352,7 +352,22 @@ CREATE INDEX bot_reports_player_created_idx ON bot_reports (player_id, created_a
 
 Behavioral bot-detection records store per-player move-time reports (an engine-free signal orthogonal to `anti_cheat_reports`). Same no-FK rationale; the `(player_id, created_at, game_id)` index supports `listByPlayer`'s `ORDER BY created_at ASC, game_id ASC` — `game_id` is the tie-breaker so pagination is deterministic (records from one `saveBatch` share `created_at`, since `now()` is fixed per transaction).
 
-### 4.7 Reserved for later milestones
+### 4.7 Search Documents
+
+```sql
+search_documents(
+  id     TEXT NOT NULL PRIMARY KEY,
+  text   TEXT NOT NULL,
+  fields JSONB NOT NULL DEFAULT '{}'::jsonb,
+  tsv    tsvector GENERATED ALWAYS AS (to_tsvector('simple', text)) STORED
+);
+CREATE INDEX search_documents_tsv_idx ON search_documents USING GIN (tsv);
+CREATE INDEX search_documents_fields_idx ON search_documents USING GIN (fields);
+```
+
+Durable keyword search index supporting full-text search across arbitrary platform entities (games, players, tournaments, studies). `id` is text primary key (upsert target); `text` is raw indexed content; `fields` holds JSONB key-value metadata attributes (e.g. `variant`, `result`), stored lowercase-canonicalized so filters match case-insensitively; `tsv` is a stored generated tsvector column using the `'simple'` text search configuration. GIN indexes on `tsv` and `fields` support fast full-text matching (`tsv @@ tsquery`) and JSONB containment field filtering (`fields @> '{"k":"v"}'`).
+
+### 4.8 Reserved for later milestones
 
 Created only when their milestone lands (listed for design coherence):
 `studies*`, `follows`, `friends`, `messages`, `puzzles`,
