@@ -4,9 +4,20 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-24 — M12 Anti-Cheat Increment 8 (ADR-0043): Production engine wiring and gateway hosting for anti-cheat auto-analyzer (createEngineProviderFromEnv, createEngineBackedAnalysisService, serve.ts ANTICHEAT_AUTO_ANALYZE=1 hosting block and graceful engine shutdown)._
+_Last updated: 2026-07-24 — M14 Increment 6: external-secrets integration for the Gambit Helm chart (ADR-0044)._
 
-Prior: M12 Anti-Cheat Correctness Hardening (ADR-0042): Engine-correlation anti-cheat parallel correctness bugs fixed (white === black player ID check in AntiCheatService.analyzeAndStore and deterministic listByPlayer ordering via game_id tie-breaker + migration 0012).
+## M14 Increment 6 — external-secrets
+
+External Secrets Operator (`external-secrets.io/v1`) integration for the Gambit Helm chart (`deploy/helm/gambit/`).
+When `secrets.externalSecrets.enabled=true`, the chart renders an `ExternalSecret` custom resource (`apiVersion: external-secrets.io/v1`) that ESO reconciles into a Kubernetes Secret named `<fullname>-secret`, sourced from a backing SecretStore / ClusterSecretStore.
+- `spec.target.name` equals `include "gambit.secretName" .` so `api` and `gateway` Deployments consume `ACCESS_TOKEN_SECRET` and `POSTGRES_PASSWORD` via `secretKeyRef` with zero modifications to Deployment manifests.
+- The inline Opaque `Secret` and its fail-closed min-length checks are skipped in ES mode.
+- `secrets.externalSecrets` and `secrets.existingSecret` are strictly mutually exclusive (fail-closed in chart).
+- CI workflow validates the external-secrets render case via `kubeconform -strict -ignore-missing-schemas`.
+- Detailed in `docs/adr/0044-external-secrets.md`, `deploy/helm/gambit/README.md`, and `docs/DEPLOYING.md`.
+
+Prior: M12 Anti-Cheat Increment 8 (ADR-0043): Production engine wiring and gateway hosting for anti-cheat auto-analyzer (createEngineProviderFromEnv, createEngineBackedAnalysisService, serve.ts ANTICHEAT_AUTO_ANALYZE=1 hosting block and graceful engine shutdown).
+
 
 Prior: M12 Bot Detection Increment 6 (ADR-0041): Automatic auto-analysis worker and gateway hosting for bot detection (BotAnalysisService, BotAutoAnalyzer, refactored analyze route, serve.ts BOT_AUTO_ANALYZE=1 hosting block).
 

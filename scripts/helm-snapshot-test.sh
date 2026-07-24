@@ -51,6 +51,17 @@ helm template "$CHART_DIR" \
   --set externalRedisUrl=redis://redis.example.com:6379 \
   > "$TMPDIR/external.yaml" 2>/dev/null
 
+# Render external-secrets override
+helm template "$CHART_DIR" \
+  --set postgres.enabled=false \
+  --set redis.enabled=false \
+  --set externalDatabaseUrl=postgres://user:pass@db.example.com:5432/gambit \
+  --set externalRedisUrl=redis://redis.example.com:6379 \
+  --set secrets.externalSecrets.enabled=true \
+  --set secrets.externalSecrets.secretStore.name=gambit-store \
+  --set secrets.externalSecrets.accessTokenSecret.key=gambit/access-token \
+  > "$TMPDIR/external-secrets.yaml" 2>/dev/null
+
 # Rendering without a secret must fail closed.
 if helm template "$CHART_DIR" > /dev/null 2>&1; then
   echo "Chart rendered without ACCESS_TOKEN_SECRET"
@@ -144,6 +155,25 @@ check "Gateway readiness probe hits /ready" "$([ "$GW_PROBE" = '/ready' ] && ech
 
 WEB_PROBE=$(yq '. | select(.kind=="Deployment" and .metadata.name | test("web")) | .spec.template.spec.containers[] | select(.name=="web") | .readinessProbe.httpGet.path' "$TMPDIR/default.yaml" 2>/dev/null || echo "")
 check "Web readiness probe hits /" "$([ "$WEB_PROBE" = '/' ] && echo 0 || echo 1)"
+
+# --- 9. External secrets integration ---
+ES_KIND=$(grep -c 'kind: ExternalSecret' "$TMPDIR/external-secrets.yaml" || true)
+check "External secrets: renders kind: ExternalSecret" "$([ "$ES_KIND" -gt 0 ] && echo 0 || echo 1)"
+
+ES_API_VER=$(grep -c 'apiVersion: external-secrets.io/v1' "$TMPDIR/external-secrets.yaml" || true)
+check "External secrets: apiVersion external-secrets.io/v1" "$([ "$ES_API_VER" -gt 0 ] && echo 0 || echo 1)"
+
+ES_TARGET=$(yq '. | select(.kind=="ExternalSecret") | .spec.target.name' "$TMPDIR/external-secrets.yaml" 2>/dev/null || grep -A2 'target:' "$TMPDIR/external-secrets.yaml" | grep 'name:' | head -n1 | awk '{print $2}')
+GW_SECRET_REF_ES=$(yq '. | select(.kind=="Deployment" and .metadata.name | test("gateway")) | .spec.template.spec.containers[] | select(.name=="gateway") | .env[] | select(.name=="ACCESS_TOKEN_SECRET") | .valueFrom.secretKeyRef.name' "$TMPDIR/external-secrets.yaml" 2>/dev/null || grep -A3 'ACCESS_TOKEN_SECRET' "$TMPDIR/external-secrets.yaml" | grep 'name:' | head -n1 | awk '{print $2}')
+check "External secrets: target.name resolves to consumer secretKeyRef name" "$([ -n "$ES_TARGET" ] && [ "$ES_TARGET" = "$GW_SECRET_REF_ES" ] && [ "$ES_TARGET" = "release-name-gambit-secret" ] && echo 0 || echo 1)"
+
+ES_SECRET_COUNT=$(grep -c '^kind: Secret$' "$TMPDIR/external-secrets.yaml" || true)
+check "External secrets: inline Secret is not rendered (kind: Secret count == 0)" "$([ "$ES_SECRET_COUNT" = "0" ] && echo 0 || echo 1)"
+
+DEFAULT_SECRET_COUNT=$(grep -c '^kind: Secret$' "$TMPDIR/default.yaml" || true)
+DEFAULT_ES_COUNT=$(grep -c '^kind: ExternalSecret$' "$TMPDIR/default.yaml" || true)
+check "Default render: exactly one kind: Secret" "$([ "$DEFAULT_SECRET_COUNT" = "1" ] && echo 0 || echo 1)"
+check "Default render: no kind: ExternalSecret" "$([ "$DEFAULT_ES_COUNT" = "0" ] && echo 0 || echo 1)"
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

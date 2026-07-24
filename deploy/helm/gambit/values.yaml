@@ -151,8 +151,8 @@ externalRedisUrl: ""
 # In production, provide via:
 #   helm --set secrets.accessTokenSecret=<your-secret> \
 #        --set secrets.postgresPassword=<your-password>
-# Or use external-secrets / a secrets manager (full integration is a later
-# M14 increment — see docs/adr/0009-kubernetes-helm.md).
+# Or use external-secrets / a secrets manager (see docs/adr/0009-kubernetes-helm.md
+# and docs/adr/0044-external-secrets.md).
 secrets:
   # Existing Secret containing ACCESS_TOKEN_SECRET and, when bundled Postgres
   # is enabled, POSTGRES_PASSWORD. When set, this chart does not create a Secret.
@@ -160,6 +160,29 @@ secrets:
   # HMAC secret shared between API and gateway (must be >= 32 bytes).
   accessTokenSecret: ""
   postgresPassword: ""
+
+  # --- External Secrets Operator (external-secrets.io) integration ---
+  # When enabled, the chart renders an ExternalSecret (instead of the inline
+  # Opaque Secret) that ESO reconciles into a Secret named <fullname>-secret,
+  # sourced from a SecretStore/ClusterSecretStore. Mutually exclusive with
+  # secrets.existingSecret. Requires the External Secrets Operator installed
+  # in the cluster and a (Cluster)SecretStore already configured.
+  externalSecrets:
+    enabled: false
+    # Reference to an existing SecretStore or ClusterSecretStore.
+    secretStore:
+      name: ""
+      kind: SecretStore   # or ClusterSecretStore
+    # How often ESO re-reads the backing store.
+    refreshInterval: 1h
+    # Remote references in the backing secrets manager. `key` is the remote
+    # secret path/name; `property` (optional) selects a field within it.
+    accessTokenSecret:
+      key: ""
+      property: ""
+    postgresPassword:
+      key: ""
+      property: ""
 
 # --- Config (non-secret env, shared via ConfigMap) ---
 config:

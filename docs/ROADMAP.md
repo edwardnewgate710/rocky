@@ -616,7 +616,7 @@ Redis pub/sub for cross-node broadcast fanout. Key design:
   payload safety.
 - ADR-0008 records the decision.
 
-### Increment 4: Kubernetes manifests + Helm chart 🚧
+### Increment 4: Kubernetes manifests + Helm chart ✅
 
 Package the existing stack (postgres, redis, api, gateway, web) as a Helm chart
 so it deploys to a Kubernetes cluster — the next step after docker-compose. This
@@ -633,10 +633,13 @@ is infrastructure/packaging: no application source changes.
 - **Config split:** ConfigMap for non-secret env (PORT, HOST, NODE_ENV, ports),
   Secret for `ACCESS_TOKEN_SECRET` + `POSTGRES_PASSWORD`. No real secrets
   committed — placeholder defaults with `helm --set` / external-secrets note.
-- **Gateway replica constraint:** the gateway Deployment defaults to
-  `replicas: 1` and MUST NOT be scaled beyond 1 without sticky per-game routing
-  or sharded authority (a later M14 increment). Game-command ownership is not
-  coordinated across gateway replicas today. The api and web are stateless and
+- **Gateway replica constraint (as shipped in inc 4; superseded by inc 5):** at
+  inc 4 the gateway Deployment defaulted to `replicas: 1` and could not be scaled
+  beyond 1 without sticky per-game routing or sharded authority, because
+  game-command ownership was not coordinated across replicas. **Increment 5**
+  lifted this: a Redis-based ownership registry + command forwarding (ADR-0010)
+  now coordinates ownership across replicas, so the gateway defaults to
+  `replicas: 2` (`REDIS_URL` required when > 1). The api and web are stateless and
   default to 2 replicas.
 - **NODE_ID via downward API:** the gateway's `NODE_ID` is the pod name via
   `fieldRef: metadata.name`, mirroring compose's `NODE_ID: gateway-${HOSTNAME}`.
@@ -664,13 +667,21 @@ is infrastructure/packaging: no application source changes.
   - ADR-0009 records the topology decisions.
   - ROADMAP + PROJECT_STATE updated.
 
+### Increment 5: Safe horizontal scaling for WebSocket gateway (ADR-0010) ✅
+
+Redis-based ownership registry and command forwarding allowing gateway scaling (`replicas: 2`).
+
+### Increment 6: External-secrets integration (ADR-0044) ✅
+
+External Secrets Operator (`external-secrets.io/v1`) integration for the Gambit Helm chart.
+Renders an `ExternalSecret` custom resource syncing `ACCESS_TOKEN_SECRET` and `POSTGRES_PASSWORD` from a backing SecretStore / ClusterSecretStore.
+
 ### Deferred (later M14 increments)
 
 - Terraform IaC for cloud provisioning
 - Blue/green + canary deployment strategy
 - GitHub Actions CI/CD pipeline with deploy gates
 - 100k-user load testing + chaos validation
-- Secrets management (Vault, AWS Secrets Manager, external-secrets)
 - Sharded game authority with durable state
 - Sticky per-game routing for horizontal gateway scaling
 

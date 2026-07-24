@@ -78,6 +78,11 @@ helm install gambit deploy/helm/gambit \
 | `secrets.existingSecret` | `""` | Existing Secret containing the required keys |
 | `secrets.accessTokenSecret` | `""` | Required HMAC secret when `existingSecret` is not set |
 | `secrets.postgresPassword` | `""` | Required when bundled Postgres is enabled |
+| `secrets.externalSecrets.enabled` | `false` | Enable External Secrets Operator integration (ADR-0044) |
+| `secrets.externalSecrets.secretStore.name` | `""` | SecretStore / ClusterSecretStore name |
+| `secrets.externalSecrets.secretStore.kind` | `SecretStore` | SecretStore or ClusterSecretStore |
+| `secrets.externalSecrets.accessTokenSecret.key` | `""` | Backing store key for ACCESS_TOKEN_SECRET |
+| `secrets.externalSecrets.postgresPassword.key` | `""` | Backing store key for POSTGRES_PASSWORD |
 | `web.ingress.enabled` | `true` | Enable Ingress for the web service |
 | `web.ingress.host` | `gambit.local` | Ingress hostname |
 
@@ -94,15 +99,27 @@ helm install gambit deploy/helm/gambit \
   --set secrets.postgresPassword="<your-password>"
 ```
 
-Alternatively create the Secret outside Helm (for example with
-External Secrets Operator) and set `secrets.existingSecret`. It must contain
-`ACCESS_TOKEN_SECRET` and, when bundled Postgres is enabled,
-`POSTGRES_PASSWORD`.
+Alternatively reference a pre-existing Secret by setting `secrets.existingSecret`, or use the **External Secrets Operator** integration (`secrets.externalSecrets.enabled=true`) to sync directly from a secrets manager (AWS Secrets Manager, GCP Secret Manager, Vault, etc.).
 
-Full secrets-manager integration (Vault, AWS Secrets Manager, external-secrets)
-is a **later M14 increment** — not included here. The current chart uses a
-plain Kubernetes Secret. When external-secrets is added, the Secret can be
-managed by an ExternalSecret resource that syncs from the secrets manager.
+### External secrets (production)
+
+For production environments using the [External Secrets Operator](https://external-secrets.io/):
+
+1. Install the External Secrets Operator in your Kubernetes cluster.
+2. Create a `SecretStore` or `ClusterSecretStore` connected to your cloud secrets manager (e.g. AWS Secrets Manager, GCP Secret Manager, Vault).
+3. Install the Gambit chart with `secrets.externalSecrets` enabled:
+
+```bash
+helm install gambit deploy/helm/gambit \
+  --set secrets.externalSecrets.enabled=true \
+  --set secrets.externalSecrets.secretStore.name="gambit-store" \
+  --set secrets.externalSecrets.secretStore.kind="SecretStore" \
+  --set secrets.externalSecrets.accessTokenSecret.key="production/gambit/access-token" \
+  --set secrets.externalSecrets.postgresPassword.key="production/gambit/postgres-password"
+```
+
+When enabled, the chart renders an `ExternalSecret` custom resource (`apiVersion: external-secrets.io/v1`) that ESO reconciles into a Kubernetes Secret named `<fullname>-secret`. The API and Gateway deployments consume this Secret seamlessly. Note that `secrets.externalSecrets` and `secrets.existingSecret` are mutually exclusive.
+
 
 ### External datastores
 

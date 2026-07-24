@@ -372,3 +372,16 @@ jobs:
             --set externalDatabaseUrl=postgres://user:pass@db.example.com:5432/gambit \
             --set externalRedisUrl=redis://redis.example.com:6379 \
             | kubeconform -strict -summary
+
+      - name: Helm template (external secrets) + kubeconform
+        run: |
+          helm template deploy/helm/gambit \
+            --set postgres.enabled=false \
+            --set redis.enabled=false \
+            --set externalDatabaseUrl=postgres://user:pass@db.example.com:5432/gambit \
+            --set externalRedisUrl=redis://redis.example.com:6379 \
+            --set secrets.externalSecrets.enabled=true \
+            --set secrets.externalSecrets.secretStore.name=gambit-store \
+            --set secrets.externalSecrets.accessTokenSecret.key=gambit/access-token \
+            | kubeconform -strict -ignore-missing-schemas -summary
+
