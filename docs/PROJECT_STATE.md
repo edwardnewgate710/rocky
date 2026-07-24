@@ -4,7 +4,9 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-23 — M12 Bot Detection Increment 2 (ADR-0037): Cross-game behavioral aggregation (`aggregateBotBehavior` in `@chess-platform/anti-cheat`, `BotAggregateInput`, `BotAggregateReport`, pooled mean/stdev/CV/instantFraction, lowConfidence gate, duplicate game rejection, shared `behaviorSuspicion` banding, and `sumMs`/`sumSqMs` raw poolable moments)._
+_Last updated: 2026-07-23 — M12 Bot Detection Increment 3 (ADR-0038): Move-timing extraction (`extractTimedMoves` in `@chess-platform/anti-cheat`, `MoveTiming`, `GameTimings`, minimal decoupled projection from `MovePlayedEvent.moveTimeMs`, `isBook` predicate seam for opening-book exclusion)._
+
+Prior: M12 Bot Detection Increment 2 (ADR-0037): Cross-game behavioral aggregation (`aggregateBotBehavior` in `@chess-platform/anti-cheat`, `BotAggregateInput`, `BotAggregateReport`, pooled mean/stdev/CV/instantFraction, lowConfidence gate, duplicate game rejection, shared `behaviorSuspicion` banding, and `sumMs`/`sumSqMs` raw poolable moments).
 
 Prior: M12 Bot Detection Increment 1 (ADR-0036): Pure domain behavioral move-time analyzer (`analyzeBotBehavior` in `@chess-platform/anti-cheat`, `TimedMove` timing interface, mean/stdev move time, coefficient of variation, near-instant move fraction, lowConfidence gate, and deterministic suspicion banding).
 
@@ -501,6 +503,14 @@ Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
 - **Duplicate Rejection**: Rejects duplicate `gameId`s with a thrown `Error` to prevent double-counting game history.
 - **Reviewer Drill-Down**: Surfaces `flaggedGameIds` listing games whose per-game suspicion was `review` or `high`.
 - **Hermetic Tests**: Unit test suite in `packages/anti-cheat/test/bot-aggregate.test.ts` covering pooling vs averaging, confidence gates, confident escalation, duplicate rejection, flagged game collection, empty inputs, and exact pooled statistics math.
+
+## M12 Bot Detection Increment 3 — Move-Timing Extraction (ADR-0038)
+- **Pure Domain Move-Timing Bridge**: Added `extractTimedMoves` in `@chess-platform/anti-cheat` (`packages/anti-cheat/src/bot-extract.ts`) to split a game's ordered per-move timings into per-player `TimedMove[]` (`{ white, black }`) ready for `analyzeBotBehavior`.
+- **Decoupled Projection**: Accepts minimal `MoveTiming` (`{ by: Color, moveTimeMs: number }`) without depending on `@chess-platform/game` or event log infrastructure.
+- **Direct Clock Timing**: Uses pre-computed `MovePlayedEvent.moveTimeMs` directly as `ms` without clock-delta math.
+- **Book Exclusion Seam**: Supports an `isBook(moveIndex: number)` predicate to flag opening-book plies so `analyzeBotBehavior` excludes them from behavioral statistics.
+- **Hermetic Tests**: Unit test suite in `packages/anti-cheat/test/bot-extract.test.ts` covering alternating split, `ms` mapping, book marking, empty input, single-color/uneven input, and end-to-end extract -> analyze bridge triggering high suspicion.
+
 
 
 
