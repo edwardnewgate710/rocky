@@ -59,6 +59,7 @@ import type { GameLauncher } from './tournament/launcher';
 import type { TournamentLiveView } from './tournament/live-view';
 import type { AntiCheatAnalysisService } from './anti-cheat/analysis-service';
 import type { BotGameTimingSource } from './bot-detection/source';
+import { BotAnalysisService } from './bot-detection/analysis-service';
 
 /** Collaborators the route handlers need. */
 export interface RouteDeps {
@@ -93,6 +94,10 @@ export function buildRouter(deps: RouteDeps): Router {
   const router = new Router();
   const { auth, repos, clock, ids, info, rateLimiter, config } = deps;
   const botService = new BotDetectionService(repos.botReports);
+  const botAnalysis = deps.botTimingSource
+    ? new BotAnalysisService(deps.botTimingSource, repos.botReports)
+    : undefined;
+
 
 
   const cookieOpts = { secure: config.cookieSecure };
@@ -817,20 +822,16 @@ export function buildRouter(deps: RouteDeps): Router {
         userAgent: ctx.userAgent,
         at: clock.now(),
       });
-      if (!deps.botTimingSource) {
+      if (!botAnalysis) {
         throw HttpError.unavailable('bot-detection timing source is not configured');
       }
-      const g = await deps.botTimingSource.load(gameId);
-      if (!g) {
+      const report = await botAnalysis.analyzeAndStore(gameId);
+      if (!report) {
         throw HttpError.notFound('no finished game with that id');
       }
-      const report = await botService.analyzeAndStore({
-        gameId,
-        players: { white: g.white, black: g.black },
-        moves: g.moves,
-      });
       return json(200, botGameAnalysisView(report));
     },
+
   );
 
   // --- Ratings / leaderboard ----------------------------------------------

@@ -25,6 +25,10 @@ export * from './tournament/reporter';
 export * from './anti-cheat/source';
 export * from './anti-cheat/analysis-service';
 export * from './anti-cheat/auto-analyzer';
+export * from './bot-detection/source';
+export * from './bot-detection/analysis-service';
+export * from './bot-detection/auto-analyzer';
+
 
 export * from './auth/password';
 export * from './auth/tokens';

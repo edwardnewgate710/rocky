@@ -31,6 +31,9 @@
  *   result reporter (ADR-0025) in this process; requires `DATABASE_URL`.
  * - `TOURNAMENT_REPORTER_SCAN_MS` (default 30000) — how often the reporter
  *   re-scans running tournaments for games launched by other processes.
+ * - `BOT_AUTO_ANALYZE` (optional, "1" to enable) — hosts the bot-detection
+ *   auto-analyzer in this process; requires `DATABASE_URL`; needs no engine.
+
  *
  * Durable event log: ADR-0007 (M14 inc 2).
  * Redis pub/sub: ADR-0008 (M14 inc 3).
@@ -191,6 +194,28 @@ async function main(): Promise<void> {
       logger.info('TournamentResultReporter is enabled');
     }
   }
+
+  // --- Bot Detection Auto-Analyzer (M12 inc 6, ADR-0041) ---
+  let botAutoAnalyzer: { stop(): void } | undefined;
+  if (process.env['BOT_AUTO_ANALYZE'] === '1') {
+    if (!pgPool || !eventStore) {
+      logger.warn('BOT_AUTO_ANALYZE requires DATABASE_URL to be set');
+    } else {
+      const { PgBotBehaviorReportRepository } = await import('@chess-platform/persistence/pg');
+      const api = await import('@chess-platform/api');
+
+      const botRepo = new PgBotBehaviorReportRepository(pgPool);
+      const source = new api.EventStoreBotTimingSource(eventStore);
+      const analysis = new api.BotAnalysisService(source, botRepo);
+
+      // Start on the fully-typed instance, then hold only the stop() handle for shutdown.
+      const worker = new api.BotAutoAnalyzer(pubsub, analysis);
+      worker.start();
+      botAutoAnalyzer = worker;
+      logger.info('BotAutoAnalyzer is enabled');
+    }
+  }
+
 
   // --- Command router: local (single-node) or Redis (multi-node) (M14 inc 5) ---
   let commandRouter: CommandRouter;
@@ -396,6 +421,7 @@ async function main(): Promise<void> {
     shuttingDown = true;
     clearInterval(heartbeat);
     reporter?.stop();
+    botAutoAnalyzer?.stop();
     logger.info('Shutdown signal received — closing');
     for (const client of wss.clients) {
       client.terminate();

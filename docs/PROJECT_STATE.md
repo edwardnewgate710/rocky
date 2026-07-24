@@ -4,9 +4,12 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-24 — M12 Bot Detection Increment 5 (ADR-0040): Postgres persistence and moderation REST API (read + on-demand analyze) for bot detection (bot_reports table, PgBotBehaviorReportRepository, EventStoreBotTimingSource, BotDetectionService, read endpoints, and on-demand analyze endpoint)._
+_Last updated: 2026-07-24 — M12 Bot Detection Increment 6 (ADR-0041): Automatic auto-analysis worker and gateway hosting for bot detection (BotAnalysisService, BotAutoAnalyzer, refactored analyze route, serve.ts BOT_AUTO_ANALYZE=1 hosting block)._
+
+Prior: M12 Bot Detection Increment 5 (ADR-0040): Postgres persistence and moderation REST API (read + on-demand analyze) for bot detection (bot_reports table, PgBotBehaviorReportRepository, EventStoreBotTimingSource, BotDetectionService, read endpoints, and on-demand analyze endpoint).
 
 Prior: M12 Bot Detection Increment 4 (ADR-0039): Bot detection service and report repository (`BotDetectionService` & `BotBehaviorReportRepository` with `InMemoryBotBehaviorReportRepository` in `@chess-platform/anti-cheat`, `AnalyzeBotAndStoreInput`, `GameBotReport`, idempotent `(playerId, gameId)` nested-map upsert, `analyzeAndStore` and `aggregatePlayer` composition).
+
 
 Prior: M12 Bot Detection Increment 3 (ADR-0038): Move-timing extraction (`extractTimedMoves` in `@chess-platform/anti-cheat`, `MoveTiming`, `GameTimings`, minimal decoupled projection from `MovePlayedEvent.moveTimeMs`, `isBook` predicate seam for opening-book exclusion).
 
@@ -530,6 +533,15 @@ Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
   - `POST /v1/moderation/bot-detection/games/:gameId/analyze` (audits `bot_detection.analyze`, loads timings via `botTimingSource`, triggers `BotDetectionService.analyzeAndStore`, returns `BotGameAnalysisView`). Unconditionally available without engine setup (throws 503 if `botTimingSource` is missing).
 - **OpenAPI & Wire Integration**: Added presenter functions/views in `presenters.ts` and OpenAPI component schemas in `schemas.ts`. Updated `deps.ts`, `server.ts`, `fakes.ts`, `bootstrap.ts`, and test `helpers.ts`.
 - **Tests**: DB-gated integration test in `packages/persistence/test/bot-reports.integration.test.ts` and API test suites in `packages/api/test/bot-detection.test.ts` and `packages/api/test/bot-detection-analyze.test.ts`.
+
+## M12 Bot Detection Increment 6 — Automatic Auto-Analysis Worker & Gateway Hosting (ADR-0041)
+- **BotAnalysisService Application Service**: Added `BotAnalysisService` in `@chess-platform/api` (`packages/api/src/bot-detection/analysis-service.ts`) encapsulating `BotGameTimingSource` and `BotDetectionService`, exposing `analyzeAndStore(gameId)`.
+- **BotAutoAnalyzer Worker**: Added `BotAutoAnalyzer` in `@chess-platform/api` (`packages/api/src/bot-detection/auto-analyzer.ts`). Subscribes once to `gamesEndedChannel()`, deduplicates game IDs up to `MAX_SEEN = 10_000` with FIFO eviction, tracks background analysis in `inFlight`, handles rejections safely via contained `onError` hook without failing promises/drain, and provides a deterministic `drain()` method.
+- **REST Analyze Route Refactoring**: Updated `POST /v1/moderation/bot-detection/games/:gameId/analyze` in `packages/api/src/routes.ts` to consume `BotAnalysisService`, removing inline loading and analysis duplication.
+- **Gateway Process Hosting**: Hosted `BotAutoAnalyzer` in `services/gateway/src/serve.ts` behind optional environment variable `BOT_AUTO_ANALYZE === '1'`. Requires `DATABASE_URL` (instantiates `PgBotBehaviorReportRepository` and `EventStoreBotTimingSource`). Requires no engine process. Stop hook wired into graceful shutdown.
+- **Package Exports & Documentation**: Exported bot detection source, analysis service, and auto-analyzer from `@chess-platform/api` index. Documented ADR-0041 and updated roadmap.
+- **Hermetic Tests**: Added unit test suite in `packages/api/test/bot-detection-auto-analyzer.test.ts` covering end-to-end auto-analysis, crash-safety and contained error hooks, retry on re-broadcast, deduplication, and subscriber filtering/cleanup.
+
 
 
 
