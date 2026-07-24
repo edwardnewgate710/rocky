@@ -4,9 +4,9 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-23 — M12 Bot Detection Increment 3 (ADR-0038): Move-timing extraction (`extractTimedMoves` in `@chess-platform/anti-cheat`, `MoveTiming`, `GameTimings`, minimal decoupled projection from `MovePlayedEvent.moveTimeMs`, `isBook` predicate seam for opening-book exclusion)._
+_Last updated: 2026-07-24 — M12 Bot Detection Increment 4 (ADR-0039): Bot detection service and report repository (`BotDetectionService` & `BotBehaviorReportRepository` with `InMemoryBotBehaviorReportRepository` in `@chess-platform/anti-cheat`, `AnalyzeBotAndStoreInput`, `GameBotReport`, idempotent `(playerId, gameId)` nested-map upsert, `analyzeAndStore` and `aggregatePlayer` composition)._
 
-Prior: M12 Bot Detection Increment 2 (ADR-0037): Cross-game behavioral aggregation (`aggregateBotBehavior` in `@chess-platform/anti-cheat`, `BotAggregateInput`, `BotAggregateReport`, pooled mean/stdev/CV/instantFraction, lowConfidence gate, duplicate game rejection, shared `behaviorSuspicion` banding, and `sumMs`/`sumSqMs` raw poolable moments).
+Prior: M12 Bot Detection Increment 3 (ADR-0038): Move-timing extraction (`extractTimedMoves` in `@chess-platform/anti-cheat`, `MoveTiming`, `GameTimings`, minimal decoupled projection from `MovePlayedEvent.moveTimeMs`, `isBook` predicate seam for opening-book exclusion).
 
 Prior: M12 Bot Detection Increment 1 (ADR-0036): Pure domain behavioral move-time analyzer (`analyzeBotBehavior` in `@chess-platform/anti-cheat`, `TimedMove` timing interface, mean/stdev move time, coefficient of variation, near-instant move fraction, lowConfidence gate, and deterministic suspicion banding).
 
@@ -510,6 +510,14 @@ Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
 - **Direct Clock Timing**: Uses pre-computed `MovePlayedEvent.moveTimeMs` directly as `ms` without clock-delta math.
 - **Book Exclusion Seam**: Supports an `isBook(moveIndex: number)` predicate to flag opening-book plies so `analyzeBotBehavior` excludes them from behavioral statistics.
 - **Hermetic Tests**: Unit test suite in `packages/anti-cheat/test/bot-extract.test.ts` covering alternating split, `ms` mapping, book marking, empty input, single-color/uneven input, and end-to-end extract -> analyze bridge triggering high suspicion.
+
+## M12 Bot Detection Increment 4 — Service + Report Repository (ADR-0039)
+- **Repository Port & In-Memory Adapter**: Added `BotBehaviorReportRepository` interface and `InMemoryBotBehaviorReportRepository` in `@chess-platform/anti-cheat` (`packages/anti-cheat/src/bot-repository.ts`) with `saveBatch` and `listByPlayer`.
+- **Nested-Map Idempotent Upsert**: `InMemoryBotBehaviorReportRepository` keys records by `(playerId, gameId)` in a nested map (`Map<playerId, Map<gameId, StoredBotReport>>`), replacing prior records on re-analysis so duplicate-`gameId` error guards in `aggregateBotBehavior` never trip.
+- **Pure Domain Service**: Added `BotDetectionService` in `@chess-platform/anti-cheat` (`packages/anti-cheat/src/bot-service.ts`) composing `extractTimedMoves` → `analyzeBotBehavior` → `saveBatch` (`analyzeAndStore`) and `listByPlayer` → `aggregateBotBehavior` (`aggregatePlayer`).
+- **Engine-Free Simplicity**: Operates entirely on move-timing data without requiring an engine/evaluator adapter (unlike `AntiCheatService`).
+- **Hermetic Tests**: Unit test suites in `packages/anti-cheat/test/bot-repository.test.ts` and `packages/anti-cheat/test/bot-service.test.ts` covering batch storage, idempotent upsert replacement, unknown player fallback, multi-game bot escalation vs human clean aggregates, and `isBook` predicate delegation.
+
 
 
 
