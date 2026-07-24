@@ -518,10 +518,12 @@ courses, video library, PGN import, studies (collaborative), opening/endgame
 encyclopedias, master game explorer. **GraphQL read layer** introduced here (and
 extended in M11) for the nested, client-driven reads these features need.
 
-## ⬜ Milestone 11 — Search
+## 🚧 Milestone 11 — Search
 
 Keyword + semantic (pgvector/Meilisearch) over games, openings, players, studies;
 natural-language query parsing.
+
+- **Increment 1 complete (ADR-0049):** pure-domain keyword search core (`@chess-platform/search`): `tokenize`, `parseSearchQuery` (terms, phrases, `[-]field:value` filters), and in-memory `search` AND matcher + ranker.
 
 ## 🚧 Milestone 12 — Security hardening & anti-cheat
 

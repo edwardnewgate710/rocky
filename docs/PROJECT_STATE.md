@@ -4,9 +4,18 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-24 — M13 Increment 5: span-export pipeline self-instrumentation (metrics) (ADR-0048)._
+_Last updated: 2026-07-24 — M11 Search Increment 1: pure-domain keyword search core (ADR-0049)._
 
-## M13 Increment 5 — span-export pipeline self-instrumentation (metrics)
+## M11 Search Increment 1 — pure-domain keyword search core
+
+Pure, dependency-free `@chess-platform/search` domain package delivering keyword search core (ADR-0049):
+- **Tokenizer**: `tokenize(text: string): string[]` splitting text into lowercase alphanumeric tokens using Unicode-aware regex (`/[^\p{L}\p{N}]+/u`).
+- **Query Parser**: `parseSearchQuery(input: string): SearchQuery` parsing free-text input into `terms`, `phrases` (`"quoted phrase"`), and `filters` (`[-]field:value` or `field:"value"`). Non-throwing, hand-rolled whitespace/quote tokenizer handling empty values (`field:` as term) and unterminated quotes cleanly.
+- **In-Memory Search Matcher & Ranker**: `search(query, documents): SearchResult[]` performing AND-matching across exact case-insensitive filters (including negated filters `-field:value`), required term-tokens, and contiguous phrase token sublists. Ranks hits by term token frequency plus phrase bonus (`2 * phraseMatches`), tie-broken deterministically by `id` ASC.
+- **Deferred**: pgvector persistence, semantic embeddings, and REST/GraphQL API surfaces deferred to later M11 increments.
+- Detailed in `docs/adr/0049-search-domain-core.md`.
+
+Prior: M13 Increment 5 — span-export pipeline self-instrumentation (metrics) (ADR-0048)
 
 Self-observing span export pipeline in `@chess-platform/api` (ADR-0048):
 - **BatchSpanProcessor Self-Instrumentation**: Emits Prometheus counters via `metrics?: Metrics` in `BatchSpanProcessorOptions` to surface pipeline health at `GET /v1/metrics`.
@@ -196,7 +205,7 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 | **M13** 🚧 | Observability | **Increment 1:** Hand-rolled zero-dependency JSON logger and Prometheus text metrics implementation (`InMemoryMetrics`), strictly isolated as domain ports (`Logger` / `Metrics`). W3C `traceparent` parsing in API router, injecting request context (traceId, logger). Automated HTTP route cardinalities. Gateway instrumented with metrics and logs. (ADR-0028 Accepted) | — |
 | **M14** 🚧 | Deployable services | Docker Compose local stack (inc 1), durable EventLog + Postgres (inc 2), Redis pub/sub multi-node fanout (inc 3), Kubernetes Helm chart (inc 4); Terraform/blue-green/load-test deferred | — |
 
-**Whole-repo total: 960 tests, 0 failures, across 12 packages + the gateway service** (skips: 33 = 8 Postgres-gated + 21 API-key-gated + 4 Redis-gated; `npm run test:counts` prints the live per-package breakdown). Strict TS, zero errors, lint clean. CI active — 6 jobs: build+typecheck+test on Node 22/24, Postgres integration, M6 Playwright + Lighthouse acceptance, helm lint + kubeconform, gateway service (build + Redis integration).
+**Whole-repo total: 1049 tests passing, 0 failures, across 13 packages + the gateway service** (31 skips, all environment-gated — Postgres/API-key/Redis; `npm run test:counts` prints the live per-package breakdown). Strict TS, zero errors, lint clean. CI active — 6 jobs: build+typecheck+test on Node 22/24, Postgres integration, M6 Playwright + Lighthouse acceptance, helm lint + kubeconform, gateway service (build + Redis integration).
 
 ## 3. Architecture summary (as-built)
 
