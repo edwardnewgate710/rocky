@@ -542,6 +542,7 @@ sensitive auth endpoints with a durable Postgres bucket store (ADR-0013).
 OpenTelemetry, Prometheus, Grafana, alerting, SLOs, runbooks, chaos tests.
 - **Increment 1 complete (ADR-0028):** Zero-dependency `Logger` (`JsonLogger`) & `Metrics` (`InMemoryMetrics`) ports, Prometheus text exposition (`GET /v1/metrics`), W3C `traceparent` parsing, bounded HTTP route metric labels, PII redaction.
 - **Increment 2 complete (ADR-0045):** Dependency-free `Tracer` / `Span` port (`NullTracer`, `RecordingTracer`, `InMemorySpanRecorder`), `http.server` span emission in `router.ts`, `alwaysOnSampler` and `probabilitySampler`, outbound W3C `traceparent` header propagation, and structured log span emission in production.
+- **Increment 3 complete (ADR-0046):** `SpanExporter` seam, `LoggingSpanExporter`, `MultiSpanExporter` composite fan-out, pure `toResourceSpans` OTLP/JSON mapping, `OtlpJsonSpanExporter` with `SpanTransport`, `OTEL_EXPORTER_OTLP_ENDPOINT` environment gate, and `FetchSpanTransport` boundary adapter.
 
 ## 🚧 Milestone 14 — Deployment & scale
 

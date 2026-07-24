@@ -65,5 +65,15 @@ Metrics are exposed in standard Prometheus text format (`v0.0.4`) at `GET /v1/me
 
 ### Sampling & Production Storage
 - **Sampler**: Default `alwaysOnSampler` (respecting inbound parent sampling decisions when present). Deterministic `probabilitySampler(ratio)` available.
-- **Production Exporter**: In production, finished spans are emitted as structured `info` log records (`msg: "span"`) via `JsonLogger`.
+- **Production Exporter**: In production, finished spans are emitted as structured `info` log records (`msg: "span"`) via `LoggingSpanExporter`.
 - **Introspection/Testing**: `InMemorySpanRecorder` provides a bounded ring-buffer for capturing spans in tests.
+
+### Span Export (`SpanExporter` Seam & OTLP/JSON Exporter)
+- **`SpanExporter` Seam**: `SpanExporter` defines `export(spans: readonly SpanData[]): void`. Export is best-effort and non-blocking — implementations contain their own errors and never throw into the request path.
+- **Exporters**:
+  - `LoggingSpanExporter`: Default. Emits structured `info` log records (`msg: "span"`) with whitelisted attributes (`http.method`, `http.route`, `http.status_code`).
+  - `OtlpJsonSpanExporter`: Serializes spans into standard OTLP/JSON trace payloads (`OtlpTracesPayload`) with nanosecond BigInt timestamps, mapped enums, and typed attribute values (`stringValue`, `intValue`, `boolValue`, `doubleValue`), sending via an injectable `SpanTransport`.
+  - `MultiSpanExporter`: Composite exporter that fans out span batches to multiple child exporters, containing individual exporter failures so one failing transport does not block others.
+- **OTLP Endpoint Gate**: Configured via `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (used verbatim) or the generic `OTEL_EXPORTER_OTLP_ENDPOINT` (a base URL onto which `/v1/traces` is appended per the OTLP/HTTP spec). When either resolves, production bootstrap combines `LoggingSpanExporter` and `OtlpJsonSpanExporter` (backed by a fire-and-forget `FetchSpanTransport`) via `MultiSpanExporter`. When neither is set, `LoggingSpanExporter` is used exclusively.
+- **Deferred**: Buffered/batched async export and retries remain deferred (spans export per-`end()`).
+

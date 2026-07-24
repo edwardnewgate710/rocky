@@ -4,11 +4,20 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-24 — M13 Increment 2: request span emission + trace-context propagation + sampling (ADR-0045)._
+_Last updated: 2026-07-24 — M13 Increment 3: span export seam + OTLP/JSON exporter (ADR-0046)._
 
-## M13 Increment 2 — tracing and propagation
+## M13 Increment 3 — span export seam + OTLP/JSON exporter
 
-Request span emission, deterministic sampling, and outbound `traceparent` propagation in `@chess-platform/api` (ADR-0045):
+Span export abstraction, reusable `LoggingSpanExporter`, fan-out `MultiSpanExporter`, pure `toResourceSpans` OTLP/JSON payload builder, and `OtlpJsonSpanExporter` over an injectable `SpanTransport` in `@chess-platform/api` (ADR-0046):
+- **Exporter Seam**: `SpanExporter` port (`export(spans: readonly SpanData[]): void`) in `src/ports/span-export.ts` with best-effort, non-blocking contract.
+- **Whitelisting**: Exported `pickBoundedAttrs` and `BOUNDED_SPAN_ATTRS` (`http.method`, `http.route`, `http.status_code`) as single source of truth; removed bootstrap local copy.
+- **Exporters**: `LoggingSpanExporter` (same structured JSON log output as inc 2), `MultiSpanExporter` (composite fan-out with try/catch error containment), and `spanSinkFromExporter` adapter.
+- **OTLP/JSON Exporter**: `src/ports/otlp-span-exporter.ts` defines OTLP/JSON interfaces (`OtlpTracesPayload`, `OtlpSpan`, etc.), pure mapping `toResourceSpans` (kind/status enums, `BigInt` nanosecond timestamps, `toOtlpAnyValue` type conversion, omitted `parentSpanId` when null), and `OtlpJsonSpanExporter` delegating to `SpanTransport`. Includes `FetchSpanTransport` boundary adapter.
+- **Bootstrap Wiring**: In production `bootstrap.ts`, if `OTEL_EXPORTER_OTLP_ENDPOINT` is set, builds `OtlpJsonSpanExporter` alongside `LoggingSpanExporter` via `MultiSpanExporter`; otherwise uses `LoggingSpanExporter` alone.
+- **Deferred**: Buffered/batched async export and retries remain deferred (spans currently export per-`end()`).
+- Detailed in `docs/adr/0046-span-export-otlp.md` and `docs/OBSERVABILITY.md`.
+
+Prior: M13 Increment 2 — tracing and propagation (ADR-0045): Request span emission, deterministic sampling, and outbound `traceparent` propagation in `@chess-platform/api`.
 - **Tracer Port**: `Tracer`, `Span`, `SpanData`, `NullTracer`, `RecordingTracer`, `InMemorySpanRecorder` ring buffer in `packages/api/src/ports/tracer.ts`.
 - **Sampling**: `alwaysOnSampler` default and deterministic `probabilitySampler(ratio)` based on the first 8 hex chars of `traceId`. Respects inbound `parentSampled` decision.
 - **Trace Context Propagation**: Hand-rolled `formatTraceparent` (`00-<traceId>-<spanId>-<flags>`), `generateSpanId`, and `isSampled` in `traceparent.ts`. Router sets outbound `traceparent` header on every response.

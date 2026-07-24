@@ -33,16 +33,15 @@ import type { Logger, LogLevel } from './ports/logger';
 import { InMemoryMetrics } from './ports/metrics';
 import type { Metrics } from './ports/metrics';
 import { RecordingTracer } from './ports/tracer';
-import type { Tracer, SpanAttributes, SpanAttributeValue } from './ports/tracer';
+import type { Tracer } from './ports/tracer';
+import { LoggingSpanExporter, MultiSpanExporter, spanSinkFromExporter } from './ports/span-export';
+import {
+  OtlpJsonSpanExporter,
+  FetchSpanTransport,
+  resolveOtlpTracesEndpoint,
+} from './ports/otlp-span-exporter';
 import { ScryptPasswordHasher } from './auth/password';
 
-function pickBoundedAttrs(attrs: SpanAttributes): Record<string, SpanAttributeValue> {
-  const result: Record<string, SpanAttributeValue> = {};
-  if (attrs['http.method'] !== undefined) result['http.method'] = attrs['http.method'];
-  if (attrs['http.route'] !== undefined) result['http.route'] = attrs['http.route'];
-  if (attrs['http.status_code'] !== undefined) result['http.status_code'] = attrs['http.status_code'];
-  return result;
-}
 import type { PasswordHasher } from './auth/password';
 import { AccessTokenService } from './auth/tokens';
 import { resolveConfig } from './config';
@@ -173,21 +172,25 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
 
   const logger = options.logger ?? new JsonLogger({ service: 'api' }, { level: resolveLogLevel() });
   const metrics = options.metrics ?? new InMemoryMetrics();
-  const spanLogger = logger;
+  const logExporter = new LoggingSpanExporter(logger);
+  const otlpTracesUrl = resolveOtlpTracesEndpoint(
+    process.env['OTEL_EXPORTER_OTLP_TRACES_ENDPOINT'],
+    process.env['OTEL_EXPORTER_OTLP_ENDPOINT'],
+  );
+  const exporter = otlpTracesUrl
+    ? new MultiSpanExporter([
+        logExporter,
+        new OtlpJsonSpanExporter(new FetchSpanTransport(otlpTracesUrl), {
+          serviceName: 'api',
+          scopeName: '@chess-platform/api',
+          scopeVersion: '0.1.0',
+        }),
+      ])
+    : logExporter;
   const tracer =
     options.tracer ??
     new RecordingTracer({
-      sink: (s) =>
-        spanLogger.info('span', {
-          name: s.name,
-          traceId: s.traceId,
-          spanId: s.spanId,
-          parentId: s.parentId,
-          kind: s.kind,
-          status: s.status,
-          durationMs: s.durationMs,
-          ...pickBoundedAttrs(s.attributes),
-        }),
+      sink: spanSinkFromExporter(exporter),
     });
 
   const deps: ApiDependencies = {
