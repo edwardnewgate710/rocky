@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { JsonLogger, NullLogger } from '../src/ports/logger';
 import { InMemoryMetrics } from '../src/ports/metrics';
+import { RecordingTracer, InMemorySpanRecorder } from '../src/ports/tracer';
 import { parseTraceparent, generateTraceId } from '../src/http/traceparent';
 import { startHarness } from './helpers';
 
@@ -134,3 +135,129 @@ test('/v1/metrics exposes Prometheus text and bounds method cardinality to OTHER
     await h.close();
   }
 });
+
+test('router server span emission, outbound traceparent propagation, route pattern attribution, and PII protection', async () => {
+  const recorder = new InMemorySpanRecorder();
+  const tracer = new RecordingTracer({ sink: recorder.record });
+  const h = await startHarness({}, { tracer });
+
+  try {
+    const concreteHandle = 'alice_test_user';
+    await h.repos.users.create({ id: 'u1', handle: concreteHandle });
+
+    // Request 1: Valid parameterized route request with inbound traceparent
+    const inboundTraceId = '4bf92f3577b34da6a3ce929d0e0e4736';
+    const inboundSpanId = '00f067aa0ba902b7';
+    const inboundTraceparent = `00-${inboundTraceId}-${inboundSpanId}-01`;
+
+    const res = await fetch(`${h.baseUrl}/v1/users/${concreteHandle}`, {
+      headers: { traceparent: inboundTraceparent },
+    });
+    assert.equal(res.status, 200);
+
+    // Outbound traceparent header check
+    const outboundTraceparent = res.headers.get('traceparent');
+    assert.ok(outboundTraceparent, 'response contains traceparent header');
+    const parsedOutbound = parseTraceparent(outboundTraceparent);
+    assert.ok(parsedOutbound, 'outbound traceparent is valid');
+    assert.equal(parsedOutbound!.traceId, inboundTraceId);
+    assert.equal(parsedOutbound!.flags, '01');
+
+    // Span assertion
+    const spans = recorder.spans();
+    assert.equal(spans.length, 1);
+    const span1 = spans[0]!;
+    assert.equal(span1.name, 'http.server');
+    assert.equal(span1.traceId, inboundTraceId);
+    assert.equal(span1.parentId, inboundSpanId);
+    assert.equal(span1.kind, 'server');
+    assert.equal(span1.status, 'ok');
+    assert.equal(span1.attributes['http.method'], 'GET');
+    assert.equal(span1.attributes['http.route'], '/v1/users/:handle');
+    assert.equal(span1.attributes['http.status_code'], 200);
+
+    // Assert NO PII attribute values or keys
+    for (const [k, v] of Object.entries(span1.attributes)) {
+      const valStr = String(v);
+      assert.ok(!valStr.includes(concreteHandle), `attribute ${k} must not contain concrete handle`);
+      assert.ok(!valStr.includes('u1'), `attribute ${k} must not contain user ID`);
+    }
+
+    // Request 2: Handled error path (404)
+    recorder.clear();
+    const res404 = await fetch(`${h.baseUrl}/v1/users/nonexistent_handle`);
+    assert.equal(res404.status, 404);
+    const spans404 = recorder.spans();
+    assert.equal(spans404.length, 1);
+    const span404 = spans404[0]!;
+    assert.equal(span404.status, 'ok', '<500 status yields status ok');
+    assert.equal(span404.attributes['http.status_code'], 404);
+    assert.equal(span404.attributes['http.route'], '/v1/users/:handle');
+  } finally {
+    await h.close();
+  }
+});
+
+test('router server span records error status on internal 500 failure', async () => {
+  const recorder = new InMemorySpanRecorder();
+  const tracer = new RecordingTracer({ sink: recorder.record });
+  const throwingEvaluator = {
+    evaluate: (): never => {
+      throw new Error('Forced anti-cheat evaluator error');
+    },
+  };
+  const h = await startHarness({}, {
+    tracer,
+    antiCheatEvaluator: throwingEvaluator,
+  });
+
+  try {
+    const { token } = await h.makeUser('mod_user', ['moderator']);
+    const gameId = '00000000-0000-7000-8000-000000000001';
+    
+    // Create a finished game in the event store so antiCheatAnalysis proceeds to evaluate
+    const now = Date.now();
+    await h.antiCheatEventStore.append(gameId, -1, [
+      {
+        type: 'GameCreated',
+        gameId,
+        variant: 'standard',
+        initialFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+        timeControl: { initialMs: 300000, incrementMs: 0, delayMs: 0, kind: 'increment' },
+        players: { white: 'u1', black: 'u2' },
+        rated: true,
+        at: now,
+      },
+      {
+        type: 'MovePlayed',
+        ply: 1,
+        uci: 'e2e4',
+        san: 'e4',
+        by: 'w',
+        moveTimeMs: 1000,
+        remaining: { w: 299000, b: 300000 },
+        at: now + 1000,
+      },
+      {
+        type: 'GameEnded',
+        result: '1-0',
+        termination: 'checkmate',
+        winner: 'w',
+        at: now + 2000,
+      },
+    ]);
+
+    const res = await h.json('POST', `/v1/moderation/anti-cheat/games/${gameId}/analyze`, { token });
+    assert.equal(res.status, 500);
+
+    const spans = recorder.spans();
+    assert.equal(spans.length, 1);
+    const span = spans[0]!;
+    assert.equal(span.status, 'error');
+    assert.equal(span.attributes['http.status_code'], 500);
+    assert.equal(span.attributes['http.route'], '/v1/moderation/anti-cheat/games/:gameId/analyze');
+  } finally {
+    await h.close();
+  }
+});
+

@@ -4,11 +4,19 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-24 — M14 Increment 6: external-secrets integration for the Gambit Helm chart (ADR-0044)._
+_Last updated: 2026-07-24 — M13 Increment 2: request span emission + trace-context propagation + sampling (ADR-0045)._
 
-## M14 Increment 6 — external-secrets
+## M13 Increment 2 — tracing and propagation
 
-External Secrets Operator (`external-secrets.io/v1`) integration for the Gambit Helm chart (`deploy/helm/gambit/`).
+Request span emission, deterministic sampling, and outbound `traceparent` propagation in `@chess-platform/api` (ADR-0045):
+- **Tracer Port**: `Tracer`, `Span`, `SpanData`, `NullTracer`, `RecordingTracer`, `InMemorySpanRecorder` ring buffer in `packages/api/src/ports/tracer.ts`.
+- **Sampling**: `alwaysOnSampler` default and deterministic `probabilitySampler(ratio)` based on the first 8 hex chars of `traceId`. Respects inbound `parentSampled` decision.
+- **Trace Context Propagation**: Hand-rolled `formatTraceparent` (`00-<traceId>-<spanId>-<flags>`), `generateSpanId`, and `isSampled` in `traceparent.ts`. Router sets outbound `traceparent` header on every response.
+- **Server Spans**: Per-request `http.server` span in `router.ts`, attributed with route pattern (`http.route`), HTTP method (`http.method`), and numeric status code (`http.status_code`). Sets span status to `'error'` for status >= 500 and `'ok'` for <500.
+- **Production Exporter**: Production `bootstrap.ts` injects a `RecordingTracer` emitting finished spans to structured logs (`JsonLogger`) with a `pickBoundedAttrs` whitelist (`http.method`, `http.route`, `http.status_code`), maintaining PII and cardinality discipline.
+- Detailed in `docs/adr/0045-tracing-and-propagation.md` and `docs/OBSERVABILITY.md`.
+
+Prior: M14 Increment 6 — external-secrets (ADR-0044): External Secrets Operator (`external-secrets.io/v1`) integration for the Gambit Helm chart (`deploy/helm/gambit/`).
 When `secrets.externalSecrets.enabled=true`, the chart renders an `ExternalSecret` custom resource (`apiVersion: external-secrets.io/v1`) that ESO reconciles into a Kubernetes Secret named `<fullname>-secret`, sourced from a backing SecretStore / ClusterSecretStore.
 - `spec.target.name` equals `include "gambit.secretName" .` so `api` and `gateway` Deployments consume `ACCESS_TOKEN_SECRET` and `POSTGRES_PASSWORD` via `secretKeyRef` with zero modifications to Deployment manifests.
 - The inline Opaque `Secret` and its fail-closed min-length checks are skipped in ES mode.

@@ -28,6 +28,7 @@ import {
 import { strictObject, oneOf, optInt, optString, parseLimit, reqString } from './http/validate';
 import type { RateLimiter } from './ports/rate-limiter';
 import type { Metrics } from './ports/metrics';
+import type { Tracer } from './ports/tracer';
 import type { ApiConfig } from './config';
 import type { Clock } from './ports/clock';
 import type { IdGenerator } from './ports/ids';
@@ -74,6 +75,7 @@ export interface RouteDeps {
   readonly gameLauncher: GameLauncher;
   readonly liveView: TournamentLiveView;
   readonly metrics: Metrics;
+  readonly tracer?: Tracer;
   readonly readiness: () => Promise<void>;
   readonly antiCheatAnalysis?: AntiCheatAnalysisService;
   readonly botTimingSource?: BotGameTimingSource;

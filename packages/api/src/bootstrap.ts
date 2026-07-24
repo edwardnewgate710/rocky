@@ -32,7 +32,17 @@ import { JsonLogger } from './ports/logger';
 import type { Logger, LogLevel } from './ports/logger';
 import { InMemoryMetrics } from './ports/metrics';
 import type { Metrics } from './ports/metrics';
+import { RecordingTracer } from './ports/tracer';
+import type { Tracer, SpanAttributes, SpanAttributeValue } from './ports/tracer';
 import { ScryptPasswordHasher } from './auth/password';
+
+function pickBoundedAttrs(attrs: SpanAttributes): Record<string, SpanAttributeValue> {
+  const result: Record<string, SpanAttributeValue> = {};
+  if (attrs['http.method'] !== undefined) result['http.method'] = attrs['http.method'];
+  if (attrs['http.route'] !== undefined) result['http.route'] = attrs['http.route'];
+  if (attrs['http.status_code'] !== undefined) result['http.status_code'] = attrs['http.status_code'];
+  return result;
+}
 import type { PasswordHasher } from './auth/password';
 import { AccessTokenService } from './auth/tokens';
 import { resolveConfig } from './config';
@@ -121,6 +131,7 @@ export interface PgBootstrapOptions {
   readonly analysisProvider?: AnalysisProvider;
   readonly logger?: Logger;
   readonly metrics?: Metrics;
+  readonly tracer?: Tracer;
 }
 
 /** Resolve the log level from `LOG_LEVEL`, defaulting to `info`. */
@@ -159,6 +170,26 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
         repos.antiCheat,
       )
     : undefined;
+
+  const logger = options.logger ?? new JsonLogger({ service: 'api' }, { level: resolveLogLevel() });
+  const metrics = options.metrics ?? new InMemoryMetrics();
+  const spanLogger = logger;
+  const tracer =
+    options.tracer ??
+    new RecordingTracer({
+      sink: (s) =>
+        spanLogger.info('span', {
+          name: s.name,
+          traceId: s.traceId,
+          spanId: s.spanId,
+          parentId: s.parentId,
+          kind: s.kind,
+          status: s.status,
+          durationMs: s.durationMs,
+          ...pickBoundedAttrs(s.attributes),
+        }),
+    });
+
   const deps: ApiDependencies = {
     repos,
     hasher,
@@ -173,10 +204,11 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     emailSender: options.emailSender ?? new ConsoleEmailSender(),
     ...(antiCheatAnalysis ? { antiCheatAnalysis } : {}),
     botTimingSource: new EventStoreBotTimingSource(eventStore),
-    // Production observability (M13): structured logs to stdout + a scrape
-    // registry backing GET /v1/metrics.
-    logger: options.logger ?? new JsonLogger({ service: 'api' }, { level: resolveLogLevel() }),
-    metrics: options.metrics ?? new InMemoryMetrics(),
+    // Production observability (M13): structured logs to stdout, a scrape
+    // registry backing GET /v1/metrics, and tracer emitting spans to logs.
+    logger,
+    metrics,
+    tracer,
     readiness: async () => {
       await pool.query('SELECT 1');
     },

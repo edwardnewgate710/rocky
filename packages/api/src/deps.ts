@@ -32,6 +32,7 @@ import type { TournamentLiveView } from './tournament/live-view';
 import type { EmailSender } from './ports/email';
 import type { Logger } from './ports/logger';
 import type { Metrics } from './ports/metrics';
+import type { Tracer } from './ports/tracer';
 import type { AntiCheatAnalysisService } from './anti-cheat/analysis-service';
 import type { BotGameTimingSource } from './bot-detection/source';
 
@@ -70,7 +71,10 @@ export interface ApiDependencies {
   readonly logger?: Logger;
   /** Metrics registry + scrape target (M13). Defaults to {@link InMemoryMetrics}. */
   readonly metrics?: Metrics;
+  /** Distributed-tracing tracer (M13). Defaults to a silent {@link NullTracer}. */
+  readonly tracer?: Tracer;
   /** Production dependency check used by the readiness endpoint. */
   readonly readiness?: () => Promise<void>;
 }
+
 

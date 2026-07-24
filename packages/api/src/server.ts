@@ -19,6 +19,7 @@ import { withSecurity } from './http/security';
 import { buildRouter } from './routes';
 import { NullLogger } from './ports/logger';
 import { InMemoryMetrics } from './ports/metrics';
+import { NullTracer } from './ports/tracer';
 import type { OpenApiDocument, OpenApiInfo } from './openapi/spec';
 import { buildOpenApiDocument } from './openapi/spec';
 
@@ -54,8 +55,10 @@ export function createApiServer(deps: ApiDependencies, options: ApiServerOptions
   // Observability (M13): one metrics registry is shared between the per-request
   // recorder (RouterRuntime) and the /v1/metrics render route so both see the
   // same series. Logger defaults to silent; production roots inject a JsonLogger.
+  // Tracer defaults to silent NullTracer; production roots inject a RecordingTracer.
   const logger = deps.logger ?? new NullLogger();
   const metrics = deps.metrics ?? new InMemoryMetrics();
+  const tracer = deps.tracer ?? new NullTracer();
 
   const auth = new AuthService({
     repos: deps.repos,
@@ -81,6 +84,7 @@ export function createApiServer(deps: ApiDependencies, options: ApiServerOptions
     gameLauncher: deps.gameLauncher,
     liveView: deps.liveView,
     metrics,
+    tracer,
     readiness: deps.readiness ?? (() => Promise.resolve()),
     antiCheatAnalysis: deps.antiCheatAnalysis,
     botTimingSource: deps.botTimingSource,
@@ -102,6 +106,7 @@ export function createApiServer(deps: ApiDependencies, options: ApiServerOptions
     newRequestId: () => deps.ids.next(),
     logger,
     metrics,
+    tracer,
   });
 
   // Wrap the router listener with security headers and CORS enforcement.
