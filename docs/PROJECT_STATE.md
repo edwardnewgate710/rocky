@@ -4,9 +4,18 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-24 — M11 Search Increment 1: pure-domain keyword search core (ADR-0049)._
+_Last updated: 2026-07-24 — M11 Search Increment 2: SearchRepository port + in-memory adapter (paginated stateful index) (ADR-0050)._
 
-## M11 Search Increment 1 — pure-domain keyword search core
+## M11 Search Increment 2 — SearchRepository port + in-memory adapter
+
+Stateful repository abstraction and in-memory adapter in `@chess-platform/search` (ADR-0050):
+- **SearchRepository Port**: `SearchRepository` interface with `index(document)`, `indexAll(documents)`, `remove(id)`, `clear()`, `size()`, and `query(query, options)`.
+- **Pagination Contracts**: `SearchOptions` (`limit`, `offset` with negative value clamping to `0`) and `SearchPage` (`total` matching hit count across index independent of pagination limits, and `results` containing sliced `SearchResult[]`).
+- **InMemorySearchRepository Adapter**: Pure, dependency-free Map-backed adapter storing `SearchableDocument`s by `id` (upsert semantics). Delegates query evaluation to Increment 1's `search` ranker and slices results deterministically (`start = Math.max(0, offset ?? 0)`, `end = limit === undefined ? allHits.length : start + Math.max(0, limit)`).
+- **Deferred**: Postgres full-text search and pgvector semantic adapters deferred to later M11 increments.
+- Detailed in `docs/adr/0050-search-repository.md`.
+
+Prior: M11 Search Increment 1 — pure-domain keyword search core (ADR-0049)
 
 Pure, dependency-free `@chess-platform/search` domain package delivering keyword search core (ADR-0049):
 - **Tokenizer**: `tokenize(text: string): string[]` splitting text into lowercase alphanumeric tokens using Unicode-aware regex (`/[^\p{L}\p{N}]+/u`).

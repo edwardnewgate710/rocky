@@ -524,6 +524,8 @@ Keyword + semantic (pgvector/Meilisearch) over games, openings, players, studies
 natural-language query parsing.
 
 - **Increment 1 complete (ADR-0049):** pure-domain keyword search core (`@chess-platform/search`): `tokenize`, `parseSearchQuery` (terms, phrases, `[-]field:value` filters), and in-memory `search` AND matcher + ranker.
+- **Increment 2 complete (ADR-0050):** `SearchRepository` port + in-memory paginated adapter (`InMemorySearchRepository`, `SearchOptions`, `SearchPage`).
+
 
 ## 🚧 Milestone 12 — Security hardening & anti-cheat
 
