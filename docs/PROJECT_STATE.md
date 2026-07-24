@@ -4,7 +4,9 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-24 — M12 Bot Detection Increment 4 (ADR-0039): Bot detection service and report repository (`BotDetectionService` & `BotBehaviorReportRepository` with `InMemoryBotBehaviorReportRepository` in `@chess-platform/anti-cheat`, `AnalyzeBotAndStoreInput`, `GameBotReport`, idempotent `(playerId, gameId)` nested-map upsert, `analyzeAndStore` and `aggregatePlayer` composition)._
+_Last updated: 2026-07-24 — M12 Bot Detection Increment 5 (ADR-0040): Postgres persistence and moderation REST API (read + on-demand analyze) for bot detection (bot_reports table, PgBotBehaviorReportRepository, EventStoreBotTimingSource, BotDetectionService, read endpoints, and on-demand analyze endpoint)._
+
+Prior: M12 Bot Detection Increment 4 (ADR-0039): Bot detection service and report repository (`BotDetectionService` & `BotBehaviorReportRepository` with `InMemoryBotBehaviorReportRepository` in `@chess-platform/anti-cheat`, `AnalyzeBotAndStoreInput`, `GameBotReport`, idempotent `(playerId, gameId)` nested-map upsert, `analyzeAndStore` and `aggregatePlayer` composition).
 
 Prior: M12 Bot Detection Increment 3 (ADR-0038): Move-timing extraction (`extractTimedMoves` in `@chess-platform/anti-cheat`, `MoveTiming`, `GameTimings`, minimal decoupled projection from `MovePlayedEvent.moveTimeMs`, `isBook` predicate seam for opening-book exclusion).
 
@@ -517,6 +519,18 @@ Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
 - **Pure Domain Service**: Added `BotDetectionService` in `@chess-platform/anti-cheat` (`packages/anti-cheat/src/bot-service.ts`) composing `extractTimedMoves` → `analyzeBotBehavior` → `saveBatch` (`analyzeAndStore`) and `listByPlayer` → `aggregateBotBehavior` (`aggregatePlayer`).
 - **Engine-Free Simplicity**: Operates entirely on move-timing data without requiring an engine/evaluator adapter (unlike `AntiCheatService`).
 - **Hermetic Tests**: Unit test suites in `packages/anti-cheat/test/bot-repository.test.ts` and `packages/anti-cheat/test/bot-service.test.ts` covering batch storage, idempotent upsert replacement, unknown player fallback, multi-game bot escalation vs human clean aggregates, and `isBook` predicate delegation.
+
+## M12 Bot Detection Increment 5 — Postgres Persistence & Moderation REST API (ADR-0040)
+- **Database Schema**: Added migration `0011_bot_reports.sql` creating `bot_reports` table (`player_id`, `game_id`, `color`, `report JSONB`, `created_at`, `updated_at`) with composite primary key `(player_id, game_id)` and supporting index `(player_id, created_at)`.
+- **Postgres Repository**: Added `PgBotBehaviorReportRepository` in `@chess-platform/persistence/pg` implementing atomic `saveBatch` (SQL `BEGIN`...`COMMIT` transaction with `ON CONFLICT (player_id, game_id) DO UPDATE`) and `listByPlayer`. Re-exported from `@chess-platform/persistence/pg`.
+- **Timing Source Adapter**: Added `EventStoreBotTimingSource` in `@chess-platform/api/src/bot-detection/source.ts` implementing `BotGameTimingSource` to project finished game events into `BotFinishedGame` (`white`, `black`, `moves`).
+- **Moderation REST Endpoints**: Added three `MODERATION`-gated, audited endpoints in `@chess-platform/api`:
+  - `GET /v1/moderation/bot-detection/players/:playerId` (audits `bot_detection.aggregate.view`, returns `BotAggregateView`).
+  - `GET /v1/moderation/bot-detection/players/:playerId/games` (audits `bot_detection.games.view`, respects `limit`, returns `BotGameReportList`).
+  - `POST /v1/moderation/bot-detection/games/:gameId/analyze` (audits `bot_detection.analyze`, loads timings via `botTimingSource`, triggers `BotDetectionService.analyzeAndStore`, returns `BotGameAnalysisView`). Unconditionally available without engine setup (throws 503 if `botTimingSource` is missing).
+- **OpenAPI & Wire Integration**: Added presenter functions/views in `presenters.ts` and OpenAPI component schemas in `schemas.ts`. Updated `deps.ts`, `server.ts`, `fakes.ts`, `bootstrap.ts`, and test `helpers.ts`.
+- **Tests**: DB-gated integration test in `packages/persistence/test/bot-reports.integration.test.ts` and API test suites in `packages/api/test/bot-detection.test.ts` and `packages/api/test/bot-detection-analyze.test.ts`.
+
 
 
 

@@ -27,12 +27,13 @@ import type { IdGenerator } from './ports/ids';
 import type { RateLimiter } from './ports/rate-limiter';
 import type { ApiConfig } from './config';
 import type { GameLauncher } from './tournament/launcher';
-import type { AntiCheatReportRepository } from '@chess-platform/anti-cheat';
+import type { AntiCheatReportRepository, BotBehaviorReportRepository } from '@chess-platform/anti-cheat';
 import type { TournamentLiveView } from './tournament/live-view';
 import type { EmailSender } from './ports/email';
 import type { Logger } from './ports/logger';
 import type { Metrics } from './ports/metrics';
 import type { AntiCheatAnalysisService } from './anti-cheat/analysis-service';
+import type { BotGameTimingSource } from './bot-detection/source';
 
 /** The full set of repositories the API consumes. */
 export interface Repositories {
@@ -47,6 +48,7 @@ export interface Repositories {
   readonly webauthnLoginChallenges: WebAuthnLoginChallengesRepository;
   readonly seekAcceptor: SeekAcceptor;
   readonly antiCheat: AntiCheatReportRepository;
+  readonly botReports: BotBehaviorReportRepository;
 }
 
 /** Everything `createApiServer` needs to construct the service. */
@@ -63,6 +65,7 @@ export interface ApiDependencies {
   readonly liveView: TournamentLiveView;
   readonly emailSender: EmailSender;
   readonly antiCheatAnalysis?: AntiCheatAnalysisService;
+  readonly botTimingSource?: BotGameTimingSource;
   /** Structured logger (M13). Defaults to a silent {@link NullLogger}. */
   readonly logger?: Logger;
   /** Metrics registry + scrape target (M13). Defaults to {@link InMemoryMetrics}. */
@@ -70,3 +73,4 @@ export interface ApiDependencies {
   /** Production dependency check used by the readiness endpoint. */
   readonly readiness?: () => Promise<void>;
 }
+

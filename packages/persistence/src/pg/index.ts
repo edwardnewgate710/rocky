@@ -9,4 +9,5 @@ export * from './migrate';
 export * from './event-store';
 export * from './repositories';
 export * from './anti-cheat';
+export * from './bot-reports';
 

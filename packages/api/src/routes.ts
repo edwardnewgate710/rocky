@@ -31,12 +31,15 @@ import type { Metrics } from './ports/metrics';
 import type { ApiConfig } from './config';
 import type { Clock } from './ports/clock';
 import type { IdGenerator } from './ports/ids';
-import { aggregatePlayer } from '@chess-platform/anti-cheat';
+import { aggregatePlayer, BotDetectionService } from '@chess-platform/anti-cheat';
 import { NoEngineForVariantError } from '@chess-platform/engine';
 import {
   antiCheatAggregateView,
   antiCheatGameReportView,
   antiCheatGameAnalysisView,
+  botAggregateView,
+  botGameReportView,
+  botGameAnalysisView,
   gameSummaryView,
   leaderboardEntry,
   publicUser,
@@ -55,6 +58,7 @@ import type { RouteDoc } from './openapi/types';
 import type { GameLauncher } from './tournament/launcher';
 import type { TournamentLiveView } from './tournament/live-view';
 import type { AntiCheatAnalysisService } from './anti-cheat/analysis-service';
+import type { BotGameTimingSource } from './bot-detection/source';
 
 /** Collaborators the route handlers need. */
 export interface RouteDeps {
@@ -71,6 +75,7 @@ export interface RouteDeps {
   readonly metrics: Metrics;
   readonly readiness: () => Promise<void>;
   readonly antiCheatAnalysis?: AntiCheatAnalysisService;
+  readonly botTimingSource?: BotGameTimingSource;
 }
 
 const PUBLIC: AuthPolicy = { required: false };
@@ -87,6 +92,8 @@ const MAX_LIST_LIMIT = 200;
 export function buildRouter(deps: RouteDeps): Router {
   const router = new Router();
   const { auth, repos, clock, ids, info, rateLimiter, config } = deps;
+  const botService = new BotDetectionService(repos.botReports);
+
 
   const cookieOpts = { secure: config.cookieSecure };
   const refreshTokenTtlSec = config.refreshTokenTtlSec;
@@ -721,7 +728,113 @@ export function buildRouter(deps: RouteDeps): Router {
     },
   );
 
+  // --- Moderation / Bot Detection ------------------------------------------
+  router.get(
+    '/v1/moderation/bot-detection/players/:playerId',
+    doc({
+      summary: 'View bot detection aggregate report for a player',
+      security: 'bearer',
+      params: [pathParam('playerId', 'Target player ID (UUID)')],
+      tags: ['moderation', 'bot-detection'],
+      responses: {
+        200: ['BotAggregateView', 'Aggregated bot detection report'],
+        422: ['Error', 'Malformed player ID'],
+      },
+    }),
+    MODERATION,
+    async (ctx) => {
+      const actor = requireAuth(ctx);
+      const playerId = parseUuid(ctx.params['playerId']!, 'playerId');
+      await repos.audit.record({
+        actorId: actor.userId,
+        action: 'bot_detection.aggregate.view',
+        target: playerId,
+        requestId: ctx.requestId,
+        ip: ctx.ip,
+        userAgent: ctx.userAgent,
+        at: clock.now(),
+      });
+      const report = await botService.aggregatePlayer(playerId);
+      return json(200, botAggregateView(playerId, report));
+    },
+  );
+
+  router.get(
+    '/v1/moderation/bot-detection/players/:playerId/games',
+    doc({
+      summary: 'List per-game bot detection reports for a player',
+      security: 'bearer',
+      params: [pathParam('playerId', 'Target player ID (UUID)'), limitParam()],
+      tags: ['moderation', 'bot-detection'],
+      responses: {
+        200: ['BotGameReportList', 'List of per-game bot detection reports'],
+        422: ['Error', 'Malformed player ID'],
+      },
+    }),
+    MODERATION,
+    async (ctx) => {
+      const actor = requireAuth(ctx);
+      const playerId = parseUuid(ctx.params['playerId']!, 'playerId');
+      const limit = parseLimit(ctx.query, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+      await repos.audit.record({
+        actorId: actor.userId,
+        action: 'bot_detection.games.view',
+        target: playerId,
+        requestId: ctx.requestId,
+        ip: ctx.ip,
+        userAgent: ctx.userAgent,
+        at: clock.now(),
+      });
+      const stored = await repos.botReports.listByPlayer(playerId);
+      return json(200, stored.slice(0, limit).map(botGameReportView));
+    },
+  );
+
+  router.post(
+    '/v1/moderation/bot-detection/games/:gameId/analyze',
+    doc({
+      summary: 'Trigger bot detection analysis for a finished game',
+      security: 'bearer',
+      params: [pathParam('gameId', 'Target game ID (UUID)')],
+      tags: ['moderation', 'bot-detection'],
+      responses: {
+        200: ['BotGameAnalysisView', 'Per-player bot reports'],
+        404: ['Error', 'No finished game'],
+        422: ['Error', 'Malformed id'],
+        503: ['Error', 'Bot detection timing source is not configured'],
+      },
+    }),
+    MODERATION,
+    async (ctx) => {
+      const actor = requireAuth(ctx);
+      const gameId = parseUuid(ctx.params['gameId']!, 'gameId');
+      await repos.audit.record({
+        actorId: actor.userId,
+        action: 'bot_detection.analyze',
+        target: gameId,
+        requestId: ctx.requestId,
+        ip: ctx.ip,
+        userAgent: ctx.userAgent,
+        at: clock.now(),
+      });
+      if (!deps.botTimingSource) {
+        throw HttpError.unavailable('bot-detection timing source is not configured');
+      }
+      const g = await deps.botTimingSource.load(gameId);
+      if (!g) {
+        throw HttpError.notFound('no finished game with that id');
+      }
+      const report = await botService.analyzeAndStore({
+        gameId,
+        players: { white: g.white, black: g.black },
+        moves: g.moves,
+      });
+      return json(200, botGameAnalysisView(report));
+    },
+  );
+
   // --- Ratings / leaderboard ----------------------------------------------
+
   router.get(
     '/v1/leaderboard/:variant',
     doc({

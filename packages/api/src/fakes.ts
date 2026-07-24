@@ -40,7 +40,7 @@ import { DuplicateUserError, VersionConflictError } from '@chess-platform/persis
 import type { AuditEntry, AuditRepository } from './ports/audit';
 import type { Clock } from './ports/clock';
 import { InMemoryEventStore } from '@chess-platform/persistence';
-import { InMemoryAntiCheatReportRepository } from '@chess-platform/anti-cheat';
+import { InMemoryAntiCheatReportRepository, InMemoryBotBehaviorReportRepository } from '@chess-platform/anti-cheat';
 import type { GameEvent } from '@chess-platform/game';
 import { systemClock } from './ports/clock';
 import type { Repositories } from './deps';
@@ -657,6 +657,7 @@ export interface InMemoryRepositories extends Repositories {
   readonly webauthnCredentials: InMemoryWebAuthnCredentialsRepository;
   readonly seekAcceptor: InMemorySeekAcceptor;
   readonly antiCheat: InMemoryAntiCheatReportRepository;
+  readonly botReports: InMemoryBotBehaviorReportRepository;
 }
 
 /** Construct a fresh set of in-memory repositories sharing a clock. */
@@ -679,5 +680,6 @@ export function createInMemoryRepositories(clock: Clock = systemClock): InMemory
     webauthnCredentials: new InMemoryWebAuthnCredentialsRepository(),
     seekAcceptor: new InMemorySeekAcceptor(seeks, events, games, clock),
     antiCheat: new InMemoryAntiCheatReportRepository(),
+    botReports: new InMemoryBotBehaviorReportRepository(),
   };
 }

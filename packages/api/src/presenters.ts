@@ -20,7 +20,12 @@ import type {
   PlayerAggregateReport,
   StoredPlayerReport,
   Suspicion,
+  BotAggregateReport,
+  StoredBotReport,
+  GameBotReport,
+  BotBehaviorReport,
 } from '@chess-platform/anti-cheat';
+
 import { classifySpeed } from '@chess-platform/game';
 
 /** Public user view (safe for any caller). */
@@ -233,6 +238,74 @@ export function antiCheatGameAnalysisView(
     black: report.black,
   };
 }
+
+/** View of an account-level aggregated bot-detection report. */
+export interface BotAggregateView {
+  readonly playerId: string;
+  readonly suspicion: Suspicion;
+  readonly gamesAnalyzed: number;
+  readonly pooledSampleSize: number;
+  readonly pooledMeanMs: number;
+  readonly pooledStdevMs: number;
+  readonly pooledCoefficientOfVariation: number;
+  readonly pooledInstantMoves: number;
+  readonly pooledInstantFraction: number;
+  readonly lowConfidence: boolean;
+  readonly flaggedGameIds: string[];
+}
+
+export function botAggregateView(
+  playerId: string,
+  r: BotAggregateReport,
+): BotAggregateView {
+  return {
+    playerId,
+    suspicion: r.suspicion,
+    gamesAnalyzed: r.gamesAnalyzed,
+    pooledSampleSize: r.pooledSampleSize,
+    pooledMeanMs: r.pooledMeanMs,
+    pooledStdevMs: r.pooledStdevMs,
+    pooledCoefficientOfVariation: r.pooledCoefficientOfVariation,
+    pooledInstantMoves: r.pooledInstantMoves,
+    pooledInstantFraction: r.pooledInstantFraction,
+    lowConfidence: r.lowConfidence,
+    flaggedGameIds: [...r.flaggedGameIds],
+  };
+}
+
+/** View of a per-game stored player bot behavior report. */
+export interface BotGameReportView {
+  readonly gameId: string;
+  readonly playerId: string;
+  readonly color: 'white' | 'black';
+  readonly report: BotBehaviorReport;
+}
+
+export function botGameReportView(
+  s: StoredBotReport,
+): BotGameReportView {
+  return {
+    gameId: s.gameId,
+    playerId: s.playerId,
+    color: s.color,
+    report: s.report,
+  };
+}
+
+export interface BotGameAnalysisView {
+  readonly white: BotBehaviorReport;
+  readonly black: BotBehaviorReport;
+}
+
+export function botGameAnalysisView(
+  r: GameBotReport,
+): BotGameAnalysisView {
+  return {
+    white: r.white,
+    black: r.black,
+  };
+}
+
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;

@@ -684,4 +684,91 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       black: { $ref: '#/components/schemas/AntiCheatPlayerReport' },
     },
   },
+
+  BotBehaviorReportView: {
+    type: 'object',
+    required: [
+      'suspicion',
+      'sampleSize',
+      'meanMs',
+      'stdevMs',
+      'coefficientOfVariation',
+      'instantMoves',
+      'instantFraction',
+      'sumMs',
+      'sumSqMs',
+      'lowConfidence',
+    ],
+    properties: {
+      suspicion: { type: 'string', enum: ['clean', 'review', 'high'] },
+      sampleSize: { type: 'integer' },
+      meanMs: { type: 'number' },
+      stdevMs: { type: 'number' },
+      coefficientOfVariation: { type: 'number' },
+      instantMoves: { type: 'integer' },
+      instantFraction: { type: 'number' },
+      sumMs: { type: 'number' },
+      sumSqMs: { type: 'number' },
+      lowConfidence: { type: 'boolean' },
+    },
+  },
+
+  BotGameReportView: {
+    type: 'object',
+    required: ['gameId', 'playerId', 'color', 'report'],
+    properties: {
+      gameId: { type: 'string', format: 'uuid' },
+      playerId: { type: 'string', format: 'uuid' },
+      color: { type: 'string', enum: ['white', 'black'] },
+      report: { $ref: '#/components/schemas/BotBehaviorReportView' },
+    },
+  },
+
+  BotAggregateView: {
+    type: 'object',
+    required: [
+      'playerId',
+      'suspicion',
+      'gamesAnalyzed',
+      'pooledSampleSize',
+      'pooledMeanMs',
+      'pooledStdevMs',
+      'pooledCoefficientOfVariation',
+      'pooledInstantMoves',
+      'pooledInstantFraction',
+      'lowConfidence',
+      'flaggedGameIds',
+    ],
+    properties: {
+      playerId: { type: 'string', format: 'uuid' },
+      suspicion: { type: 'string', enum: ['clean', 'review', 'high'] },
+      gamesAnalyzed: { type: 'integer' },
+      pooledSampleSize: { type: 'integer' },
+      pooledMeanMs: { type: 'number' },
+      pooledStdevMs: { type: 'number' },
+      pooledCoefficientOfVariation: { type: 'number' },
+      pooledInstantMoves: { type: 'integer' },
+      pooledInstantFraction: { type: 'number' },
+      lowConfidence: { type: 'boolean' },
+      flaggedGameIds: {
+        type: 'array',
+        items: { type: 'string', format: 'uuid' },
+      },
+    },
+  },
+
+  BotGameReportList: {
+    type: 'array',
+    items: { $ref: '#/components/schemas/BotGameReportView' },
+  },
+
+  BotGameAnalysisView: {
+    type: 'object',
+    required: ['white', 'black'],
+    properties: {
+      white: { $ref: '#/components/schemas/BotBehaviorReportView' },
+      black: { $ref: '#/components/schemas/BotBehaviorReportView' },
+    },
+  },
 };
+

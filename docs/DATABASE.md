@@ -334,7 +334,24 @@ anti_cheat_reports(
 
 Analytical anti-cheat records store per-player engine-correlation reports. No foreign keys are attached to `player_id` or `game_id` so reports survive independently of user/game row lifecycles. Composite PK `(player_id, game_id)` indexes `player_id` as prefix for `listByPlayer` queries.
 
-### 4.6 Reserved for later milestones
+### 4.6 Bot Detection Reports
+
+```sql
+bot_reports(
+  player_id  UUID NOT NULL,
+  game_id    UUID NOT NULL,
+  color      TEXT NOT NULL CHECK (color IN ('white', 'black')),
+  report     JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (player_id, game_id)
+);
+CREATE INDEX bot_reports_player_created_idx ON bot_reports (player_id, created_at, game_id);
+```
+
+Behavioral bot-detection records store per-player move-time reports (an engine-free signal orthogonal to `anti_cheat_reports`). Same no-FK rationale; the `(player_id, created_at, game_id)` index supports `listByPlayer`'s `ORDER BY created_at ASC, game_id ASC` — `game_id` is the tie-breaker so pagination is deterministic (records from one `saveBatch` share `created_at`, since `now()` is fixed per transaction).
+
+### 4.7 Reserved for later milestones
 
 Created only when their milestone lands (listed for design coherence):
 `studies*`, `follows`, `friends`, `messages`, `puzzles`,

@@ -1375,6 +1375,270 @@
         }
       }
     },
+    "/v1/moderation/bot-detection/players/{playerId}": {
+      "get": {
+        "summary": "View bot detection aggregate report for a player",
+        "tags": [
+          "moderation",
+          "bot-detection"
+        ],
+        "operationId": "get_v1_moderation_bot_detection_players_by_playerId",
+        "responses": {
+          "200": {
+            "description": "Aggregated bot detection report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotAggregateView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Malformed player ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "playerId",
+            "in": "path",
+            "required": true,
+            "description": "Target player ID (UUID)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/moderation/bot-detection/players/{playerId}/games": {
+      "get": {
+        "summary": "List per-game bot detection reports for a player",
+        "tags": [
+          "moderation",
+          "bot-detection"
+        ],
+        "operationId": "get_v1_moderation_bot_detection_players_by_playerId_games",
+        "responses": {
+          "200": {
+            "description": "List of per-game bot detection reports",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotGameReportList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Malformed player ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "playerId",
+            "in": "path",
+            "required": true,
+            "description": "Target player ID (UUID)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum number of results.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/v1/moderation/bot-detection/games/{gameId}/analyze": {
+      "post": {
+        "summary": "Trigger bot detection analysis for a finished game",
+        "tags": [
+          "moderation",
+          "bot-detection"
+        ],
+        "operationId": "post_v1_moderation_bot_detection_games_by_gameId_analyze",
+        "responses": {
+          "200": {
+            "description": "Per-player bot reports",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotGameAnalysisView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No finished game",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Malformed id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Bot detection timing source is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "gameId",
+            "in": "path",
+            "required": true,
+            "description": "Target game ID (UUID)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/v1/leaderboard/{variant}": {
       "get": {
         "summary": "Top players for a variant",
@@ -4262,6 +4526,169 @@
           },
           "black": {
             "$ref": "#/components/schemas/AntiCheatPlayerReport"
+          }
+        }
+      },
+      "BotBehaviorReportView": {
+        "type": "object",
+        "required": [
+          "suspicion",
+          "sampleSize",
+          "meanMs",
+          "stdevMs",
+          "coefficientOfVariation",
+          "instantMoves",
+          "instantFraction",
+          "sumMs",
+          "sumSqMs",
+          "lowConfidence"
+        ],
+        "properties": {
+          "suspicion": {
+            "type": "string",
+            "enum": [
+              "clean",
+              "review",
+              "high"
+            ]
+          },
+          "sampleSize": {
+            "type": "integer"
+          },
+          "meanMs": {
+            "type": "number"
+          },
+          "stdevMs": {
+            "type": "number"
+          },
+          "coefficientOfVariation": {
+            "type": "number"
+          },
+          "instantMoves": {
+            "type": "integer"
+          },
+          "instantFraction": {
+            "type": "number"
+          },
+          "sumMs": {
+            "type": "number"
+          },
+          "sumSqMs": {
+            "type": "number"
+          },
+          "lowConfidence": {
+            "type": "boolean"
+          }
+        }
+      },
+      "BotGameReportView": {
+        "type": "object",
+        "required": [
+          "gameId",
+          "playerId",
+          "color",
+          "report"
+        ],
+        "properties": {
+          "gameId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "playerId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "color": {
+            "type": "string",
+            "enum": [
+              "white",
+              "black"
+            ]
+          },
+          "report": {
+            "$ref": "#/components/schemas/BotBehaviorReportView"
+          }
+        }
+      },
+      "BotAggregateView": {
+        "type": "object",
+        "required": [
+          "playerId",
+          "suspicion",
+          "gamesAnalyzed",
+          "pooledSampleSize",
+          "pooledMeanMs",
+          "pooledStdevMs",
+          "pooledCoefficientOfVariation",
+          "pooledInstantMoves",
+          "pooledInstantFraction",
+          "lowConfidence",
+          "flaggedGameIds"
+        ],
+        "properties": {
+          "playerId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "suspicion": {
+            "type": "string",
+            "enum": [
+              "clean",
+              "review",
+              "high"
+            ]
+          },
+          "gamesAnalyzed": {
+            "type": "integer"
+          },
+          "pooledSampleSize": {
+            "type": "integer"
+          },
+          "pooledMeanMs": {
+            "type": "number"
+          },
+          "pooledStdevMs": {
+            "type": "number"
+          },
+          "pooledCoefficientOfVariation": {
+            "type": "number"
+          },
+          "pooledInstantMoves": {
+            "type": "integer"
+          },
+          "pooledInstantFraction": {
+            "type": "number"
+          },
+          "lowConfidence": {
+            "type": "boolean"
+          },
+          "flaggedGameIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
+      "BotGameReportList": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/BotGameReportView"
+        }
+      },
+      "BotGameAnalysisView": {
+        "type": "object",
+        "required": [
+          "white",
+          "black"
+        ],
+        "properties": {
+          "white": {
+            "$ref": "#/components/schemas/BotBehaviorReportView"
+          },
+          "black": {
+            "$ref": "#/components/schemas/BotBehaviorReportView"
           }
         }
       }

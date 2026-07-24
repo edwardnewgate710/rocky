@@ -24,6 +24,7 @@ import {
   PgWebAuthnLoginChallengesRepository,
   PgSeekAcceptor,
   PgAntiCheatReportRepository,
+  PgBotBehaviorReportRepository,
 } from '@chess-platform/persistence/pg';
 import { ConsoleEmailSender } from './ports/email';
 import type { EmailSender } from './ports/email';
@@ -54,6 +55,8 @@ import type { AnalysisProvider } from '@chess-platform/engine';
 import { EngineBackedEvaluator } from '@chess-platform/anti-cheat/engine';
 import { AntiCheatAnalysisService } from './anti-cheat/analysis-service';
 import { EventStoreGameSource } from './anti-cheat/source';
+import { EventStoreBotTimingSource } from './bot-detection/source';
+
 
 /** Postgres-backed {@link AuditRepository} writing to the `audit_log` table. */
 export class PgAuditRepository implements AuditRepository {
@@ -96,6 +99,7 @@ export function createPgRepositories(pool: Pool, ids: IdGenerator = uuidv7Genera
     webauthnLoginChallenges: new PgWebAuthnLoginChallengesRepository(pool),
     seekAcceptor: new PgSeekAcceptor(pool),
     antiCheat: new PgAntiCheatReportRepository(pool),
+    botReports: new PgBotBehaviorReportRepository(pool),
   };
 }
 
@@ -168,6 +172,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     liveView: options.liveView ?? new DurableTournamentLiveView(tournamentRepo, eventStore),
     emailSender: options.emailSender ?? new ConsoleEmailSender(),
     ...(antiCheatAnalysis ? { antiCheatAnalysis } : {}),
+    botTimingSource: new EventStoreBotTimingSource(eventStore),
     // Production observability (M13): structured logs to stdout + a scrape
     // registry backing GET /v1/metrics.
     logger: options.logger ?? new JsonLogger({ service: 'api' }, { level: resolveLogLevel() }),

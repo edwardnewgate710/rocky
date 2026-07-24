@@ -24,7 +24,9 @@ import { InMemoryEventStore } from '@chess-platform/persistence';
 import type { PositionEvaluator } from '@chess-platform/anti-cheat';
 import { AntiCheatAnalysisService } from '../src/anti-cheat/analysis-service';
 import { EventStoreGameSource } from '../src/anti-cheat/source';
+import { EventStoreBotTimingSource } from '../src/bot-detection/source';
 import type { Logger } from '../src/ports/logger';
+
 
 export const TEST_SECRET = 'test-access-token-secret-0123456789abcdef';
 export const START_MS = 1_700_000_000_000;
@@ -116,6 +118,7 @@ export async function startHarness(
   const server = createApiServer({
     repos, hasher, tokens, clock, ids, rateLimiter, tournamentRepo, gameLauncher, liveView, emailSender,
     config: resolved,
+    botTimingSource: new EventStoreBotTimingSource(antiCheatEventStore),
     ...(antiCheatAnalysis ? { antiCheatAnalysis } : {}),
     ...(harnessOptions.readiness ? { readiness: harnessOptions.readiness } : {}),
     ...(harnessOptions.logger ? { logger: harnessOptions.logger } : {}),
