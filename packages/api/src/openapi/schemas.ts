@@ -770,5 +770,26 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       black: { $ref: '#/components/schemas/BotBehaviorReportView' },
     },
   },
+
+  SearchResult: {
+    type: 'object',
+    required: ['id', 'score'],
+    properties: {
+      id: { type: 'string' },
+      score: { type: 'number' },
+    },
+  },
+
+  SearchResults: {
+    type: 'object',
+    required: ['total', 'results'],
+    properties: {
+      total: { type: 'integer' },
+      results: {
+        type: 'array',
+        items: { $ref: '#/components/schemas/SearchResult' },
+      },
+    },
+  },
 };
 

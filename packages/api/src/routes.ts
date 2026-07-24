@@ -61,6 +61,7 @@ import type { TournamentLiveView } from './tournament/live-view';
 import type { AntiCheatAnalysisService } from './anti-cheat/analysis-service';
 import type { BotGameTimingSource } from './bot-detection/source';
 import { BotAnalysisService } from './bot-detection/analysis-service';
+import { parseNaturalQuery, type SearchRepository } from '@chess-platform/search';
 
 /** Collaborators the route handlers need. */
 export interface RouteDeps {
@@ -79,6 +80,7 @@ export interface RouteDeps {
   readonly readiness: () => Promise<void>;
   readonly antiCheatAnalysis?: AntiCheatAnalysisService;
   readonly botTimingSource?: BotGameTimingSource;
+  readonly searchRepository?: SearchRepository;
 }
 
 const PUBLIC: AuthPolicy = { required: false };
@@ -90,6 +92,8 @@ const DEFAULT_LEADERBOARD_LIMIT = 50;
 const MAX_LEADERBOARD_LIMIT = 200;
 const DEFAULT_LIST_LIMIT = 50;
 const MAX_LIST_LIMIT = 200;
+const DEFAULT_SEARCH_LIMIT = 20;
+const MAX_SEARCH_LIMIT = 100;
 
 /** Build the fully-wired router. */
 export function buildRouter(deps: RouteDeps): Router {
@@ -855,6 +859,63 @@ export function buildRouter(deps: RouteDeps): Router {
     },
   );
 
+  // --- Search --------------------------------------------------------------
+  router.get(
+    '/v1/search',
+    doc({
+      summary: 'Search',
+      tags: ['search'],
+      params: [
+        {
+          name: 'q',
+          in: 'query',
+          required: true,
+          description: 'Search query (non-blank)',
+          schema: { type: 'string', minLength: 1 },
+        },
+        {
+          name: 'limit',
+          in: 'query',
+          required: false,
+          description: 'Maximum results to return',
+          schema: {
+            type: 'integer',
+            minimum: 1,
+            maximum: MAX_SEARCH_LIMIT,
+            default: DEFAULT_SEARCH_LIMIT,
+          },
+        },
+        {
+          name: 'offset',
+          in: 'query',
+          required: false,
+          description: 'Number of results to skip',
+          schema: { type: 'integer', minimum: 0, default: 0 },
+        },
+      ],
+      responses: {
+        200: ['SearchResults', 'Ranked search results'],
+        422: ['Error', 'Invalid query'],
+        503: ['Error', 'Search is not configured'],
+      },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      if (!deps.searchRepository) {
+        throw HttpError.unavailable('search is not configured');
+      }
+      const q = ctx.query.get('q');
+      if (q === null || q.trim() === '') {
+        throw HttpError.validation('"q" is required', { q: 'required' });
+      }
+      const limit = parseLimit(ctx.query, DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
+      const offset = parseSearchOffset(ctx.query);
+      const query = parseNaturalQuery(q);
+      const page = await deps.searchRepository.query(query, { limit, offset });
+      return json(200, { total: page.total, results: page.results });
+    },
+  );
+
   // --- Seeks / lobby -------------------------------------------------------
   router.get(
     '/v1/seeks',
@@ -1443,4 +1504,17 @@ function limitParam(): NonNullable<RouteDoc['params']>[number] {
     description: 'Maximum number of results.',
     schema: { type: 'integer', minimum: 1 },
   };
+}
+
+function parseSearchOffset(query: URLSearchParams): number {
+  const raw = query.get('offset');
+  if (raw === null) return 0;
+  if (raw.trim() === '') {
+    throw HttpError.validation('"offset" must be a non-negative integer', { offset: 'invalid' });
+  }
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    throw HttpError.validation('"offset" must be a non-negative integer', { offset: 'invalid' });
+  }
+  return n;
 }

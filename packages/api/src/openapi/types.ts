@@ -21,6 +21,7 @@ export interface JsonSchema {
   readonly maximum?: number;
   readonly minLength?: number;
   readonly maxLength?: number;
+  readonly default?: string | number | boolean;
   readonly example?: unknown;
   readonly oneOf?: readonly JsonSchema[];
 }

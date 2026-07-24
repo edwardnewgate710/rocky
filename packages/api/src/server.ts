@@ -88,6 +88,7 @@ export function createApiServer(deps: ApiDependencies, options: ApiServerOptions
     readiness: deps.readiness ?? (() => Promise.resolve()),
     antiCheatAnalysis: deps.antiCheatAnalysis,
     botTimingSource: deps.botTimingSource,
+    searchRepository: deps.searchRepository,
   });
 
   const authenticate = (authorization: string | undefined): Identity | null => {

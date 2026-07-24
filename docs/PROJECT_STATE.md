@@ -4,9 +4,20 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-24 — M11 Search Increment 5: Postgres full-text adapter (PgSearchRepository) (ADR-0053)._
+_Last updated: 2026-07-24 — M11 Search Increment 6: Search REST API (GET /v1/search) (ADR-0054)._
 
-## M11 Search Increment 5 — Postgres full-text adapter (PgSearchRepository) (ADR-0053)
+## M11 Search Increment 6 — Search REST API (GET /v1/search) (ADR-0054)
+
+Public, read-only search REST API endpoint `GET /v1/search` in `@chess-platform/api` (ADR-0054):
+- **Endpoint & Routing**: Added `GET /v1/search` route (public policy) accepting required `q` query string, optional bounded `limit` (default 20, max 100), and optional `offset` (default 0, non-negative integer validation).
+- **Query Processing**: Runs natural language query normalizer `parseNaturalQuery(q)` from `@chess-platform/search` and executes `deps.searchRepository.query(query, { limit, offset })`.
+- **Response & OpenAPI Schemas**: Returns `{ total, results }` matching `SearchResults` schema (`SearchResult` items with `id` and `score`).
+- **Optional Dependency & 503 Guard**: Injected `searchRepository?: SearchRepository` on `ApiDependencies` / `RouteDeps`. Throws `HttpError.unavailable('search is not configured')` (503) when `searchRepository` is absent, mirroring anti-cheat moderation routes.
+- **Test Harness**: Wired `InMemorySearchRepository` into `startHarness`, controllable via `withoutSearch` option.
+- **Deferred**: Populating search index (projections from entities) and wiring `PgSearchRepository` in `bootstrap.ts` deferred to later increments.
+- Detailed in `docs/adr/0054-search-rest-api.md`.
+
+Prior: M11 Search Increment 5 — Postgres full-text adapter (PgSearchRepository) (ADR-0053)
 
 Durable Postgres full-text adapter `PgSearchRepository` in `@chess-platform/persistence` implementing `SearchRepository` (ADR-0053):
 - **Schema & Migration (`0013_search_documents.sql`)**: `search_documents` table with `id TEXT PRIMARY KEY`, `text TEXT`, `fields JSONB`, and stored generated `tsv tsvector` using `'simple'` configuration, with GIN indexes on `tsv` and `fields`.

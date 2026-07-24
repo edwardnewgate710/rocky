@@ -27,6 +27,7 @@ import { EventStoreGameSource } from '../src/anti-cheat/source';
 import { EventStoreBotTimingSource } from '../src/bot-detection/source';
 import type { Logger } from '../src/ports/logger';
 import type { Tracer } from '../src/ports/tracer';
+import { InMemorySearchRepository } from '@chess-platform/search';
 
 
 export const TEST_SECRET = 'test-access-token-secret-0123456789abcdef';
@@ -47,6 +48,7 @@ export interface Harness {
   readonly repos: InMemoryRepositories;
   readonly tournamentRepo: InMemoryTournamentsRepository;
   readonly antiCheatEventStore: InMemoryEventStore;
+  readonly searchRepository?: InMemorySearchRepository;
   readonly clock: ManualClock;
   readonly tokens: AccessTokenService;
   readonly emailSender: InMemoryEmailSender;
@@ -70,6 +72,8 @@ export interface HarnessOptions {
   readonly tracer?: Tracer;
   /** Pass true to simulate a server constructed without an anti-cheat analysis service. */
   readonly withoutAntiCheatAnalysis?: boolean;
+  /** Pass true to simulate a server constructed without search. */
+  readonly withoutSearch?: boolean;
   /** Override the anti-cheat evaluator (e.g. to make it throw) for edge-case tests. */
   readonly antiCheatEvaluator?: PositionEvaluator;
 }
@@ -118,11 +122,15 @@ export async function startHarness(
         () => antiCheatEvaluator,
         repos.antiCheat,
       );
+  const searchRepository = harnessOptions.withoutSearch
+    ? undefined
+    : new InMemorySearchRepository();
   const server = createApiServer({
     repos, hasher, tokens, clock, ids, rateLimiter, tournamentRepo, gameLauncher, liveView, emailSender,
     config: resolved,
     botTimingSource: new EventStoreBotTimingSource(antiCheatEventStore),
     ...(antiCheatAnalysis ? { antiCheatAnalysis } : {}),
+    ...(searchRepository ? { searchRepository } : {}),
     ...(harnessOptions.readiness ? { readiness: harnessOptions.readiness } : {}),
     ...(harnessOptions.logger ? { logger: harnessOptions.logger } : {}),
     ...(harnessOptions.tracer ? { tracer: harnessOptions.tracer } : {}),
@@ -141,6 +149,7 @@ export async function startHarness(
     repos,
     tournamentRepo,
     antiCheatEventStore,
+    searchRepository,
     clock,
     tokens,
     emailSender,
