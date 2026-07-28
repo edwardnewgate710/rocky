@@ -9,6 +9,8 @@ colors:
   board-light: "#f0d9b5"
   board-dark: "#b58863"
   teal-accent: "#20b2aa"
+  teal-accent-deep: "#17827c"
+  selection-edge: "#161512"
   ember: "#e5484d"
   ember-deep: "#b42318"
   hint-green: "#14551e80"
@@ -16,6 +18,9 @@ colors:
   premove-blue: "#141ec866"
   panel-tint: "#ffffff0a"
   panel-tint-strong: "#ffffff0f"
+  scrim: "#000000b8"
+  promo-tile: "#fafafa"
+  promo-tile-ink: "#111111"
 typography:
   title:
     fontFamily: "system-ui, sans-serif"
@@ -164,10 +169,10 @@ Flat at rest, everywhere. There is no `box-shadow` in the current implementation
 
 ### The Board
 - **Squares:** Board Light / Board Dark fills, no radius on individual squares; the 6px radius and `overflow: hidden` live on the board container only.
-- **Selection:** 3px Grandmaster Teal outline, inset so it never shifts layout.
+- **Selection:** a 3px inset two-tone ring — 1px `Selection Edge` (ink) on the outside, 2px Grandmaster Teal inside — still inset so it never shifts layout. The ink edge exists for contrast, not decoration: board squares are fixed by chess convention and theme-independent, and no teal clears the 3:1 WCAG 1.4.11 floor against *both* (Teal is 1.9:1 on Board Light and 1.2:1 on Board Dark; Teal Deep is 3.4:1 / 1.5:1). Ink clears both at 13.3:1 / 5.8:1, so it carries the contrast while the teal band keeps selection reading as teal. Don't drop the ink edge to "clean up" the ring.
 - **Legal destinations:** Hint Green dot (empty square) or ring (capture) — shape difference is intentional and colorblind-relevant: a player who can't distinguish the hue can still distinguish dot vs. ring.
 - **Last move / premove:** full-square translucent tint (Last Move / Premove Blue), applied as a pseudo-element so it never displaces the piece glyph.
-- **Promotion picker:** a `rgba(0,0,0,0.62)` scrim over the affected file, with square choice buttons on a near-white (`#fafafa`) fill — the one place the system intentionally breaks from Ink/Paper, because the picker needs to read clearly regardless of active theme.
+- **Promotion picker:** a `Scrim` (`rgba(0,0,0,0.72)`) over the affected file, with square choice buttons on a near-white `Promo Tile` (`#fafafa`) fill — the one place the system intentionally breaks from Ink/Paper, because the picker needs to read clearly regardless of active theme. Because the tile is near-white in *both* themes, its focus ring uses **Grandmaster Teal Deep**, not the standard Teal (see Focus below).
 
 ### Clock
 - **Style:** `Panel Tint Strong` background, 6px radius, `Numeric` typography, `padding: 8px 12px`.
@@ -181,6 +186,7 @@ Flat at rest, everywhere. There is no `box-shadow` in the current implementation
 ### Do:
 - **Do** keep the board as the single largest, highest-contrast element on every screen — nothing else scales up to compete with it.
 - **Do** use Grandmaster Teal for one meaning only: active/selected/focused. If a new feature needs a second accent, it needs its own token, not a Teal variant.
+- **Do** switch to **Grandmaster Teal Deep** (`teal-accent-deep`) wherever the accent lands on a light surface — light theme, or the always-near-white promotion tile. Standard Teal measures only 2.4:1 on Paper and 2.5:1 on the promo tile, below the 3:1 WCAG 1.4.11 floor for focus and state indicators; Deep clears it at 4.3:1 / 4.5:1. This is a legibility variant of the *same* meaning, not a second accent — light mode remaps `--sel` to it automatically, so use `--sel` and it resolves correctly.
 - **Do** keep every list (seeks, ratings, games, and any future list) on the identical `panel-row` treatment — one row style for the whole app.
 - **Do** reserve shadows for interaction feedback only (`Interactive Lift` on hover/focus/active) — resting layouts stay flat.
 - **Do** keep legal-move/last-move/premove board cues distinguishable by shape as well as color (dot vs. ring, full-square tint vs. outline) so they read without relying on hue alone.

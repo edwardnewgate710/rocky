@@ -4,6 +4,18 @@
   --light: #f0d9b5;
   --dark: #b58863;
   --sel: #20b2aa;
+  /* Deepened selection teal for LIGHT surfaces. #20b2aa is only 2.4:1 on the
+     light paper and 2.5:1 on the promotion tile — under the 3:1 WCAG 1.4.11
+     floor for focus and state indicators. This clears it (4.3:1 / 4.5:1) while
+     staying recognisably the selection hue. Mirrors --ember / --ember-deep. */
+  --sel-deep: #17827c;
+  /* Contrast edge for the board selection ring. Board squares are fixed by
+     chess convention and theme-independent, and NO teal clears 3:1 against both
+     (#20b2aa: 1.9:1 light / 1.2:1 dark; #17827c: 3.4:1 / 1.5:1). Ink does
+     (13.3:1 / 5.8:1), so the ring pairs a 1px ink edge — which carries the
+     WCAG 1.4.11 contrast against the square — with the teal band that carries
+     the meaning. Ink vs teal is 7.0:1, so the two bands stay distinct. */
+  --sel-edge: #161512;
   /* Ember: error/danger only — deliberately a different hue from --sel so
      "you're selected" and "something's wrong" never share a color (a real
      problem for colorblind users, and confusing regardless). */
@@ -21,6 +33,24 @@
   --hint: rgba(20, 85, 30, 0.5);
   --last: rgba(155, 199, 0, 0.41);
   --premove: rgba(20, 30, 200, 0.4);
+  /* Promotion overlay surfaces. The tile is deliberately near-white in both
+     themes (the piece glyphs are dark), so these are theme-independent and the
+     ring over them uses --sel-deep, not --sel. The scrim is dark enough that a
+     focus ring over it clears 3:1 on either board square (4.1:1 / 5.9:1). */
+  --scrim: rgba(0, 0, 0, 0.72);
+  --promo-tile: #fafafa;
+  --promo-tile-hover: #fff;
+  --promo-tile-ink: #111;
+  --promo-cancel-ink: #fff;
+  --promo-cancel-hover: rgba(255, 255, 255, 0.12);
+  /* Light-theme values. Assigned by BOTH light entry points below (OS
+     preference and the explicit .light class) so the two can never drift. */
+  --light-bg: #f7f6f5;
+  --light-fg: #2b2b2b;
+  --light-ember: #b42318;
+  --light-panel: rgba(22, 21, 18, 0.05);
+  --light-panel-strong: rgba(22, 21, 18, 0.07);
+  --light-muted: #5c5b57;
   /* Semantic z-index scale (low → high): board cues sit under the promotion
      overlay, which sits under the dragged piece; the skip link tops everything
      so keyboard users can always reach it. */
@@ -32,12 +62,14 @@
 }
 @media (prefers-color-scheme: light) {
   :root:not(.light):not(.dark) {
-    --bg: #f7f6f5;
-    --fg: #2b2b2b;
-    --ember: #b42318;
-    --panel: rgba(22, 21, 18, 0.05);
-    --panel-strong: rgba(22, 21, 18, 0.07);
-    --muted: #5c5b57;
+    --bg: var(--light-bg);
+    --fg: var(--light-fg);
+    --ember: var(--light-ember);
+    --panel: var(--light-panel);
+    --panel-strong: var(--light-panel-strong);
+    --muted: var(--light-muted);
+    /* Selection/focus deepens on light surfaces (see --sel-deep). */
+    --sel: var(--sel-deep);
     color-scheme: light;
   }
 }
@@ -47,12 +79,14 @@
    light on a dark-system browser removed a class but left every colour token
    dark. Keep an explicit light state as the persisted, authoritative choice. */
 :root.light {
-  --bg: #f7f6f5;
-  --fg: #2b2b2b;
-  --ember: #b42318;
-  --panel: rgba(22, 21, 18, 0.05);
-  --panel-strong: rgba(22, 21, 18, 0.07);
-  --muted: #5c5b57;
+  --bg: var(--light-bg);
+  --fg: var(--light-fg);
+  --ember: var(--light-ember);
+  --panel: var(--light-panel);
+  --panel-strong: var(--light-panel-strong);
+  --muted: var(--light-muted);
+  /* Selection/focus deepens on light surfaces (see --sel-deep). */
+  --sel: var(--sel-deep);
   color-scheme: light;
 }
 
@@ -118,7 +152,19 @@ body {
 }
 .cb-light { background: var(--light); }
 .cb-dark { background: var(--dark); }
-.cb-selected { outline: 3px solid var(--sel); outline-offset: -3px; }
+/* Two-tone selection ring, same 3px inset footprint as before: the outer 1px is
+   the ink contrast edge (see --sel-edge), the inner 2px stays Grandmaster Teal
+   so selection still reads as teal at a glance. Outline paints over the inset
+   shadow, so the shadow supplies the teal band and the outline the ink edge. */
+.cb-selected {
+  outline: 1px solid var(--sel-edge);
+  outline-offset: -1px;
+  box-shadow: inset 0 0 0 3px var(--sel);
+}
+/* Last-move and premove are separated by LIGHTNESS, not hue alone: composited
+   over the board they measure 1.88:1 (light square) and 2.13:1 (dark square)
+   apart, so they stay tellable under red-green CVD. Keep that separation if
+   either tint is ever retuned. */
 .cb-last::before {
   content: '';
   position: absolute;
@@ -132,6 +178,14 @@ body {
   inset: 0;
   background: var(--premove);
   pointer-events: none;
+}
+/* A square can be both selected and last-move/premove. These tints are
+   positioned pseudo-elements, so they paint above the selection ring's inset
+   band and would mute it. Inset them by the ring width in that overlap so the
+   ring stays crisp and selection is never ambiguous. */
+.cb-selected.cb-last::before,
+.cb-selected.cb-premove::before {
+  inset: 3px;
 }
 /* Legal destination: a dot for empty squares, a ring for captures. */
 .cb-legal::after {
@@ -194,7 +248,7 @@ body {
   align-content: center;
   justify-content: center;
   gap: 4px;
-  background: rgba(0, 0, 0, 0.62);
+  background: var(--scrim);
   z-index: var(--z-promotion);
 }
 .cb-promo-choice {
@@ -202,19 +256,21 @@ body {
   line-height: 1;
   width: 22%;
   aspect-ratio: 1 / 1;
-  background: #fafafa;
-  color: #111;
+  background: var(--promo-tile);
+  color: var(--promo-tile-ink);
   border: none;
   border-radius: 6px;
   cursor: pointer;
 }
-.cb-promo-choice:focus-visible { outline: 3px solid var(--sel); }
+/* The tile is near-white in both themes, so the ring must be the deepened teal
+   regardless of theme — plain --sel measures 2.5:1 here, under the 3:1 floor. */
+.cb-promo-choice:focus-visible { outline: 3px solid var(--sel-deep); }
 .cb-promo-cancel {
   width: 22%;
   aspect-ratio: 1 / 1;
   background: transparent;
-  color: #fff;
-  border: 1px solid #fff;
+  color: var(--promo-cancel-ink);
+  border: 1px solid var(--promo-cancel-ink);
   border-radius: 6px;
   cursor: pointer;
 }
@@ -313,8 +369,8 @@ button:disabled {
 }
 /* Promotion choices carry their own near-white fill; keep it on hover and let
    them take only the lift, not the panel tint. */
-.cb-promo-choice:hover { background: #fff; }
-.cb-promo-cancel:hover { background: rgba(255, 255, 255, 0.12); }
+.cb-promo-choice:hover { background: var(--promo-tile-hover); }
+.cb-promo-cancel:hover { background: var(--promo-cancel-hover); }
 
 
 /* --- Navigation --- */
