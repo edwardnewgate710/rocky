@@ -84,6 +84,21 @@ test('pg search backfill source: keyset pagination, user handle JOIN, and entity
     assert.strictEqual(foundGame.rated, true);
     assert.strictEqual(foundGame.eco, 'B90');
 
+    // Verify findGame single-game read path
+    const directGame = await backfill.findGame(gameId1);
+    assert.ok(directGame);
+    assert.strictEqual(directGame.id, gameId1);
+    assert.strictEqual(directGame.whiteHandle, 'backfill_white');
+    assert.strictEqual(directGame.blackHandle, 'backfill_black');
+    assert.strictEqual(directGame.variant, 'standard');
+    assert.strictEqual(directGame.speed, 'blitz');
+    assert.strictEqual(directGame.result, '1-0');
+    assert.strictEqual(directGame.rated, true);
+    assert.strictEqual(directGame.eco, 'B90');
+
+    const nonExistentGame = await backfill.findGame(uuidv7());
+    assert.strictEqual(nonExistentGame, null);
+
     // Verify listTournaments
     const findSeededTournament = async (id: string) => {
       let cursor: string | null = null;

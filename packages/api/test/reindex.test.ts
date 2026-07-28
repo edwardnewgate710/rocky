@@ -40,6 +40,10 @@ class FakeSearchBackfillSource implements SearchBackfillSource {
     { id: 't-1', name: 'Spring Arena', format: 'arena', state: 'running' },
   ];
 
+  async findGame(id: string): Promise<GameDocumentInput | null> {
+    return this.games.find((g) => g.id === id) ?? null;
+  }
+
   async listGames(afterId: string | null, limit: number): Promise<GameDocumentInput[]> {
     const start = afterId === null ? 0 : this.games.findIndex((g) => g.id === afterId) + 1;
     return this.games.slice(start, start + limit);

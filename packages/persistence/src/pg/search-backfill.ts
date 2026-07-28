@@ -13,13 +13,64 @@ function sanitizeLimit(limit: number, maxLimit = 1000): number {
   return Math.min(maxLimit, Math.max(1, Math.floor(limit)));
 }
 
+const GAME_SELECT_COLUMNS = `
+  g.id::text AS id,
+  g.variant,
+  g.speed,
+  COALESCE(g.result, '*') AS result,
+  g.rated,
+  g.opening_eco AS eco,
+  COALESCE(wu.handle, '') AS white_handle,
+  COALESCE(bu.handle, '') AS black_handle
+`;
+
+interface GameRow {
+  id: string;
+  variant: string;
+  speed: string;
+  result: string;
+  rated: boolean;
+  eco: string | null;
+  white_handle: string;
+  black_handle: string;
+}
+
+function mapGameRow(r: GameRow): GameDocumentInput {
+  return {
+    id: r.id,
+    whiteHandle: r.white_handle,
+    blackHandle: r.black_handle,
+    variant: r.variant,
+    speed: r.speed,
+    result: r.result,
+    rated: r.rated,
+    ...(r.eco ? { eco: r.eco } : {}),
+  };
+}
+
 /**
  * Postgres implementation of SearchBackfillSource.
- * Performs keyset (cursor) pagination using bound parameters ($1, $2, ...)
- * over primary key `id ASC`.
+ * Performs keyset (cursor) pagination and single entity queries using bound parameters ($1, $2, ...).
  */
 export class PgSearchBackfillSource implements SearchBackfillSource {
   constructor(private readonly pool: Pool) {}
+
+  async findGame(id: string): Promise<GameDocumentInput | null> {
+    const query = `
+      SELECT
+        ${GAME_SELECT_COLUMNS}
+      FROM games g
+      LEFT JOIN users wu ON g.white_id = wu.id
+      LEFT JOIN users bu ON g.black_id = bu.id
+      WHERE g.id = $1::uuid
+    `;
+
+    const res = await this.pool.query<GameRow>(query, [id]);
+    if (res.rows.length === 0) {
+      return null;
+    }
+    return mapGameRow(res.rows[0]);
+  }
 
   async listGames(afterId: string | null, limit: number): Promise<GameDocumentInput[]> {
     const safeLimit = sanitizeLimit(limit);
@@ -36,14 +87,7 @@ export class PgSearchBackfillSource implements SearchBackfillSource {
 
     const query = `
       SELECT
-        g.id::text AS id,
-        g.variant,
-        g.speed,
-        COALESCE(g.result, '*') AS result,
-        g.rated,
-        g.opening_eco AS eco,
-        COALESCE(wu.handle, '') AS white_handle,
-        COALESCE(bu.handle, '') AS black_handle
+        ${GAME_SELECT_COLUMNS}
       FROM games g
       LEFT JOIN users wu ON g.white_id = wu.id
       LEFT JOIN users bu ON g.black_id = bu.id
@@ -52,27 +96,8 @@ export class PgSearchBackfillSource implements SearchBackfillSource {
       LIMIT ${limitParam}
     `;
 
-    const res = await this.pool.query<{
-      id: string;
-      variant: string;
-      speed: string;
-      result: string;
-      rated: boolean;
-      eco: string | null;
-      white_handle: string;
-      black_handle: string;
-    }>(query, params);
-
-    return res.rows.map((r) => ({
-      id: r.id,
-      whiteHandle: r.white_handle,
-      blackHandle: r.black_handle,
-      variant: r.variant,
-      speed: r.speed,
-      result: r.result,
-      rated: r.rated,
-      ...(r.eco ? { eco: r.eco } : {}),
-    }));
+    const res = await this.pool.query<GameRow>(query, params);
+    return res.rows.map(mapGameRow);
   }
 
   async listPlayers(afterId: string | null, limit: number): Promise<PlayerDocumentInput[]> {

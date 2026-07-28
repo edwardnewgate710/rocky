@@ -30,6 +30,10 @@ export * from './bot-detection/source';
 export * from './bot-detection/analysis-service';
 export * from './bot-detection/auto-analyzer';
 
+export * from './search/reindex';
+export * from './search/index-worker';
+
+
 
 export * from './auth/password';
 export * from './auth/tokens';

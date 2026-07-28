@@ -4,7 +4,17 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-28 — M11 Search Increment 7: Search projections, backfill source, production wiring, and reindex CLI (ADR-0055)._
+_Last updated: 2026-07-28 — M11 Search Increment 8: Live incremental game search indexing (ADR-0056)._
+
+## M11 Search Increment 8 — Live Incremental Game Search Indexing (ADR-0056)
+
+Event-driven live game search indexing triggered by `gamesEndedChannel()` broadcasts (ADR-0056):
+- **Single-Game Read Path (`@chess-platform/persistence`)**: Added `findGame(id: string): Promise<GameDocumentInput | null>` to `SearchBackfillSource` port and implemented in `PgSearchBackfillSource` reusing column selection + JOINs.
+- **Package Boundary & Local Subscriber Port (`@chess-platform/api`)**: Declared local structural `SearchIndexSubscriber` port (`subscribe(channel, handler): () => void`) avoiding an `api` -> `realtime-gateway` package dependency.
+- **Live Worker Architecture (`SearchIndexWorker`)**: Created `SearchIndexWorker` in `@chess-platform/api` with defensive payload type guards, bounded FIFO dedup set (`MAX_SEEN = 10_000`), error containment, and deterministic `await worker.drain()` test hook.
+- **Aborted Games Decision**: Aborted games (`result: '*'`) and non-existent games (`null`) are explicitly skipped during live indexing.
+- **Gateway Hosting (`services/gateway/src/serve.ts`)**: Hosted worker gated on `SEARCH_INDEXER=1`, suppressed by `SEARCH_ENABLED=0`, and wired to graceful process shutdown (`worker.stop()`).
+- Detailed in `docs/adr/0056-live-search-indexing.md`.
 
 ## M11 Search Increment 7 — Search Projections, Backfill & Production Wiring (ADR-0055)
 

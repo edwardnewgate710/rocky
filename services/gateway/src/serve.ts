@@ -35,6 +35,13 @@
  *   auto-analyzer in this process; requires `DATABASE_URL`; needs no engine.
  * - `ANTICHEAT_AUTO_ANALYZE` (optional, "1" to enable) — hosts the anti-cheat
  *   auto-analyzer; requires `DATABASE_URL` and an engine binary (`STOCKFISH_PATH`).
+ * - `SEARCH_INDEXER` (optional, "1" to enable) — hosts the live search index
+ *   worker (ADR-0056); requires `DATABASE_URL`. Dedup is process-local, so set
+ *   this on exactly ONE replica: every replica that enables it will index every
+ *   finished game. Indexing is an idempotent upsert, so extra replicas waste a
+ *   read + write per game rather than corrupting the index.
+ * - `SEARCH_ENABLED` (optional, "0" to disable) — absolute kill switch for
+ *   search (ADR-0055); when `0`, `SEARCH_INDEXER` is suppressed too.
 
  *
  * Durable event log: ADR-0007 (M14 inc 2).
@@ -244,6 +251,28 @@ async function main(): Promise<void> {
     }
   }
 
+  // --- Search Index Worker (M11 inc 8, ADR-0056) ---
+  let searchIndexWorker: { stop(): void } | undefined;
+  if (process.env['SEARCH_INDEXER'] === '1') {
+    if (process.env['SEARCH_ENABLED'] === '0') {
+      logger.info('SEARCH_INDEXER is suppressed because SEARCH_ENABLED=0');
+    } else if (!pgPool) {
+      logger.warn('SEARCH_INDEXER requires DATABASE_URL to be set');
+    } else {
+      const { PgSearchRepository, PgSearchBackfillSource } = await import('@chess-platform/persistence/pg');
+      const { gamesEndedChannel } = await import('@chess-platform/realtime-gateway');
+      const api = await import('@chess-platform/api');
+
+      const searchRepo = new PgSearchRepository(pgPool);
+      const backfillSource = new PgSearchBackfillSource(pgPool);
+      const worker = new api.SearchIndexWorker(pubsub, gamesEndedChannel(), backfillSource, searchRepo);
+      worker.start();
+      searchIndexWorker = worker;
+      // Dedup is process-local: if more than one replica enables SEARCH_INDEXER, each
+      // one indexes every finished game. Harmless (upsert) but wasteful — see ADR-0056.
+      logger.info('SearchIndexWorker is enabled (run on a single replica; dedup is process-local)');
+    }
+  }
 
   // --- Command router: local (single-node) or Redis (multi-node) (M14 inc 5) ---
   let commandRouter: CommandRouter;
@@ -451,6 +480,7 @@ async function main(): Promise<void> {
     reporter?.stop();
     botAutoAnalyzer?.stop();
     antiCheatAutoAnalyzer?.stop();
+    searchIndexWorker?.stop();
     // Start engine (subprocess) shutdown now so it runs concurrently with the
     // socket drain, but await it below before process.exit so cleanup can't be cut short.
     const engineShutdown = antiCheatEngine?.shutdown().catch((err: unknown) =>
