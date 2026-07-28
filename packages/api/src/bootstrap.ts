@@ -25,7 +25,9 @@ import {
   PgSeekAcceptor,
   PgAntiCheatReportRepository,
   PgBotBehaviorReportRepository,
+  PgSearchRepository,
 } from '@chess-platform/persistence/pg';
+import type { SearchRepository } from '@chess-platform/search';
 import { ConsoleEmailSender } from './ports/email';
 import type { EmailSender } from './ports/email';
 import { JsonLogger } from './ports/logger';
@@ -129,6 +131,7 @@ export interface PgBootstrapOptions {
   readonly liveView?: TournamentLiveView;
   readonly emailSender?: EmailSender;
   readonly analysisProvider?: AnalysisProvider;
+  readonly searchRepository?: SearchRepository;
   readonly logger?: Logger;
   readonly metrics?: Metrics;
   readonly tracer?: Tracer;
@@ -171,6 +174,11 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
       )
     : undefined;
 
+  const searchEnabled = process.env['SEARCH_ENABLED'] !== '0';
+  const searchRepository = searchEnabled
+    ? (options.searchRepository ?? new PgSearchRepository(pool))
+    : undefined;
+
   const logger = options.logger ?? new JsonLogger({ service: 'api' }, { level: resolveLogLevel() });
   const metrics = options.metrics ?? new InMemoryMetrics();
   const logExporter = new LoggingSpanExporter(logger);
@@ -210,6 +218,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     liveView: options.liveView ?? new DurableTournamentLiveView(tournamentRepo, eventStore),
     emailSender: options.emailSender ?? new ConsoleEmailSender(),
     ...(antiCheatAnalysis ? { antiCheatAnalysis } : {}),
+    ...(searchRepository ? { searchRepository } : {}),
     botTimingSource: new EventStoreBotTimingSource(eventStore),
     // Production observability (M13): structured logs to stdout, a scrape
     // registry backing GET /v1/metrics, and tracer emitting spans to logs.

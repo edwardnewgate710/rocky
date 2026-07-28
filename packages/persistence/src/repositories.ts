@@ -316,3 +316,5 @@ export interface TournamentsRepository {
   findById(id: string): Promise<{ snapshot: TournamentAnySnapshot; version: number } | null>;
   list(limit: number): Promise<TournamentSummaryRow[]>;
 }
+
+

@@ -529,9 +529,7 @@ natural-language query parsing.
 - **Increment 4 complete (ADR-0052):** async `SearchRepository` port (`Promise`-returning signatures) enabling I/O-backed adapters (Postgres full-text search) to implement the interface.
 - **Increment 5 complete (ADR-0053):** Postgres full-text adapter `PgSearchRepository` in `@chess-platform/persistence` (`/pg` subpath) + migration `0013_search_documents.sql` (`tsvector` 'simple' column + GIN index, jsonb field filters, parameterized SQL queries, `ts_rank` scoring).
 - **Increment 6 complete (ADR-0054):** search REST API (`GET /v1/search`) with `parseNaturalQuery` normalization, `SearchRepository` query execution, pagination (`limit`/`offset`), `SearchResults` OpenAPI schema, and optional-dependency 503 guard.
-
-
-
+- **Increment 7 complete (ADR-0055):** entity projections (`gameToDocument`, `playerToDocument`, `tournamentToDocument`) with PII exclusion, keyset-paginated backfill source (`SearchBackfillSource` / `PgSearchBackfillSource`), production wiring in `bootstrap.ts` (with `SEARCH_ENABLED=0` absolute kill switch), `reindex-search` CLI script + `reindexAll` helper, natural vocabulary realignment (`speed` vs `variant`, canonical codes, `match`/`matches` -> `game`, draw result mapping), player-relative query deferral to Increment 8, and end-to-end round-trip test suite.
 
 ## 🚧 Milestone 12 — Security hardening & anti-cheat
 

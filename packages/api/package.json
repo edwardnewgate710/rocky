@@ -25,6 +25,7 @@
     "test": "tsc -p tsconfig.test.json && node --test \"dist-test/test/**/*.test.js\"",
     "lint": "tsc -p tsconfig.json --noEmit",
     "openapi": "node dist/scripts/generate-openapi.js",
+    "reindex-search": "node dist/scripts/reindex-search.js",
     "serve": "node dist/scripts/serve.js",
     "clean": "rm -rf dist dist-test"
   },

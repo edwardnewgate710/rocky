@@ -13,3 +13,5 @@ export * from './ids';
 export * from './glicko2';
 export * from './event-store';
 export * from './repositories';
+export * from './search-backfill';
+

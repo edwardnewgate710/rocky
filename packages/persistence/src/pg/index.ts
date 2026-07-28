@@ -11,4 +11,5 @@ export * from './repositories';
 export * from './anti-cheat';
 export * from './bot-reports';
 export * from './search';
+export * from './search-backfill';
 

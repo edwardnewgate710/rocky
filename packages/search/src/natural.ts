@@ -21,10 +21,6 @@ export const NATURAL_STOP_WORDS: ReadonlySet<string> = new Set<string>([
   'show',
   'find',
   'list',
-  'game',
-  'games',
-  'match',
-  'matches',
   'played',
   'between',
   'was',
@@ -34,43 +30,51 @@ export const NATURAL_STOP_WORDS: ReadonlySet<string> = new Set<string>([
 
 /**
  * Maps a recognized lowercase natural word to the structured filter it implies.
- * Bounded, deterministic chess-search vocabulary (documented in ADR-0051).
+ * Bounded, deterministic chess-search vocabulary (documented in ADR-0051 & ADR-0055).
  */
 export const NATURAL_VOCABULARY: ReadonlyMap<
   string,
   { readonly field: string; readonly value: string }
 > = new Map<string, { readonly field: string; readonly value: string }>([
-  // Variants
-  ['blitz', { field: 'variant', value: 'blitz' }],
-  ['bullet', { field: 'variant', value: 'bullet' }],
-  ['rapid', { field: 'variant', value: 'rapid' }],
-  ['classical', { field: 'variant', value: 'classical' }],
+  // Entity types
+  ['game', { field: 'type', value: 'game' }],
+  ['games', { field: 'type', value: 'game' }],
+  ['match', { field: 'type', value: 'game' }],
+  ['matches', { field: 'type', value: 'game' }],
+  ['player', { field: 'type', value: 'player' }],
+  ['players', { field: 'type', value: 'player' }],
+  ['user', { field: 'type', value: 'player' }],
+  ['users', { field: 'type', value: 'player' }],
+  ['tournament', { field: 'type', value: 'tournament' }],
+  ['tournaments', { field: 'type', value: 'tournament' }],
+
+  // Speed buckets
+  ['bullet', { field: 'speed', value: 'bullet' }],
+  ['ultrabullet', { field: 'speed', value: 'ultrabullet' }],
+  ['blitz', { field: 'speed', value: 'blitz' }],
+  ['rapid', { field: 'speed', value: 'rapid' }],
+  ['classical', { field: 'speed', value: 'classical' }],
+  ['correspondence', { field: 'speed', value: 'correspondence' }],
+
+  // Variants (canonical DB codes)
+  ['standard', { field: 'variant', value: 'standard' }],
   ['chess960', { field: 'variant', value: 'chess960' }],
   ['960', { field: 'variant', value: 'chess960' }],
+  ['kingofthehill', { field: 'variant', value: 'kingofthehill' }],
+  ['koth', { field: 'variant', value: 'kingofthehill' }],
   ['atomic', { field: 'variant', value: 'atomic' }],
   ['crazyhouse', { field: 'variant', value: 'crazyhouse' }],
+  ['threecheck', { field: 'variant', value: 'threecheck' }],
   ['horde', { field: 'variant', value: 'horde' }],
-  ['antichess', { field: 'variant', value: 'antichess' }],
+  ['racingkings', { field: 'variant', value: 'racingkings' }],
 
-  // Colors
-  ['white', { field: 'color', value: 'white' }],
-  ['black', { field: 'color', value: 'black' }],
-
-  // Results
-  ['won', { field: 'result', value: 'win' }],
-  ['win', { field: 'result', value: 'win' }],
-  ['wins', { field: 'result', value: 'win' }],
-  ['winning', { field: 'result', value: 'win' }],
-  ['lost', { field: 'result', value: 'loss' }],
-  ['loss', { field: 'result', value: 'loss' }],
-  ['losses', { field: 'result', value: 'loss' }],
-  ['lose', { field: 'result', value: 'loss' }],
-  ['draw', { field: 'result', value: 'draw' }],
-  ['draws', { field: 'result', value: 'draw' }],
-  ['drew', { field: 'result', value: 'draw' }],
-  ['drawn', { field: 'result', value: 'draw' }],
-  ['tie', { field: 'result', value: 'draw' }],
-  ['tied', { field: 'result', value: 'draw' }],
+  // Objective results (draws only; wins/losses require player perspective and explicit filters)
+  ['draw', { field: 'result', value: '1/2-1/2' }],
+  ['draws', { field: 'result', value: '1/2-1/2' }],
+  ['drew', { field: 'result', value: '1/2-1/2' }],
+  ['drawn', { field: 'result', value: '1/2-1/2' }],
+  ['tie', { field: 'result', value: '1/2-1/2' }],
+  ['tied', { field: 'result', value: '1/2-1/2' }],
 ]);
 
 /**

@@ -4,7 +4,21 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-24 — M11 Search Increment 6: Search REST API (GET /v1/search) (ADR-0054)._
+_Last updated: 2026-07-28 — M11 Search Increment 7: Search projections, backfill source, production wiring, and reindex CLI (ADR-0055)._
+
+## M11 Search Increment 7 — Search Projections, Backfill & Production Wiring (ADR-0055)
+
+Search entity projections, keyset-paginated backfill source, production wiring, and reindex CLI (ADR-0055):
+- **Entity Projections (`@chess-platform/search`)**: Added `gameToDocument`, `playerToDocument`, and `tournamentToDocument` in `projections.ts` mapping local structural inputs into canonicalized `SearchableDocument` records with namespaced IDs (`game:<id>`, `player:<id>`, `tournament:<id>`) and a `type` field (`game` | `player` | `tournament`). Zero external runtime dependencies.
+- **Security & PII Exclusion**: Player documents strictly index `handle` and optional `country`. User `email`, `email_hash`, and `flags` are explicitly excluded from indexed search documents, proven by automated regression test.
+- **Backfill Source (`@chess-platform/persistence`)**: Added `SearchBackfillSource` interface port and `PgSearchBackfillSource` PostgreSQL implementation using bound parameter keyset (cursor) pagination (`WHERE id > $1 ORDER BY id ASC LIMIT $2`). JOINs `users` on `games` to resolve player handles.
+- **Production Wiring (`@chess-platform/api`)**: Wired `PgSearchRepository` in `createPgDependencies` in `bootstrap.ts`, with operator opt-out via `SEARCH_ENABLED=0` environment variable (degrading `GET /v1/search` to HTTP 503).
+- **Reindex CLI**: Added `reindex-search.ts` script in `packages/api/src/scripts/` (registered as `npm run reindex-search -w @chess-platform/api`), paging all entity kinds in batches (~500) and upserting into `search_documents` idempotently.
+- **Vocabulary Realignment & Player-Relative Query Deferral**: Realigned natural vocabulary (`speed` vs `variant`, canonical codes, `match`/`matches` -> `game`, draw result mapping). Removed player-relative terms (`won`, `lost`, `white`, `black`) from `NATURAL_VOCABULARY`, deferring player-scoped natural queries ("games I won") to Increment 8 (authenticated search mode).
+- **Absolute Operator Kill Switch**: Hardened `SEARCH_ENABLED=0` in `bootstrap.ts` to act as an absolute kill switch (setting `deps.searchRepository` to `undefined` unconditionally).
+- **Reindex Core & Idempotency**: Extracted pure `reindexAll` helper in `packages/api/src/search/reindex.ts`, verified idempotent across multiple runs.
+- **Round-Trip Testing**: Added `search-roundtrip.test.ts` verifying end-to-end matching of projected entity documents via `parseNaturalQuery` against `InMemorySearchRepository`.
+- Detailed in `docs/adr/0055-search-projections-and-wiring.md`.
 
 ## M11 Search Increment 6 — Search REST API (GET /v1/search) (ADR-0054)
 

@@ -29,12 +29,12 @@ test('GET /v1/search: natural-language promotion converts terms to filters', asy
     await harness.searchRepository.index({
       id: 'game-1',
       text: 'magnus vs hikaru',
-      fields: { variant: 'blitz', result: 'win' },
+      fields: { speed: 'blitz', result: '1-0' },
     });
     await harness.searchRepository.index({
       id: 'game-2',
       text: 'fabiano vs alireza',
-      fields: { variant: 'rapid', result: 'win' },
+      fields: { speed: 'rapid', result: '1-0' },
     });
 
     const res = await harness.json('GET', '/v1/search?q=blitz');
