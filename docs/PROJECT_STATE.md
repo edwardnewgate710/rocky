@@ -4,7 +4,23 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-28 — M11 Search Increment 8: Live incremental game search indexing (ADR-0056)._
+_Last updated: 2026-07-28 — M14 Increment 7: dedicated single-replica Deployment for the search indexer (ADR-0057)._
+
+## M14 Increment 7 — Search Indexer Deployment (ADR-0057)
+
+Helm wiring for the live search indexer, pinned to one replica (ADR-0057):
+- **Dedicated Deployment (`deploy/helm/gambit/templates/search-indexer.yaml`)**: renders `<fullname>-search-indexer` when `gateway.searchIndexer.enabled=true` (default `false`), running the gateway image with `SEARCH_INDEXER=1`. `replicas: 1` is hard-coded, not a value — the worker's dedup set is process-local, so N replicas would each index every finished game.
+- **No Service**: the pod takes no client traffic. It binds the WS/health ports because it reuses `serve.ts`, but with no clients it never claims game ownership and stays inert in the Redis ownership registry (ADR-0010). Probes target the pod directly.
+- **`SEARCH_ENABLED` reachable from Helm (`templates/api.yaml`)**: new `search.enabled` value (default `true`); when `false` the API gets `SEARCH_ENABLED=0` and `GET /v1/search` returns 503 per ADR-0055.
+- **Fail-closed**: `gateway.searchIndexer.enabled=true` with `search.enabled=false` fails at template time instead of indexing into an index nothing serves.
+- **Gateway template comment**: records that `SEARCH_INDEXER` is deliberately absent there, so it is not added later — unlike `TOURNAMENT_REPORTER`, duplicate indexing is not made safe by CAS.
+- **Explicit rollout strategy**: `RollingUpdate` with `maxSurge: 1, maxUnavailable: 0`. `Recreate` was rejected — `gamesEndedChannel()` is Redis pub/sub (fire-and-forget), so terminating the old pod first would drop every game finishing in the gap; a brief two-pod overlap only duplicates idempotent work.
+- **Verification**: `scripts/helm-snapshot-test.sh` extended with assertions for opt-in default, `replicas == 1`, the pinned strategy, `SEARCH_INDEXER` absent from the gateway, no added Service, the fail-closed combination, and the `SEARCH_ENABLED` kill switch. 35 passed / 0 failed locally. Default render stays 13 resources; indexer-enabled is 14.
+- **CI wiring PENDING**: `.github/workflows/ci.yml` could not be committed (integration lacks the GitHub App `workflows` permission), and the snapshot script has never run in CI. Indexer rendering is not continuously verified until a step invoking it is added.
+- **Debt note**: this closes the single-replica-Deployment debt for the indexer only. `TOURNAMENT_REPORTER` (safe via CAS), `BOT_AUTO_ANALYZE` and `ANTICHEAT_AUTO_ANALYZE` remain per-replica; shared distributed leadership stays tracked.
+- Detailed in `docs/adr/0057-search-indexer-deployment.md`.
+
+Prior: M11 Search Increment 8 — Live Incremental Game Search Indexing (ADR-0056)
 
 ## M11 Search Increment 8 — Live Incremental Game Search Indexing (ADR-0056)
 

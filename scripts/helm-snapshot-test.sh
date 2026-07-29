@@ -12,6 +12,9 @@
 #   4. Gateway gets REDIS_URL + NODE_ID from the pod name (downward API)
 #   5. Secrets come from the Secret (not hardcoded in env)
 #   6. Probes hit the correct endpoints
+#   7. Search indexer (ADR-0057): opt-in, pinned to one replica, no Service,
+#      absent from the default render, and mutually exclusive with search
+#      being disabled
 #
 set -euo pipefail
 
@@ -32,6 +35,19 @@ check() {
     echo "  ✗ $desc"
     FAIL=$((FAIL + 1))
   fi
+}
+
+# Emit the single YAML document that is both a Deployment and carries the given
+# component label, so env assertions can be scoped to one container instead of
+# grepping the whole release. Uses awk's record separator on the document
+# delimiter — no yq dependency.
+deployment_doc() {
+  local file="$1"
+  local component="$2"
+  awk -v c="app.kubernetes.io/component: $component" '
+    BEGIN { RS = "\n---\n" }
+    $0 ~ /kind: Deployment/ && index($0, c) { print; exit }
+  ' "$file"
 }
 
 # Render default values
@@ -174,6 +190,87 @@ DEFAULT_SECRET_COUNT=$(grep -c '^kind: Secret$' "$TMPDIR/default.yaml" || true)
 DEFAULT_ES_COUNT=$(grep -c '^kind: ExternalSecret$' "$TMPDIR/default.yaml" || true)
 check "Default render: exactly one kind: Secret" "$([ "$DEFAULT_SECRET_COUNT" = "1" ] && echo 0 || echo 1)"
 check "Default render: no kind: ExternalSecret" "$([ "$DEFAULT_ES_COUNT" = "0" ] && echo 0 || echo 1)"
+
+
+# --- Search indexer (M14 inc 7, ADR-0057) -----------------------------------
+# The live indexer (ADR-0056) dedups in-process, so exactly one process may run
+# it per release. These assertions guard that invariant in the chart: it must be
+# opt-in, pinned to a single replica, and must not gain a Service (which would
+# imply it takes traffic and could be scaled behind a load balancer).
+echo ""
+echo "Search indexer (ADR-0057):"
+
+helm template "$CHART_DIR" "${HELM_SECRETS[@]}" \
+  --set gateway.searchIndexer.enabled=true > "$TMPDIR/indexer.yaml" 2>/dev/null
+
+# Opt-in: absent unless explicitly enabled.
+DEFAULT_IX=$(grep -c 'app.kubernetes.io/component: search-indexer' "$TMPDIR/default.yaml" || true)
+check "Default render: no search-indexer resources" "$([ "$DEFAULT_IX" = "0" ] && echo 0 || echo 1)"
+
+# Present when enabled.
+IX_PRESENT=$(grep -c 'app.kubernetes.io/component: search-indexer' "$TMPDIR/indexer.yaml" || true)
+check "Indexer enabled: search-indexer resources render" "$([ "$IX_PRESENT" -gt 0 ] && echo 0 || echo 1)"
+
+# Exactly one Deployment, and its replica count is 1. Read the replicas line that
+# follows the search-indexer Deployment's metadata, without depending on yq.
+IX_REPLICAS=$(awk '
+  /^kind: Deployment$/ { indoc=1; isix=0 }
+  indoc && /app.kubernetes.io\/component: search-indexer/ { isix=1 }
+  isix && /^  replicas:/ { print $2; exit }
+' "$TMPDIR/indexer.yaml")
+check "Indexer: replicas == 1 (pinned, not configurable)" "$([ "$IX_REPLICAS" = "1" ] && echo 0 || echo 1)"
+
+# SEARCH_INDEXER must be set to exactly "1", inside the search-indexer
+# Deployment, and must appear nowhere else in the release.
+IX_DOC=$(deployment_doc "$TMPDIR/indexer.yaml" search-indexer)
+IX_SCOPED=$(printf '%s\n' "$IX_DOC" | grep -A1 'name: SEARCH_INDEXER' | grep -c 'value: "1"' || true)
+IX_GLOBAL=$(grep -c 'name: SEARCH_INDEXER' "$TMPDIR/indexer.yaml" || true)
+check "Indexer: SEARCH_INDEXER=\"1\" on the search-indexer container" "$([ "$IX_SCOPED" = "1" ] && echo 0 || echo 1)"
+check "Indexer: SEARCH_INDEXER appears nowhere else in the release" "$([ "$IX_GLOBAL" = "1" ] && echo 0 || echo 1)"
+
+# The gateway Deployment must NOT carry the flag — duplicate indexing is not
+# made safe by CAS the way TOURNAMENT_REPORTER is.
+GW_FLAG=$(grep -c 'name: SEARCH_INDEXER' "$TMPDIR/default.yaml" || true)
+check "Gateway render: SEARCH_INDEXER is not set on gateway replicas" "$([ "$GW_FLAG" = "0" ] && echo 0 || echo 1)"
+
+# No Service for the indexer: Service count is unchanged by enabling it.
+SVC_DEFAULT=$(grep -c '^kind: Service$' "$TMPDIR/default.yaml" || true)
+SVC_INDEXER=$(grep -c '^kind: Service$' "$TMPDIR/indexer.yaml" || true)
+check "Indexer: adds no Service (Service count unchanged)" "$([ "$SVC_DEFAULT" = "$SVC_INDEXER" ] && echo 0 || echo 1)"
+
+# Enabling it adds exactly one resource (the Deployment).
+DOCS_DEFAULT=$(grep -c '^kind: ' "$TMPDIR/default.yaml" || true)
+DOCS_INDEXER=$(grep -c '^kind: ' "$TMPDIR/indexer.yaml" || true)
+check "Indexer: adds exactly one resource to the release" "$([ "$((DOCS_INDEXER - DOCS_DEFAULT))" = "1" ] && echo 0 || echo 1)"
+
+# Rollout strategy must be explicit and zero-gap. Recreate / maxSurge 0 would
+# leave the fire-and-forget game-ended channel unsubscribed during upgrades.
+IX_SURGE=$(grep -c 'maxSurge: 1' "$TMPDIR/indexer.yaml" || true)
+IX_UNAVAIL=$(grep -c 'maxUnavailable: 0' "$TMPDIR/indexer.yaml" || true)
+IX_RECREATE=$(grep -c 'type: Recreate' "$TMPDIR/indexer.yaml" || true)
+check "Indexer: explicit maxSurge 1 / maxUnavailable 0 (no rollout gap)" "$([ "$IX_SURGE" = "1" ] && [ "$IX_UNAVAIL" = "1" ] && [ "$IX_RECREATE" = "0" ] && echo 0 || echo 1)"
+
+# Fail closed: indexer enabled while search is disabled must not render.
+if helm template "$CHART_DIR" "${HELM_SECRETS[@]}" \
+     --set gateway.searchIndexer.enabled=true \
+     --set search.enabled=false >/dev/null 2>&1; then
+  check "Fail-closed: indexer + search.enabled=false is rejected" 1
+else
+  check "Fail-closed: indexer + search.enabled=false is rejected" 0
+fi
+
+# The ADR-0055 kill switch reaches the API.
+helm template "$CHART_DIR" "${HELM_SECRETS[@]}" \
+  --set search.enabled=false > "$TMPDIR/search-off.yaml" 2>/dev/null
+API_DOC=$(deployment_doc "$TMPDIR/search-off.yaml" api)
+KILL_SCOPED=$(printf '%s\n' "$API_DOC" | grep -A1 'name: SEARCH_ENABLED' | grep -c 'value: "0"' || true)
+KILL_GLOBAL=$(grep -c 'name: SEARCH_ENABLED' "$TMPDIR/search-off.yaml" || true)
+check "search.enabled=false sets SEARCH_ENABLED=\"0\" on the API container" "$([ "$KILL_SCOPED" = "1" ] && echo 0 || echo 1)"
+check "search.enabled=false sets SEARCH_ENABLED nowhere else" "$([ "$KILL_GLOBAL" = "1" ] && echo 0 || echo 1)"
+
+# And it must be absent entirely when search is enabled (the app keeps its default).
+KILL_DEFAULT=$(grep -c 'name: SEARCH_ENABLED' "$TMPDIR/default.yaml" || true)
+check "Default render: SEARCH_ENABLED is not set at all" "$([ "$KILL_DEFAULT" = "0" ] && echo 0 || echo 1)"
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

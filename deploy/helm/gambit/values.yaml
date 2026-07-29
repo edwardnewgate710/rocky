@@ -72,6 +72,20 @@ gateway:
   tournamentReporter:
     enabled: false
     scanIntervalMs: 30000
+  # M14 inc 7 (ADR-0057): the live search indexer (ADR-0056) runs in its own
+  # single-replica Deployment rather than on the scalable gateway replicas.
+  # Its dedup set is process-local, so N replicas would each index every
+  # finished game — idempotent, but N times the reads and writes.
+  # Requires search.enabled=true; the chart fails closed otherwise.
+  searchIndexer:
+    enabled: false
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 300m
+        memory: 512Mi
   resources:
     requests:
       cpu: 100m
@@ -142,6 +156,13 @@ redis:
 # Set via --set externalDatabaseUrl=postgres://user:pass@host:5432/db
 # or --set externalRedisUrl=redis://host:6379
 # These can also be provided via a Secret (see secrets section below).
+# --- Search (M11) ---
+# ADR-0055 defines SEARCH_ENABLED as an absolute kill switch: with search
+# disabled the API's search repository is never constructed and GET /v1/search
+# returns 503. Left unset here so the API keeps its own default (enabled).
+search:
+  enabled: true
+
 externalDatabaseUrl: ""
 externalRedisUrl: ""
 

@@ -157,6 +157,14 @@ spec:
             - name: TOURNAMENT_REPORTER_SCAN_MS
               value: {{ .Values.gateway.tournamentReporter.scanIntervalMs | quote }}
             {{- end }}
+            {{- /*
+              Deliberately absent here (ADR-0057): SEARCH_INDEXER, introduced
+              in ADR-0056. Unlike the tournament reporter, whose duplicate work
+              is made safe by version CAS, the search indexer dedups only
+              in-process — every replica would index every finished game. It
+              runs in its own single-replica Deployment instead
+              (templates/search-indexer.yaml).
+            */}}
           livenessProbe:
             httpGet:
               path: /health

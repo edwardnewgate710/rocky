@@ -174,6 +174,26 @@ without Redis.
 
 See `docs/adr/0010-game-authority-ownership.md` for the decision record.
 
+## Search indexer
+
+The live search indexer (ADR-0056) keeps `search_documents` current by consuming
+game-ended broadcasts. Its dedup set is process-local, so it runs in a dedicated
+single-replica Deployment instead of on the gateway replicas:
+
+```bash
+helm upgrade gambit deploy/helm/gambit --set gateway.searchIndexer.enabled=true
+```
+
+That Deployment's replica count is fixed at 1 by design and is not exposed as a
+value — two indexers would each read and upsert every finished game. The upsert is
+idempotent, so the index would still be correct, just built twice.
+
+`--set search.enabled=false` disables search altogether (ADR-0055): the API stops
+constructing a search repository and `GET /v1/search` returns 503. Combining that
+with an enabled indexer fails at template time.
+
+See `docs/adr/0057-search-indexer-deployment.md` for the decision record.
+
 ## Validation
 
 ```bash

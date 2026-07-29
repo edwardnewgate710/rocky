@@ -1,0 +1,160 @@
+{{/*
+Search Index Worker Deployment (M14 inc 7, ADR-0057).
+
+ADR-0056 hosts the live search indexer inside the gateway process behind
+`SEARCH_INDEXER=1`, but its dedup set is process-local: every replica with the
+flag set indexes every finished game. Indexing is an idempotent upsert keyed on
+`game:<id>`, so duplicates are wasteful rather than corrupting — but the gateway
+defaults to `replicas: 2`, and a Deployment cannot vary env per pod.
+
+So the indexer gets its own Deployment pinned to a single replica instead of
+riding the scalable WS edge. This is the "dedicated single-replica Deployment"
+that PROJECT_STATE has tracked as debt for the gateway-hosted workers.
+
+Notes:
+- `replicas: 1` is deliberately hard-coded, not a value. Making it configurable
+  would re-introduce exactly the duplicate-work problem this template exists to
+  remove. Scale the gateway, not this.
+- No Service is rendered. This pod runs the same `serve.ts` entry point, so it
+  binds the WS and health ports, but it receives no client traffic. With no
+  clients it never claims game ownership, so it stays inert in the Redis
+  ownership registry (ADR-0010) while still consuming game-ended broadcasts.
+- Probes target the pod directly, so the absent Service does not affect them.
+*/}}
+{{- if .Values.gateway.searchIndexer.enabled }}
+{{- if not .Values.search.enabled }}
+{{- fail "gateway.searchIndexer.enabled requires search.enabled=true — the indexer cannot run while SEARCH_ENABLED=0 disables search" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gambit.fullname" . }}-search-indexer
+  labels:
+    {{- include "gambit.labels" . | nindent 4 }}
+    app.kubernetes.io/component: search-indexer
+spec:
+  # Pinned to 1 on purpose — see the header comment. Do not parameterize.
+  replicas: 1
+  {{- /*
+    Rollout strategy is explicit, and deliberately NOT `Recreate`.
+
+    With `replicas: 1` and no strategy, the default RollingUpdate resolves
+    maxSurge 25% -> 1, so an upgrade briefly runs two indexer pods. That
+    overlap is stated here rather than left implicit, because the alternative
+    is worse: `Recreate` (or maxSurge 0) terminates the old pod before the new
+    one is Ready, leaving a window with no subscriber.
+
+    `gamesEndedChannel()` is Redis PUBLISH/SUBSCRIBE — fire-and-forget, not a
+    durable queue. A gap therefore drops every game that finishes during it,
+    recoverable only by an operator rerunning `reindex-search`. A brief overlap
+    costs one duplicated read + idempotent upsert per game finished during the
+    rollout. Losing games is worse than indexing a few of them twice.
+
+    maxUnavailable: 0 guarantees the new pod is Ready before the old one goes.
+  */}}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "gambit.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: search-indexer
+  template:
+    metadata:
+      labels:
+        {{- include "gambit.labels" . | nindent 8 }}
+        app.kubernetes.io/component: search-indexer
+    spec:
+      initContainers:
+        {{- /*
+          Wait for the API to be Ready, same as the gateway. The API runs
+          migrations in its init container, so the `games`, `users` and
+          `search_documents` tables exist by the time it reports Ready.
+        */}}
+        - name: wait-for-api
+          image: "{{ .Values.images.api.repository }}:{{ .Values.images.api.tag }}"
+          imagePullPolicy: {{ .Values.images.api.pullPolicy | quote }}
+          command:
+            - sh
+            - -c
+            - 'until node -e "fetch(''http://{{ include "gambit.fullname" . }}-api:{{ .Values.api.port }}/v1/ready'').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; do echo "Waiting for API readiness..."; sleep 2; done'
+      containers:
+        - name: search-indexer
+          image: "{{ .Values.images.gateway.repository }}:{{ .Values.images.gateway.tag }}"
+          imagePullPolicy: {{ .Values.images.gateway.pullPolicy | quote }}
+          ports:
+            - name: ws
+              containerPort: {{ .Values.gateway.port }}
+              protocol: TCP
+            - name: health
+              containerPort: {{ .Values.gateway.healthPort }}
+              protocol: TCP
+          env:
+            {{- if .Values.postgres.enabled }}
+            # POSTGRES_PASSWORD MUST appear before DATABASE_URL so $(POSTGRES_PASSWORD)
+            # expands correctly — Kubernetes only resolves $(VAR) for vars defined
+            # earlier in the same env list.
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "gambit.secretName" . }}
+                  key: POSTGRES_PASSWORD
+            {{- end }}
+            - name: DATABASE_URL
+              value: {{ include "gambit.databaseUrl" . | quote }}
+            - name: ACCESS_TOKEN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "gambit.secretName" . }}
+                  key: ACCESS_TOKEN_SECRET
+            - name: ACCESS_TOKEN_TTL_SEC
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "gambit.configMapName" . }}
+                  key: ACCESS_TOKEN_TTL_SEC
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "gambit.configMapName" . }}
+                  key: GATEWAY_PORT
+            - name: HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "gambit.configMapName" . }}
+                  key: GATEWAY_HOST
+            - name: HEALTH_PORT
+              value: {{ .Values.gateway.healthPort | quote }}
+            - name: NODE_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "gambit.configMapName" . }}
+                  key: NODE_ENV
+            - name: REDIS_URL
+              value: {{ include "gambit.redisUrl" . | quote }}
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            # M11 inc 8 (ADR-0056): the live search indexer. This Deployment is
+            # the single owner of the flag across the release.
+            - name: SEARCH_INDEXER
+              value: "1"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.gateway.searchIndexer.resources | nindent 12 }}
+{{- end }}

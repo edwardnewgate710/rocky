@@ -690,6 +690,15 @@ Redis-based ownership registry and command forwarding allowing gateway scaling (
 External Secrets Operator (`external-secrets.io/v1`) integration for the Gambit Helm chart.
 Renders an `ExternalSecret` custom resource syncing `ACCESS_TOKEN_SECRET` and `POSTGRES_PASSWORD` from a backing SecretStore / ClusterSecretStore.
 
+### Increment 7: Search indexer Deployment (ADR-0057) ✅
+
+Dedicated single-replica Deployment for the live search indexer (ADR-0056), gated on `gateway.searchIndexer.enabled`.
+`replicas: 1` is hard-coded because the worker dedups only in-process, so the flag cannot ride the scalable gateway replicas.
+Also wires ADR-0055's `SEARCH_ENABLED` kill switch into the API via a new `search.enabled` value, fails closed when the
+indexer is enabled with search disabled, and pins an explicit `maxSurge: 1 / maxUnavailable: 0` rollout strategy so an
+upgrade never leaves the fire-and-forget game-ended channel unsubscribed. Verified by new assertions in
+`scripts/helm-snapshot-test.sh`; wiring that script into CI is still pending (the workflow file could not be committed).
+
 ### Deferred (later M14 increments)
 
 - Terraform IaC for cloud provisioning
