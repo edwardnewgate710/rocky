@@ -1,8 +1,13 @@
 export * from './tokenize';
 export * from './query';
+export * from './filters';
 export * from './search';
+export * from './pagination';
 export * from './repository';
 export * from './natural';
 export * from './projections';
-
-
+export * from './vector';
+export * from './embedding';
+export * from './semantic';
+export * from './hybrid';
+export * from './semantic-repository';

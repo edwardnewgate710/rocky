@@ -1,22 +1,10 @@
-import type { SearchableDocument, SearchResult } from './search';
+import type { SearchableDocument } from './search';
 import type { SearchQuery } from './query';
 import { search } from './search';
+import type { SearchOptions, SearchPage } from './pagination';
+import { paginate } from './pagination';
 
-/** Pagination/query options for a repository query. */
-export interface SearchOptions {
-  /** Max results to return (the page size). Omitted/undefined => all hits. Values < 0 clamp to 0. */
-  readonly limit?: number;
-  /** Number of leading hits to skip. Omitted/undefined => 0. Values < 0 clamp to 0. */
-  readonly offset?: number;
-}
-
-/** A page of ranked results plus the total number of hits (before pagination). */
-export interface SearchPage {
-  /** Total hits matching the query across the whole index (independent of limit/offset). */
-  readonly total: number;
-  /** The requested page of ranked results (already sorted by the underlying matcher). */
-  readonly results: readonly SearchResult[];
-}
+export type { SearchOptions, SearchPage };
 
 /**
  * A stateful, queryable index of SearchableDocuments. The port is async so I/O-backed adapters
@@ -64,18 +52,7 @@ export class InMemorySearchRepository implements SearchRepository {
   }
 
   async query(query: SearchQuery, options?: SearchOptions): Promise<SearchPage> {
-    const allHits = search(query, Array.from(this.docs.values()));
-    const total = allHits.length;
-
-    const offset = options?.offset;
-    const limit = options?.limit;
-
-    const start = Math.max(0, offset ?? 0);
-    const end = limit === undefined ? allHits.length : start + Math.max(0, limit);
-
-    const results = allHits.slice(start, end);
-
-    return { total, results };
+    return paginate(search(query, Array.from(this.docs.values())), options);
   }
 }
 

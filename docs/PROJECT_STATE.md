@@ -4,7 +4,20 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-28 — M14 Increment 7: dedicated single-replica Deployment for the search indexer (ADR-0057)._
+_Last updated: 2026-07-29 — M11 Search Increment 9: Semantic search domain core (ADR-0058)._
+
+## M11 Search Increment 9 — Semantic Search Domain Core (ADR-0058)
+
+Pure, dependency-free domain core for vector and hybrid search in `@chess-platform/search` (ADR-0058):
+- **Pure Vector Math (`src/vector.ts`)**: Added `Vector` type (`readonly number[]`) and functions `dot`, `magnitude`, `cosineSimilarity` (bounded in `[-1, 1]`), and `normalize`. All vector functions validate finite components via `assertFinite` throwing `RangeError` on `NaN`/`Infinity`. Dimension mismatches throw `RangeError` with explicit length details. Zero-magnitude vectors return `0` similarity and normalize to zero vectors of equal length. `cosineSimilarity`/`normalize` scale by the largest absolute component before squaring, so entirely finite inputs near `Number.MAX_VALUE` cannot overflow into a `NaN` score or a silently zeroed unit vector.
+- **Embedding Provider Port & Offline Hashing Adapter (`src/embedding.ts`)**: Defined async `EmbeddingProvider` interface (`dimensions`, `embed`, `embedAll`) ensuring `@chess-platform/search` stays dependency-free while accommodating external model providers. Implemented `HashingEmbeddingProvider` using deterministic 32-bit FNV-1a hashing (`fnv1a32`) for offline, reproducible vectorization in CI.
+- **Shared Filter Module (`src/filters.ts`)**: Extracted `matchesAllFilters`, `matchesFilter`, and `getFieldValue` into a shared module for keyword and vector search rankers without altering `search.ts` external behavior.
+- **Pure Vector Similarity Ranker (`src/semantic.ts`)**: Created `SemanticSearchableDocument` interface and `semanticSearch` ranker evaluating cosine similarity, enforcing `minScore` thresholding, applying field filters, and sorting results `score DESC`, tie-broken by `id ASC`.
+- **Hybrid Search via Reciprocal Rank Fusion (`src/hybrid.ts`)**: Implemented `hybridSearch` fusing keyword FTS and vector search via Reciprocal Rank Fusion (RRF, `1-based rank` score `weight / (rrfK + rank)`). Solves term-frequency vs cosine-similarity scale incompatibility with scale-invariant rank fusion. Validates `keywordWeight` in `[0, 1]` and `rrfK > 0`.
+- **Semantic Repository Port & In-Memory Adapter (`src/semantic-repository.ts`)**: Created `SemanticSearchRepository` interface (`index`, `indexAll`, `remove`, `clear`, `size`, `querySemantic`, `queryHybrid`) and `InMemorySemanticSearchRepository` adapter. The index latches its embedding dimension on first write and rejects mismatched documents there (released again whenever the index becomes empty, via `clear()` or removal of the last document), so one bad insert cannot break reads for the whole repository. Documented pgvector cosine-distance (`<=>`) mapping (`1 - distance`) for future persistence adapters.
+- **Shared Pagination Contract (`src/pagination.ts`)**: Moved `SearchOptions`, `SearchPage`, and a new `paginate` helper out of `repository.ts` (which re-exports both types, so the package's public API is unchanged and `PgSearchRepository` keeps importing them from the package root). Both `InMemorySearchRepository` and `InMemorySemanticSearchRepository` now share one implementation of the clamping rules — negative `offset`/`limit` clamp to `0`, an omitted `limit` returns all remaining hits, `total` counts hits before pagination — so keyword and semantic paging cannot drift apart.
+- **Deferred**: pgvector persistence adapter (`PgSemanticSearchRepository`) and REST API wiring deferred to Increments 10 and 11.
+- Detailed in `docs/adr/0058-semantic-search-core.md`.
 
 ## M14 Increment 7 — Search Indexer Deployment (ADR-0057)
 

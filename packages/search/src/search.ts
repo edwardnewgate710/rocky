@@ -1,5 +1,6 @@
 import { tokenize } from './tokenize';
-import { type SearchFilter, type SearchQuery } from './query';
+import { type SearchQuery } from './query';
+import { matchesAllFilters } from './filters';
 
 export interface SearchableDocument {
   readonly id: string;
@@ -12,34 +13,6 @@ export interface SearchableDocument {
 export interface SearchResult {
   readonly id: string;
   readonly score: number;
-}
-
-function getFieldValue(
-  fields: Readonly<Record<string, string>> | undefined,
-  field: string
-): string | undefined {
-  if (!fields) {
-    return undefined;
-  }
-  if (Object.prototype.hasOwnProperty.call(fields, field)) {
-    return fields[field];
-  }
-  const target = field.toLowerCase();
-  for (const key of Object.keys(fields)) {
-    if (key.toLowerCase() === target) {
-      return fields[key];
-    }
-  }
-  return undefined;
-}
-
-function matchesFilter(
-  filter: SearchFilter,
-  fields?: Readonly<Record<string, string>>
-): boolean {
-  const docVal = getFieldValue(fields, filter.field);
-  const isMatch = docVal !== undefined && docVal.toLowerCase() === filter.value.toLowerCase();
-  return filter.negated ? !isMatch : isMatch;
 }
 
 function countPhraseOccurrences(docTokens: readonly string[], phraseTokens: readonly string[]): number {
@@ -93,14 +66,7 @@ export function search(
 
   for (const doc of documents) {
     // 1. Filter matching
-    let filtersPass = true;
-    for (const filter of query.filters) {
-      if (!matchesFilter(filter, doc.fields)) {
-        filtersPass = false;
-        break;
-      }
-    }
-    if (!filtersPass) {
+    if (!matchesAllFilters(query.filters, doc.fields)) {
       continue;
     }
 
