@@ -115,6 +115,13 @@ spec:
             - name: SEARCH_ENABLED
               value: "0"
             {{- end }}
+            {{- if and .Values.search.enabled (not .Values.search.semanticEnabled) }}
+            # M11 (ADR-0060): disables only ?mode=semantic|hybrid, which then return
+            # 503. Redundant when search.enabled is false, since that already stops
+            # the semantic repository being constructed at all.
+            - name: SEMANTIC_SEARCH_ENABLED
+              value: "0"
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /v1/health

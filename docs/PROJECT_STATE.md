@@ -4,7 +4,24 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-07-29 — M11 Search Increment 10: pgvector semantic adapter (ADR-0059)._
+_Last updated: 2026-08-01 — M11 Search Increment 11: semantic/hybrid modes on GET /v1/search (ADR-0060)._
+
+## M11 Search Increment 11 — REST Endpoint Wiring for Semantic and Hybrid Search (ADR-0060)
+
+REST API search endpoint (`GET /v1/search`) support for semantic and hybrid search modes in `@chess-platform/api` (ADR-0060):
+- **Search Mode Query Parameter**: Added optional `mode` query parameter (`mode=keyword|semantic|hybrid`, default `keyword`) to `GET /v1/search`. Invalid `mode` values return 422 validation errors (`"mode" must be one of keyword, semantic, hybrid`).
+- **Keyword Mode Unchanged**: `mode=keyword` (and default when `mode` is omitted) preserves exact byte-for-byte existing behavior and response shape. Requires `deps.searchRepository` or returns 503 (`search is not configured`).
+- **Semantic & Hybrid Mode Requirements**: `mode=semantic` and `mode=hybrid` require both `deps.semanticSearchRepository` and `deps.embeddingProvider`, returning 503 (`semantic search is not configured`) if either dependency is missing.
+- **Filter-Aware Query Embedding**: For vector embedding input, `parseNaturalQuery` output extracts relevance terms and phrases (`[...query.terms, ...query.phrases].join(' ')`), stripping filter tokens (e.g. `variant:blitz`) to prevent noisy filter tokens from skewing vector distance calculations. Falls back to raw `q` when no terms/phrases exist.
+- **Search Execution & Filtering**: `mode=semantic` executes `semanticSearchRepository.querySemantic(vector, { limit, offset, filters: query.filters })`, ensuring natural query filters constrain the vector result set. `mode=hybrid` executes `semanticSearchRepository.queryHybrid(query, vector, { limit, offset })` (where filters are applied internally across both keyword and vector RRF CTE branches).
+- **Constant Export & Schema Coupling**: Exported `SEARCH_EMBEDDING_DIMENSIONS = 256` constant from `@chess-platform/search` (re-exported via package index) with explicit comment documenting strict coupling to `vector(256)` in `packages/persistence/migrations/0014_search_embeddings.sql`.
+- **Production Wiring & Test Harness**: Configured production bootstrap in `bootstrap.ts` gated by `SEMANTIC_SEARCH_ENABLED !== '0'` (defaulting to `PgSemanticSearchRepository` and `HashingEmbeddingProvider(SEARCH_EMBEDDING_DIMENSIONS)`). Updated test harness (`HarnessOptions.withoutSemanticSearch`) with `InMemorySemanticSearchRepository` and `HashingEmbeddingProvider` exposed on `Harness`.
+- **OpenAPI 3.1 & Integration Tests**: Regenerated `packages/api/openapi.json` with `mode` enum and updated 503 response docs. Added comprehensive integration tests covering mode defaults, semantic ranking, hybrid union/RRF fusion, filter parsing & exclusion from vector generation, mode validation, 503 unconfigured states, and pagination.
+- **Helm Wiring**: New `search.semanticEnabled` value (default `true`) renders `SEMANTIC_SEARCH_ENABLED=0` on the API Deployment, so the switch is actually reachable in a Kubernetes deployment (the gap ADR-0057 fixed for `SEARCH_ENABLED`). `scripts/helm-snapshot-test.sh` grew from 39 to 43 assertions.
+- **DEFERRED Gap**: Documented plainly that no production worker or projection pipeline populates `search_embeddings` yet; `mode=semantic` in production returns an empty page until an embedding backfill/projection increment lands.
+- Detailed in `docs/adr/0060-semantic-search-rest-wiring.md`.
+
+Prior: M11 Search Increment 10 — pgvector Semantic Adapter (ADR-0059)
 
 ## M11 Search Increment 10 — pgvector Semantic Adapter (ADR-0059)
 

@@ -27,7 +27,12 @@ import { EventStoreGameSource } from '../src/anti-cheat/source';
 import { EventStoreBotTimingSource } from '../src/bot-detection/source';
 import type { Logger } from '../src/ports/logger';
 import type { Tracer } from '../src/ports/tracer';
-import { InMemorySearchRepository } from '@chess-platform/search';
+import {
+  HashingEmbeddingProvider,
+  InMemorySearchRepository,
+  InMemorySemanticSearchRepository,
+  SEARCH_EMBEDDING_DIMENSIONS,
+} from '@chess-platform/search';
 
 
 export const TEST_SECRET = 'test-access-token-secret-0123456789abcdef';
@@ -49,6 +54,8 @@ export interface Harness {
   readonly tournamentRepo: InMemoryTournamentsRepository;
   readonly antiCheatEventStore: InMemoryEventStore;
   readonly searchRepository?: InMemorySearchRepository;
+  readonly semanticSearchRepository?: InMemorySemanticSearchRepository;
+  readonly embeddingProvider?: HashingEmbeddingProvider;
   readonly clock: ManualClock;
   readonly tokens: AccessTokenService;
   readonly emailSender: InMemoryEmailSender;
@@ -74,6 +81,8 @@ export interface HarnessOptions {
   readonly withoutAntiCheatAnalysis?: boolean;
   /** Pass true to simulate a server constructed without search. */
   readonly withoutSearch?: boolean;
+  /** Pass true to simulate a server constructed without semantic search. */
+  readonly withoutSemanticSearch?: boolean;
   /** Override the anti-cheat evaluator (e.g. to make it throw) for edge-case tests. */
   readonly antiCheatEvaluator?: PositionEvaluator;
 }
@@ -125,12 +134,20 @@ export async function startHarness(
   const searchRepository = harnessOptions.withoutSearch
     ? undefined
     : new InMemorySearchRepository();
+  const semanticSearchRepository = harnessOptions.withoutSemanticSearch
+    ? undefined
+    : new InMemorySemanticSearchRepository();
+  const embeddingProvider = harnessOptions.withoutSemanticSearch
+    ? undefined
+    : new HashingEmbeddingProvider(SEARCH_EMBEDDING_DIMENSIONS);
   const server = createApiServer({
     repos, hasher, tokens, clock, ids, rateLimiter, tournamentRepo, gameLauncher, liveView, emailSender,
     config: resolved,
     botTimingSource: new EventStoreBotTimingSource(antiCheatEventStore),
     ...(antiCheatAnalysis ? { antiCheatAnalysis } : {}),
     ...(searchRepository ? { searchRepository } : {}),
+    ...(semanticSearchRepository ? { semanticSearchRepository } : {}),
+    ...(embeddingProvider ? { embeddingProvider } : {}),
     ...(harnessOptions.readiness ? { readiness: harnessOptions.readiness } : {}),
     ...(harnessOptions.logger ? { logger: harnessOptions.logger } : {}),
     ...(harnessOptions.tracer ? { tracer: harnessOptions.tracer } : {}),
@@ -150,6 +167,8 @@ export async function startHarness(
     tournamentRepo,
     antiCheatEventStore,
     searchRepository,
+    semanticSearchRepository,
+    embeddingProvider,
     clock,
     tokens,
     emailSender,

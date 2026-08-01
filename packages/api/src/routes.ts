@@ -61,7 +61,13 @@ import type { TournamentLiveView } from './tournament/live-view';
 import type { AntiCheatAnalysisService } from './anti-cheat/analysis-service';
 import type { BotGameTimingSource } from './bot-detection/source';
 import { BotAnalysisService } from './bot-detection/analysis-service';
-import { parseNaturalQuery, type SearchRepository } from '@chess-platform/search';
+import {
+  parseNaturalQuery,
+  type EmbeddingProvider,
+  type SearchQuery,
+  type SearchRepository,
+  type SemanticSearchRepository,
+} from '@chess-platform/search';
 
 /** Collaborators the route handlers need. */
 export interface RouteDeps {
@@ -81,6 +87,8 @@ export interface RouteDeps {
   readonly antiCheatAnalysis?: AntiCheatAnalysisService;
   readonly botTimingSource?: BotGameTimingSource;
   readonly searchRepository?: SearchRepository;
+  readonly semanticSearchRepository?: SemanticSearchRepository;
+  readonly embeddingProvider?: EmbeddingProvider;
 }
 
 const PUBLIC: AuthPolicy = { required: false };
@@ -874,6 +882,17 @@ export function buildRouter(deps: RouteDeps): Router {
           schema: { type: 'string', minLength: 1 },
         },
         {
+          name: 'mode',
+          in: 'query',
+          required: false,
+          description: 'Search mode (keyword, semantic, hybrid)',
+          schema: {
+            type: 'string',
+            enum: ['keyword', 'semantic', 'hybrid'],
+            default: 'keyword',
+          },
+        },
+        {
           name: 'limit',
           in: 'query',
           required: false,
@@ -896,22 +915,52 @@ export function buildRouter(deps: RouteDeps): Router {
       responses: {
         200: ['SearchResults', 'Ranked search results'],
         422: ['Error', 'Invalid query'],
-        503: ['Error', 'Search is not configured'],
+        503: ['Error', 'Search or semantic search is not configured'],
       },
     }),
     PUBLIC,
     async (ctx) => {
-      if (!deps.searchRepository) {
-        throw HttpError.unavailable('search is not configured');
+      // Each mode resolves its own collaborators before parsing `q`, so an unconfigured backend
+      // still answers 503 rather than 422 — the order this route has always had. Binding them to
+      // locals is also what lets the calls below stay assertion-free under strict null checks.
+      const mode = parseSearchMode(ctx.query);
+
+      if (mode === 'keyword') {
+        const repository = deps.searchRepository;
+        if (!repository) {
+          throw HttpError.unavailable('search is not configured');
+        }
+        const { query, limit, offset } = parseSearchParams(ctx.query);
+        const page = await repository.query(query, { limit, offset });
+        return json(200, { total: page.total, results: page.results });
       }
-      const q = ctx.query.get('q');
-      if (q === null || q.trim() === '') {
-        throw HttpError.validation('"q" is required', { q: 'required' });
+
+      const semanticRepository = deps.semanticSearchRepository;
+      const embeddingProvider = deps.embeddingProvider;
+      if (!semanticRepository || !embeddingProvider) {
+        throw HttpError.unavailable('semantic search is not configured');
       }
-      const limit = parseLimit(ctx.query, DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
-      const offset = parseSearchOffset(ctx.query);
-      const query = parseNaturalQuery(q);
-      const page = await deps.searchRepository.query(query, { limit, offset });
+
+      const { q, query, limit, offset } = parseSearchParams(ctx.query);
+
+      // Filters (e.g. `variant:blitz`) are hard constraints, not relevance signals — the repository
+      // applies them separately. Hashing their tokens into the query vector would only add noise, so
+      // the embedding is built from terms and phrases alone. A query of nothing BUT filters would
+      // leave that empty, so fall back to the raw text rather than embedding an empty string.
+      const relevanceText = [...query.terms, ...query.phrases].join(' ');
+      const vector = await embeddingProvider.embed(relevanceText !== '' ? relevanceText : q.trim());
+
+      const page =
+        mode === 'semantic'
+          ? await semanticRepository.querySemantic(vector, {
+              limit,
+              offset,
+              filters: query.filters,
+            })
+          : // queryHybrid merges query.filters into both branches itself — passing them again here
+            // would apply them twice.
+            await semanticRepository.queryHybrid(query, vector, { limit, offset });
+
       return json(200, { total: page.total, results: page.results });
     },
   );
@@ -1518,3 +1567,32 @@ function parseSearchOffset(query: URLSearchParams): number {
   }
   return n;
 }
+
+/** The `q`/`limit`/`offset` parsing every `/v1/search` mode shares, so no mode can drift from it. */
+function parseSearchParams(search: URLSearchParams): {
+  q: string;
+  query: SearchQuery;
+  limit: number;
+  offset: number;
+} {
+  const q = search.get('q');
+  if (q === null || q.trim() === '') {
+    throw HttpError.validation('"q" is required', { q: 'required' });
+  }
+  return {
+    q,
+    query: parseNaturalQuery(q),
+    limit: parseLimit(search, DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT),
+    offset: parseSearchOffset(search),
+  };
+}
+
+function parseSearchMode(query: URLSearchParams): 'keyword' | 'semantic' | 'hybrid' {
+  const raw = query.get('mode');
+  if (raw === null || raw.trim() === '') return 'keyword';
+  if (raw === 'keyword' || raw === 'semantic' || raw === 'hybrid') {
+    return raw;
+  }
+  throw HttpError.validation('"mode" must be one of keyword, semantic, hybrid', { mode: 'invalid' });
+}
+

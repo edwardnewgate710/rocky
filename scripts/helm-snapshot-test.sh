@@ -272,6 +272,23 @@ check "search.enabled=false sets SEARCH_ENABLED nowhere else" "$([ "$KILL_GLOBAL
 KILL_DEFAULT=$(grep -c 'name: SEARCH_ENABLED' "$TMPDIR/default.yaml" || true)
 check "Default render: SEARCH_ENABLED is not set at all" "$([ "$KILL_DEFAULT" = "0" ] && echo 0 || echo 1)"
 
+# The ADR-0060 semantic switch narrows the kill to ?mode=semantic|hybrid.
+helm template "$CHART_DIR" "${HELM_SECRETS[@]}" \
+  --set search.semanticEnabled=false > "$TMPDIR/semantic-off.yaml" 2>/dev/null
+API_DOC=$(deployment_doc "$TMPDIR/semantic-off.yaml" api)
+SEM_SCOPED=$(printf '%s\n' "$API_DOC" | grep -A1 'name: SEMANTIC_SEARCH_ENABLED' | grep -c 'value: "0"' || true)
+SEM_KEYWORD=$(printf '%s\n' "$API_DOC" | grep -c 'name: SEARCH_ENABLED' || true)
+check "search.semanticEnabled=false sets SEMANTIC_SEARCH_ENABLED=\"0\" on the API container" "$([ "$SEM_SCOPED" = "1" ] && echo 0 || echo 1)"
+check "search.semanticEnabled=false leaves keyword search alone" "$([ "$SEM_KEYWORD" = "0" ] && echo 0 || echo 1)"
+
+SEM_DEFAULT=$(grep -c 'name: SEMANTIC_SEARCH_ENABLED' "$TMPDIR/default.yaml" || true)
+check "Default render: SEMANTIC_SEARCH_ENABLED is not set at all" "$([ "$SEM_DEFAULT" = "0" ] && echo 0 || echo 1)"
+
+# search.enabled=false already stops the semantic repository being constructed, so
+# emitting the narrower switch too would be redundant noise in the manifest.
+SEM_REDUNDANT=$(grep -c 'name: SEMANTIC_SEARCH_ENABLED' "$TMPDIR/search-off.yaml" || true)
+check "search.enabled=false does not also emit SEMANTIC_SEARCH_ENABLED" "$([ "$SEM_REDUNDANT" = "0" ] && echo 0 || echo 1)"
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 

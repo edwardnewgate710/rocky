@@ -165,6 +165,11 @@ redis:
 # returns 503. Left unset here so the API keeps its own default (enabled).
 search:
   enabled: true
+  # ADR-0060: the semantic/hybrid modes of GET /v1/search (`?mode=semantic|hybrid`).
+  # Disabling leaves keyword search untouched and makes those two modes return 503.
+  # Nothing populates `search_embeddings` yet, so until an embedding backfill lands
+  # the semantic modes answer with an empty page — turning them off is a real choice.
+  semanticEnabled: true
 
 externalDatabaseUrl: ""
 externalRedisUrl: ""

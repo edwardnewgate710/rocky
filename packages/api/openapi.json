@@ -1740,7 +1740,7 @@
             }
           },
           "503": {
-            "description": "Search is not configured",
+            "description": "Search or semantic search is not configured",
             "content": {
               "application/json": {
                 "schema": {
@@ -1759,6 +1759,21 @@
             "schema": {
               "type": "string",
               "minLength": 1
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "description": "Search mode (keyword, semantic, hybrid)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "keyword",
+                "semantic",
+                "hybrid"
+              ],
+              "default": "keyword"
             }
           },
           {

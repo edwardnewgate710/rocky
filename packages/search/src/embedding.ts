@@ -65,10 +65,21 @@ export function fnv1a32(s: string): number {
  */
 const MAX_DIMENSIONS = 16000;
 
+/**
+ * Default vector dimensionality for search embeddings (256).
+ *
+ * NOTE ON COUPLING:
+ * This value is strictly coupled to the `vector(256)` column in
+ * `packages/persistence/migrations/0014_search_embeddings.sql`.
+ * Changing this constant REQUIRES a corresponding database migration to alter
+ * the pgvector column width and rebuild the HNSW index.
+ */
+export const SEARCH_EMBEDDING_DIMENSIONS = 256;
+
 export class HashingEmbeddingProvider implements EmbeddingProvider {
   readonly dimensions: number;
 
-  constructor(dimensions = 256) {
+  constructor(dimensions = SEARCH_EMBEDDING_DIMENSIONS) {
     if (
       typeof dimensions !== 'number' ||
       !Number.isInteger(dimensions) ||

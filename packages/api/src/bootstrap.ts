@@ -26,8 +26,10 @@ import {
   PgAntiCheatReportRepository,
   PgBotBehaviorReportRepository,
   PgSearchRepository,
+  PgSemanticSearchRepository,
 } from '@chess-platform/persistence/pg';
-import type { SearchRepository } from '@chess-platform/search';
+import { HashingEmbeddingProvider, SEARCH_EMBEDDING_DIMENSIONS } from '@chess-platform/search';
+import type { EmbeddingProvider, SearchRepository, SemanticSearchRepository } from '@chess-platform/search';
 import { ConsoleEmailSender } from './ports/email';
 import type { EmailSender } from './ports/email';
 import { JsonLogger } from './ports/logger';
@@ -132,6 +134,8 @@ export interface PgBootstrapOptions {
   readonly emailSender?: EmailSender;
   readonly analysisProvider?: AnalysisProvider;
   readonly searchRepository?: SearchRepository;
+  readonly semanticSearchRepository?: SemanticSearchRepository;
+  readonly embeddingProvider?: EmbeddingProvider;
   readonly logger?: Logger;
   readonly metrics?: Metrics;
   readonly tracer?: Tracer;
@@ -179,6 +183,14 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ? (options.searchRepository ?? new PgSearchRepository(pool))
     : undefined;
 
+  const semanticSearchEnabled = searchEnabled && process.env['SEMANTIC_SEARCH_ENABLED'] !== '0';
+  const semanticSearchRepository = semanticSearchEnabled
+    ? (options.semanticSearchRepository ?? new PgSemanticSearchRepository(pool))
+    : undefined;
+  const embeddingProvider = semanticSearchEnabled
+    ? (options.embeddingProvider ?? new HashingEmbeddingProvider(SEARCH_EMBEDDING_DIMENSIONS))
+    : undefined;
+
   const logger = options.logger ?? new JsonLogger({ service: 'api' }, { level: resolveLogLevel() });
   const metrics = options.metrics ?? new InMemoryMetrics();
   const logExporter = new LoggingSpanExporter(logger);
@@ -219,6 +231,8 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     emailSender: options.emailSender ?? new ConsoleEmailSender(),
     ...(antiCheatAnalysis ? { antiCheatAnalysis } : {}),
     ...(searchRepository ? { searchRepository } : {}),
+    ...(semanticSearchRepository ? { semanticSearchRepository } : {}),
+    ...(embeddingProvider ? { embeddingProvider } : {}),
     botTimingSource: new EventStoreBotTimingSource(eventStore),
     // Production observability (M13): structured logs to stdout, a scrape
     // registry backing GET /v1/metrics, and tracer emitting spans to logs.
