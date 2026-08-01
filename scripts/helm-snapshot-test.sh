@@ -297,6 +297,42 @@ IX_SEM_DOC=$(deployment_doc "$TMPDIR/semantic-off-indexer.yaml" search-indexer)
 IX_SEM_SCOPED=$(printf '%s\n' "$IX_SEM_DOC" | grep -A1 'name: SEMANTIC_SEARCH_ENABLED' | grep -c 'value: "0"' || true)
 check "search.semanticEnabled=false sets SEMANTIC_SEARCH_ENABLED=\"0\" on the search-indexer container" "$([ "$IX_SEM_SCOPED" = "1" ] && echo 0 || echo 1)"
 
+# --- Tracing (M13 inc 6, ADR-0062) ------------------------------------------
+echo ""
+echo "Tracing (ADR-0062):"
+
+# Default render: no OTEL vars anywhere
+OTEL_DEFAULT=$(grep -c 'OTEL_' "$TMPDIR/default.yaml" || true)
+check "Default render: no OTEL vars anywhere" "$([ "$OTEL_DEFAULT" = "0" ] && echo 0 || echo 1)"
+
+# Enabled + base endpoint: sets OTEL_EXPORTER_OTLP_ENDPOINT on both API and Gateway
+helm template "$CHART_DIR" "${HELM_SECRETS[@]}" \
+  --set tracing.enabled=true \
+  --set tracing.otlpEndpoint=http://collector:4318 > "$TMPDIR/tracing-base.yaml" 2>/dev/null
+
+API_OTEL_BASE=$(deployment_doc "$TMPDIR/tracing-base.yaml" api | grep -A1 'name: OTEL_EXPORTER_OTLP_ENDPOINT' | grep -c 'value: "http://collector:4318"' || true)
+GW_OTEL_BASE=$(deployment_doc "$TMPDIR/tracing-base.yaml" gateway | grep -A1 'name: OTEL_EXPORTER_OTLP_ENDPOINT' | grep -c 'value: "http://collector:4318"' || true)
+check "Tracing enabled+base endpoint: OTEL_EXPORTER_OTLP_ENDPOINT set on API container" "$([ "$API_OTEL_BASE" = "1" ] && echo 0 || echo 1)"
+check "Tracing enabled+base endpoint: OTEL_EXPORTER_OTLP_ENDPOINT set on Gateway container" "$([ "$GW_OTEL_BASE" = "1" ] && echo 0 || echo 1)"
+
+# Enabled + traces endpoint: sets OTEL_EXPORTER_OTLP_TRACES_ENDPOINT verbatim
+helm template "$CHART_DIR" "${HELM_SECRETS[@]}" \
+  --set tracing.enabled=true \
+  --set tracing.otlpTracesEndpoint=http://collector:4318/v1/traces > "$TMPDIR/tracing-traces.yaml" 2>/dev/null
+
+API_OTEL_TRACES=$(deployment_doc "$TMPDIR/tracing-traces.yaml" api | grep -A1 'name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT' | grep -c 'value: "http://collector:4318/v1/traces"' || true)
+GW_OTEL_TRACES=$(deployment_doc "$TMPDIR/tracing-traces.yaml" gateway | grep -A1 'name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT' | grep -c 'value: "http://collector:4318/v1/traces"' || true)
+check "Tracing enabled+traces endpoint: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT set on API container" "$([ "$API_OTEL_TRACES" = "1" ] && echo 0 || echo 1)"
+check "Tracing enabled+traces endpoint: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT set on Gateway container" "$([ "$GW_OTEL_TRACES" = "1" ] && echo 0 || echo 1)"
+
+# Fail closed: tracing enabled with no endpoint must fail render
+if helm template "$CHART_DIR" "${HELM_SECRETS[@]}" \
+     --set tracing.enabled=true >/dev/null 2>&1; then
+  check "Fail-closed: tracing.enabled=true with no endpoint is rejected" 1
+else
+  check "Fail-closed: tracing.enabled=true with no endpoint is rejected" 0
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 

@@ -23,11 +23,21 @@ import {
   type ApplyResult,
   type AuthorityErrorCode,
   type Command,
+  type CommandRouter,
   type MoveBroadcast,
   type EndedBroadcast,
   type StateView,
 } from '@chess-platform/realtime-gateway';
 import type { GameEvent } from '@chess-platform/game';
+import {
+  type Span,
+  type Tracer,
+  NullTracer,
+  generateTraceId,
+  formatTraceparent,
+  parseTraceparent,
+  isSampled,
+} from '@chess-platform/api';
 import { OwnershipRegistry } from './ownership.js';
 
 export interface RedisCommandRouterOptions {
@@ -46,6 +56,8 @@ export interface RedisCommandRouterOptions {
    * starts the consumer for that game so forwarded commands are processed.
    */
   consumer: OwnerCommandConsumer;
+  /** Tracer for span instrumentation. Defaults to NullTracer. */
+  tracer?: Tracer;
 }
 
 const DEFAULT_FORWARD_TIMEOUT_MS = 5000;
@@ -59,6 +71,7 @@ export interface ForwardedCommand {
   readonly userId: string;
   readonly cmd: Command;
   readonly responseKey: string;
+  readonly traceparent?: string;
 }
 
 /** Wire format for a successful forwarded command result. */
@@ -80,18 +93,83 @@ export interface ForwardedFailure {
 
 export type ForwardedResult = ForwardedSuccess | ForwardedFailure;
 
+/** Where a `gateway.command` span sits in the trace: a new root, or a child of a forwarder. */
+interface CommandSpanParent {
+  readonly traceId: string;
+  readonly parentId?: string;
+  readonly sampledFlag?: boolean;
+}
+
+/**
+ * Runs `work` inside a `gateway.command` span and records how it ended.
+ *
+ * Every command path needs identical bookkeeping — routed locally, forwarded to another node, or
+ * consumed as the owner — and writing it inline produced four near-identical copies that could
+ * drift apart. `end()` lives in a `finally` because an unended span is never exported at all.
+ *
+ * Attributes stay on the `BOUNDED_SPAN_ATTRS` whitelist: command kind and outcome, never the game
+ * id, user id, or move payload. Span attributes bypass JsonLogger's PII redaction.
+ */
+async function withCommandSpan<T>(
+  tracer: Tracer,
+  cmdKind: string,
+  parent: CommandSpanParent,
+  work: (span: Span) => Promise<T>,
+): Promise<T> {
+  const span = tracer.startSpan('gateway.command', {
+    traceId: parent.traceId,
+    ...(parent.parentId !== undefined ? { parentId: parent.parentId } : {}),
+    ...(parent.sampledFlag !== undefined ? { sampledFlag: parent.sampledFlag } : {}),
+    kind: 'server',
+    attributes: { 'cmd.kind': cmdKind },
+  });
+
+  try {
+    const result = await work(span);
+    span.setAttribute('cmd.outcome', 'ok');
+    span.setStatus('ok');
+    return result;
+  } catch (err) {
+    span.setAttribute('cmd.outcome', 'error');
+    span.setAttribute('cmd.error_code', err instanceof AuthorityError ? err.code : 'invalid_command');
+    span.setStatus('error');
+    throw err;
+  } finally {
+    span.end();
+  }
+}
+
+/**
+ * Adds `gateway.command` spans to a router that has none of its own — the single-node
+ * {@link LocalCommandRouter} path. {@link RedisCommandRouter} instruments itself, because only it
+ * knows whether a command was applied locally or forwarded, so it must NOT be wrapped in this.
+ */
+export class TracingCommandRouter implements CommandRouter {
+  constructor(
+    private readonly inner: CommandRouter,
+    private readonly tracer: Tracer = new NullTracer(),
+  ) {}
+
+  async route(gameId: string, userId: string, cmd: Command): Promise<ApplyResult> {
+    return withCommandSpan(this.tracer, cmd.kind, { traceId: generateTraceId() }, () =>
+      this.inner.route(gameId, userId, cmd),
+    );
+  }
+}
+
 /**
  * A CommandRouter backed by Redis. Checks ownership via the
  * OwnershipRegistry; forwards non-owned commands via Redis lists.
  * Starts the owner consumer when this node claims a game.
  */
-export class RedisCommandRouter {
+export class RedisCommandRouter implements CommandRouter {
   private readonly authority: GameAuthority;
   private readonly registry: OwnershipRegistry;
   private readonly redis: Redis;
   private readonly nodeId: string;
   private readonly forwardTimeoutMs: number;
   private readonly consumer: OwnerCommandConsumer;
+  private readonly tracer: Tracer;
   private hooksInstalled = false;
 
   constructor(opts: RedisCommandRouterOptions) {
@@ -101,6 +179,7 @@ export class RedisCommandRouter {
     this.nodeId = opts.nodeId;
     this.forwardTimeoutMs = opts.forwardTimeoutMs ?? DEFAULT_FORWARD_TIMEOUT_MS;
     this.consumer = opts.consumer;
+    this.tracer = opts.tracer ?? new NullTracer();
     this.installHooks();
   }
 
@@ -122,11 +201,16 @@ export class RedisCommandRouter {
 
     if (claim.owned) {
       // Consumer was started by the onClaimed hook (or already running).
-      return this.authority.apply(gameId, userId, cmd);
+      return withCommandSpan(this.tracer, cmd.kind, { traceId: generateTraceId() }, () =>
+        this.authority.apply(gameId, userId, cmd),
+      );
     }
 
     // Another node owns the game — forward the command.
-    return this.forward(gameId, userId, cmd);
+    const commandTraceId = generateTraceId();
+    return withCommandSpan(this.tracer, cmd.kind, { traceId: commandTraceId }, (commandSpan) =>
+      this.forward(gameId, userId, cmd, commandTraceId, commandSpan.spanId, commandSpan.sampled),
+    );
   }
 
   /**
@@ -137,10 +221,30 @@ export class RedisCommandRouter {
    * sender's BLPOP and can eat the response. The sender's BLPOP consumes
    * the value; use a short EXPIRE on the response key for cleanup.
    */
-  private async forward(gameId: string, userId: string, cmd: Command): Promise<ApplyResult> {
+  private async forward(
+    gameId: string,
+    userId: string,
+    cmd: Command,
+    parentTraceId: string,
+    parentSpanId: string,
+    parentSampled: boolean,
+  ): Promise<ApplyResult> {
     const requestId = `${this.nodeId}-${randomUUID()}`;
     const cmdKey = `${CMD_PREFIX}:${gameId}`;
     const respKey = `${RESP_PREFIX}:${requestId}`;
+
+    const forwardSpan = this.tracer.startSpan('gateway.forward', {
+      traceId: parentTraceId,
+      parentId: parentSpanId,
+      sampledFlag: parentSampled,
+      kind: 'client',
+    });
+
+    const traceparent = formatTraceparent({
+      traceId: parentTraceId,
+      spanId: forwardSpan.spanId,
+      sampled: forwardSpan.sampled,
+    });
 
     const envelope: ForwardedCommand = {
       requestId,
@@ -148,8 +252,14 @@ export class RedisCommandRouter {
       userId,
       cmd,
       responseKey: respKey,
+      ...(traceparent ? { traceparent } : {}),
     };
 
+    // `forwardSpan.end()` lives in the `finally` below: rpush, blpop and JSON.parse can all throw,
+    // and a span that is never ended is never exported — the failure would be invisible in exactly
+    // the case most worth seeing.
+    let timedOut = false;
+    try {
     // Push the command to the owner's queue (non-blocking, shared connection).
     await this.redis.rpush(cmdKey, JSON.stringify(envelope));
 
@@ -168,8 +278,15 @@ export class RedisCommandRouter {
     }
 
     if (!raw) {
+      timedOut = true;
+      forwardSpan.setAttribute('forward.outcome', 'error');
+      forwardSpan.setAttribute('forward.timeout', true);
+      forwardSpan.setStatus('error');
+
       // Timeout — the owner may have crashed. Try to claim ownership.
       // If the owner's lease has expired, SET NX EX succeeds.
+      // The forward genuinely failed even when this recovery succeeds, so the span above stays
+      // an error; the enclosing gateway.command span is what records the command's real outcome.
       const reclaimed = await this.registry.claim(gameId);
       if (reclaimed.owned) {
         await this.authority.ensureLoaded(gameId);
@@ -183,11 +300,19 @@ export class RedisCommandRouter {
     const result = JSON.parse(payload) as ForwardedResult;
 
     if (!result.ok) {
+      forwardSpan.setAttribute('forward.outcome', 'error');
+      forwardSpan.setAttribute('forward.timeout', false);
+      forwardSpan.setStatus('error');
+
       throw new AuthorityError(
         result.error.code,
         result.error.message,
       );
     }
+
+    forwardSpan.setAttribute('forward.outcome', 'ok');
+    forwardSpan.setAttribute('forward.timeout', false);
+    forwardSpan.setStatus('ok');
 
     // Broadcasts were already published by the owner via pub/sub.
     return {
@@ -195,6 +320,16 @@ export class RedisCommandRouter {
       broadcasts: result.broadcasts,
       state: result.state,
     };
+    } catch (err) {
+      // Covers the throws the branches above do not set attributes for — a Redis failure or a
+      // malformed response payload.
+      forwardSpan.setAttribute('forward.outcome', 'error');
+      forwardSpan.setAttribute('forward.timeout', timedOut);
+      forwardSpan.setStatus('error');
+      throw err;
+    } finally {
+      forwardSpan.end();
+    }
   }
 }
 
@@ -212,13 +347,15 @@ export class OwnerCommandConsumer {
   private readonly blockingConns = new Map<string, Redis>();
   private readonly authority: GameAuthority;
   private readonly redis: Redis;
+  private readonly tracer: Tracer;
   private readonly blpopTimeoutSec = 15;
   /** Response key TTL (seconds) so abandoned responses don't leak. */
   private readonly responseTtlSec = 30;
 
-  constructor(authority: GameAuthority, redis: Redis) {
+  constructor(authority: GameAuthority, redis: Redis, tracer?: Tracer) {
     this.authority = authority;
     this.redis = redis;
+    this.tracer = tracer ?? new NullTracer();
   }
 
   /**
@@ -284,7 +421,25 @@ export class OwnerCommandConsumer {
   }
 
   private async processCommand(raw: string): Promise<void> {
+    // A malformed payload throws out to consumeLoop, which logs it and backs off. Swallowing it
+    // here would drop the message silently — the one failure mode an observability change must
+    // not introduce.
     const envelope = JSON.parse(raw) as ForwardedCommand;
+
+    // An older node mid-rollout sends no traceparent, and a malformed one must never be fatal:
+    // either way this span starts a new root trace instead of joining the forwarder's.
+    const parsedTrace = parseTraceparent(envelope.traceparent);
+    const traceId = parsedTrace?.traceId ?? generateTraceId();
+
+    const commandSpan = this.tracer.startSpan('gateway.command', {
+      traceId,
+      ...(parsedTrace?.parentId ? { parentId: parsedTrace.parentId } : {}),
+      ...(parsedTrace ? { sampledFlag: isSampled(parsedTrace.flags) } : {}),
+      kind: 'server',
+      attributes: {
+        'cmd.kind': envelope.cmd.kind,
+      },
+    });
 
     try {
       await this.authority.ensureLoaded(envelope.gameId);
@@ -293,6 +448,9 @@ export class OwnerCommandConsumer {
         envelope.userId,
         envelope.cmd,
       );
+
+      commandSpan.setAttribute('cmd.outcome', 'ok');
+      commandSpan.setStatus('ok');
 
       const response: ForwardedSuccess = {
         ok: true,
@@ -304,15 +462,22 @@ export class OwnerCommandConsumer {
       await this.redis.rpush(envelope.responseKey, JSON.stringify(response));
       await this.redis.expire(envelope.responseKey, this.responseTtlSec);
     } catch (err) {
+      const errorCode = err instanceof AuthorityError ? err.code : 'invalid_command';
+      commandSpan.setAttribute('cmd.outcome', 'error');
+      commandSpan.setAttribute('cmd.error_code', errorCode);
+      commandSpan.setStatus('error');
+
       const response: ForwardedFailure = {
         ok: false,
         error: {
-          code: err instanceof AuthorityError ? err.code : 'invalid_command',
+          code: errorCode,
           message: err instanceof Error ? err.message : String(err),
         },
       };
       await this.redis.rpush(envelope.responseKey, JSON.stringify(response));
       await this.redis.expire(envelope.responseKey, this.responseTtlSec);
+    } finally {
+      commandSpan.end();
     }
   }
 }

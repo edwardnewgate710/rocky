@@ -4,14 +4,14 @@ This guide describes the operational observability capabilities implemented acro
 
 ## Overview
 
-Gambit implements a dependency-free, zero-overhead observability stack. The ports live in `@chess-platform/api`; structured logging (`JsonLogger`) and Prometheus metrics (`InMemoryMetrics`) are also reused by the deployable `services/gateway`, which constructs them from `@chess-platform/api` (`serve.ts`). Request tracing (server spans) is currently wired into the API's HTTP router only; the gateway emits structured logs and metrics but not spans yet. All instrumentation adheres to strict PII redaction and bounded cardinality controls.
+Gambit implements a dependency-free, zero-overhead observability stack. The ports live in `@chess-platform/api`; structured logging (`JsonLogger`) and Prometheus metrics (`InMemoryMetrics`) are also reused by the deployable `services/gateway`, which constructs them from `@chess-platform/api` (`serve.ts`). Request tracing covers both the API's HTTP router (`http.server` spans) and the gateway service (`gateway.command` and `gateway.forward` spans). All instrumentation adheres to strict PII redaction and bounded cardinality controls.
 
 ---
 
 ## 1. Structured Logging (`JsonLogger`)
 
 ### Format
-In production (`bootstrap.ts`), the API and Gateway emit single-line JSON records to `stdout`:
+In production (`bootstrap.ts` and `serve.ts`), the API and Gateway emit single-line JSON records to `stdout`:
 ```json
 {
   "ts": "2026-07-24T10:30:00.000Z",
@@ -36,17 +36,18 @@ Controlled via `LOG_LEVEL` environment variable (`debug`, `info`, `warn`, `error
 
 ---
 
-## 2. Prometheus Metrics (`/v1/metrics`)
+## 2. Prometheus Metrics (`/v1/metrics` and `GET /metrics`)
 
 ### Endpoint
-Metrics are exposed in standard Prometheus text format (`v0.0.4`) at `GET /v1/metrics`.
+Metrics are exposed in standard Prometheus text format (`v0.0.4`) at `GET /v1/metrics` on the API and `GET /metrics` on the Gateway.
 
 ### Key Metrics
 - `http_requests_total` (counter): Count of HTTP requests labeled by `method`, `route` (pattern), and `status`.
 - `http_request_duration_seconds` (histogram): Request latency in seconds bucketed across standard intervals (`0.005s` to `10s`), labeled by `route`.
+- Gateway counters: `gateway_connections_opened_total`, `gateway_messages_received_total`, `gateway_auth_failures_total`.
 
 ### Span Export Pipeline
-When OTLP export is enabled, `BatchSpanProcessor` self-instruments by emitting unlabelled Prometheus counters to `GET /v1/metrics`:
+When OTLP export is enabled, `BatchSpanProcessor` self-instruments by emitting unlabelled Prometheus counters to the metrics registry:
 - `span_export_received_total` (counter): Spans accepted into the pipeline.
 - `span_export_dropped_total` (counter): Spans dropped due to queue overflow eviction or post-shutdown exports.
 - `span_export_exported_total` (counter): Spans handed to the downstream exporter (in batches).
@@ -64,24 +65,26 @@ When OTLP export is enabled, `BatchSpanProcessor` self-instruments by emitting u
 ### Trace Context & Propagation
 - **Inbound Context**: Inbound `traceparent` headers (`00-<traceId>-<parentId>-<flags>`) are validated and adopted. If absent or invalid, a fresh 128-bit `traceId` is minted.
 - **Outbound Context**: Every API response includes both `traceparent` (`00-<traceId>-<spanId>-<flags>`) and legacy `trace-id` headers for downstream propagation.
+- **Cross-Node Gateway Context**: Cross-node command forwards carry `traceparent` in the `ForwardedCommand` Redis queue envelope. The owner node parses this header and creates child spans under the forwarder's span.
 
-### Server Request Spans (`http.server`)
-- Each HTTP request creates an `http.server` span covering the request lifecycle.
-- **Attributes**: Bounded attributes only (`http.method`, `http.route`, `http.status_code`).
-- **Span Status**: Set to `'error'` for status >= 500, `'ok'` for status < 500.
+### Server Request & Command Spans
+- **`http.server`**: Each API HTTP request creates an `http.server` span covering the request lifecycle (attributes: `http.method`, `http.route`, `http.status_code`).
+- **`gateway.command`**: Each game command processed by the gateway creates a `gateway.command` span (attributes: `cmd.kind`, `cmd.outcome`, `cmd.error_code`).
+- **`gateway.forward`**: Cross-node command forwards create a `gateway.forward` span wrapping the Redis list queue RPC (attributes: `forward.outcome`, `forward.timeout`).
 
 ### Sampling & Production Storage
-- **Sampler**: Default `alwaysOnSampler` (respecting inbound parent sampling decisions when present). Deterministic `probabilitySampler(ratio)` available.
+- **Sampler**: Default `alwaysOnSampler` (respecting inbound parent sampling decisions when present). Deterministic `probabilitySampler(ratio)` available via `OTEL_TRACES_SAMPLER_ARG`.
 - **Production Exporter**: In production, finished spans are emitted as structured `info` log records (`msg: "span"`) via `LoggingSpanExporter`.
 - **Introspection/Testing**: `InMemorySpanRecorder` provides a bounded ring-buffer for capturing spans in tests.
 
 ### Span Export (`SpanExporter` Seam & OTLP/JSON Exporter)
 - **`SpanExporter` Seam**: `SpanExporter` defines `export(spans: readonly SpanData[]): void`. Export is best-effort and non-blocking — implementations contain their own errors and never throw into the request path.
 - **Exporters**:
-  - `LoggingSpanExporter`: Default. Emits structured `info` log records (`msg: "span"`) with whitelisted attributes (`http.method`, `http.route`, `http.status_code`).
+  - `LoggingSpanExporter`: Default. Emits structured `info` log records (`msg: "span"`) with whitelisted attributes (`http.method`, `http.route`, `http.status_code`, `cmd.kind`, `cmd.outcome`, `cmd.error_code`, `forward.outcome`, `forward.timeout`).
   - `OtlpJsonSpanExporter`: Serializes spans into standard OTLP/JSON trace payloads (`OtlpTracesPayload`) with nanosecond BigInt timestamps, mapped enums, and typed attribute values (`stringValue`, `intValue`, `boolValue`, `doubleValue`), sending via an injectable `SpanTransport`.
   - `MultiSpanExporter`: Composite exporter that fans out span batches to multiple child exporters, containing individual exporter failures so one failing transport does not block others.
-- **OTLP Endpoint Gate**: Configured via `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (used verbatim) or the generic `OTEL_EXPORTER_OTLP_ENDPOINT` (a base URL onto which `/v1/traces` is appended per the OTLP/HTTP spec). When either resolves, production bootstrap combines `LoggingSpanExporter` and the (batched) `OtlpJsonSpanExporter` via `MultiSpanExporter`. When neither is set, `LoggingSpanExporter` is used exclusively.
-- **Span Processor (`BatchSpanProcessor`)**: OTLP span export is batched by `BatchSpanProcessor` (decorating `OtlpJsonSpanExporter` in production `bootstrap.ts`). Defaults to `maxQueueSize = 2048`, `maxExportBatchSize = 512`, and periodic flush delay `scheduledDelayMillis = 5000` via an unref'd `intervalScheduler`. Logging export stays direct and per-span. Queue overflow drops oldest spans and increments `droppedSpans`. `shutdown()` drains remaining queue contents and cancels periodic tasks. The processor is self-instrumented: when `metrics` is provided (as in `bootstrap.ts`), it emits unlabelled Prometheus counters (`span_export_received_total`, `span_export_dropped_total`, `span_export_exported_total`, `span_export_batches_total`) for scraping at `GET /v1/metrics`.
-- **Deferred**: Export retries remain deferred (sync `void` `export` contract).
+- **OTLP Endpoint Gate**: Configured via `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (used verbatim) or the generic `OTEL_EXPORTER_OTLP_ENDPOINT` (a base URL onto which `/v1/traces` is appended per the OTLP/HTTP spec). When either resolves, production bootstrap in both `api` and `gateway` combines `LoggingSpanExporter` and the (batched) `OtlpJsonSpanExporter` via `MultiSpanExporter`. When neither is set, `LoggingSpanExporter` is used exclusively.
+- **Span Processor (`BatchSpanProcessor`)**: OTLP span export is batched by `BatchSpanProcessor` (decorating `OtlpJsonSpanExporter` in production `bootstrap.ts` and `serve.ts`). Defaults to `maxQueueSize = 2048`, `maxExportBatchSize = 512`, and periodic flush delay `scheduledDelayMillis = 5000` via an unref'd `intervalScheduler`. Logging export stays direct and per-span. Queue overflow drops oldest spans and increments `droppedSpans`. `shutdown()` drains remaining queue contents and cancels periodic tasks. The processor is self-instrumented: when `metrics` is provided, it emits unlabelled Prometheus counters (`span_export_received_total`, `span_export_dropped_total`, `span_export_exported_total`, `span_export_batches_total`) for scraping at metrics endpoints.
+- **Helm Configuration**: Helm values provide `tracing.enabled`, `tracing.otlpEndpoint`, `tracing.otlpTracesEndpoint`, and `tracing.samplerArg` to render OTEL variables onto API and Gateway Deployments.
+
 

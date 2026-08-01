@@ -224,3 +224,11 @@ config:
   cmdForwardTimeoutMs: "5000"
   ownershipLeaseTtlSec: "30"
   ownershipRenewalIntervalSec: "15"
+
+# --- Tracing (M13 inc 6, ADR-0062) ---
+tracing:
+  enabled: false
+  otlpEndpoint: ""        # base URL; /v1/traces is appended by resolveOtlpTracesEndpoint
+  otlpTracesEndpoint: ""  # set to override the full traces URL verbatim
+  samplerArg: ""          # probability in [0,1]; empty means always-on
+

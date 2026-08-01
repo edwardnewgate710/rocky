@@ -58,6 +58,7 @@ export * from './http/context';
 export * from './http/router';
 export * from './http/validate';
 export * from './http/cookie';
+export * from './http/traceparent';
 
 export * from './openapi/types';
 export * from './openapi/spec';

@@ -6,6 +6,7 @@ import {
   InMemorySpanRecorder,
   alwaysOnSampler,
   probabilitySampler,
+  resolveTracesSampler,
   type SpanData,
 } from '../src/ports/tracer';
 import {
@@ -177,4 +178,32 @@ test('formatTraceparent round-trips with parseTraceparent, generateSpanId and is
   assert.ok(parsedNotSampled);
   assert.equal(parsedNotSampled!.flags, '00');
   assert.equal(isSampled(parsedNotSampled!.flags), false);
+});
+
+// Regression (Qodo, PR #56): probabilitySampler clamps with Math.max/Math.min, and both propagate
+// NaN, so an unvalidated `Number("abc")` produced a sampler that failed every comparison and
+// recorded nothing at all — tracing silently off across a whole deployment, with no error.
+test('resolveTracesSampler rejects non-probability values instead of silently sampling nothing', () => {
+  const traceId = '0'.repeat(31) + '1';
+
+  const unset = resolveTracesSampler(undefined);
+  assert.equal(unset.warning, undefined);
+  assert.equal(unset.sampler({ traceId, parentSampled: undefined }), true);
+
+  assert.equal(resolveTracesSampler('').warning, undefined);
+
+  for (const bad of ['abc', 'NaN', '-0.5', '1.5', 'Infinity']) {
+    const { sampler, warning } = resolveTracesSampler(bad);
+    assert.ok(warning, `"${bad}" must produce a warning`);
+    assert.equal(
+      sampler({ traceId, parentSampled: undefined }),
+      true,
+      `"${bad}" must fall back to always-on, never to sampling nothing`,
+    );
+  }
+
+  // A valid ratio is honoured: 0 samples nothing, 1 samples everything.
+  assert.equal(resolveTracesSampler('0').sampler({ traceId, parentSampled: undefined }), false);
+  assert.equal(resolveTracesSampler('1').sampler({ traceId, parentSampled: undefined }), true);
+  assert.equal(resolveTracesSampler('0.5').warning, undefined);
 });

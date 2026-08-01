@@ -24,7 +24,7 @@ test('pickBoundedAttrs returns strictly whitelisted keys', () => {
   assert.equal(picked['http.status_code'], 200);
   assert.equal('user.id' in picked, false);
   assert.equal('net.peer.ip' in picked, false);
-  assert.deepEqual(Object.keys(BOUNDED_SPAN_ATTRS).length, 3);
+  assert.deepEqual(Object.keys(BOUNDED_SPAN_ATTRS).length, 8);
 });
 
 test('LoggingSpanExporter.export emits structured log record with bounded attributes only', () => {

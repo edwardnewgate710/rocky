@@ -36,7 +36,7 @@ import { JsonLogger } from './ports/logger';
 import type { Logger, LogLevel } from './ports/logger';
 import { InMemoryMetrics } from './ports/metrics';
 import type { Metrics } from './ports/metrics';
-import { RecordingTracer } from './ports/tracer';
+import { RecordingTracer, resolveTracesSampler } from './ports/tracer';
 import type { Tracer } from './ports/tracer';
 import { LoggingSpanExporter, MultiSpanExporter, spanSinkFromExporter } from './ports/span-export';
 import {
@@ -211,10 +211,19 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
         ),
       ])
     : logExporter;
+  // The Helm chart renders OTEL_TRACES_SAMPLER_ARG onto this Deployment (ADR-0062), so the API has
+  // to honour it — otherwise the knob is documented, deployable, and silently ignored.
+  const { sampler, warning: samplerWarning } = resolveTracesSampler(
+    process.env['OTEL_TRACES_SAMPLER_ARG'],
+  );
+  if (samplerWarning) {
+    logger.warn(samplerWarning);
+  }
   const tracer =
     options.tracer ??
     new RecordingTracer({
       sink: spanSinkFromExporter(exporter),
+      sampler,
     });
 
   const deps: ApiDependencies = {

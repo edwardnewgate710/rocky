@@ -14,7 +14,16 @@ export interface SpanExporter {
   export(spans: readonly SpanData[]): void;
 }
 
-export const BOUNDED_SPAN_ATTRS = ['http.method', 'http.route', 'http.status_code'] as const;
+export const BOUNDED_SPAN_ATTRS = [
+  'http.method',
+  'http.route',
+  'http.status_code',
+  'cmd.kind',
+  'cmd.outcome',
+  'cmd.error_code',
+  'forward.outcome',
+  'forward.timeout',
+] as const;
 
 export function pickBoundedAttrs(attrs: SpanAttributes): Record<string, SpanAttributeValue> {
   const result: Record<string, SpanAttributeValue> = {};

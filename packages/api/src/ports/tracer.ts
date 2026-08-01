@@ -91,6 +91,35 @@ export function probabilitySampler(ratio: number): Sampler {
 }
 
 /**
+ * Turns an `OTEL_TRACES_SAMPLER_ARG` value into a sampler, rejecting anything that is not a
+ * probability.
+ *
+ * This validation cannot live inside {@link probabilitySampler}: it clamps with `Math.max`/
+ * `Math.min`, and both propagate `NaN`, so a ratio of `NaN` fails every comparison in the returned
+ * sampler and silently samples NOTHING. A typo in one env var would switch tracing off across a
+ * whole deployment with no error anywhere — so the caller gets a `warning` to log and always-on
+ * sampling rather than silence.
+ *
+ * Returns rather than logs so it stays pure; every caller already has a logger.
+ */
+export function resolveTracesSampler(samplerArg: string | undefined): {
+  sampler: Sampler;
+  warning?: string;
+} {
+  if (samplerArg === undefined || samplerArg === '') {
+    return { sampler: alwaysOnSampler };
+  }
+  const ratio = Number(samplerArg);
+  if (!Number.isFinite(ratio) || ratio < 0 || ratio > 1) {
+    return {
+      sampler: alwaysOnSampler,
+      warning: `OTEL_TRACES_SAMPLER_ARG must be a number in [0, 1]; ignoring "${samplerArg}" and sampling everything`,
+    };
+  }
+  return { sampler: probabilitySampler(ratio) };
+}
+
+/**
  * A span that records nothing but still carries a valid propagation id, so an
  * unsampled request (or the {@link NullTracer}) can still be a well-formed
  * parent in an outbound `traceparent` — `parseTraceparent` rejects all-zero ids.

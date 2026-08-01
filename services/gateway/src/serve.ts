@@ -45,11 +45,17 @@
  * - `SEMANTIC_SEARCH_ENABLED` (optional, "0" to disable) — when "0", search
  *   indexer writes only to the keyword index (`search_documents`), skipping
  *   vector embedding generation (`search_embeddings`).
-
+ * - `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (optional) — signal-specific OTLP/HTTP
+ *   traces endpoint URL (used verbatim).
+ * - `OTEL_EXPORTER_OTLP_ENDPOINT` (optional) — base OTLP collector URL
+ *   (`/v1/traces` is appended).
+ * - `OTEL_TRACES_SAMPLER_ARG` (optional) — sampling probability ratio in [0, 1];
+ *   when absent, defaults to 1.0 (always-on).
  *
  * Durable event log: ADR-0007 (M14 inc 2).
  * Redis pub/sub: ADR-0008 (M14 inc 3).
  * Command routing: ADR-0010 (M14 inc 5).
+ * Tracing: ADR-0062 (M13 inc 6).
  */
 
 import { createServer } from 'node:http';
@@ -70,7 +76,22 @@ import {
   encode,
   decode,
 } from '@chess-platform/realtime-gateway';
-import { AccessTokenService, systemClock, uuidv7Generator, JsonLogger, InMemoryMetrics } from '@chess-platform/api';
+import {
+  AccessTokenService,
+  systemClock,
+  uuidv7Generator,
+  JsonLogger,
+  InMemoryMetrics,
+  LoggingSpanExporter,
+  resolveOtlpTracesEndpoint,
+  MultiSpanExporter,
+  BatchSpanProcessor,
+  OtlpJsonSpanExporter,
+  FetchSpanTransport,
+  RecordingTracer,
+  spanSinkFromExporter,
+  resolveTracesSampler,
+} from '@chess-platform/api';
 import type { TournamentResultReporter, LaunchInput } from '@chess-platform/api';
 import type { EventStore } from '@chess-platform/persistence';
 
@@ -124,7 +145,47 @@ async function main(): Promise<void> {
 
   const logger = new JsonLogger({ service: 'realtime-gateway', nodeId });
   const metrics = new InMemoryMetrics();
-  
+
+  const logExporter = new LoggingSpanExporter(logger);
+  const otlpTracesUrl = resolveOtlpTracesEndpoint(
+    process.env['OTEL_EXPORTER_OTLP_TRACES_ENDPOINT'],
+    process.env['OTEL_EXPORTER_OTLP_ENDPOINT'],
+  );
+  // Held in a variable so the shutdown handler can drain it. Without that call the queued spans —
+  // the ones describing whatever the pod was doing as it went down, which is exactly when you want
+  // them — are discarded by the process.exit below.
+  const batchSpanProcessor = otlpTracesUrl
+    ? new BatchSpanProcessor(
+        new OtlpJsonSpanExporter(new FetchSpanTransport(otlpTracesUrl), {
+          serviceName: 'realtime-gateway',
+          scopeName: '@chess-platform/gateway-service',
+          scopeVersion: '0.1.0',
+        }),
+        { metrics },
+      )
+    : undefined;
+  const exporter = batchSpanProcessor
+    ? new MultiSpanExporter([logExporter, batchSpanProcessor])
+    : logExporter;
+
+  const { sampler, warning: samplerWarning } = resolveTracesSampler(
+    process.env['OTEL_TRACES_SAMPLER_ARG'],
+  );
+  if (samplerWarning) {
+    logger.warn(samplerWarning);
+  }
+
+  const tracer = new RecordingTracer({
+    sink: spanSinkFromExporter(exporter),
+    sampler,
+  });
+
+  if (otlpTracesUrl) {
+    logger.info(`traces export: OTLP (${otlpTracesUrl})`);
+  } else {
+    logger.info('traces export: log-only');
+  }
+
   const connectionsCounter = metrics.counter('gateway_connections_opened_total');
   const messagesCounter = metrics.counter('gateway_messages_received_total');
   const authFailuresCounter = metrics.counter('gateway_auth_failures_total');
@@ -316,7 +377,9 @@ async function main(): Promise<void> {
       renewalIntervalSec: ownershipRenewalIntervalSec,
     });
     // Consumer must exist before the router so ownership hooks can start it.
-    const consumer = new OwnerCommandConsumer(authority, cmdRedis);
+    const consumer = new OwnerCommandConsumer(authority, cmdRedis, tracer);
+    // Not wrapped in TracingCommandRouter: RedisCommandRouter spans itself, because only it knows
+    // whether a command was applied locally or forwarded to the owning node.
     commandRouter = new RedisCommandRouter({
       authority,
       registry,
@@ -324,13 +387,15 @@ async function main(): Promise<void> {
       nodeId,
       forwardTimeoutMs: cmdForwardTimeoutMs,
       consumer,
+      tracer,
     });
     commandConsumer = consumer;
     ownershipRegistry = registry;
     registry.startRenewal();
     logger.info(`command routing: Redis (forwardTimeout=${cmdForwardTimeoutMs}ms, leaseTtl=${ownershipLeaseTtlSec}s)`);
   } else {
-    commandRouter = new LocalCommandRouter(authority);
+    const { TracingCommandRouter } = await import('./command-forwarder.js');
+    commandRouter = new TracingCommandRouter(new LocalCommandRouter(authority), tracer);
     logger.info('command routing: local (single-node)');
   }
 
@@ -522,6 +587,10 @@ async function main(): Promise<void> {
         if (closePubSub) await closePubSub();
         if (closeCommandRedis) await closeCommandRedis();
         if (closeDatabase) await closeDatabase();
+        // Last, so the spans covering this shutdown are queued before the drain. shutdown()
+        // cancels the periodic flush and force-flushes what is left; without it process.exit
+        // below discards the queue and aborts any OTLP request already in flight.
+        batchSpanProcessor?.shutdown();
         process.exit(0);
       });
     });

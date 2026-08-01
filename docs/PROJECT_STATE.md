@@ -4,7 +4,18 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-01 — CI: Helm chart snapshot test is now a gate (see below)._
+_Last updated: 2026-08-01 — M13 Observability Increment 6: gateway tracing + reachable OTLP export (ADR-0062)._
+
+## M13 Observability Increment 6 — Gateway Tracing + Reachable OTLP Export (ADR-0062)
+
+Realtime gateway tracing, cross-node trace context propagation, and Helm OTLP configuration reachability (ADR-0062):
+- **Gateway Tracer Wiring**: Wired `RecordingTracer` into `services/gateway/src/serve.ts` matching `packages/api/src/bootstrap.ts`. Configured with `serviceName: 'realtime-gateway'`, `LoggingSpanExporter`, and optional `BatchSpanProcessor(OtlpJsonSpanExporter)` gated by `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` or `OTEL_EXPORTER_OTLP_ENDPOINT`. Self-instrumented via existing `metrics` registry (`GET /metrics`). Sampling supported via `OTEL_TRACES_SAMPLER_ARG` (`probabilitySampler`, defaulting to `alwaysOnSampler`).
+- **Targeted Gateway Spans**: Spans emitted for game commands (`gateway.command`) and cross-node command forwarding (`gateway.forward`). Noise endpoints (`/health`, `/metrics`, `/ready`) and raw WS frames are excluded.
+- **Bounded-Attribute PII Discipline**: `gateway.command` carries bounded attributes (`'cmd.kind'`, `'cmd.outcome'`, `'cmd.error_code'`); `gateway.forward` carries `'forward.outcome'` and `'forward.timeout'`. Updated `BOUNDED_SPAN_ATTRS` in `@chess-platform/api` to whitelist these keys. Game ID, user ID, move UCI payload, and tokens are never added to attributes.
+- **Distributed Trace Context Propagation**: Added optional `traceparent?: string` to `ForwardedCommand` wire envelope. Forwarding node writes active span context; receiving node (`OwnerCommandConsumer`) parses `traceparent` and creates child spans under the forwarder. Wire-compatible fallback to fresh root span if missing or malformed.
+- **Helm OTLP Reachability**: Added `tracing` configuration block to `deploy/helm/gambit/values.yaml` (`enabled`, `otlpEndpoint`, `otlpTracesEndpoint`, `samplerArg`). Rendered onto both API and Gateway Deployments (`api.yaml`, `gateway.yaml`). Fails closed when enabled with no endpoint. Verified by 50 snapshot test assertions in `scripts/helm-snapshot-test.sh`.
+
+Prior: _Last updated: 2026-08-01 — CI: Helm chart snapshot test is now a gate (see below)._
 
 ## CI — Helm chart snapshot test wired into the `helm` job
 

@@ -157,6 +157,23 @@ spec:
             - name: TOURNAMENT_REPORTER_SCAN_MS
               value: {{ .Values.gateway.tournamentReporter.scanIntervalMs | quote }}
             {{- end }}
+            {{- if .Values.tracing.enabled }}
+            {{- if and (not .Values.tracing.otlpEndpoint) (not .Values.tracing.otlpTracesEndpoint) }}
+            {{- fail "tracing.enabled requires at least one of tracing.otlpEndpoint or tracing.otlpTracesEndpoint to be set" }}
+            {{- end }}
+            {{- if .Values.tracing.otlpEndpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.tracing.otlpEndpoint | quote }}
+            {{- end }}
+            {{- if .Values.tracing.otlpTracesEndpoint }}
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: {{ .Values.tracing.otlpTracesEndpoint | quote }}
+            {{- end }}
+            {{- if .Values.tracing.samplerArg }}
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: {{ .Values.tracing.samplerArg | quote }}
+            {{- end }}
+            {{- end }}
             {{- /*
               Deliberately absent here (ADR-0057): SEARCH_INDEXER, introduced
               in ADR-0056. Unlike the tournament reporter, whose duplicate work

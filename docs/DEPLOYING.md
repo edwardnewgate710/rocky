@@ -85,6 +85,10 @@ helm install gambit deploy/helm/gambit \
 | `secrets.externalSecrets.postgresPassword.key` | `""` | Backing store key for POSTGRES_PASSWORD |
 | `web.ingress.enabled` | `true` | Enable Ingress for the web service |
 | `web.ingress.host` | `gambit.local` | Ingress hostname |
+| `tracing.enabled` | `false` | Enable OTLP distributed trace export (ADR-0062) |
+| `tracing.otlpEndpoint` | `""` | Base OTLP collector URL (`/v1/traces` appended) |
+| `tracing.otlpTracesEndpoint` | `""` | Signal-specific OTLP traces URL (verbatim) |
+| `tracing.samplerArg` | `""` | Trace sampling probability ratio in [0, 1] |
 
 ### Secrets
 
