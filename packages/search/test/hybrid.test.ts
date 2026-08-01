@@ -23,6 +23,25 @@ test('hybrid: union behavior (doc found by only one signal still appears)', () =
   assert.ok(ids.includes('semantic-only'));
 });
 
+// Regression (CodeRabbit, PR #52): query.filters were applied only to the keyword branch, so a
+// document violating a hard constraint like `variant:blitz` could re-enter through the semantic
+// branch and surface in the fused result.
+test('hybrid: a filter in the query text constrains the semantic branch too', () => {
+  const docs: SemanticSearchableDocument[] = [
+    { id: 'blitz-far', text: 'ruy lopez', fields: { variant: 'blitz' }, embedding: [0, 1, 0] },
+    // Violates variant:blitz, but is a perfect vector match — the leak this guards against.
+    { id: 'rapid-near', text: 'sicilian', fields: { variant: 'rapid' }, embedding: [1, 0, 0] },
+  ];
+
+  const results = hybridSearch(parseSearchQuery('ruy variant:blitz'), [1, 0, 0], docs);
+
+  assert.deepEqual(
+    results.map((r) => r.id),
+    ['blitz-far'],
+    'a document failing query.filters must not appear via the vector branch'
+  );
+});
+
 test('hybrid: keywordWeight: 1 produces exact keyword ordering', () => {
   const docs: SemanticSearchableDocument[] = [
     { id: 'doc-low-kw', text: 'ruy', embedding: [1, 0, 0] }, // 1 occurrence, perfect vector

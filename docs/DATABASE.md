@@ -367,7 +367,21 @@ CREATE INDEX search_documents_fields_idx ON search_documents USING GIN (fields);
 
 Durable keyword search index supporting full-text search across arbitrary platform entities (games, players, tournaments, studies). `id` is text primary key (upsert target); `text` is raw indexed content; `fields` holds JSONB key-value metadata attributes (e.g. `variant`, `result`), stored lowercase-canonicalized so filters match case-insensitively; `tsv` is a stored generated tsvector column using the `'simple'` text search configuration. GIN indexes on `tsv` and `fields` support fast full-text matching (`tsv @@ tsquery`) and JSONB containment field filtering (`fields @> '{"k":"v"}'`).
 
-### 4.8 Reserved for later milestones
+### 4.8 Search Embeddings
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+
+search_embeddings(
+  id        TEXT NOT NULL PRIMARY KEY REFERENCES search_documents(id) ON DELETE CASCADE,
+  embedding vector(256) NOT NULL
+);
+CREATE INDEX search_embeddings_embedding_idx ON search_embeddings USING hnsw (embedding vector_cosine_ops);
+```
+
+Durable semantic search index supporting pgvector vector similarity and RRF hybrid search over platform entities (games, players, tournaments). `id` is primary key referencing `search_documents(id)` with `ON DELETE CASCADE`. `embedding` stores fixed 256-dimensional vector embeddings (`vector(256)`). The HNSW index on `embedding` using `vector_cosine_ops` supports cosine distance queries (`<=>`) for approximate nearest-neighbour retrieval. Note that `PgSemanticSearchRepository` does not currently hit this index: it keeps an `id` tie-break for deterministic pagination, which measurably forces a sort over a full scan instead. The index exists for the deferred ANN fast path — see ADR-0059 for the measurements and the reasoning.
+
+### 4.9 Reserved for later milestones
 
 Created only when their milestone lands (listed for design coherence):
 `studies*`, `follows`, `friends`, `messages`, `puzzles`,

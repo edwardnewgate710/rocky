@@ -139,6 +139,9 @@ StatefulSet/Service/PVC, and `DATABASE_URL` is set from `externalDatabaseUrl`.
 The `POSTGRES_PASSWORD` key is omitted from the Secret (it is only needed for
 the bundled Postgres). The same applies to Redis.
 
+> [!NOTE]
+> **Postgres `vector` Extension**: PostgreSQL must provide the `vector` extension (provided by `pgvector/pgvector:pg16` in bundled deployments). Managed Postgres databases used with `postgres.enabled=false` must have `pgvector` installed and available.
+
 ### Migrations
 
 Database migrations run as an **init container** in the API Deployment, using

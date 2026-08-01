@@ -48,14 +48,19 @@ export function hybridSearch(
     throw new RangeError(`rrfK must be a positive finite number, got ${rrfK}`);
   }
 
-  const filters = options?.filters;
+  // Filters from BOTH sources constrain BOTH signals. query.filters (e.g. a `variant:blitz` parsed
+  // out of the query text) are hard constraints, not relevance hints: applying them only to the
+  // keyword branch let a document that violates them re-enter through the semantic branch and
+  // surface in the fused result. Terms and phrases are the relevance signal the vector branch is
+  // meant to bypass; filters are not.
+  const allFilters = [...(options?.filters ?? []), ...query.filters];
   const filteredDocs =
-    filters && filters.length > 0
-      ? documents.filter((doc) => matchesAllFilters(filters, doc.fields))
+    allFilters.length > 0
+      ? documents.filter((doc) => matchesAllFilters(allFilters, doc.fields))
       : documents;
 
   const keywordHits = search(query, filteredDocs);
-  // filteredDocs already satisfies options.filters, so only the threshold is still relevant.
+  // filteredDocs already satisfies every filter, so only the threshold is still relevant.
   const semanticHits = semanticSearch(queryVector, filteredDocs, { minScore: options?.minScore });
 
   const fusedScores = new Map<string, number>();

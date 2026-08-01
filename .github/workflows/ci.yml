@@ -109,7 +109,12 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        # pgvector/pgvector:pgNN is the stock Postgres image plus the `vector`
+        # extension. Required from migration 0014 (ADR-0059): the search
+        # embeddings table needs CREATE EXTENSION vector, and migrate() applies
+        # every migration unconditionally, so plain postgres:16 would fail this
+        # whole job rather than just the pgvector tests.
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: chess
           POSTGRES_PASSWORD: chess

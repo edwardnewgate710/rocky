@@ -22,7 +22,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/test/**/*.test.js\"",
+    "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 \"dist-test/test/**/*.test.js\"",
     "lint": "tsc -p tsconfig.json --noEmit",
     "migrate": "node dist/pg/migrate-cli.js",
     "clean": "rm -rf dist dist-test"

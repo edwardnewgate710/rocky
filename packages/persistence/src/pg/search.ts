@@ -14,25 +14,14 @@ import type {
   SearchPage,
   SearchResult,
 } from '@chess-platform/search';
+import {
+  canonicalizeFields,
+  buildTsqueryExpr,
+  buildJsonbFilterClauses,
+} from './search-helpers';
 
 async function rollback(client: PoolClient): Promise<void> {
   try { await client.query('ROLLBACK'); } catch { /* ignore */ }
-}
-
-/**
- * Canonicalize field keys AND values to lowercase so metadata filters are
- * case-insensitive via jsonb containment (`fields @> '{...}'`), which the
- * `search_documents_fields_idx` GIN index can serve — unlike a
- * `lower(fields->>'k') = lower($v)` functional predicate, which cannot.
- */
-function canonicalizeFields(fields: Readonly<Record<string, string>> | undefined): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (fields) {
-    for (const [key, value] of Object.entries(fields)) {
-      out[key.toLowerCase()] = value.toLowerCase();
-    }
-  }
-  return out;
 }
 
 const UPSERT_SQL =
@@ -87,28 +76,14 @@ export class PgSearchRepository implements SearchRepository {
     const params: unknown[] = [];
     const p = (v: unknown): string => { params.push(v); return `$${params.length}`; };
 
-    // --- text query: terms (AND'd lexemes) + phrases (followed-by), combined with && ---
-    const tsqueryParts: string[] = [];
-    if (query.terms.length > 0) {
-      tsqueryParts.push(`plainto_tsquery('simple', ${p(query.terms.join(' '))})`);
-    }
-    for (const phrase of query.phrases) {
-      tsqueryParts.push(`phraseto_tsquery('simple', ${p(phrase)})`);
-    }
-    const hasText = tsqueryParts.length > 0;
-    const tsqueryExpr = tsqueryParts.join(' && '); // '' when no text
+    // --- text query: terms + phrases ---
+    const { hasText, tsqueryExpr } = buildTsqueryExpr(query, p);
 
     // --- WHERE: text match + jsonb field filters ---
     const clauses: string[] = [];
     if (hasText) clauses.push(`tsv @@ (${tsqueryExpr})`);
-    for (const f of query.filters) {
-      // Match via jsonb containment on canonicalized (lowercased) fields so the
-      // `search_documents_fields_idx` GIN index serves the predicate. `@>` is
-      // case-insensitive here because stored keys/values are lowercased at index
-      // time (canonicalizeFields). `NOT (@>)` gives the negation semantics: an
-      // absent field or a different value is a hit.
-      const contains = p(JSON.stringify({ [f.field.toLowerCase()]: f.value.toLowerCase() }));
-      clauses.push(f.negated ? `NOT (fields @> ${contains}::jsonb)` : `fields @> ${contains}::jsonb`);
+    if (query.filters.length > 0) {
+      clauses.push(...buildJsonbFilterClauses(query.filters, p));
     }
     const whereSql = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
 

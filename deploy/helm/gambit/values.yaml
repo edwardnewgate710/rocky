@@ -119,7 +119,10 @@ web:
 # provide externalDatabaseUrl (or set it via --set / a Secret).
 postgres:
   enabled: true
-  image: postgres:16-alpine
+  # Postgres 16 plus the `vector` extension, required by migration 0014
+  # (ADR-0059). A managed Postgres used via postgres.enabled=false +
+  # externalDatabaseUrl must have pgvector available too.
+  image: pgvector/pgvector:pg16
   user: gambit
   # POSTGRES_PASSWORD is sourced from secrets.postgresPassword or the Secret
   # named by secrets.existingSecret; it is never stored in non-secret values.
