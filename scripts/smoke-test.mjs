@@ -172,6 +172,38 @@ async function main() {
   // can check the WS port is listening by attempting a connection later.
   log('');
 
+  // 1b. The Prometheus registry must not be reachable through the public web proxy. Its `route`
+  // label enumerates every endpoint with per-route request volume and status distribution.
+  // Prometheus scrapes the API Service directly inside the cluster, so nothing legitimate comes
+  // through here. Asserted against the real nginx, which is the only place this rule exists
+  // (M12 pen-test pass, SEC-1).
+  // Both forms: the API router drops empty path segments, so `/v1/metrics/` resolves to the same
+  // route. Checking only the bare form is how the trailing-slash bypass survived the first fix.
+  log('Checking the metrics endpoint is not publicly exposed...');
+  for (const path of ['/v1/metrics', '/v1/metrics/']) {
+    const metricsRes = await fetch(`${webUrl}${path}`);
+    const body = await metricsRes.text();
+    if (metricsRes.status !== 404) {
+      throw new Error(
+        `GET ${webUrl}${path} returned ${metricsRes.status}, expected 404. ` +
+          `The public proxy is exposing the Prometheus registry: ${body.slice(0, 200)}`,
+      );
+    }
+    // Belt and braces: a 404 page that somehow carried the registry would still be a leak.
+    if (body.includes('# HELP') || body.includes('# TYPE')) {
+      throw new Error(`GET ${webUrl}${path} returned 404 but the body contains Prometheus text`);
+    }
+  }
+  // The block must be exact — the rest of /v1/ has to keep proxying.
+  const healthViaWeb = await fetch(`${webUrl}/v1/health`);
+  if (!healthViaWeb.ok) {
+    throw new Error(
+      `GET ${webUrl}/v1/health returned ${healthViaWeb.status}; the metrics rule over-blocked /v1/`,
+    );
+  }
+  log('✓ /v1/metrics is blocked at the proxy; the rest of /v1/ still routes');
+  log('');
+
   // 2. Register a user
   log('Registering a test user...');
   const suffix = Date.now().toString(36);

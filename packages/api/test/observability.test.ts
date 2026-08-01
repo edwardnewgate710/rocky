@@ -261,3 +261,37 @@ test('router server span records error status on internal 500 failure', async ()
   }
 });
 
+
+// Regression (Qodo, PR #58): splitPath() filters empty segments, so `/v1/metrics/` resolves to the
+// SAME route as `/v1/metrics`. The M12 nginx mitigation originally used an exact-match
+// `location = /v1/metrics`, which the trailing-slash form walked straight past — the fix looked
+// verified because the proxy forwarded it, and nobody checked what the API did with it.
+// This asserts the API-side equivalence that makes the proxy rule's shape load-bearing.
+test('/v1/metrics/ resolves to the same route as /v1/metrics (why the proxy rule must match both)', async () => {
+  const h = await startHarness();
+  try {
+    const withSlash = await fetch(`${h.baseUrl}/v1/metrics/`);
+    assert.equal(
+      withSlash.status,
+      200,
+      'trailing slash hits the same route — any path-based block must cover both forms',
+    );
+    assert.match(withSlash.headers.get('content-type') ?? '', /text\/plain/);
+  } finally {
+    await h.close();
+  }
+});
+
+// The companion to the case above: percent-encoded padding must NOT collapse to the metrics route,
+// which is what makes it safe for the proxy to forward `/v1/metrics%20` rather than block it.
+test('/v1/metrics%20 does NOT resolve to the metrics route', async () => {
+  const h = await startHarness();
+  try {
+    const res = await fetch(`${h.baseUrl}/v1/metrics%20`);
+    assert.equal(res.status, 404, 'percent-encoding is preserved in pathname, so this is not a route');
+    const body = await res.text();
+    assert.ok(!body.includes('# HELP'), 'no Prometheus text may leak through the encoded form');
+  } finally {
+    await h.close();
+  }
+});

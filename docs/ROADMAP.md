@@ -536,7 +536,7 @@ natural-language query parsing.
 - **Increment 11 complete (ADR-0060):** REST endpoint wiring for semantic and hybrid search (`GET /v1/search?mode=keyword|semantic|hybrid`) with query mode parsing (defaulting to `keyword`), term+phrase embedding text derivation (`[...query.terms, ...query.phrases].join(' ')` excluding filter tokens), `SEARCH_EMBEDDING_DIMENSIONS = 256` constant export coupled to `vector(256)` in migration 0014, dependency injection via `semanticSearchRepository` & `embeddingProvider`, optional-dependency 503 guards, updated OpenAPI 3.1 specification, test harness support (`withoutSemanticSearch`), and comprehensive mode validation/ranking/fusion tests.
 - **Increment 12 complete (ADR-0061):** embedding backfill + live embedding pipeline (`@chess-platform/search` `embedDocument`/`embedDocuments`, single write path routing in `reindexAll` and `SearchIndexWorker` avoiding double-writing `search_documents`, refactored `ReindexOptions` options object, `reindex-search` script and `serve.ts` gateway live worker wired to `SEMANTIC_SEARCH_ENABLED !== '0'`, Helm search-indexer `SEMANTIC_SEARCH_ENABLED=0` when `search.semanticEnabled=false`, DB-gated integration tests, and manual operator backfill documentation).
 
-## 🚧 Milestone 12 — Security hardening & anti-cheat
+## ✅ Milestone 12 — Security hardening & anti-cheat
 
 Engine-correlation scoring, bot detection, fraud/DDoS, audit, pen-test pass.
 
@@ -547,6 +547,15 @@ sensitive auth endpoints with a durable Postgres bucket store (ADR-0013).
 **Bot Detection Increments 1–6 complete:** pure domain behavioral move-time analyzer (ADR-0036), cross-game behavioral aggregation (ADR-0037), move-timing extraction (ADR-0038), service + report repository (ADR-0039), Postgres persistence + moderation REST API (ADR-0040), and automatic auto-analysis worker + gateway hosting (ADR-0041). Bot detection is now feature-complete; the pen-test pass remains.
 **Anti-Cheat Correctness Hardening complete (ADR-0042):** engine-correlation correctness follow-ups landed (identical white/black player ID guard in `AntiCheatService.analyzeAndStore` and deterministic `listByPlayer` ordering via `game_id` tie-breaker + migration `0012`).
 **Anti-Cheat Increment 8 complete (ADR-0043):** anti-cheat auto-analyzer gateway hosting with a real engine landed (`createEngineProviderFromEnv`, `createEngineBackedAnalysisService`, `serve.ts` `ANTICHEAT_AUTO_ANALYZE=1` hosting block and graceful engine shutdown). Anti-cheat is now fully production-hostable end-to-end.
+**Pen-test pass complete — M12 CLOSED.** STRIDE audit of all seven trust boundaries, recorded in
+`docs/SECURITY_AUDIT.md`. One finding (SEC-1, Medium): the public web proxy exposed
+`GET /v1/metrics`, leaking the Prometheus registry — route inventory plus per-route request volume
+and status distribution, moderation traffic included — unauthenticated to the internet. Fixed with an
+exact-match nginx block, verified against a running proxy including path-normalisation bypasses,
+and guarded by `scripts/smoke-test.mjs`. Injection, authorization, gateway command authorization,
+authentication, security headers, CORS, error disclosure, command injection, secrets, and the
+dependency audit (0 vulnerabilities) were all checked and found sound; the audit document records
+what was verified and what the pass deliberately did not cover.
 
 
 

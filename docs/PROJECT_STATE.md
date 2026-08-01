@@ -28,6 +28,39 @@ Realtime gateway tracing, cross-node trace context propagation, and Helm OTLP co
 - **Distributed Trace Context Propagation**: Added optional `traceparent?: string` to `ForwardedCommand` wire envelope. Forwarding node writes active span context; receiving node (`OwnerCommandConsumer`) parses `traceparent` and creates child spans under the forwarder. Wire-compatible fallback to fresh root span if missing or malformed.
 - **Helm OTLP Reachability**: Added `tracing` configuration block to `deploy/helm/gambit/values.yaml` (`enabled`, `otlpEndpoint`, `otlpTracesEndpoint`, `samplerArg`). Rendered onto both API and Gateway Deployments (`api.yaml`, `gateway.yaml`). Fails closed when enabled with no endpoint. Verified by 50 snapshot test assertions in `scripts/helm-snapshot-test.sh`.
 
+Prior: _Last updated: 2026-08-01 — M12 CLOSED: pen-test pass (see below)._
+
+## M12 — pen-test pass complete, milestone CLOSED
+
+Full STRIDE audit of all seven trust boundaries at `c4d5bc7`, written up in `docs/SECURITY_AUDIT.md`.
+
+**One finding, SEC-1 (Medium), fixed:** `docker/web/nginx.conf` proxied all of `/v1/` to the API and
+`GET /v1/metrics` is a `PUBLIC` route, so on any deployed Gambit the whole Prometheus registry was
+retrievable unauthenticated from the internet — ten series whose `route` label enumerates every
+endpoint, with per-route request volume and status distribution (moderation traffic included), plus
+the five `span_export_*` counters. Fixed with an exact-match
+`location = /v1/metrics { return 404; }` ahead of the `/v1/` block; Prometheus scrapes the API
+Service directly in-cluster, so nothing legitimate used the public path.
+
+**The first fix was bypassable and Qodo caught it.** `splitPath` filters empty segments, so
+`/v1/metrics/` resolves to the same route and serves the registry; an exact-match
+`location = /v1/metrics` let it through. The initial probe forwarded that form upstream and recorded
+it as "does not over-block" — a bypass written down as correct, because the probe stopped at the
+proxy instead of asking what the API did with it. Now `location ~ ^/v1/metrics/?$`, verified against
+a running nginx across `/v1/metrics/`, `/v1//metrics//`, `/v1/./metrics`, `/v1/foo/../metrics`, case
+variation and `%20`, while `/v1/metricsfoo` and `/v1/metrics/sub` still proxy.
+
+Guarded at both layers: an api test pins the route equivalence that makes the proxy rule's shape
+load-bearing, and `scripts/smoke-test.mjs` checks both URL forms and rejects any 404 body containing
+Prometheus text.
+
+Everything else checked out: parameterised SQL throughout, moderation endpoints correctly gated to
+`moderator`/`admin`, spectators unable to issue commands, scrypt + 256-bit tokens + rate limiting on
+every brute-forceable endpoint, full security-header set, allowlist CORS, no internal detail in error
+bodies, `shell: false` engine spawn, no committed secrets, and `npm audit --omit=dev` clean. The
+audit document also states what the pass did NOT cover — no fuzzing/DAST, no load or DoS testing, no
+frontend or WebAuthn crypto review, no live-cluster infrastructure review.
+
 Prior: _Last updated: 2026-08-01 — CI: Helm chart snapshot test is now a gate (see below)._
 
 ## CI — Helm chart snapshot test wired into the `helm` job
