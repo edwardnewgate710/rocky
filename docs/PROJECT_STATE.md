@@ -28,6 +28,38 @@ Realtime gateway tracing, cross-node trace context propagation, and Helm OTLP co
 - **Distributed Trace Context Propagation**: Added optional `traceparent?: string` to `ForwardedCommand` wire envelope. Forwarding node writes active span context; receiving node (`OwnerCommandConsumer`) parses `traceparent` and creates child spans under the forwarder. Wire-compatible fallback to fresh root span if missing or malformed.
 - **Helm OTLP Reachability**: Added `tracing` configuration block to `deploy/helm/gambit/values.yaml` (`enabled`, `otlpEndpoint`, `otlpTracesEndpoint`, `samplerArg`). Rendered onto both API and Gateway Deployments (`api.yaml`, `gateway.yaml`). Fails closed when enabled with no endpoint. Verified by 50 snapshot test assertions in `scripts/helm-snapshot-test.sh`.
 
+Prior: _Last updated: 2026-08-01 — M13 CLOSED: SLOs, alerting, dashboards, drift guard (see below)._
+
+## M13 — increment 8, milestone CLOSED (ADR-0064)
+
+Increments 1–7 built the signals; nothing looked at them, which operationally equals having no
+instrumentation, only more expensive. This adds the consuming half.
+
+- **Three SLOs** (`docs/SLO.md`): API availability 99.5%, API latency 99% under 250 ms, span-export
+  delivery 99%. Deliberately no gateway-latency SLO — the WebSocket path emits only connection,
+  message and auth-failure counters, so one would have to be invented rather than measured.
+- **Latency thresholds sit on real histogram bucket edges.** `http_request_duration_seconds` buckets
+  are fixed at `0.005 … 10`; a threshold off an edge makes `histogram_quantile` interpolate and
+  return an estimate that reads like a measurement. 250 ms is an actual edge.
+- **Multi-window multi-burn-rate alerts** (14.4x page / 6x page / 3x ticket), thresholds derived as
+  `burn x (1 - target)` rather than tuned by feel. 4xx never burns availability. No traffic means a
+  NaN ratio, no series, and no alert — an idle service has no measured availability.
+- **21 rules validated with the real `promtool`**, two Grafana dashboards, and a runbook per alert
+  with all nine `runbook_url` anchors verified to resolve.
+- **`scripts/check-observability-drift.mjs`** (`npm run check:observability`, wired into the CI
+  `helm` job) cross-checks every metric referenced in `deploy/observability/**` against the names the
+  source emits. This is the piece that matters: rename a counter and an alert silently stops matching
+  forever, and nothing else in the suite can catch it because the rules are YAML and the metrics are
+  TypeScript. Verified by making it fail — renaming `gateway_auth_failures_total` produced exit 1
+  naming the metric and the file.
+- **Scraping:** Prometheus must hit the API Service directly in-cluster; SEC-1 blocks `/v1/metrics`
+  at the public proxy.
+- **The SLO targets are unvalidated.** No production traffic, no load test (M14's 100k validation is
+  still deferred). `docs/SLO.md` opens by saying so.
+
+Also fixed stale drift in `docs/OBSERVABILITY.md`: it still described `OtlpJsonSpanExporter` as
+passing outcomes via `onOutcome`, a symbol removed in ADR-0063 and replaced by `exportWithOutcome`.
+
 Prior: _Last updated: 2026-08-01 — M12 CLOSED: pen-test pass (see below)._
 
 ## M12 — pen-test pass complete, milestone CLOSED

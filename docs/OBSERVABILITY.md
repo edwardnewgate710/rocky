@@ -82,10 +82,77 @@ When OTLP export is enabled, `BatchSpanProcessor` self-instruments by emitting u
 - **`SpanExporter` Seam**: `SpanExporter` defines `export(spans: readonly SpanData[]): void`. Export is best-effort and non-blocking — implementations contain their own errors and never throw into the request path. `SpanTransport.send` returns `Promise<SpanExportOutcome>` (`ok: true` or `ok: false, retryable, reason`) without blocking callers.
 - **Exporters**:
   - `LoggingSpanExporter`: Default. Emits structured `info` log records (`msg: "span"`) with whitelisted attributes (`http.method`, `http.route`, `http.status_code`, `cmd.kind`, `cmd.outcome`, `cmd.error_code`, `forward.outcome`, `forward.timeout`).
-  - `OtlpJsonSpanExporter`: Serializes spans into standard OTLP/JSON trace payloads (`OtlpTracesPayload`) with nanosecond BigInt timestamps, mapped enums, and typed attribute values (`stringValue`, `intValue`, `boolValue`, `doubleValue`), sending via an injectable `SpanTransport`. Passes outcomes via `onOutcome`.
+  - `OtlpJsonSpanExporter`: Serializes spans into standard OTLP/JSON trace payloads (`OtlpTracesPayload`) with nanosecond BigInt timestamps, mapped enums, and typed attribute values (`stringValue`, `intValue`, `boolValue`, `doubleValue`), sending via an injectable `SpanTransport`. Implements `OutcomeReportingSpanExporter`, so `exportWithOutcome(spans)` returns the delivery outcome as a promise — the promise is what correlates a result with the batch that produced it, since several batches are in flight whenever a flush drains a full queue.
   - `MultiSpanExporter`: Composite exporter that fans out span batches to multiple child exporters, containing individual exporter failures so one failing transport does not block others.
 - **OTLP Endpoint Gate**: Configured via `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (used verbatim) or the generic `OTEL_EXPORTER_OTLP_ENDPOINT` (a base URL onto which `/v1/traces` is appended per the OTLP/HTTP spec). When either resolves, production bootstrap in both `api` and `gateway` combines `LoggingSpanExporter` and the (batched) `OtlpJsonSpanExporter` via `MultiSpanExporter`. When neither is set, `LoggingSpanExporter` is used exclusively.
 - **Span Processor (`BatchSpanProcessor`)**: OTLP span export is batched by `BatchSpanProcessor` (decorating `OtlpJsonSpanExporter` in production `bootstrap.ts` and `serve.ts`). Defaults to `maxQueueSize = 2048`, `maxExportBatchSize = 512`, periodic flush delay `scheduledDelayMillis = 5000` via an unref'd `intervalScheduler`, and `maxExportRetries = 3`. Retryable failures (network errors, HTTP 408/429/5xx) are retried up to 3 times through the `Scheduler` seam while respecting `maxQueueSize`. Non-retryable 4xx errors fail immediately. Logging export stays direct and per-span. Queue overflow drops oldest spans (from retrying batches or fresh queue) and increments `droppedSpans`. `shutdown()` cancels pending retries, marks unsent retries as failed, drains remaining queue contents, and finishes synchronously without hanging. The processor emits unlabelled Prometheus counters (`span_export_received_total`, `span_export_dropped_total`, `span_export_exported_total`, `span_export_failed_total`, `span_export_batches_total`) at metrics endpoints.
 - **Helm Configuration**: Helm values provide `tracing.enabled`, `tracing.otlpEndpoint`, `tracing.otlpTracesEndpoint`, and `tracing.samplerArg` to render OTEL variables onto API and Gateway Deployments.
 
 
+
+---
+
+## SLOs, alerting, dashboards (M13 inc 8, ADR-0064)
+
+The consuming half of the observability stack. Signals without something watching them are the same
+operational position as no instrumentation, only more expensive.
+
+| Artefact | Location |
+|---|---|
+| SLO definitions and reasoning | `docs/SLO.md` |
+| Recording rules + alerts | `deploy/observability/prometheus/rules/gambit.rules.yml` |
+| Grafana dashboards | `deploy/observability/grafana/dashboards/*.json` |
+| Runbook per alert | `docs/RUNBOOKS.md` |
+| Drift guard | `scripts/check-observability-drift.mjs` (`npm run check:observability`) |
+
+### Scraping — read this before configuring Prometheus
+
+**`/v1/metrics` is blocked at the public web proxy** (SEC-1, `docs/SECURITY_AUDIT.md`). Prometheus
+must scrape the API **Service** directly inside the cluster; scraping through the Ingress hostname
+returns 404 by design. The gateway exposes its own registry on `GET /metrics` on the health port
+(`PORT + 1`), which is not proxied publicly at all.
+
+### Loading the configuration
+
+```bash
+# Alert + recording rules — validate first, then mount into your Prometheus.
+# Pinned deliberately: CI runs the same command, and a floating tag would let a guardrail
+# change behaviour with no commit to explain it.
+docker run --rm -v "$PWD/deploy/observability:/o:ro" \
+  --entrypoint promtool prom/prometheus:v3.13.2 check rules /o/prometheus/rules/gambit.rules.yml
+
+# Dashboards: import the JSON, or point Grafana provisioning at the directory.
+```
+
+Both files are plain configuration; no Prometheus or Grafana is bundled in the Helm chart, so an
+operator loads them into an existing stack.
+
+### One selector you must adjust
+
+`GambitTargetDown` is scoped to `up{job=~"gambit.*"}`, because a bare `up == 0` fires for every
+target in the Prometheus that loads this file — including ones unrelated to Gambit — and then points
+the responder at a Gambit-specific runbook.
+
+**If your scrape jobs are not named `gambit-…`, change that matcher** to whatever label your scrape
+config applies. A selector that matches nothing means the alert never fires, which is worse than a
+noisy one.
+
+### A note on aggregation
+
+Gateway counters are emitted per process and the chart ships `gateway.replicas: 2`, so Prometheus
+sees one series per pod. Service-wide conditions are therefore summed —
+`GambitGatewayAuthFailureSpike` uses `sum(rate(...))`, since two replicas each below a per-series
+threshold can exceed it together and never alert. `GambitSpanQueueOverflowing` is deliberately *not*
+summed: any single replica dropping spans is worth knowing, and summing would let one sick pod hide
+behind healthy ones.
+
+### Why the drift guard exists
+
+Alerts and dashboards fail silently. Rename a metric and the alert stops matching anything — it does
+not error, it just never fires again, and nobody finds out until the incident it was supposed to
+catch. Nothing else in the test suite covers this, because the rules are YAML and the metrics are
+TypeScript and neither imports the other.
+
+`npm run check:observability` cross-checks every metric referenced in `deploy/observability/**`
+against the names the source actually emits, and fails the build on a reference nothing satisfies.
+It runs in CI in the `helm` job.

@@ -1,0 +1,232 @@
+# Gambit — SLI recording rules and alerts (M13 increment 8, ADR-0064).
+#
+# Recording rules exist so a dashboard, an alert and a runbook cannot drift apart: each SLI is
+# defined once here and referenced everywhere else, the same reason `search-helpers.ts` is shared
+# between the two Postgres search adapters.
+#
+# Every metric referenced below is emitted by the application. `scripts/check-observability-drift.mjs`
+# enforces that in CI — a renamed metric fails the build instead of silently disabling an alert.
+#
+# Scrape note (SEC-1): `/v1/metrics` is blocked at the public web proxy, so Prometheus must scrape
+# the API Service directly inside the cluster. See docs/OBSERVABILITY.md.
+
+groups:
+  # --- SLIs -----------------------------------------------------------------
+  #
+  # Each SLI is recorded as an ERROR ratio (bad / total), because that is what burn-rate alerting
+  # consumes. Availability = 1 - gambit:api_error:ratio_rateXX.
+  #
+  # When there is no traffic the denominator is zero, the ratio is NaN, and the series simply does
+  # not exist — so no alert fires on an idle service. That is intended: an idle service has no
+  # measured availability, and inventing one would only produce noise.
+  - name: gambit-sli-recording
+    interval: 30s
+    rules:
+      # 5xx only. A 4xx is the client getting it wrong and must never burn the service's budget.
+      - record: gambit:api_error:ratio_rate5m
+        expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m]))
+      - record: gambit:api_error:ratio_rate30m
+        expr: sum(rate(http_requests_total{status=~"5.."}[30m])) / sum(rate(http_requests_total[30m]))
+      - record: gambit:api_error:ratio_rate1h
+        expr: sum(rate(http_requests_total{status=~"5.."}[1h])) / sum(rate(http_requests_total[1h]))
+      - record: gambit:api_error:ratio_rate2h
+        expr: sum(rate(http_requests_total{status=~"5.."}[2h])) / sum(rate(http_requests_total[2h]))
+      - record: gambit:api_error:ratio_rate6h
+        expr: sum(rate(http_requests_total{status=~"5.."}[6h])) / sum(rate(http_requests_total[6h]))
+      - record: gambit:api_error:ratio_rate1d
+        expr: sum(rate(http_requests_total{status=~"5.."}[1d])) / sum(rate(http_requests_total[1d]))
+
+      # "Slow" = not served within 250 ms. 0.25 is an ACTUAL bucket boundary of
+      # http_request_duration_seconds, so this ratio is exact. Picking, say, 300 ms would make
+      # Prometheus interpolate inside the 0.25–0.5 bucket and hand back an estimate that reads
+      # like a measurement. See docs/SLO.md.
+      - record: gambit:api_latency_slow:ratio_rate5m
+        expr: 1 - (sum(rate(http_request_duration_seconds_bucket{le="0.25"}[5m])) / sum(rate(http_request_duration_seconds_count[5m])))
+      - record: gambit:api_latency_slow:ratio_rate30m
+        expr: 1 - (sum(rate(http_request_duration_seconds_bucket{le="0.25"}[30m])) / sum(rate(http_request_duration_seconds_count[30m])))
+      - record: gambit:api_latency_slow:ratio_rate1h
+        expr: 1 - (sum(rate(http_request_duration_seconds_bucket{le="0.25"}[1h])) / sum(rate(http_request_duration_seconds_count[1h])))
+      - record: gambit:api_latency_slow:ratio_rate6h
+        expr: 1 - (sum(rate(http_request_duration_seconds_bucket{le="0.25"}[6h])) / sum(rate(http_request_duration_seconds_count[6h])))
+
+      # Span-export loss: a trace that was accepted by the processor and never delivered, whether
+      # the collector rejected it (failed) or the queue overflowed (dropped). ADR-0063 exists
+      # because this was previously unmeasurable — exported_total counted attempts.
+      - record: gambit:span_export_loss:ratio_rate5m
+        expr: |
+          (sum(rate(span_export_failed_total[5m])) + sum(rate(span_export_dropped_total[5m])))
+          /
+          (sum(rate(span_export_exported_total[5m])) + sum(rate(span_export_failed_total[5m])) + sum(rate(span_export_dropped_total[5m])))
+      - record: gambit:span_export_loss:ratio_rate1h
+        expr: |
+          (sum(rate(span_export_failed_total[1h])) + sum(rate(span_export_dropped_total[1h])))
+          /
+          (sum(rate(span_export_exported_total[1h])) + sum(rate(span_export_failed_total[1h])) + sum(rate(span_export_dropped_total[1h])))
+
+  # --- SLO burn-rate alerts -------------------------------------------------
+  #
+  # Multi-window, multi-burn-rate (Google SRE Workbook ch. 5). Each alert pairs a LONG window,
+  # which establishes that budget is genuinely being consumed, with a SHORT one, which confirms the
+  # burn is still happening right now. Without the short window an alert keeps firing for hours
+  # after an incident is over; without the long one a 30-second blip pages someone.
+  #
+  # Thresholds are burn_rate x (1 - SLO). API availability SLO is 99.5%, so the budget is 0.005:
+  #   14.4x -> 0.072   consumes 2% of a 30-day budget in 1h   -> page
+  #    6x   -> 0.03    consumes 5% in 6h                      -> page
+  #    3x   -> 0.015   consumes 10% in 1d                     -> ticket
+  - name: gambit-slo-burn
+    rules:
+      - alert: GambitApiErrorBudgetBurnFast
+        expr: |
+          gambit:api_error:ratio_rate1h > 0.072
+          and
+          gambit:api_error:ratio_rate5m > 0.072
+        for: 2m
+        labels:
+          severity: critical
+          slo: api-availability
+        annotations:
+          summary: "API is burning its availability budget 14.4x too fast"
+          description: >-
+            5xx ratio is above 7.2% over both 1h and 5m. At this rate 2% of the 30-day error budget
+            is gone every hour. Current 5m ratio: {{ $value | humanizePercentage }}.
+          runbook_url: "https://github.com/senasehs19-oss/shatarang/blob/main/docs/RUNBOOKS.md#gambitapierrorbudgetburnfast"
+
+      - alert: GambitApiErrorBudgetBurnMedium
+        expr: |
+          gambit:api_error:ratio_rate6h > 0.03
+          and
+          gambit:api_error:ratio_rate30m > 0.03
+        for: 15m
+        labels:
+          severity: critical
+          slo: api-availability
+        annotations:
+          summary: "API is burning its availability budget 6x too fast"
+          description: >-
+            5xx ratio is above 3% over both 6h and 30m. Current 30m ratio:
+            {{ $value | humanizePercentage }}.
+          runbook_url: "https://github.com/senasehs19-oss/shatarang/blob/main/docs/RUNBOOKS.md#gambitapierrorbudgetburnmedium"
+
+      - alert: GambitApiErrorBudgetBurnSlow
+        expr: |
+          gambit:api_error:ratio_rate1d > 0.015
+          and
+          gambit:api_error:ratio_rate2h > 0.015
+        for: 1h
+        labels:
+          severity: warning
+          slo: api-availability
+        annotations:
+          summary: "API is slowly burning its availability budget (3x)"
+          description: >-
+            5xx ratio is above 1.5% over both 1d and 2h. Not an outage, but the budget will be gone
+            in ten days at this rate. Raise a ticket rather than paging.
+          runbook_url: "https://github.com/senasehs19-oss/shatarang/blob/main/docs/RUNBOOKS.md#gambitapierrorbudgetburnslow"
+
+      # Latency SLO is 99% under 250 ms, so the budget is 0.01: 14.4x -> 0.144, 6x -> 0.06.
+      - alert: GambitApiLatencyBudgetBurnFast
+        expr: |
+          gambit:api_latency_slow:ratio_rate1h > 0.144
+          and
+          gambit:api_latency_slow:ratio_rate5m > 0.144
+        for: 5m
+        labels:
+          severity: critical
+          slo: api-latency
+        annotations:
+          summary: "API latency budget burning 14.4x too fast"
+          description: >-
+            More than 14.4% of requests are taking longer than 250 ms, over both 1h and 5m.
+            Current 5m: {{ $value | humanizePercentage }} slow.
+          runbook_url: "https://github.com/senasehs19-oss/shatarang/blob/main/docs/RUNBOOKS.md#gambitapilatencybudgetburnfast"
+
+      - alert: GambitApiLatencyBudgetBurnSlow
+        expr: |
+          gambit:api_latency_slow:ratio_rate6h > 0.06
+          and
+          gambit:api_latency_slow:ratio_rate30m > 0.06
+        for: 30m
+        labels:
+          severity: warning
+          slo: api-latency
+        annotations:
+          summary: "API latency budget burning 6x too fast"
+          description: >-
+            More than 6% of requests are slower than 250 ms over both 6h and 30m.
+          runbook_url: "https://github.com/senasehs19-oss/shatarang/blob/main/docs/RUNBOOKS.md#gambitapilatencybudgetburnslow"
+
+  # --- Operational alerts ---------------------------------------------------
+  #
+  # Not SLO burn: conditions that mean a signal is being lost, or that something is being attacked.
+  - name: gambit-operational
+    rules:
+      - alert: GambitSpanExportFailing
+        expr: gambit:span_export_loss:ratio_rate5m > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          component: observability
+        annotations:
+          summary: "More than 5% of spans are not reaching the collector"
+          description: >-
+            Traces are being lost, so the next incident will be harder to diagnose than this one.
+            Loss ratio over 5m: {{ $value | humanizePercentage }}.
+          runbook_url: "https://github.com/senasehs19-oss/shatarang/blob/main/docs/RUNBOOKS.md#gambitspanexportfailing"
+
+      # NOT summed, unlike the auth alert above, and that is deliberate: any single replica dropping
+      # spans is worth knowing about, and summing would let one sick pod hide behind healthy ones.
+      - alert: GambitSpanQueueOverflowing
+        expr: rate(span_export_dropped_total[5m]) > 0
+        for: 15m
+        labels:
+          severity: warning
+          component: observability
+        annotations:
+          summary: "Span export queue is overflowing"
+          description: >-
+            BatchSpanProcessor is dropping the oldest spans to stay inside maxQueueSize, which means
+            spans are arriving faster than they can be exported — usually a slow or unreachable
+            collector rather than a traffic spike.
+          runbook_url: "https://github.com/senasehs19-oss/shatarang/blob/main/docs/RUNBOOKS.md#gambitspanqueueoverflowing"
+
+      # Deliberately a rate, not a total: the counter only ever grows, so alerting on its value
+      # would fire forever after the first bad password in the service's lifetime.
+      #
+      # And deliberately summed. The counter is emitted per gateway PROCESS, and the chart ships
+      # `gateway.replicas: 2` by default (ADR-0010), so Prometheus sees one series per pod. A
+      # per-series threshold would let two replicas each sustain 0.9 failures/second — 1.8/s service
+      # wide — without ever tripping.
+      - alert: GambitGatewayAuthFailureSpike
+        expr: sum(rate(gateway_auth_failures_total[5m])) > 1
+        for: 10m
+        labels:
+          severity: warning
+          component: gateway
+        annotations:
+          summary: "Sustained WebSocket authentication failures"
+          description: >-
+            More than one token verification failure per second for 10 minutes. Expected during a
+            bad deploy where the gateway and API disagree on ACCESS_TOKEN_SECRET; otherwise it looks
+            like credential stuffing against the socket.
+          runbook_url: "https://github.com/senasehs19-oss/shatarang/blob/main/docs/RUNBOOKS.md#gambitgatewayauthfailurespike"
+
+      # Scoped to Gambit's own scrape jobs. A bare `up == 0` fires for EVERY target in whichever
+      # Prometheus loads this file — including ones that have nothing to do with Gambit — and then
+      # sends the responder to a Gambit-specific runbook.
+      #
+      # OPERATOR ACTION: this selector assumes your scrape jobs are named `gambit-…`. If they are
+      # not, change the matcher here to whatever label your scrape config applies (`namespace`,
+      # `service`, …). Leaving it unmatched means this alert never fires, which is worse than a
+      # noisy one — see docs/OBSERVABILITY.md.
+      - alert: GambitTargetDown
+        expr: up{job=~"gambit.*"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Prometheus cannot scrape {{ $labels.job }} ({{ $labels.instance }})"
+          description: >-
+            The target has been unreachable for 5 minutes. Every other alert in this file is blind
+            while this one is firing, so treat it as the first thing to fix.
+          runbook_url: "https://github.com/senasehs19-oss/shatarang/blob/main/docs/RUNBOOKS.md#gambittargetdown"

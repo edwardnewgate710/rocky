@@ -559,7 +559,7 @@ what was verified and what the pass deliberately did not cover.
 
 
 
-## 🚧 Milestone 13 — Observability & SRE
+## ✅ Milestone 13 — Observability & SRE
 
 OpenTelemetry, Prometheus, Grafana, alerting, SLOs, runbooks, chaos tests.
 - **Increment 1 complete (ADR-0028):** Zero-dependency `Logger` (`JsonLogger`) & `Metrics` (`InMemoryMetrics`) ports, Prometheus text exposition (`GET /v1/metrics`), W3C `traceparent` parsing, bounded HTTP route metric labels, PII redaction.
@@ -568,6 +568,16 @@ OpenTelemetry, Prometheus, Grafana, alerting, SLOs, runbooks, chaos tests.
 - **Increment 4 complete (ADR-0047):** `BatchSpanProcessor` decorator buffering finished spans and exporting in batches (`maxQueueSize = 2048`, `maxExportBatchSize = 512`, 5s flush delay), `Scheduler` seam with unref'd `intervalScheduler` default, bounded queue with oldest-drop policy and drop counter, wrapping OTLP exporter in bootstrap.
 - **Increment 5 complete (ADR-0048):** Span-export pipeline self-instrumentation (`BatchSpanProcessor` emits `span_export_received_total`, `span_export_dropped_total`, `span_export_exported_total`, and `span_export_batches_total` counters to `InMemoryMetrics` for scraping at `GET /v1/metrics`).
 - **Increment 6 complete (ADR-0062):** Gateway tracing and reachable OTLP export (`gateway.command` and `gateway.forward` span emission, cross-node `traceparent` context propagation, bounded-attribute PII enforcement, Helm chart `tracing` configuration block, and snapshot test coverage).
+- **Increment 8 complete (ADR-0064) — M13 CLOSED:** the consuming half of the stack. Three SLOs
+  (API availability 99.5%, API latency 99% under 250 ms, span-export delivery 99%) in `docs/SLO.md`;
+  multi-window multi-burn-rate alerts plus operational alerts in
+  `deploy/observability/prometheus/rules/gambit.rules.yml` (21 rules, validated with real
+  `promtool`); two Grafana dashboards; a runbook per alert in `docs/RUNBOOKS.md` with all nine
+  anchors verified; and `scripts/check-observability-drift.mjs`, which fails CI when a rule or panel
+  references a metric the source does not emit — the failure mode where a renamed counter silently
+  disables an alert forever. Latency thresholds sit on real histogram bucket edges so the SLI is
+  exact rather than interpolated. **The SLO targets are unvalidated starting points** — this repo has
+  never carried production traffic or been load tested, and `docs/SLO.md` says so up front.
 - **Increment 7 complete (ADR-0063):** Span-export failure visibility + bounded retry (`SpanExportOutcome` async outcome reporting, `FetchSpanTransport` HTTP 4xx/5xx status and network error classification, `span_export_failed_total` counter, `span_export_exported_total` confirmed delivery counting, bounded retries via `Scheduler` seam, and non-blocking synchronous `shutdown()`).
 
 ## 🚧 Milestone 14 — Deployment & scale

@@ -1,0 +1,134 @@
+{
+  "uid": "gambit-observability-pipeline",
+  "title": "Gambit — Observability pipeline health",
+  "description": "Whether the tracing pipeline is actually delivering. Until ADR-0063 a failing collector was indistinguishable from a healthy one: exported_total counted attempts and no failure counter existed. This dashboard is what that fix bought.",
+  "tags": ["gambit", "observability"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Span loss ratio (5m)",
+      "description": "(failed + dropped) / (exported + failed + dropped). Alerts at 5%.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "decimals": 3,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.01 },
+              { "color": "red", "value": 0.05 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        { "refId": "A", "expr": "gambit:span_export_loss:ratio_rate5m", "legendFormat": "loss" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Spans delivered (5m)",
+      "description": "Confirmed deliveries only — this counter moves on a successful transport outcome, not on an attempt.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 } },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(span_export_exported_total[5m]))", "legendFormat": "exported/s" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Spans lost (5m)",
+      "description": "Rejected by the collector, or evicted from the queue when it overflowed.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 0.001 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(span_export_failed_total[5m])) + sum(rate(span_export_dropped_total[5m]))",
+          "legendFormat": "lost/s"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Pipeline throughput",
+      "description": "received is what the tracer handed over; exported is what the collector confirmed. A widening gap between them is the pipeline silently failing.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(span_export_received_total[5m]))", "legendFormat": "received" },
+        { "refId": "B", "expr": "sum(rate(span_export_exported_total[5m]))", "legendFormat": "exported" },
+        { "refId": "C", "expr": "sum(rate(span_export_failed_total[5m]))", "legendFormat": "failed" },
+        { "refId": "D", "expr": "sum(rate(span_export_dropped_total[5m]))", "legendFormat": "dropped" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Batches exported and average batch size",
+      "description": "Batch size collapsing towards 1 means the periodic flush is firing on a near-empty queue; pinned at maxExportBatchSize means the queue is saturated.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "none" } },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(span_export_batches_total[5m]))", "legendFormat": "batches/s" },
+        {
+          "refId": "B",
+          "expr": "sum(rate(span_export_exported_total[5m])) / sum(rate(span_export_batches_total[5m]))",
+          "legendFormat": "avg spans per batch"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Loss ratio over time",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 15 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0 } },
+      "targets": [
+        { "refId": "A", "expr": "gambit:span_export_loss:ratio_rate5m", "legendFormat": "5m" },
+        { "refId": "B", "expr": "gambit:span_export_loss:ratio_rate1h", "legendFormat": "1h" }
+      ]
+    }
+  ]
+}

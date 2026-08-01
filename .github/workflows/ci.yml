@@ -402,3 +402,18 @@ jobs:
           yq --version
           bash scripts/helm-snapshot-test.sh
 
+      # Alerts and dashboards rot silently: rename a metric and the alert simply stops matching,
+      # which nobody notices until the incident it was meant to catch. Nothing else in the suite
+      # covers it — the rules are YAML and the metrics are TypeScript, and neither imports the
+      # other. Runs here because this job needs no services and the check is a few seconds.
+      - name: Observability drift check
+        run: node scripts/check-observability-drift.mjs
+
+      # Pinned, not :latest. This step IS a guardrail, so a floating tool version would let it
+      # change behaviour — or start failing — with no commit in this repo to explain why.
+      - name: Validate Prometheus rules
+        run: |
+          docker run --rm -v "$PWD/deploy/observability:/o:ro" \
+            --entrypoint promtool prom/prometheus:v3.13.2 \
+            check rules /o/prometheus/rules/gambit.rules.yml
+
