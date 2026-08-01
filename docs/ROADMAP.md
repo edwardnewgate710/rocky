@@ -511,12 +511,14 @@ live broadcast multiplexing + `GET /v1/tournaments/:id/live`; and the
 Tournament Commentator AI feature deferred from M8. Full FIDE Dutch pairing
 remains deferred (ADR-0015).
 
-## ⬜ Milestone 10 — Social & learning
+## 🚧 Milestone 10 — Social & learning
 
 Teams/communities, forums, messaging, friends/followers, achievements; lessons,
 courses, video library, PGN import, studies (collaborative), opening/endgame
 encyclopedias, master game explorer. **GraphQL read layer** introduced here (and
 extended in M11) for the nested, client-driven reads these features need.
+
+- **Increment 1 complete (ADR-0066):** pure social graph domain core (`@chess-platform/social`): follows, friend requests, and blocks; explicit `FriendRequest` state machine (`pending` -> `accepted` | `declined` | `cancelled`, plus `accepted` -> `ended` via `terminateFriendship`, the only non-terminal move out of an accepted friendship), atomic block precedence (a block tears down follows in both directions, pending requests, and any active friendship, and takes effect symmetrically), `unblock` restoring nothing, crossing friend requests rejected rather than auto-accepted, caller-supplied ids and timestamps, and a `SocialGraphRepository` port + `InMemorySocialGraphRepository` adapter with pagination ordered by timestamp descending and tie-broken on code-point id order (which Postgres reproduces only with `COLLATE "C"`). Domain only — no table, no route, no production wiring until increment 2.
 
 ## 🚧 Milestone 11 — Search
 

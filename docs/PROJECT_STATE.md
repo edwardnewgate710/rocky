@@ -4,7 +4,23 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-01 — M13 Observability Increment 7: span-export failure visibility + bounded retry (ADR-0063)._
+_Last updated: 2026-08-01 — M10 Social Graph Increment 1: pure social graph domain core (ADR-0066)._
+
+## M10 Social Graph Increment 1 — Pure Social Graph Domain Core (ADR-0066)
+
+Pure, dependency-free domain core for the social graph (follows, friend requests, blocks) in `@chess-platform/social` (ADR-0066):
+- **Package Foundation (`@chess-platform/social`)**: Pure TypeScript package with zero runtime dependencies. All timestamps are passed in (`at: Date`), making domain operations and tests deterministic.
+- **Error Taxonomy (`src/errors.ts`)**: `SocialRuleError` carrying `SocialErrorCode` (`self_relation`, `blocked`, `already_exists`, `not_found`, `invalid_transition`, `not_authorized`).
+- **Relations & Equality Primitives (`src/relation.ts`)**: `PlayerId` type, `assertDistinct(a, b)` throwing `self_relation` when `a === b` (run on all public mutations), and `normalizePair(a, b)` returning sorted ID tuples for symmetric relations.
+- **Follow Graph (`src/follow.ts`)**: `FollowEdge` interface and pure queries (`isFollowing`, `followersOf`, `followingOf`). Follows are directed and require no consent.
+- **Friendship State Machine (`src/friendship.ts`)**: `FriendRequest` with status `pending`, `accepted`, `declined`, `cancelled`, or `ended`. `applyFriendRequestAction` validates state transitions (only `pending` can be acted on) and actor authority (`accept`/`decline` restricted to addressee, `cancel` restricted to requester). `terminateFriendship` is the single move out of `accepted`, used when a block ends a friendship — kept beside the state machine so no other module writes a status transition. `ended` is distinct from `declined` on purpose: the history must not claim the addressee refused a request they accepted. `areFriends` and `friendsOf` query symmetric friendships. Crossing friend requests (simultaneous A→B and B→A) are rejected with `already_exists`.
+- **Block Graph & Precedence (`src/block.ts`)**: Directed `BlockEdge` with symmetric enforcement. `block(A, B)` atomically removes follow edges (`A→B` and `B→A`), transitions pending requests (cancels A→B, declines B→A), and ends any active friendship. While a block exists, both blocker and blocked are barred from `follow` and `sendFriendRequest`. `unblock` removes the block without restoring past relations, so the pair must re-establish them.
+- **Async Repository Port & In-Memory Adapter (`src/repository.ts`)**: `SocialGraphRepository` interface with `Promise`-returning signatures and `InMemorySocialGraphRepository` adapter implementing idempotent follows, friend request actions, blocks, and teardowns.
+- **Deterministic Tie-Break Pagination (`src/ordering.ts`, `src/pagination.ts`)**: Shared `paginate` helper clamping negative `limit`/`offset` to 0. All list queries sort by timestamp descending and tie-break on counterpart `PlayerId` in **code-point** order (`compareIds`), not locale collation — the two disagree on mixed-case ids, and the Postgres adapter in increment 2 must therefore order with `COLLATE "C"`.
+- **Not wired to anything yet**: domain logic and an in-memory adapter only. No migration, no route, no `bootstrap.ts` change, and `build:server` deliberately untouched — increment 2 makes it reachable.
+- Detailed in `docs/adr/0066-social-graph-core.md`.
+
+Prior: _Last updated: 2026-08-01 — M13 Observability Increment 7: span-export failure visibility + bounded retry (ADR-0063)._
 
 ## M13 Observability Increment 7 — Span-Export Failure Visibility + Bounded Retry (ADR-0063)
 
