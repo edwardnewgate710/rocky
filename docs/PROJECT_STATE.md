@@ -4,7 +4,21 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-01 — M11 Search Increment 12: embedding backfill + live embedding pipeline (ADR-0061)._
+_Last updated: 2026-08-01 — CI: Helm chart snapshot test is now a gate (see below)._
+
+## CI — Helm chart snapshot test wired into the `helm` job
+
+`scripts/helm-snapshot-test.sh` (44 assertions) had been written in ADR-0057 and extended twice
+since, but **nothing ever ran it automatically** — it only executed when someone remembered to.
+It is now the final step of the `helm` job.
+
+This matters because `kubeconform` only proves manifests are schema-valid. It cannot catch that
+`POSTGRES_PASSWORD` must be declared before `DATABASE_URL` (Kubernetes expands `$(VAR)` only for
+earlier entries), that `SEARCH_ENABLED`/`SEMANTIC_SEARCH_ENABLED` land on the right container, or
+that the search indexer stays pinned to one replica. Those are exactly the regressions the script
+guards, and they are invisible until a deploy.
+
+Prior: _Last updated: 2026-08-01 — M11 Search Increment 12: embedding backfill + live embedding pipeline (ADR-0061)._
 
 ## M11 Search Increment 12 — Embedding Backfill + Live Embedding Pipeline (ADR-0061)
 

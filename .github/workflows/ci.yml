@@ -390,3 +390,15 @@ jobs:
             --set secrets.externalSecrets.accessTokenSecret.key=gambit/access-token \
             | kubeconform -strict -ignore-missing-schemas -summary
 
+      # kubeconform only proves the manifests are SCHEMA-valid. It cannot tell that
+      # POSTGRES_PASSWORD is declared before DATABASE_URL (Kubernetes only expands
+      # $(VAR) for earlier entries), that the search kill switches reach the right
+      # container, or that the indexer stays pinned to one replica. Those are the
+      # assertions this script makes, and until now nothing ran it automatically.
+      - name: Helm chart snapshot test
+        run: |
+          # Parses rendered manifests with yq, which the runner image provides.
+          # Fail loudly here rather than as a cascade of confusing assertion failures.
+          yq --version
+          bash scripts/helm-snapshot-test.sh
+

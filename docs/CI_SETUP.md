@@ -37,5 +37,7 @@ group that cancels superseded runs on the same ref.
 - Installs use `npm ci` against the committed root `package-lock.json` for
   reproducible builds.
 - The deeper chart-wiring checks (env-var ordering, gateway `replicas: 1`,
-  secret sourcing) live in `scripts/helm-snapshot-test.sh` and can be run
-  locally alongside the helm job's commands — see `docs/DEPLOYING.md`.
+  secret sourcing, the search kill switches) live in
+  `scripts/helm-snapshot-test.sh`. The `helm` job runs it as its final step, so
+  a chart change that breaks wiring fails CI rather than waiting for a deploy.
+  It is also runnable locally — see `docs/DEPLOYING.md`.
