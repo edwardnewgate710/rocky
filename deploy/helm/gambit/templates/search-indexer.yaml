@@ -141,6 +141,11 @@ spec:
             # the single owner of the flag across the release.
             - name: SEARCH_INDEXER
               value: "1"
+            {{- if and .Values.search.enabled (not .Values.search.semanticEnabled) }}
+            # M11 (ADR-0061): disables writing vector embeddings when semantic search is disabled.
+            - name: SEMANTIC_SEARCH_ENABLED
+              value: "0"
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /health

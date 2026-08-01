@@ -177,25 +177,29 @@ without Redis.
 
 See `docs/adr/0010-game-authority-ownership.md` for the decision record.
 
-## Search indexer
+## Search indexer and reindex CLI
 
-The live search indexer (ADR-0056) keeps `search_documents` current by consuming
-game-ended broadcasts. Its dedup set is process-local, so it runs in a dedicated
-single-replica Deployment instead of on the gateway replicas:
+The live search indexer (ADR-0056, ADR-0061) keeps `search_documents` and `search_embeddings` current by consuming game-ended broadcasts. Its dedup set is process-local, so it runs in a dedicated single-replica Deployment instead of on the gateway replicas:
 
 ```bash
 helm upgrade gambit deploy/helm/gambit --set gateway.searchIndexer.enabled=true
 ```
 
-That Deployment's replica count is fixed at 1 by design and is not exposed as a
-value — two indexers would each read and upsert every finished game. The upsert is
-idempotent, so the index would still be correct, just built twice.
+That Deployment's replica count is fixed at 1 by design and is not exposed as a value — two indexers would each read and upsert every finished game. The upsert is idempotent, so the index would still be correct, just built twice.
 
-`--set search.enabled=false` disables search altogether (ADR-0055): the API stops
-constructing a search repository and `GET /v1/search` returns 503. Combining that
-with an enabled indexer fails at template time.
+`--set search.semanticEnabled=false` disables writing vector embeddings (ADR-0061), causing the indexer to write keyword documents (`search_documents`) only. `--set search.enabled=false` disables search altogether (ADR-0055): the API stops constructing a search repository and `GET /v1/search` returns 503. Combining `search.enabled=false` with an enabled indexer fails at template time.
 
-See `docs/adr/0057-search-indexer-deployment.md` for the decision record.
+### Backfill existing data
+
+To populate search indexes (both keyword and vector embeddings) for pre-existing games, players, and tournaments, run the backfill script:
+
+```bash
+npm run reindex-search -w @chess-platform/api
+```
+
+When `SEMANTIC_SEARCH_ENABLED !== '0'`, the reindex script generates 256-dimensional vector embeddings and writes to both `search_documents` and `search_embeddings` (ADR-0061).
+
+See `docs/adr/0057-search-indexer-deployment.md` and `docs/adr/0061-embedding-pipeline.md` for decision records.
 
 ## Validation
 

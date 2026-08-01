@@ -1,14 +1,21 @@
 /**
  * @packageDocumentation
- * Reindex search documents in the database (`search_documents` table) by paging
- * games, players, and tournaments through {@link PgSearchBackfillSource}, mapping
- * them to {@link SearchableDocument} via entity projections, and upserting in batches.
+ * Reindex search documents in the database (`search_documents` table, and optionally
+ * `search_embeddings` table when semantic search is enabled) by paging games, players,
+ * and tournaments through {@link PgSearchBackfillSource}, mapping them to {@link SearchableDocument}
+ * via entity projections, and upserting in batches.
  *
  * Idempotent and re-runnable (upserts by document id).
  * Run with: `npm run reindex-search -w @chess-platform/api`
  */
 
-import { createPool, PgSearchRepository, PgSearchBackfillSource } from '@chess-platform/persistence/pg';
+import {
+  createPool,
+  PgSearchRepository,
+  PgSearchBackfillSource,
+  PgSemanticSearchRepository,
+} from '@chess-platform/persistence/pg';
+import { HashingEmbeddingProvider, SEARCH_EMBEDDING_DIMENSIONS } from '@chess-platform/search';
 import { reindexAll } from '../search/reindex';
 
 const BATCH_SIZE = 500;
@@ -26,12 +33,34 @@ async function main(): Promise<void> {
     const searchRepo = new PgSearchRepository(pool);
     const backfillSource = new PgSearchBackfillSource(pool);
 
+    const searchEnabled = process.env['SEARCH_ENABLED'] !== '0';
+    const semanticSearchEnabled = searchEnabled && process.env['SEMANTIC_SEARCH_ENABLED'] !== '0';
+
+    const semantic = semanticSearchEnabled
+      ? {
+          repository: new PgSemanticSearchRepository(pool),
+          embeddingProvider: new HashingEmbeddingProvider(SEARCH_EMBEDDING_DIMENSIONS),
+        }
+      : undefined;
+
     // eslint-disable-next-line no-console
     console.log('Starting search index reindex...');
+    // eslint-disable-next-line no-console
+    console.log(
+      semantic
+        ? 'Reindexing path: SEMANTIC (writing both search_documents and search_embeddings)'
+        : 'Reindexing path: KEYWORD (writing search_documents only)'
+    );
 
-    const res = await reindexAll(backfillSource, searchRepo, BATCH_SIZE, (type, count) => {
-      // eslint-disable-next-line no-console
-      console.log(`Indexed ${count} ${type}...`);
+    const res = await reindexAll({
+      source: backfillSource,
+      repository: searchRepo,
+      batchSize: BATCH_SIZE,
+      onProgress: (type, count) => {
+        // eslint-disable-next-line no-console
+        console.log(`Indexed ${count} ${type}...`);
+      },
+      ...(semantic ? { semantic } : {}),
     });
 
     const totalCount = res.games + res.players + res.tournaments;

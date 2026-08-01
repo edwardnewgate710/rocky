@@ -289,6 +289,14 @@ check "Default render: SEMANTIC_SEARCH_ENABLED is not set at all" "$([ "$SEM_DEF
 SEM_REDUNDANT=$(grep -c 'name: SEMANTIC_SEARCH_ENABLED' "$TMPDIR/search-off.yaml" || true)
 check "search.enabled=false does not also emit SEMANTIC_SEARCH_ENABLED" "$([ "$SEM_REDUNDANT" = "0" ] && echo 0 || echo 1)"
 
+# The ADR-0061 semantic switch disables vector embedding on the search-indexer container when searchIndexer is enabled.
+helm template "$CHART_DIR" "${HELM_SECRETS[@]}" \
+  --set gateway.searchIndexer.enabled=true \
+  --set search.semanticEnabled=false > "$TMPDIR/semantic-off-indexer.yaml" 2>/dev/null
+IX_SEM_DOC=$(deployment_doc "$TMPDIR/semantic-off-indexer.yaml" search-indexer)
+IX_SEM_SCOPED=$(printf '%s\n' "$IX_SEM_DOC" | grep -A1 'name: SEMANTIC_SEARCH_ENABLED' | grep -c 'value: "0"' || true)
+check "search.semanticEnabled=false sets SEMANTIC_SEARCH_ENABLED=\"0\" on the search-indexer container" "$([ "$IX_SEM_SCOPED" = "1" ] && echo 0 || echo 1)"
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 

@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   InMemorySearchRepository,
+  InMemorySemanticSearchRepository,
+  HashingEmbeddingProvider,
   type GameDocumentInput,
   type PlayerDocumentInput,
   type TournamentDocumentInput,
@@ -60,19 +62,48 @@ class FakeSearchBackfillSource implements SearchBackfillSource {
   }
 }
 
-test('reindexAll: pages entities into SearchRepository and is idempotent across multiple runs', async () => {
+test('reindexAll: pages entities into SearchRepository without semantic option and is idempotent across multiple runs', async () => {
   const source = new FakeSearchBackfillSource();
   const repo = new InMemorySearchRepository();
 
   // First run
-  const res1 = await reindexAll(source, repo, 1);
+  const res1 = await reindexAll({ source, repository: repo, batchSize: 1 });
   assert.deepEqual(res1, { games: 2, players: 2, tournaments: 1 });
   const sizeAfterRun1 = await repo.size();
   assert.strictEqual(sizeAfterRun1, 5); // 2 games + 2 players + 1 tournament
 
   // Second run (idempotency check)
-  const res2 = await reindexAll(source, repo, 1);
+  const res2 = await reindexAll({ source, repository: repo, batchSize: 1 });
   assert.deepEqual(res2, { games: 2, players: 2, tournaments: 1 });
   const sizeAfterRun2 = await repo.size();
   assert.strictEqual(sizeAfterRun2, 5, 'Search index size must remain identical after second run');
+});
+
+test('reindexAll: with semantic option, documents land in semantic repository and NOT in keyword repository', async () => {
+  const source = new FakeSearchBackfillSource();
+  const keywordRepo = new InMemorySearchRepository();
+  const semanticRepo = new InMemorySemanticSearchRepository();
+  const embeddingProvider = new HashingEmbeddingProvider(256);
+
+  const res = await reindexAll({
+    source,
+    repository: keywordRepo,
+    batchSize: 1,
+    semantic: {
+      repository: semanticRepo,
+      embeddingProvider,
+    },
+  });
+
+  assert.deepEqual(res, { games: 2, players: 2, tournaments: 1 });
+
+  // Double-write guard assertion: keyword repository size MUST be 0 when semantic path is used
+  assert.strictEqual(
+    await keywordRepo.size(),
+    0,
+    'Keyword repository must not receive writes when semantic option is supplied (single write path rule)'
+  );
+
+  // Semantic repository received all documents with 256-dim embeddings
+  assert.strictEqual(await semanticRepo.size(), 5);
 });

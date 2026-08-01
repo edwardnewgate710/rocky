@@ -11,3 +11,4 @@ export * from './embedding';
 export * from './semantic';
 export * from './hybrid';
 export * from './semantic-repository';
+export * from './embed-document';

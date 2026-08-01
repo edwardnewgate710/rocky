@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { InMemorySearchRepository, type GameDocumentInput } from '@chess-platform/search';
+import {
+  InMemorySearchRepository,
+  InMemorySemanticSearchRepository,
+  HashingEmbeddingProvider,
+  type GameDocumentInput,
+} from '@chess-platform/search';
 import { SearchIndexWorker, type SearchIndexSubscriber, type SearchGameSource } from '../src';
 
 class FakeSubscriber implements SearchIndexSubscriber {
@@ -61,6 +66,59 @@ test('SearchIndexWorker: indexes ended game into SearchRepository', async () => 
   assert.strictEqual(await repo.size(), 1);
   const page = await repo.query({ terms: [], phrases: [], filters: [{ field: 'type', value: 'game', negated: false }] });
   assert.strictEqual(page.results[0]?.id, 'game:g-1');
+
+  worker.stop();
+});
+
+test('SearchIndexWorker with semantic option: embeds and indexes ended game into SemanticSearchRepository with 256-dim embedding', async () => {
+  const subscriber = new FakeSubscriber();
+  const source = new FakeGameSource();
+  const keywordRepo = new InMemorySearchRepository();
+  const semanticRepo = new InMemorySemanticSearchRepository();
+  const embeddingProvider = new HashingEmbeddingProvider(256);
+
+  const worker = new SearchIndexWorker(subscriber, 'games:ended', source, keywordRepo, {
+    semantic: {
+      repository: semanticRepo,
+      embeddingProvider,
+    },
+  });
+
+  source.games.set('g-sem-1', {
+    id: 'g-sem-1',
+    whiteHandle: 'alice',
+    blackHandle: 'bob',
+    variant: 'standard',
+    speed: 'blitz',
+    result: '1-0',
+    rated: true,
+  });
+
+  source.games.set('g-aborted', {
+    id: 'g-aborted',
+    whiteHandle: 'carol',
+    blackHandle: 'dave',
+    variant: 'standard',
+    speed: 'blitz',
+    result: '*', // Aborted game
+    rated: true,
+  });
+
+  worker.start();
+  subscriber.emit({ t: 'ended', gameId: 'g-sem-1' });
+  subscriber.emit({ t: 'ended', gameId: 'g-aborted' });
+  await worker.drain();
+
+  // Keyword repository must NOT receive writes (single write path rule)
+  assert.strictEqual(await keywordRepo.size(), 0);
+
+  // Semantic repository has 1 document (aborted game skipped)
+  assert.strictEqual(await semanticRepo.size(), 1);
+
+  const queryVector = await embeddingProvider.embed('Game alice vs bob');
+  const semRes = await semanticRepo.querySemantic(queryVector);
+  assert.strictEqual(semRes.total, 1);
+  assert.strictEqual(semRes.results[0]?.id, 'game:g-sem-1');
 
   worker.stop();
 });

@@ -1,5 +1,10 @@
-import type { GameDocumentInput, SearchRepository } from '@chess-platform/search';
-import { gameToDocument } from '@chess-platform/search';
+import type {
+  EmbeddingProvider,
+  GameDocumentInput,
+  SearchRepository,
+  SemanticSearchRepository,
+} from '@chess-platform/search';
+import { embedDocument, gameToDocument } from '@chess-platform/search';
 
 /**
  * Minimal subscriber port required by SearchIndexWorker.
@@ -19,6 +24,11 @@ export interface SearchGameSource {
 export interface SearchIndexWorkerOptions {
   /** Called when indexing a game fails or rejects. Defaults to console.error. Never rethrows. */
   readonly onError?: (gameId: string, err: unknown) => void;
+  /** Supplying both routes writes through the semantic repository instead of `repo`. */
+  readonly semantic?: {
+    readonly repository: SemanticSearchRepository;
+    readonly embeddingProvider: EmbeddingProvider;
+  };
 }
 
 /**
@@ -90,7 +100,17 @@ export class SearchIndexWorker {
           }
 
           const doc = gameToDocument(gameInput);
-          await this.repo.index(doc);
+
+          // SINGLE WRITE PATH DECISION:
+          // When a semantic repository and embedding provider are supplied, they replace the keyword write path
+          // because PgSemanticSearchRepository.index upserts into search_documents AND search_embeddings
+          // inside one transaction. Calling both would write search_documents twice per document for no benefit.
+          if (this.options.semantic) {
+            const semanticDoc = await embedDocument(this.options.semantic.embeddingProvider, doc);
+            await this.options.semantic.repository.index(semanticDoc);
+          } else {
+            await this.repo.index(doc);
+          }
         } catch (err: unknown) {
           this.seen.delete(gameId);
           try {

@@ -4,7 +4,21 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-01 — M11 Search Increment 11: semantic/hybrid modes on GET /v1/search (ADR-0060)._
+_Last updated: 2026-08-01 — M11 Search Increment 12: embedding backfill + live embedding pipeline (ADR-0061)._
+
+## M11 Search Increment 12 — Embedding Backfill + Live Embedding Pipeline (ADR-0061)
+
+Vector embedding backfill (`reindexAll`) and live index worker (`SearchIndexWorker`) embedding pipeline in `@chess-platform/search`, `@chess-platform/api`, `services/gateway`, and Helm (ADR-0061):
+- **Pure Domain Document Embedding**: Added `embedDocument` and `embedDocuments` to `@chess-platform/search` (`src/embed-document.ts`). Preserves `id`, `text`, and filter `fields` using conditional spread for `exactOptionalPropertyTypes` compliance. Processes inputs sequentially (since `HashingEmbeddingProvider` is CPU-bound and synchronous).
+- **Single Write Path Routing**: Refactored `reindexAll` and `SearchIndexWorker` so that when `semantic` options (`{ repository, embeddingProvider }`) are supplied, writes route exclusively through the semantic repository, replacing the keyword write path. Rationale: `PgSemanticSearchRepository.index` and `indexAll` already write to both `search_documents` and `search_embeddings` inside one transaction; calling both write paths would write `search_documents` twice per document.
+- **`reindexAll` Options Object Refactoring**: Converted `reindexAll` from 4 positional parameters to a unified `ReindexOptions` options object (`{ source, repository, batchSize?, onProgress?, semantic? }`), respecting the 4-argument ceiling.
+- **CLI Reindex & Live Worker Wiring**: Updated `packages/api/src/scripts/reindex-search.ts` to instantiate `PgSemanticSearchRepository` and `HashingEmbeddingProvider(SEARCH_EMBEDDING_DIMENSIONS)` when `SEMANTIC_SEARCH_ENABLED !== '0'`, logging the active path. Updated `services/gateway/src/serve.ts` to pass `semantic` options to `SearchIndexWorker` under the same env gate.
+- **Helm Indexer & Snapshot Test**: Updated `deploy/helm/gambit/templates/search-indexer.yaml` to set `SEMANTIC_SEARCH_ENABLED="0"` when `search.semanticEnabled` is `false`. Extended `scripts/helm-snapshot-test.sh` with matching assertions.
+- **DB-Gated Integration Tests**: Added `packages/api/test/semantic-pipeline.integration.test.ts` (gated on `DATABASE_URL`, namespaced via `uuidv7()`), verifying that `reindexAll` populates `search_embeddings` in Postgres and that `querySemantic` successfully retrieves seeded entities.
+- **Operator Backfill Requirement**: Documented plainly in ADR-0061 and deployment guide that populating pre-existing data into `search_embeddings` is a manual operator step (`npm run reindex-search -w @chess-platform/api`).
+- Detailed in `docs/adr/0061-embedding-pipeline.md`.
+
+Prior: M11 Search Increment 11 — REST Endpoint Wiring for Semantic and Hybrid Search (ADR-0060)
 
 ## M11 Search Increment 11 — REST Endpoint Wiring for Semantic and Hybrid Search (ADR-0060)
 

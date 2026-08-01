@@ -82,12 +82,11 @@ Added `semanticSearchRepository?: SemanticSearchRepository` and `embeddingProvid
 - **503 Unavailable Guard**: If `mode=semantic` or `mode=hybrid` is requested but either `deps.semanticSearchRepository` or `deps.embeddingProvider` is missing, the route responds HTTP 503 (`semantic search is not configured`). `mode=keyword` independently checks `deps.searchRepository`.
 - **Strict TypeScript**: Optional dependencies use conditional spreads (`...(semanticSearchRepository ? { semanticSearchRepository } : {})`) to satisfy `exactOptionalPropertyTypes`.
 
-### 6. DEFERRED Gap
+### 6. Population Gap (Resolved in ADR-0061)
 
-> [!WARNING]
-> **Production Population Gap**: Nothing populates the `search_embeddings` table in production yet.
-> Keyword search has a projection/backfill pipeline and live index worker (Increments 7 and 8), but the vector embedding column does not.
-> In production environments, calling `GET /v1/search?mode=semantic` will return an empty page (`{ total: 0, results: [] }`) until a vector embedding projection/backfill worker lands in a future increment.
+> [!NOTE]
+> **Production Population Pipeline**: Populated via Increment 12 (ADR-0061).
+> The vector embedding backfill (`reindexAll`) and live worker (`SearchIndexWorker`) populate `search_embeddings` in production environments when `SEMANTIC_SEARCH_ENABLED !== '0'`. See `docs/adr/0061-embedding-pipeline.md`.
 
 ## Consequences
 

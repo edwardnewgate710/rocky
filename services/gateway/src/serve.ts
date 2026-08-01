@@ -42,6 +42,9 @@
  *   read + write per game rather than corrupting the index.
  * - `SEARCH_ENABLED` (optional, "0" to disable) — absolute kill switch for
  *   search (ADR-0055); when `0`, `SEARCH_INDEXER` is suppressed too.
+ * - `SEMANTIC_SEARCH_ENABLED` (optional, "0" to disable) — when "0", search
+ *   indexer writes only to the keyword index (`search_documents`), skipping
+ *   vector embedding generation (`search_embeddings`).
 
  *
  * Durable event log: ADR-0007 (M14 inc 2).
@@ -259,18 +262,36 @@ async function main(): Promise<void> {
     } else if (!pgPool) {
       logger.warn('SEARCH_INDEXER requires DATABASE_URL to be set');
     } else {
-      const { PgSearchRepository, PgSearchBackfillSource } = await import('@chess-platform/persistence/pg');
+      const { PgSearchRepository, PgSearchBackfillSource, PgSemanticSearchRepository } = await import('@chess-platform/persistence/pg');
       const { gamesEndedChannel } = await import('@chess-platform/realtime-gateway');
+      const { HashingEmbeddingProvider, SEARCH_EMBEDDING_DIMENSIONS } = await import('@chess-platform/search');
       const api = await import('@chess-platform/api');
 
       const searchRepo = new PgSearchRepository(pgPool);
       const backfillSource = new PgSearchBackfillSource(pgPool);
-      const worker = new api.SearchIndexWorker(pubsub, gamesEndedChannel(), backfillSource, searchRepo);
+
+      const semanticEnabled = process.env['SEMANTIC_SEARCH_ENABLED'] !== '0';
+      const semantic = semanticEnabled
+        ? {
+            repository: new PgSemanticSearchRepository(pgPool),
+            embeddingProvider: new HashingEmbeddingProvider(SEARCH_EMBEDDING_DIMENSIONS),
+          }
+        : undefined;
+
+      const worker = new api.SearchIndexWorker(
+        pubsub,
+        gamesEndedChannel(),
+        backfillSource,
+        searchRepo,
+        semantic ? { semantic } : {},
+      );
       worker.start();
       searchIndexWorker = worker;
       // Dedup is process-local: if more than one replica enables SEARCH_INDEXER, each
       // one indexes every finished game. Harmless (upsert) but wasteful — see ADR-0056.
-      logger.info('SearchIndexWorker is enabled (run on a single replica; dedup is process-local)');
+      logger.info(
+        `SearchIndexWorker is enabled (${semantic ? 'semantic mode: search_documents + search_embeddings' : 'keyword mode: search_documents only'}; run on a single replica; dedup is process-local)`
+      );
     }
   }
 
