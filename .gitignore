@@ -6,3 +6,7 @@ dist-test/
 test-results/
 playwright-report/
 blob-report/
+
+# Load-test output: measured on whatever machine ran it, so not meaningful to commit.
+# The measured baseline that IS meaningful is recorded in docs/SLO.md and ADR-0065.
+deploy/load/results/

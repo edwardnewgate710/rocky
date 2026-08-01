@@ -28,6 +28,68 @@ Realtime gateway tracing, cross-node trace context propagation, and Helm OTLP co
 - **Distributed Trace Context Propagation**: Added optional `traceparent?: string` to `ForwardedCommand` wire envelope. Forwarding node writes active span context; receiving node (`OwnerCommandConsumer`) parses `traceparent` and creates child spans under the forwarder. Wire-compatible fallback to fresh root span if missing or malformed.
 - **Helm OTLP Reachability**: Added `tracing` configuration block to `deploy/helm/gambit/values.yaml` (`enabled`, `otlpEndpoint`, `otlpTracesEndpoint`, `samplerArg`). Rendered onto both API and Gateway Deployments (`api.yaml`, `gateway.yaml`). Fails closed when enabled with no endpoint. Verified by 50 snapshot test assertions in `scripts/helm-snapshot-test.sh`.
 
+Prior: _Last updated: 2026-08-01 — M14 inc 8: load baseline, and the container build was broken (see below)._
+
+## M14 Increment 8 — load baseline + container-build repair (ADR-0065)
+
+### `docker compose up --build` had been broken since M11 inc 5
+
+The headline. `docs/RUNNING.md` promises a one-command local stack; it had not worked for months and
+**no gate noticed**, because CI builds from the root `npm run build` chain and never builds the
+container images.
+
+Two hand-maintained lists, stale in the same way:
+1. **Build order** — duplicated inside `Dockerfile.api` and `Dockerfile.gateway`, and neither gained
+   `search`, `engine` or `anti-cheat` when `persistence` and `api` started depending on them. The
+   build failed outright.
+2. **Runtime `COPY` list** — with the order fixed the image built, then died at startup with
+   `Cannot find module '@chess-platform/search'`. Same three packages missing again.
+
+Fixed by removing the duplication: both Dockerfiles now run the root `build:server` script.
+`scripts/check-docker-build-order.mjs` (`npm run check:build-order`, wired into the `build-test` CI
+job) verifies statically that the chain covers every transitive dependency of `@chess-platform/api`
+in a valid order **and** that each runtime stage ships them. Verified by reproducing both real
+failures. Note for future work: package directory ≠ package name — `@chess-platform/core` lives in
+`packages/chess-core/`, so the checker maps names from the manifests rather than deriving paths.
+
+### Load baseline
+
+`deploy/load` + `npm run load-test`. k6 from a pinned image (`grafana/k6:0.55.0`), no npm dependency,
+matching how helm/kubeconform/promtool are used. **The k6 thresholds ARE the SLOs from ADR-0064**, so
+an unachievable target fails the run instead of sitting unchallenged in a document.
+
+Measured on one Windows workstation, single replica, near-empty dataset, generator sharing the host:
+
+Latency figures are the **read path only** — the series the threshold enforces.
+
+| | Measured | Target |
+|---|---|---|
+| Availability | 100.000% (0/50,800 5xx) | 99.5% ✅ |
+| Read p99 | 98.9 ms | 250 ms ✅ |
+| Read p95 | 66.4 ms | — |
+| Throughput | 1,582 req/s | — |
+
+Targets are achievable and conservative. Deliberately **not** tightened — a target tuned to an empty
+database on a laptop is a promise about the wrong system.
+
+**Five bugs in my own harness.** Three found by running it, two more by Qodo on PR #60:
+the reporter printed the *aggregate* `http_req_duration` p99 while the threshold is scoped to
+`{scenario:read}`, so the documented figure came from a series that blends in the registration path;
+and `readPath` checked only "not 5xx", meaning a 4xx passed the check while its latency still
+entered the baseline — which is exactly how the `blitz` mistake below stayed invisible. Read checks
+now demand 200 and the run fails if they stop doing so.
+
+The first three: k6's `http_req_failed` counts all
+non-2xx, so the rate limiter's 429s reported 76.5% availability for a service returning zero 5xx
+(fixed with `setResponseCallback`); `p(99)` is absent from k6's default summary stats, so the one
+percentile the SLO is stated at printed `n/a`; and the scenario requested
+`/v1/leaderboard/blitz`, but `blitz` is a *speed* and the path takes a *variant* — 9,039 silent 422s
+that looked like healthy traffic (the exact vocabulary split ADR-0055 introduced).
+
+Registration throughput remains unmeasurable from one host: 5 requests/IP/hour (ADR-0013) means the
+scenario is really a rate-limiter probe, and it now asserts what it can — that the limiter sheds
+load with a 429 rather than a 5xx.
+
 Prior: _Last updated: 2026-08-01 — M13 CLOSED: SLOs, alerting, dashboards, drift guard (see below)._
 
 ## M13 — increment 8, milestone CLOSED (ADR-0064)

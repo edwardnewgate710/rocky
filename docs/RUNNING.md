@@ -27,6 +27,11 @@ open http://localhost:3000
 
 That's it. You can register a user, and the platform is live.
 
+> **If the API image fails to build, or starts and immediately exits with `MODULE_NOT_FOUND`:** run
+> `npm run check:build-order`. The container images build and copy their packages from lists that
+> are maintained by hand, and those lists went stale once already — see ADR-0065. That check catches
+> it in seconds and runs in CI, but it is the first thing to try if the stack will not come up.
+
 ## What runs
 
 | Service | Container | Port | Description |

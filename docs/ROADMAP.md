@@ -724,6 +724,24 @@ indexer is enabled with search disabled, and pins an explicit `maxSurge: 1 / max
 upgrade never leaves the fire-and-forget game-ended channel unsubscribed. Verified by new assertions in
 `scripts/helm-snapshot-test.sh`; wiring that script into CI is still pending (the workflow file could not be committed).
 
+### Increment 8: Load baseline + container-build repair (ADR-0065) ✅
+
+`deploy/load` runs a k6 baseline whose thresholds **are** the SLOs from ADR-0064, so an unachievable
+target fails the run rather than sitting unchallenged in a document. Measured on one workstation:
+100.000% availability across 48,542 requests, p99 98.3 ms against a 250 ms target, 1,517 req/s.
+`docs/SLO.md` now records the measured baseline and, just as importantly, what it cannot tell you —
+near-empty dataset, no WebSocket load, and registration throughput unmeasurable from a single IP
+because the limiter allows 5/hour.
+
+Standing the stack up to measure it revealed that **`docker compose up --build` had been broken
+since M11 inc 5** — the one-command local stack `docs/RUNNING.md` promises. Two hand-maintained
+lists had gone stale identically: the build chain duplicated in each Dockerfile (missing `search`,
+`engine`, `anti-cheat`), and the runtime `COPY` list (missing the same three, so the image built and
+then died with `MODULE_NOT_FOUND`). No gate saw it: CI builds from the root chain and never builds
+these images. Both Dockerfiles now delegate to a root `build:server` script, and
+`scripts/check-docker-build-order.mjs` fails CI if the chain or the runtime copies drift from the
+real dependency graph again.
+
 ### Deferred (later M14 increments)
 
 - Terraform IaC for cloud provisioning

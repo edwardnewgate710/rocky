@@ -102,6 +102,12 @@ jobs:
       - name: Test (node --test)
         run: npm test
 
+      # The container images build with their own package chain, which CI never exercises — it
+      # builds from the root chain instead. That gap let `docker compose up --build` stay broken
+      # from M11 inc 5 onwards while every gate here was green. Static, so it costs seconds.
+      - name: Docker build-order check
+        run: npm run check:build-order
+
   # Runs the Postgres-gated integration tests (persistence event store +
   # repositories against a real database). Everything else is hermetic.
   postgres-integration:

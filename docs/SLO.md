@@ -1,11 +1,15 @@
 # Gambit — Service Level Objectives
 
-> **These are starting targets, not measured ones.** Gambit has never carried production traffic and
-> has never been load tested (M14's 100k-user validation is still deferred). Every number below is a
-> considered guess about what the service *should* achieve, chosen so the alerting has something to
-> fire on. Revise them once real traffic exists — an SLO that was never checked against reality is a
-> hypothesis, and presenting it as a commitment is how teams end up defending a number nobody
-> believes.
+> **Status: targets set by judgement, then checked against a single-machine baseline.**
+>
+> These numbers began as considered guesses, chosen so the alerting had something to fire on. ADR-0065
+> added `deploy/load` and they have now been measured against a real `docker compose` stack — see
+> **Measured baseline** below. They held, comfortably.
+>
+> That is a floor, not a capacity figure. Gambit still has not carried production traffic, and M14's
+> 100k-user validation is still deferred. What the baseline rules out is targets that were never
+> achievable; what it cannot tell you is how the service behaves at real scale, on real data, under
+> real concurrency.
 
 Defined in `deploy/observability/prometheus/rules/gambit.rules.yml`; see ADR-0064 for the reasoning
 and `docs/RUNBOOKS.md` for what to do when one burns.
@@ -120,6 +124,50 @@ The target is deliberately looser than the user-facing SLOs. Losing 1% of traces
 losing 1% of requests degrades the product.
 
 ---
+
+## Measured baseline
+
+Run `node scripts/load-test.mjs` against a `docker compose` stack. The k6 thresholds in
+`deploy/load/scenarios/api-baseline.js` *are* the targets above, so the run fails if a target is
+unachievable.
+
+**Conditions — read these before quoting the numbers.** One Windows workstation under Docker
+Desktop; a single API replica, single Postgres, near-empty dataset; 20 concurrent read users plus 3
+registration users for 30 seconds; and the load generator running on the same host as the service,
+so the two compete for CPU.
+
+All latency figures below are the **read path only** (`http_req_duration{scenario:read}`) — the
+series the SLO threshold enforces. The aggregate would blend in the scrypt-bound registration path,
+which is the very thing splitting the scenarios was meant to prevent.
+
+| | Measured | Target | |
+|---|---|---|---|
+| Availability | **100.000%** (0 of 50,800 requests 5xx) | 99.5% | ✅ |
+| Read latency p99 | **98.9 ms** | 99% under 250 ms | ✅ |
+| Read latency p95 | 66.4 ms | — | |
+| Read latency max | 476.1 ms | — | a small tail exceeds the target; the SLO is stated at p99, not max |
+| Throughput | 1,582 req/s sustained | — | |
+
+The targets are therefore achievable, and conservative on this hardware. They are deliberately not
+being tightened: a target tuned to an empty database on a developer laptop would be a promise about
+the wrong system.
+
+**The max is noisy and should not be read as a capacity signal.** An earlier run of the same
+scenario recorded 213 ms; this one, with the web container also running and competing for CPU on the
+same host, recorded 476 ms. That spread is the measurement environment, not the service — which is
+exactly why the objective is stated at p99 rather than at the worst observed request.
+
+### What the baseline cannot tell you
+
+- **Registration throughput and scrypt cost are unmeasured.** `/v1/auth/register` allows 5 requests
+  per IP per hour (ADR-0013), and all load originates from one container, so after five successes
+  every request is a 429. That scenario verifies the limiter sheds load with a 429 rather than a
+  5xx — worth knowing, but not a latency measurement. Measuring it properly needs distributed load
+  generation.
+- **The dataset is nearly empty.** `/v1/search` in particular is measured against almost no rows.
+  ADR-0059 recorded that the `id` tie-break defeats the HNSW index, so semantic search is a
+  sequential scan whose latency grows with corpus size — this baseline says nothing about that.
+- **No WebSocket load.** The gateway path is not exercised at all.
 
 ## Burn-rate alerting
 
