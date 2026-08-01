@@ -9,9 +9,35 @@
 
 import type { Logger } from './logger';
 import type { SpanData, SpanAttributes, SpanAttributeValue, SpanSink } from './tracer';
+import type { SpanExportOutcome } from './otlp-span-exporter';
 
 export interface SpanExporter {
   export(spans: readonly SpanData[]): void;
+}
+
+/**
+ * An exporter that can confirm whether a batch actually reached its destination.
+ *
+ * Kept separate from {@link SpanExporter} so the base port stays the one-method contract every
+ * exporter can satisfy: {@link LoggingSpanExporter} writes to a logger and cannot fail in a way
+ * worth reporting. {@link BatchSpanProcessor} uses this richer contract when the downstream
+ * exporter offers it, and falls back to optimistic counting when it does not.
+ *
+ * The promise is what correlates a result with its batch — a callback set on the exporter cannot,
+ * because several batches are in flight at once whenever a flush drains a full queue.
+ */
+export interface OutcomeReportingSpanExporter extends SpanExporter {
+  /** Resolves with the delivery outcome. MUST NOT reject; callers must not await it. */
+  exportWithOutcome(spans: readonly SpanData[]): Promise<SpanExportOutcome>;
+}
+
+/** Narrows an exporter to {@link OutcomeReportingSpanExporter}, or `undefined` if it cannot report. */
+export function asOutcomeReporting(
+  exporter: SpanExporter,
+): OutcomeReportingSpanExporter | undefined {
+  return typeof (exporter as Partial<OutcomeReportingSpanExporter>).exportWithOutcome === 'function'
+    ? (exporter as OutcomeReportingSpanExporter)
+    : undefined;
 }
 
 export const BOUNDED_SPAN_ATTRS = [

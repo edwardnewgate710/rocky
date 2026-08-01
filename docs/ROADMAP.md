@@ -559,6 +559,7 @@ OpenTelemetry, Prometheus, Grafana, alerting, SLOs, runbooks, chaos tests.
 - **Increment 4 complete (ADR-0047):** `BatchSpanProcessor` decorator buffering finished spans and exporting in batches (`maxQueueSize = 2048`, `maxExportBatchSize = 512`, 5s flush delay), `Scheduler` seam with unref'd `intervalScheduler` default, bounded queue with oldest-drop policy and drop counter, wrapping OTLP exporter in bootstrap.
 - **Increment 5 complete (ADR-0048):** Span-export pipeline self-instrumentation (`BatchSpanProcessor` emits `span_export_received_total`, `span_export_dropped_total`, `span_export_exported_total`, and `span_export_batches_total` counters to `InMemoryMetrics` for scraping at `GET /v1/metrics`).
 - **Increment 6 complete (ADR-0062):** Gateway tracing and reachable OTLP export (`gateway.command` and `gateway.forward` span emission, cross-node `traceparent` context propagation, bounded-attribute PII enforcement, Helm chart `tracing` configuration block, and snapshot test coverage).
+- **Increment 7 complete (ADR-0063):** Span-export failure visibility + bounded retry (`SpanExportOutcome` async outcome reporting, `FetchSpanTransport` HTTP 4xx/5xx status and network error classification, `span_export_failed_total` counter, `span_export_exported_total` confirmed delivery counting, bounded retries via `Scheduler` seam, and non-blocking synchronous `shutdown()`).
 
 ## 🚧 Milestone 14 — Deployment & scale
 

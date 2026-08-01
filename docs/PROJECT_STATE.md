@@ -4,7 +4,20 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-01 — M13 Observability Increment 6: gateway tracing + reachable OTLP export (ADR-0062)._
+_Last updated: 2026-08-01 — M13 Observability Increment 7: span-export failure visibility + bounded retry (ADR-0063)._
+
+## M13 Observability Increment 7 — Span-Export Failure Visibility + Bounded Retry (ADR-0063)
+
+Span-export failure visibility, HTTP status code classification, honest delivery metrics, and bounded retries in `@chess-platform/api` (ADR-0063):
+- **Async Outcome Reporting (`SpanExportOutcome`)**: `SpanTransport.send(payload)` now returns `Promise<SpanExportOutcome>` (`{ ok: true }` or `{ ok: false, retryable: boolean, reason: string }`). Export callers do not await `send()`, preserving the non-blocking `export(spans): void` contract. `send()` contains all rejections and synchronous throws, resolving to `{ ok: false, retryable: true, reason: 'network' }`.
+- **`FetchSpanTransport` Classification**: `FetchSpanTransport` classifies network rejections and synchronous throws as retryable (`reason: 'network'`). On `response.ok === false`, HTTP 408, 429, and 5xx are classified as retryable (`reason: 'http_<status>'`), while all other 4xx status codes (e.g. 401, 413) are classified as non-retryable. `response.ok === true` resolves to `{ ok: true }`.
+- **`OtlpJsonSpanExporter` Outcome Callback**: Added optional `onOutcome?: (outcome: SpanExportOutcome, spanCount: number, spans?: readonly SpanData[]) => void` callback to `OtlpJsonSpanExporter`. Maps payloads and delegates outcome reporting to `BatchSpanProcessor`.
+- **Honest Metrics (`span_export_exported_total` & `span_export_failed_total`)**: Moved `span_export_exported_total` increment to confirmed delivery receipt (`ok: true`). Added new unlabelled counter `span_export_failed_total` incremented by the span count of a batch whose final attempt failed.
+- **Bounded Retry & Memory Bound**: Bounded retries for retryable failures up to `maxExportRetries` (default 3) attempts scheduled through the existing `Scheduler` seam. Spans awaiting retry count toward `maxQueueSize`; when memory bound is hit, oldest spans (from retrying batches or fresh queue) are evicted, incrementing `span_export_dropped_total`.
+- **Synchronous Non-Blocking `shutdown()`**: `BatchSpanProcessor.shutdown()` cancels pending retry tasks, counts unsent retrying spans as failed in `span_export_failed_total`, force-flushes queued spans, and finishes synchronously without hanging.
+- Detailed in `docs/adr/0063-span-export-failure-visibility.md`.
+
+Prior: _Last updated: 2026-08-01 — M13 Observability Increment 6: gateway tracing + reachable OTLP export (ADR-0062)._
 
 ## M13 Observability Increment 6 — Gateway Tracing + Reachable OTLP Export (ADR-0062)
 

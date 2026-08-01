@@ -5,6 +5,7 @@ import {
   toResourceSpans,
   toOtlpAnyValue,
   OtlpJsonSpanExporter,
+  FetchSpanTransport,
   resolveOtlpTracesEndpoint,
   type SpanTransport,
   type OtlpTracesPayload,
@@ -164,11 +165,12 @@ test('resolveOtlpTracesEndpoint: signal-specific verbatim, generic base appends 
   assert.equal(resolveOtlpTracesEndpoint(undefined, undefined), undefined);
 });
 
-test('OtlpJsonSpanExporter export calls transport, skips empty array, and swallows transport errors', () => {
+test('OtlpJsonSpanExporter export calls transport, skips empty array, and swallows transport errors', async () => {
   const calls: OtlpTracesPayload[] = [];
   const fakeTransport: SpanTransport = {
-    send(payload) {
+    async send(payload) {
       calls.push(payload);
+      return { ok: true };
     },
   };
 
@@ -195,7 +197,7 @@ test('OtlpJsonSpanExporter export calls transport, skips empty array, and swallo
   assert.equal(calls.length, 1);
   assert.equal(calls[0]!.resourceSpans[0]!.scopeSpans[0]!.spans[0]!.name, 'http.server');
 
-  // Throwing transport is swallowed
+  // A transport that throws synchronously is contained and reported, not propagated.
   const throwingTransport: SpanTransport = {
     send() {
       throw new Error('Transport network failure');
@@ -203,4 +205,77 @@ test('OtlpJsonSpanExporter export calls transport, skips empty array, and swallo
   };
   const throwingExporter = new OtlpJsonSpanExporter(throwingTransport, resourceInfo);
   assert.doesNotThrow(() => throwingExporter.export([span]));
+  assert.deepEqual(await throwingExporter.exportWithOutcome([span]), {
+    ok: false,
+    retryable: true,
+    reason: 'transport_rejected',
+  });
+});
+
+test('OtlpJsonSpanExporter contains transport whose send() returns a rejected promise', async () => {
+  const rejectingTransport: SpanTransport = {
+    send() {
+      return Promise.reject(new Error('Async connection failed'));
+    },
+  };
+
+  const exporter = new OtlpJsonSpanExporter(rejectingTransport, resourceInfo);
+
+  const span: SpanData = {
+    name: 'test.span',
+    traceId: '11111111111111111111111111111111',
+    spanId: '2222222222222222',
+    parentId: null,
+    kind: 'internal',
+    status: 'ok',
+    startTimeMs: 1000,
+    durationMs: 10,
+    attributes: {},
+  };
+
+  // export() must not surface the rejection as an unhandled rejection...
+  assert.doesNotThrow(() => exporter.export([span]));
+  // ...and the outcome-reporting form turns it into a retryable failure.
+  assert.deepEqual(await exporter.exportWithOutcome([span]), {
+    ok: false,
+    retryable: true,
+    reason: 'transport_rejected',
+  });
+});
+
+test('FetchSpanTransport classifies HTTP status codes and network throws correctly', async () => {
+  const dummyPayload: OtlpTracesPayload = { resourceSpans: [] };
+
+  const makeTransport = (mockResponse: { ok: boolean; status: number } | Error) => {
+    const fakeFetch: typeof fetch = async () => {
+      if (mockResponse instanceof Error) throw mockResponse;
+      return mockResponse as Response;
+    };
+    return new FetchSpanTransport('http://localhost:4318/v1/traces', fakeFetch);
+  };
+
+  // 200 -> ok
+  const res200 = await makeTransport({ ok: true, status: 200 }).send(dummyPayload);
+  assert.deepEqual(res200, { ok: true });
+
+  // 500 / 429 / 408 -> retryable
+  const res500 = await makeTransport({ ok: false, status: 500 }).send(dummyPayload);
+  assert.deepEqual(res500, { ok: false, retryable: true, reason: 'http_500' });
+
+  const res429 = await makeTransport({ ok: false, status: 429 }).send(dummyPayload);
+  assert.deepEqual(res429, { ok: false, retryable: true, reason: 'http_429' });
+
+  const res408 = await makeTransport({ ok: false, status: 408 }).send(dummyPayload);
+  assert.deepEqual(res408, { ok: false, retryable: true, reason: 'http_408' });
+
+  // 401 / 413 -> non-retryable
+  const res401 = await makeTransport({ ok: false, status: 401 }).send(dummyPayload);
+  assert.deepEqual(res401, { ok: false, retryable: false, reason: 'http_401' });
+
+  const res413 = await makeTransport({ ok: false, status: 413 }).send(dummyPayload);
+  assert.deepEqual(res413, { ok: false, retryable: false, reason: 'http_413' });
+
+  // thrown / rejected -> retryable network error
+  const resErr = await makeTransport(new Error('ECONNREFUSED')).send(dummyPayload);
+  assert.deepEqual(resErr, { ok: false, retryable: true, reason: 'network' });
 });

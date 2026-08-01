@@ -30,9 +30,9 @@ This increment makes the span export pipeline self-observing by instrumenting `B
    - `exportBatch(n)`: Increments `span_export_exported_total` by `batch.length` and `span_export_batches_total` by `1` when a batch is dispatched downstream.
    - `span_export_dropped_total` and the existing `droppedSpans` getter stay in exact agreement.
 
-4. **Export Dispatched Meaning & Deferred Failure Metrics.**
-   - `span_export_exported_total` represents spans handed/dispatched to the downstream exporter. Because the synchronous `void` `export(spans)` contract does not return delivery receipts or promises, it cannot confirm downstream collector receipt.
-   - A dedicated export-FAILURE metric and retries remain deferred until the async-exporter increment.
+4. **Export Dispatched Meaning & Failure Metrics.**
+   - In this increment `span_export_exported_total` represented spans handed/dispatched to downstream.
+   - Confirmed delivery counting (`span_export_exported_total` on success only), failure visibility (`span_export_failed_total`), and retries were implemented in ADR-0063.
 
 5. **Zero Overhead Default.**
    - When `options.metrics` is absent, counter fields remain undefined and increments are short-circuited via optional chaining (`?.inc(...)`). The no-metrics path is zero-overhead and behaviorally identical to Increment 4.

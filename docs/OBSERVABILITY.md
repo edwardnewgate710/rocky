@@ -50,7 +50,8 @@ Metrics are exposed in standard Prometheus text format (`v0.0.4`) at `GET /v1/me
 When OTLP export is enabled, `BatchSpanProcessor` self-instruments by emitting unlabelled Prometheus counters to the metrics registry:
 - `span_export_received_total` (counter): Spans accepted into the pipeline.
 - `span_export_dropped_total` (counter): Spans dropped due to queue overflow eviction or post-shutdown exports.
-- `span_export_exported_total` (counter): Spans handed to the downstream exporter (in batches).
+- `span_export_exported_total` (counter): Spans confirmed successfully exported to the collector (incremented on delivery receipt).
+- `span_export_failed_total` (counter): Spans whose final export attempt failed (unlabelled, ADR-0063).
 - `span_export_batches_total` (counter): Batches dispatched to the downstream exporter.
 
 ### Cardinality Discipline
@@ -78,13 +79,13 @@ When OTLP export is enabled, `BatchSpanProcessor` self-instruments by emitting u
 - **Introspection/Testing**: `InMemorySpanRecorder` provides a bounded ring-buffer for capturing spans in tests.
 
 ### Span Export (`SpanExporter` Seam & OTLP/JSON Exporter)
-- **`SpanExporter` Seam**: `SpanExporter` defines `export(spans: readonly SpanData[]): void`. Export is best-effort and non-blocking — implementations contain their own errors and never throw into the request path.
+- **`SpanExporter` Seam**: `SpanExporter` defines `export(spans: readonly SpanData[]): void`. Export is best-effort and non-blocking — implementations contain their own errors and never throw into the request path. `SpanTransport.send` returns `Promise<SpanExportOutcome>` (`ok: true` or `ok: false, retryable, reason`) without blocking callers.
 - **Exporters**:
   - `LoggingSpanExporter`: Default. Emits structured `info` log records (`msg: "span"`) with whitelisted attributes (`http.method`, `http.route`, `http.status_code`, `cmd.kind`, `cmd.outcome`, `cmd.error_code`, `forward.outcome`, `forward.timeout`).
-  - `OtlpJsonSpanExporter`: Serializes spans into standard OTLP/JSON trace payloads (`OtlpTracesPayload`) with nanosecond BigInt timestamps, mapped enums, and typed attribute values (`stringValue`, `intValue`, `boolValue`, `doubleValue`), sending via an injectable `SpanTransport`.
+  - `OtlpJsonSpanExporter`: Serializes spans into standard OTLP/JSON trace payloads (`OtlpTracesPayload`) with nanosecond BigInt timestamps, mapped enums, and typed attribute values (`stringValue`, `intValue`, `boolValue`, `doubleValue`), sending via an injectable `SpanTransport`. Passes outcomes via `onOutcome`.
   - `MultiSpanExporter`: Composite exporter that fans out span batches to multiple child exporters, containing individual exporter failures so one failing transport does not block others.
 - **OTLP Endpoint Gate**: Configured via `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (used verbatim) or the generic `OTEL_EXPORTER_OTLP_ENDPOINT` (a base URL onto which `/v1/traces` is appended per the OTLP/HTTP spec). When either resolves, production bootstrap in both `api` and `gateway` combines `LoggingSpanExporter` and the (batched) `OtlpJsonSpanExporter` via `MultiSpanExporter`. When neither is set, `LoggingSpanExporter` is used exclusively.
-- **Span Processor (`BatchSpanProcessor`)**: OTLP span export is batched by `BatchSpanProcessor` (decorating `OtlpJsonSpanExporter` in production `bootstrap.ts` and `serve.ts`). Defaults to `maxQueueSize = 2048`, `maxExportBatchSize = 512`, and periodic flush delay `scheduledDelayMillis = 5000` via an unref'd `intervalScheduler`. Logging export stays direct and per-span. Queue overflow drops oldest spans and increments `droppedSpans`. `shutdown()` drains remaining queue contents and cancels periodic tasks. The processor is self-instrumented: when `metrics` is provided, it emits unlabelled Prometheus counters (`span_export_received_total`, `span_export_dropped_total`, `span_export_exported_total`, `span_export_batches_total`) for scraping at metrics endpoints.
+- **Span Processor (`BatchSpanProcessor`)**: OTLP span export is batched by `BatchSpanProcessor` (decorating `OtlpJsonSpanExporter` in production `bootstrap.ts` and `serve.ts`). Defaults to `maxQueueSize = 2048`, `maxExportBatchSize = 512`, periodic flush delay `scheduledDelayMillis = 5000` via an unref'd `intervalScheduler`, and `maxExportRetries = 3`. Retryable failures (network errors, HTTP 408/429/5xx) are retried up to 3 times through the `Scheduler` seam while respecting `maxQueueSize`. Non-retryable 4xx errors fail immediately. Logging export stays direct and per-span. Queue overflow drops oldest spans (from retrying batches or fresh queue) and increments `droppedSpans`. `shutdown()` cancels pending retries, marks unsent retries as failed, drains remaining queue contents, and finishes synchronously without hanging. The processor emits unlabelled Prometheus counters (`span_export_received_total`, `span_export_dropped_total`, `span_export_exported_total`, `span_export_failed_total`, `span_export_batches_total`) at metrics endpoints.
 - **Helm Configuration**: Helm values provide `tracing.enabled`, `tracing.otlpEndpoint`, `tracing.otlpTracesEndpoint`, and `tracing.samplerArg` to render OTEL variables onto API and Gateway Deployments.
 
 

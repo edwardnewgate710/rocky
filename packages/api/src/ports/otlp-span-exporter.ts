@@ -6,7 +6,7 @@
  */
 
 import type { SpanData, SpanAttributeValue } from './tracer';
-import type { SpanExporter } from './span-export';
+import type { OutcomeReportingSpanExporter } from './span-export';
 
 export type OtlpAnyValue =
   | { stringValue: string }
@@ -55,8 +55,18 @@ export interface OtlpResourceInfo {
   scopeVersion: string;
 }
 
+export type SpanExportOutcome =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly retryable: boolean; readonly reason: string };
+
 export interface SpanTransport {
-  send(payload: OtlpTracesPayload): void;
+  /**
+   * Resolves with the delivery outcome and MUST NOT reject.
+   *
+   * Returning a promise does NOT make export blocking: nothing on the request path awaits it.
+   * `OtlpJsonSpanExporter.export` stays `void` and simply attaches a handler.
+   */
+  send(payload: OtlpTracesPayload): Promise<SpanExportOutcome>;
 }
 
 export function toOtlpAnyValue(v: SpanAttributeValue): OtlpAnyValue {
@@ -158,42 +168,68 @@ export function resolveOtlpTracesEndpoint(
   return undefined;
 }
 
-export class OtlpJsonSpanExporter implements SpanExporter {
+export class OtlpJsonSpanExporter implements OutcomeReportingSpanExporter {
   constructor(
     private readonly transport: SpanTransport,
     private readonly resource: OtlpResourceInfo,
   ) {}
 
+  /** Fire-and-forget. Callers wanting to know whether delivery worked use {@link exportWithOutcome}. */
   export(spans: readonly SpanData[]): void {
-    if (spans.length === 0) return;
+    void this.exportWithOutcome(spans);
+  }
+
+  async exportWithOutcome(spans: readonly SpanData[]): Promise<SpanExportOutcome> {
+    if (spans.length === 0) return { ok: true };
+
+    let payload: OtlpTracesPayload;
     try {
-      this.transport.send(toResourceSpans(spans, this.resource));
+      payload = toResourceSpans(spans, this.resource);
     } catch {
-      /* swallow — export is best-effort */
+      // Mapping the same spans will fail the same way every time, so this is permanent — retrying
+      // it would burn attempts and hide the real fault behind a network-shaped reason.
+      return { ok: false, retryable: false, reason: 'serialize' };
+    }
+
+    try {
+      return await this.transport.send(payload);
+    } catch {
+      // The contract says send() must not reject; contain a transport that breaks it rather than
+      // letting it surface as an unhandled rejection.
+      return { ok: false, retryable: true, reason: 'transport_rejected' };
     }
   }
 }
 
 /**
  * Thin boundary adapter that POSTs serialized OTLP/JSON trace payloads to a URL.
- * Fire-and-forget; never awaited, never throws.
+ * Fire-and-forget; send() resolves with outcome and MUST NOT reject.
  */
 export class FetchSpanTransport implements SpanTransport {
-  constructor(private readonly endpoint: string) {}
+  constructor(
+    private readonly endpoint: string,
+    private readonly fetchImpl: typeof fetch = fetch,
+  ) {}
 
-  send(payload: OtlpTracesPayload): void {
+  async send(payload: OtlpTracesPayload): Promise<SpanExportOutcome> {
     try {
-      fetch(this.endpoint, {
+      const response = await this.fetchImpl(this.endpoint, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
         },
         body: JSON.stringify(payload),
-      }).catch(() => {
-        /* swallow network/http errors — best-effort */
       });
+
+      if (!response.ok) {
+        const status = response.status;
+        const retryable = status === 408 || status === 429 || status >= 500;
+        return { ok: false, retryable, reason: `http_${status}` };
+      }
+
+      return { ok: true };
     } catch {
-      /* swallow synchronous errors — best-effort */
+      return { ok: false, retryable: true, reason: 'network' };
     }
   }
 }

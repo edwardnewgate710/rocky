@@ -39,8 +39,8 @@ This increment introduces `BatchSpanProcessor`, a `SpanExporter` decorator that 
    - In production `bootstrap.ts`, when `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is configured, `BatchSpanProcessor` wraps **only** `OtlpJsonSpanExporter` inside `MultiSpanExporter`.
    - `LoggingSpanExporter` remains direct and unbatched, as per-span log records are cheap and immediate.
 
-6. **Deferred Retries & Lifecycle Scope.**
-   - **Retry remains deferred:** The synchronous `void` `export(spans)` contract cannot report export failure without async/promise refactoring.
+6. **Retries & Lifecycle Scope.**
+   - Retries were deferred in this increment and implemented in ADR-0063 via `SpanExportOutcome` and `SpanTransport.send` async outcome reporting.
    - Formal service shutdown drain hooks for long-running services remain a follow-up; the unref'd periodic timer bounds loss window meanwhile.
 
 ## Consequences

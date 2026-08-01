@@ -8,6 +8,7 @@ import {
 } from '../src/ports/batch-span-processor';
 import { spanSinkFromExporter } from '../src/ports/span-export';
 import { InMemoryMetrics } from '../src/ports/metrics';
+import { OtlpJsonSpanExporter, type SpanTransport } from '../src/ports/otlp-span-exporter';
 
 function makeManualScheduler() {
   let scheduled: (() => void) | null = null;
@@ -415,3 +416,318 @@ test('BatchSpanProcessor operates without throwing when no metrics registry is p
   });
 });
 
+
+// --- ADR-0063: export failure visibility + bounded retry --------------------
+
+/**
+ * The scheduler helper above keeps only the LAST scheduled callback, which is fine for the single
+ * periodic flush but silently loses retry tasks. This one keeps every pending task so retries can
+ * be run deliberately.
+ */
+function makeQueueingScheduler() {
+  const tasks: (() => void)[] = [];
+  const scheduler: Scheduler = {
+    schedule(cb) {
+      tasks.push(cb);
+      return {
+        cancel() {
+          const i = tasks.indexOf(cb);
+          if (i !== -1) tasks.splice(i, 1);
+        },
+      };
+    },
+  };
+  // Runs every task queued at call time; tasks queued BY those tasks wait for the next call.
+  const runPending = (): void => {
+    const due = tasks.splice(0, tasks.length);
+    for (const t of due) t();
+  };
+  return { scheduler, runPending, pendingCount: () => tasks.length };
+}
+
+/** Lets the promise chain inside sendBatch settle before assertions run. */
+const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
+function makeOtlpExporter(transport: SpanTransport): OtlpJsonSpanExporter {
+  return new OtlpJsonSpanExporter(transport, {
+    serviceName: 'api',
+    scopeName: 'test',
+    scopeVersion: '0.1.0',
+  });
+}
+
+function counterValue(metrics: InMemoryMetrics, name: string): number {
+  for (const line of metrics.render().split('\n')) {
+    const [metric, value] = line.trim().split(' ');
+    if (metric === name) return Number(value);
+  }
+  return 0;
+}
+
+test('a retryable failure is retried up to the cap, then counted failed', async () => {
+  const { scheduler, runPending } = makeQueueingScheduler();
+  const metrics = new InMemoryMetrics();
+  let attempts = 0;
+  const exporter = makeOtlpExporter({
+    async send() {
+      attempts += 1;
+      return { ok: false as const, retryable: true, reason: 'http_503' };
+    },
+  });
+
+  const processor = new BatchSpanProcessor(exporter, {
+    maxExportBatchSize: 1,
+    maxExportRetries: 3,
+    scheduler,
+    metrics,
+  });
+
+  processor.export([makeSpan('s1')]);
+  await flush();
+  assert.equal(attempts, 1, 'the first attempt is immediate');
+
+  for (let i = 0; i < 4; i++) {
+    runPending();
+    await flush();
+  }
+
+  assert.equal(attempts, 3, 'attempts must stop at maxExportRetries');
+  assert.equal(counterValue(metrics, 'span_export_failed_total'), 1);
+  assert.equal(counterValue(metrics, 'span_export_exported_total'), 0);
+});
+
+test('success on a retry counts exported once and never counts failed', async () => {
+  const { scheduler, runPending } = makeQueueingScheduler();
+  const metrics = new InMemoryMetrics();
+  let attempts = 0;
+  const exporter = makeOtlpExporter({
+    async send() {
+      attempts += 1;
+      return attempts < 2
+        ? { ok: false as const, retryable: true, reason: 'http_500' }
+        : { ok: true as const };
+    },
+  });
+
+  const processor = new BatchSpanProcessor(exporter, {
+    maxExportBatchSize: 1,
+    maxExportRetries: 3,
+    scheduler,
+    metrics,
+  });
+
+  processor.export([makeSpan('s1')]);
+  await flush();
+  runPending();
+  await flush();
+
+  assert.equal(attempts, 2);
+  assert.equal(
+    counterValue(metrics, 'span_export_exported_total'),
+    1,
+    'counted once for the batch, not once per attempt',
+  );
+  assert.equal(counterValue(metrics, 'span_export_failed_total'), 0);
+});
+
+test('a non-retryable failure (HTTP 401) is not retried and is counted failed at once', async () => {
+  const { scheduler, runPending, pendingCount } = makeQueueingScheduler();
+  const metrics = new InMemoryMetrics();
+  let attempts = 0;
+  const exporter = makeOtlpExporter({
+    async send() {
+      attempts += 1;
+      return { ok: false as const, retryable: false, reason: 'http_401' };
+    },
+  });
+
+  const processor = new BatchSpanProcessor(exporter, {
+    maxExportBatchSize: 1,
+    maxExportRetries: 3,
+    scheduler,
+    metrics,
+  });
+
+  const before = pendingCount();
+  processor.export([makeSpan('s1')]);
+  await flush();
+
+  assert.equal(attempts, 1);
+  assert.equal(pendingCount(), before, 'no retry may be scheduled');
+  assert.equal(counterValue(metrics, 'span_export_failed_total'), 1);
+
+  runPending();
+  await flush();
+  assert.equal(attempts, 1, 'still no retry after the scheduler runs');
+});
+
+// The regression this whole increment exists for: the counter used to be incremented before the
+// send even happened, so a collector rejecting everything looked perfectly healthy.
+test('span_export_exported_total does not move while the transport is failing', async () => {
+  const { scheduler } = makeQueueingScheduler();
+  const metrics = new InMemoryMetrics();
+  const exporter = makeOtlpExporter({
+    async send() {
+      return { ok: false as const, retryable: false, reason: 'http_413' };
+    },
+  });
+
+  const processor = new BatchSpanProcessor(exporter, {
+    maxExportBatchSize: 2,
+    maxExportRetries: 1,
+    scheduler,
+    metrics,
+  });
+
+  processor.export([makeSpan('s1'), makeSpan('s2')]);
+  await flush();
+
+  assert.equal(counterValue(metrics, 'span_export_exported_total'), 0);
+  assert.equal(counterValue(metrics, 'span_export_failed_total'), 2);
+});
+
+test('an exporter whose promise rejects is treated as a failure, not an unhandled rejection', async () => {
+  const { scheduler } = makeQueueingScheduler();
+  const metrics = new InMemoryMetrics();
+  const rejecting = {
+    export(): void {
+      /* no-op */
+    },
+    exportWithOutcome(): Promise<never> {
+      return Promise.reject(new Error('badly behaved exporter'));
+    },
+  };
+
+  const processor = new BatchSpanProcessor(rejecting, {
+    maxExportBatchSize: 1,
+    maxExportRetries: 1,
+    scheduler,
+    metrics,
+  });
+
+  assert.doesNotThrow(() => processor.export([makeSpan('s1')]));
+  await flush();
+
+  assert.equal(counterValue(metrics, 'span_export_failed_total'), 1);
+  assert.equal(counterValue(metrics, 'span_export_exported_total'), 0);
+});
+
+test('shutdown during a pending retry neither hangs nor loses the failure count', async () => {
+  const { scheduler } = makeQueueingScheduler();
+  const metrics = new InMemoryMetrics();
+  const exporter = makeOtlpExporter({
+    async send() {
+      return { ok: false as const, retryable: true, reason: 'http_503' };
+    },
+  });
+
+  const processor = new BatchSpanProcessor(exporter, {
+    maxExportBatchSize: 1,
+    maxExportRetries: 5,
+    scheduler,
+    metrics,
+  });
+
+  processor.export([makeSpan('s1')]);
+  await flush();
+
+  assert.doesNotThrow(() => processor.shutdown());
+  assert.equal(
+    counterValue(metrics, 'span_export_failed_total'),
+    1,
+    'spans still awaiting retry are counted failed',
+  );
+  assert.doesNotThrow(() => processor.shutdown(), 'shutdown stays idempotent');
+});
+
+test('spans awaiting retry still count against maxQueueSize', async () => {
+  const { scheduler } = makeQueueingScheduler();
+  const metrics = new InMemoryMetrics();
+  const exporter = makeOtlpExporter({
+    async send() {
+      return { ok: false as const, retryable: true, reason: 'http_503' };
+    },
+  });
+
+  const processor = new BatchSpanProcessor(exporter, {
+    maxQueueSize: 2,
+    maxExportBatchSize: 1,
+    maxExportRetries: 5,
+    scheduler,
+    metrics,
+  });
+
+  // Each export fails and parks its span in the retry buffer; the bound must still hold.
+  for (const name of ['s1', 's2', 's3', 's4']) {
+    processor.export([makeSpan(name)]);
+    await flush();
+  }
+
+  assert.ok(
+    processor.droppedSpans > 0,
+    'exceeding the bound with retrying batches must drop, not grow without limit',
+  );
+  assert.equal(
+    counterValue(metrics, 'span_export_dropped_total'),
+    processor.droppedSpans,
+    'the dropped counter must agree with droppedSpans',
+  );
+});
+
+// Regression (Qodo, PR #57): retries were scheduled through the Scheduler seam, whose default
+// implementation is setInterval. A retry task therefore fired FOREVER, resending the same batch
+// every interval past maxExportRetries. The queueing fake above splices each task out when it runs,
+// making every task one-shot by construction — it could never have caught this. This fake repeats,
+// like the real one.
+function makeRepeatingScheduler() {
+  const tasks = new Set<() => void>();
+  const scheduler: Scheduler = {
+    schedule(cb) {
+      tasks.add(cb);
+      return {
+        cancel() {
+          tasks.delete(cb);
+        },
+      };
+    },
+  };
+  // Fires every LIVE task, and keeps firing it on later ticks unless it cancelled itself.
+  const tick = (): void => {
+    for (const t of [...tasks]) t();
+  };
+  return { scheduler, tick, liveCount: () => tasks.size };
+}
+
+test('retries stop at the cap even when the scheduler repeats (setInterval-style)', async () => {
+  const { scheduler, tick } = makeRepeatingScheduler();
+  const metrics = new InMemoryMetrics();
+  let attempts = 0;
+  const exporter = makeOtlpExporter({
+    async send() {
+      attempts += 1;
+      return { ok: false as const, retryable: true, reason: 'http_503' };
+    },
+  });
+
+  const processor = new BatchSpanProcessor(exporter, {
+    maxExportBatchSize: 1,
+    maxExportRetries: 2,
+    scheduler,
+    metrics,
+  });
+
+  processor.export([makeSpan('s1')]);
+  await flush();
+  assert.equal(attempts, 1);
+
+  // Tick far more times than the cap. With a repeating scheduler and no self-cancel, the retry
+  // task would resend on every one of these.
+  for (let i = 0; i < 10; i++) {
+    tick();
+    await flush();
+  }
+
+  assert.equal(attempts, 2, 'a repeating scheduler must not resend past maxExportRetries');
+  assert.equal(counterValue(metrics, 'span_export_failed_total'), 1);
+  assert.equal(counterValue(metrics, 'span_export_exported_total'), 0);
+});
