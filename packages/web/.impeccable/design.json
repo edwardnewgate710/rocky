@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-07-15T00:00:00Z",
+  "generatedAt": "2026-08-02T00:00:00Z",
   "title": "Design System: Gambit",
   "extensions": {
     "colorMeta": {
@@ -11,8 +11,15 @@
       "board-light": { "role": "secondary", "displayName": "Board Light", "canonical": "oklch(88% 0.045 80)", "tonalRamp": ["oklch(30% 0.045 80)", "oklch(42% 0.05 80)", "oklch(54% 0.052 80)", "oklch(66% 0.05 80)", "oklch(76% 0.048 80)", "oklch(84% 0.046 80)", "oklch(88% 0.045 80)", "oklch(94% 0.03 80)"] },
       "board-dark": { "role": "secondary", "displayName": "Board Dark", "canonical": "oklch(62% 0.07 55)", "tonalRamp": ["oklch(22% 0.05 55)", "oklch(32% 0.06 55)", "oklch(42% 0.065 55)", "oklch(52% 0.07 55)", "oklch(62% 0.07 55)", "oklch(72% 0.065 55)", "oklch(82% 0.05 55)", "oklch(90% 0.035 55)"] },
       "teal-accent": { "role": "primary", "displayName": "Grandmaster Teal", "canonical": "oklch(65% 0.11 192)", "tonalRamp": ["oklch(20% 0.06 192)", "oklch(30% 0.08 192)", "oklch(40% 0.095 192)", "oklch(50% 0.105 192)", "oklch(58% 0.11 192)", "oklch(65% 0.11 192)", "oklch(76% 0.09 192)", "oklch(88% 0.05 192)"] },
+      "teal-accent-deep": { "role": "primary", "displayName": "Grandmaster Teal Deep", "canonical": "oklch(52% 0.09 192)", "tonalRamp": ["oklch(18% 0.05 192)", "oklch(26% 0.07 192)", "oklch(36% 0.085 192)", "oklch(44% 0.09 192)", "oklch(52% 0.09 192)", "oklch(63% 0.1 192)", "oklch(75% 0.085 192)", "oklch(88% 0.05 192)"] },
+      "selection-edge": { "role": "primary", "displayName": "Selection Edge", "canonical": "oklch(18% 0.006 60)", "tonalRamp": ["oklch(10% 0.005 60)", "oklch(18% 0.006 60)", "oklch(28% 0.007 60)", "oklch(38% 0.008 60)", "oklch(50% 0.008 60)", "oklch(64% 0.008 60)", "oklch(78% 0.007 60)", "oklch(92% 0.005 60)"] },
       "ember": { "role": "tertiary", "displayName": "Ember", "canonical": "oklch(62% 0.19 25)", "tonalRamp": ["oklch(22% 0.1 25)", "oklch(32% 0.14 25)", "oklch(42% 0.17 25)", "oklch(52% 0.185 25)", "oklch(62% 0.19 25)", "oklch(72% 0.15 25)", "oklch(82% 0.1 25)", "oklch(90% 0.05 25)"] },
-      "ember-deep": { "role": "tertiary", "displayName": "Ember Deep", "canonical": "oklch(32% 0.16 25)", "tonalRamp": ["oklch(15% 0.09 25)", "oklch(22% 0.12 25)", "oklch(32% 0.16 25)", "oklch(42% 0.17 25)", "oklch(52% 0.18 25)", "oklch(62% 0.19 25)", "oklch(76% 0.12 25)", "oklch(88% 0.06 25)"] }
+      "ember-deep": { "role": "tertiary", "displayName": "Ember Deep", "canonical": "oklch(32% 0.16 25)", "tonalRamp": ["oklch(15% 0.09 25)", "oklch(22% 0.12 25)", "oklch(32% 0.16 25)", "oklch(42% 0.17 25)", "oklch(52% 0.18 25)", "oklch(62% 0.19 25)", "oklch(76% 0.12 25)", "oklch(88% 0.06 25)"] },
+      "hint-green": { "role": "tertiary", "displayName": "Hint Green", "canonical": "rgba(20, 85, 30, 0.5)" },
+      "last-move": { "role": "tertiary", "displayName": "Last Move", "canonical": "rgba(155, 199, 0, 0.41)" },
+      "premove-blue": { "role": "tertiary", "displayName": "Premove Blue", "canonical": "rgba(20, 30, 200, 0.4)" },
+      "panel-tint": { "role": "neutral", "displayName": "Panel Tint", "canonical": "rgba(255, 255, 255, 0.04)" },
+      "panel-tint-strong": { "role": "neutral", "displayName": "Panel Tint Strong", "canonical": "rgba(255, 255, 255, 0.06)" }
     },
     "typographyMeta": {
       "title": { "displayName": "Title", "purpose": "Wordmark and section headings only — the largest text in the system." },
@@ -22,9 +29,14 @@
       "numeric": { "displayName": "Numeric", "purpose": "Clock time only — tabular-nums, the one place weight/size step up for legibility under time pressure." }
     },
     "shadows": [
-      { "name": "interactive-lift", "value": "0 2px 8px rgba(0, 0, 0, 0.28)", "purpose": "Hover/focus/active feedback on buttons and the promotion picker only — never on a resting element." }
+      { "name": "interactive-lift", "value": "0 2px 8px rgba(0, 0, 0, 0.28)", "purpose": "Hover/focus/active feedback on buttons and the promotion picker only — never on a resting element. Exposed as --lift." }
     ],
-    "motion": [],
+    "motion": [
+      { "name": "state-fast", "value": "120ms ease", "purpose": "Background and border-color changes on inputs and small controls." },
+      { "name": "state-lift", "value": "160ms ease", "purpose": "Paired background + box-shadow transition when a button takes the Interactive Lift on hover/focus." },
+      { "name": "text-state", "value": "150ms ease", "purpose": "Color-only transitions, such as navigation link opacity/color on hover." },
+      { "name": "reduced-motion", "value": "transition: none", "purpose": "Every transition above is disabled under @media (prefers-reduced-motion: reduce)." }
+    ],
     "breakpoints": [
       { "name": "game-two-col", "value": "720px" }
     ]
@@ -34,49 +46,57 @@
       "name": "Button",
       "kind": "button",
       "refersTo": "button",
-      "description": "The single button style used everywhere: sign in, register, create/cancel seek, flip board, theme toggle, sign out.",
+      "description": "The single button style used everywhere: sign in, register, create/cancel seek, flip board, theme toggle, sign out. There is no separate primary variant — hierarchy comes from placement and copy.",
       "html": "<button class=\"ds-btn\">Create seek</button>",
-      "css": ".ds-btn { font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid currentColor; background: transparent; color: #bababa; cursor: pointer; transition: background 0.15s ease-out, box-shadow 0.15s ease-out; } .ds-btn:hover { background: #ffffff0a; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28); } .ds-btn:focus-visible { outline: 3px solid #20b2aa; } .ds-btn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }"
+      "css": ".ds-btn { font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid currentColor; background: transparent; color: var(--fg, #bababa); cursor: pointer; transition: background 160ms ease, box-shadow 160ms ease; } .ds-btn:hover { background: var(--panel, rgba(255,255,255,0.04)); box-shadow: var(--lift, 0 2px 8px rgba(0,0,0,0.28)); } .ds-btn:focus-visible { outline: 3px solid var(--sel, #20b2aa); } .ds-btn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; } @media (prefers-reduced-motion: reduce) { .ds-btn { transition: none; } }"
     },
     {
       "name": "List Row",
       "kind": "custom",
       "refersTo": "panel-row",
-      "description": "Shared row treatment for seek list, ratings list, and recent-games list.",
+      "description": "Shared row treatment for seek list, ratings list, and recent-games list. One row style for the whole app.",
       "html": "<div class=\"ds-row\"><span>Blitz 5+3 · 1450–1550</span><button class=\"ds-btn ds-row-cancel\">Cancel</button></div>",
-      "css": ".ds-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-radius: 6px; background: #ffffff0a; font-size: 0.875rem; color: #bababa; } .ds-row-cancel { font-size: 0.8rem; padding: 2px 10px; }"
+      "css": ".ds-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-radius: 6px; background: var(--panel, rgba(255,255,255,0.04)); font-size: 0.875rem; color: var(--fg, #bababa); } .ds-row-cancel { font-size: 0.8rem; padding: 2px 10px; }"
     },
     {
       "name": "Clock",
       "kind": "custom",
       "refersTo": "clock",
-      "description": "Dual-side chess clock; active side renders in Grandmaster Teal.",
+      "description": "Dual-side chess clock; the side to move renders in the selection accent, reinforcing 'this is live right now' as one consistent meaning.",
       "html": "<div class=\"ds-clock\"><div class=\"ds-clock-side ds-clock-active\"><span class=\"ds-clock-label\">White</span><span class=\"ds-clock-time\">10:00</span></div><div class=\"ds-clock-side\"><span class=\"ds-clock-label\">Black</span><span class=\"ds-clock-time\">10:00</span></div></div>",
-      "css": ".ds-clock { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-radius: 6px; background: #ffffff0f; } .ds-clock-side { display: flex; align-items: center; gap: 6px; color: #bababa; } .ds-clock-active { color: #20b2aa; } .ds-clock-label { font-size: 0.75rem; opacity: 0.7; } .ds-clock-time { font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; }"
+      "css": ".ds-clock { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-radius: 6px; background: var(--panel-strong, rgba(255,255,255,0.06)); } .ds-clock-side { display: flex; align-items: center; gap: 6px; color: var(--fg, #bababa); } .ds-clock-active { color: var(--sel, #20b2aa); } .ds-clock-label { font-size: 0.75rem; opacity: 0.7; } .ds-clock-time { font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; }"
     },
     {
       "name": "Board Square (light)",
       "kind": "custom",
       "refersTo": "board-square-light",
-      "description": "Light board square with legal-move hint dot.",
+      "description": "Light board square with a legal-destination hint dot. The dot/ring shape difference is colorblind-relevant, not decorative. --light and --hint are defined once in :root and never remapped per theme, so the square stays the same wood tone in both themes — the token carries that constancy rather than hiding it in a literal.",
       "html": "<div class=\"ds-sq ds-sq-light ds-sq-hint\"></div>",
-      "css": ".ds-sq { position: relative; aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center; } .ds-sq-light { background: #f0d9b5; } .ds-sq-hint::after { content: ''; position: absolute; width: 30%; height: 30%; border-radius: 50%; background: #14551e80; pointer-events: none; }"
+      "css": ".ds-sq { position: relative; aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center; } .ds-sq-light { background: var(--light, #f0d9b5); } .ds-sq-hint::after { content: ''; position: absolute; width: 30%; height: 30%; border-radius: 50%; background: var(--hint, rgba(20, 85, 30, 0.5)); pointer-events: none; }"
     },
     {
       "name": "Board Square (dark, selected)",
       "kind": "custom",
       "refersTo": "board-square-dark",
-      "description": "Dark board square in the selected state.",
+      "description": "Dark board square in the selected state. The ring is two-tone on purpose: board squares are theme-independent and no teal clears WCAG 1.4.11's 3:1 against both, so a 1px ink edge carries the contrast while the teal band carries the meaning.",
       "html": "<div class=\"ds-sq ds-sq-dark ds-sq-selected\"></div>",
-      "css": ".ds-sq-dark { background: #b58863; } .ds-sq-selected { outline: 3px solid #20b2aa; outline-offset: -3px; }"
+      "css": ".ds-sq-dark { background: var(--dark, #b58863); } .ds-sq-selected { outline: 1px solid var(--sel-edge, #161512); outline-offset: -1px; box-shadow: inset 0 0 0 3px var(--sel, #20b2aa); }"
+    },
+    {
+      "name": "Promotion Choice",
+      "kind": "button",
+      "refersTo": "promo-tile",
+      "description": "Promotion picker tile over a scrim. --promo-tile and --promo-tile-ink are defined once in :root and never remapped, so the tile stays near-white in both themes — which is why its focus ring uses Grandmaster Teal Deep: standard Teal is only 2.5:1 here, under the 3:1 floor.",
+      "html": "<button class=\"ds-promo-choice\">♕</button>",
+      "css": ".ds-promo-choice { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; padding: 0; border: none; border-radius: 6px; background: var(--promo-tile, #fafafa); color: var(--promo-tile-ink, #111); font-size: 1.75rem; cursor: pointer; transition: background 160ms ease, box-shadow 160ms ease; } .ds-promo-choice:hover { box-shadow: var(--lift, 0 2px 8px rgba(0,0,0,0.28)); } .ds-promo-choice:focus-visible { outline: 3px solid var(--sel-deep, #17827c); }"
     },
     {
       "name": "Navigation Link",
       "kind": "nav",
       "refersTo": "nav-link",
-      "description": "Topbar navigation link (Lobby / Profile).",
+      "description": "Topbar navigation link (Lobby / Profile). No underline, no pill, no tab background.",
       "html": "<a class=\"ds-nav-link\" href=\"/profile\">Profile</a>",
-      "css": ".ds-nav-link { color: #bababa; text-decoration: none; opacity: 0.8; transition: opacity 0.15s ease-out; } .ds-nav-link:hover { opacity: 1; }"
+      "css": ".ds-nav-link { color: var(--fg, #bababa); text-decoration: none; opacity: 0.8; transition: color 150ms ease, opacity 150ms ease; } .ds-nav-link:hover { opacity: 1; } .ds-nav-link:focus-visible { outline: 3px solid var(--sel, #20b2aa); border-radius: 6px; }"
     }
   ],
   "narrative": {
@@ -98,6 +118,7 @@
     "dos": [
       "Do keep the board as the single largest, highest-contrast element on every screen.",
       "Do use Grandmaster Teal for one meaning only: active/selected/focused.",
+      "Do switch to Grandmaster Teal Deep wherever the accent lands on a light surface — light theme, or the always-near-white promotion tile. This is a legibility variant of the same meaning, not a second accent; light mode remaps --sel to it automatically, so use --sel and it resolves correctly.",
       "Do keep every list on the identical panel-row treatment.",
       "Do reserve shadows for interaction feedback only.",
       "Do keep legal-move/last-move/premove board cues distinguishable by shape as well as color.",
@@ -109,7 +130,8 @@
       "Don't introduce a second accent color for variety.",
       "Don't add a resting-state shadow to any card, panel, or list row.",
       "Don't introduce a new border-radius value.",
-      "Don't reuse the dark-mode Panel Tint unmodified in light mode — it's nearly invisible on Paper; this is an open gap, not a pattern to copy forward."
+      "Don't reuse the dark-mode Panel Tint (a white overlay) unmodified in light mode — a white-on-near-white overlay is close to invisible on Paper. This is handled by the --panel / --panel-strong tokens, which resolve to a white overlay on Ink and an ink-tinted dark overlay on Paper; use those tokens rather than a raw rgba(255,255,255,…) fill.",
+      "Don't drop the ink edge from the board selection ring to 'clean it up' — it is what carries WCAG 1.4.11 contrast against squares no teal can clear."
     ]
   }
 }
