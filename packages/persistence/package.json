@@ -39,6 +39,7 @@
   },
   "dependencies": {
     "@chess-platform/anti-cheat": "file:../anti-cheat",
+    "@chess-platform/community": "file:../community",
     "@chess-platform/game": "file:../game",
     "@chess-platform/messaging": "file:../messaging",
     "@chess-platform/search": "file:../search",

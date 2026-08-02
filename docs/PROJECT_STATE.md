@@ -4,7 +4,7 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-02 — M10 Direct Messaging Increment 3: domain + Postgres + REST API (ADR-0068)._
+_Last updated: 2026-08-02 — M10 Teams & Forums Increment 4: domain + Postgres + REST API (ADR-0069)._
 
 ## M10 Social Graph Increment 1 — Pure Social Graph Domain Core (ADR-0066)
 
@@ -958,6 +958,17 @@ Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
 - **Wiring & OpenAPI**: Added presenters in `presenters.ts` and OpenAPI component schemas in `schemas.ts`. Updated `deps.ts`, `server.ts`, `bootstrap.ts` (with optional dependency 503 fallback), and test `helpers.ts` (`withoutMessaging`). Regenerated `packages/api/openapi.json` with zero drift. Updated workspace dependencies, `package.json` scripts, `test-counts.mjs`, `Dockerfile.api`, `Dockerfile.gateway`, and verified `check:build-order`.
 - **Tests**: Domain unit tests in `packages/messaging/test/messaging.test.ts` (10/10), DB-gated integration tests in `packages/persistence/test/messaging.integration.test.ts` (persistence 30/30 against a real Postgres), and REST API tests in `packages/api/test/messaging-api.test.ts` (api 263/263). Two of them were checked against deliberately broken code before being trusted: the deadlock test fails with Postgres' own `deadlock detected` under the original lock order, and the stranger-probing tests compare a real id against an invented one so they cannot pass by accident.
 - Detailed in `docs/adr/0068-direct-messaging.md`.
+
+## M10 Teams & Forums Increment 4 — Teams/Communities + Forums (ADR-0069)
+- **Domain Core Package (`@chess-platform/community`)**: Created pure TypeScript domain package with zero runtime dependencies. Defined `Team`, `Membership`, `JoinRequest`, `ForumThread`, `ForumPost` interfaces, bounds, role hierarchy (`owner` > `admin` > `member`), and slug normalization. Defined `CommunityRuleError` with codes `not_found`, `not_authorized`, `invalid_slug`, `slug_taken`, `invalid_input`, `already_member`, `already_requested`, `cannot_leave_as_owner`, `invalid_role_transition`, `invalid_transition`. Defined ordering comparators (`compareThreads`, `comparePosts`, `compareMembers`, `compareTeams`) and `paginate` pagination helper.
+- **Single-Owner & Role Invariants**: Enforced single owner per team across domain logic and persistence. Ownership transfer updates old owner to admin and target member to owner atomically under an advisory lock. Primary owner cannot leave the team without first transferring ownership.
+- **Existence Oracle Protection**: Private teams read as `not_found` (404) for non-members across team details, membership lists, join requests, and forum threads/posts. `not_authorized` (403) is used exclusively for visible resources where the actor lacks permission.
+- **Migration `0017_community.sql`**: Created tables `community_teams`, `community_memberships`, `community_join_requests`, `community_forum_threads`, `community_forum_posts`. `ON DELETE CASCADE` foreign key references to `users(id)` and `community_teams(id)`. Partial unique indexes `community_memberships_one_owner_per_team` and `community_join_requests_one_pending_per_player`. All referencing foreign key columns indexed to avoid full table scans on cascading user or team deletions.
+- **Postgres Adapter (`PgCommunityRepository`)**: Implemented `CommunityRepository` in `packages/persistence/src/pg/community.ts` and re-exported from `@chess-platform/persistence/pg`. Transaction advisory locks (`lockTeam` via `pg_advisory_xact_lock`) acquired before row locks (`FOR UPDATE`) to prevent deadlocks. Safe `NaN`/`Infinity` pagination handling.
+- **REST API Endpoints**: Registered 22 `/v1/teams/*` and `/v1/teams/:id/forum/*` endpoints in `packages/api/src/routes.ts`. Enforced authentication matrix, `requirePlayerExists` verification for target user routes, server-generated `uuidv7()` IDs, presenter views in `presenters.ts`, and `mapCommunityError` error translation.
+- **Wiring & OpenAPI**: Added presenter views in `presenters.ts` and OpenAPI component schemas in `schemas.ts`. Updated `deps.ts`, `server.ts`, `bootstrap.ts` (with optional dependency 503 fallback), and test `helpers.ts` (`withoutCommunity`). Regenerated `packages/api/openapi.json` with zero drift. Updated workspace dependencies, `package.json` scripts (`build`, `test`, `lint`, `clean`, `build:server`), `scripts/test-counts.mjs`, `Dockerfile.api`, `Dockerfile.gateway`, and verified `check:build-order`.
+- **Tests**: Domain unit tests in `packages/community/test/community.test.ts` (8/8 suites pass), DB-gated integration tests in `packages/persistence/test/community.integration.test.ts` (7/7 pass), and REST API tests in `packages/api/test/community-api.test.ts` (all auth matrix, 503 fallback, and full lifecycle tests pass).
+- Detailed in `docs/adr/0069-teams-and-forums.md`.
 
 
 

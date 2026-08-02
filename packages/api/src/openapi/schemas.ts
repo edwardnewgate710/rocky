@@ -982,6 +982,155 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     },
     additionalProperties: false,
   },
+
+  TeamView: {
+    type: 'object',
+    required: ['id', 'slug', 'name', 'description', 'visibility', 'createdBy', 'createdAt', 'updatedAt'],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      slug: { type: 'string' },
+      name: { type: 'string' },
+      description: { type: 'string' },
+      visibility: { type: 'string', enum: ['public', 'private'] },
+      createdBy: { type: 'string', format: 'uuid' },
+      createdAt: dateTime,
+      updatedAt: dateTime,
+    },
+  },
+
+  TeamList: {
+    type: 'object',
+    required: ['items', 'total'],
+    properties: {
+      items: {
+        type: 'array',
+        items: { $ref: '#/components/schemas/TeamView' },
+      },
+      total: { type: 'integer' },
+    },
+  },
+
+  MembershipView: {
+    type: 'object',
+    required: ['id', 'teamId', 'playerId', 'role', 'joinedAt'],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      teamId: { type: 'string', format: 'uuid' },
+      playerId: { type: 'string', format: 'uuid' },
+      role: { type: 'string', enum: ['owner', 'admin', 'member'] },
+      joinedAt: dateTime,
+    },
+  },
+
+  MemberList: {
+    type: 'object',
+    required: ['items', 'total'],
+    properties: {
+      items: {
+        type: 'array',
+        items: { $ref: '#/components/schemas/MembershipView' },
+      },
+      total: { type: 'integer' },
+    },
+  },
+
+  OwnershipTransferView: {
+    type: 'object',
+    required: ['oldOwner', 'newOwner'],
+    properties: {
+      oldOwner: { $ref: '#/components/schemas/MembershipView' },
+      newOwner: { $ref: '#/components/schemas/MembershipView' },
+    },
+  },
+
+  JoinRequestView: {
+    type: 'object',
+    required: ['id', 'teamId', 'playerId', 'status', 'createdAt', 'updatedAt'],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      teamId: { type: 'string', format: 'uuid' },
+      playerId: { type: 'string', format: 'uuid' },
+      status: { type: 'string', enum: ['pending', 'accepted', 'declined', 'cancelled'] },
+      createdAt: dateTime,
+      updatedAt: dateTime,
+    },
+  },
+
+  JoinRequestList: {
+    type: 'object',
+    required: ['items', 'total'],
+    properties: {
+      items: {
+        type: 'array',
+        items: { $ref: '#/components/schemas/JoinRequestView' },
+      },
+      total: { type: 'integer' },
+    },
+  },
+
+  ForumThreadView: {
+    type: 'object',
+    required: ['id', 'teamId', 'authorId', 'title', 'pinned', 'locked', 'createdAt', 'updatedAt', 'lastPostAt', 'deletedAt'],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      teamId: { type: 'string', format: 'uuid' },
+      authorId: { type: 'string', format: 'uuid' },
+      title: { type: 'string' },
+      pinned: { type: 'boolean' },
+      locked: { type: 'boolean' },
+      createdAt: dateTime,
+      updatedAt: dateTime,
+      lastPostAt: dateTime,
+      deletedAt: { ...dateTime, nullable: true },
+    },
+  },
+
+  ForumThreadList: {
+    type: 'object',
+    required: ['items', 'total'],
+    properties: {
+      items: {
+        type: 'array',
+        items: { $ref: '#/components/schemas/ForumThreadView' },
+      },
+      total: { type: 'integer' },
+    },
+  },
+
+  ForumThreadCreateView: {
+    type: 'object',
+    required: ['thread', 'firstPost'],
+    properties: {
+      thread: { $ref: '#/components/schemas/ForumThreadView' },
+      firstPost: { $ref: '#/components/schemas/ForumPostView' },
+    },
+  },
+
+  ForumPostView: {
+    type: 'object',
+    required: ['id', 'threadId', 'authorId', 'body', 'createdAt', 'updatedAt', 'deletedAt'],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      threadId: { type: 'string', format: 'uuid' },
+      authorId: { type: 'string', format: 'uuid' },
+      body: { type: 'string' },
+      createdAt: dateTime,
+      updatedAt: dateTime,
+      deletedAt: { ...dateTime, nullable: true },
+    },
+  },
+
+  ForumPostList: {
+    type: 'object',
+    required: ['items', 'total'],
+    properties: {
+      items: {
+        type: 'array',
+        items: { $ref: '#/components/schemas/ForumPostView' },
+      },
+      total: { type: 'integer' },
+    },
+  },
 };
 
 

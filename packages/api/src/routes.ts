@@ -13,7 +13,7 @@ import { AuthService } from './auth/service';
 import type { RequestMeta } from './auth/service';
 import type { Repositories } from './deps';
 import { Game, classifySpeed } from '@chess-platform/game';
-import { parseRole, parseSeekColor, parseTimeControl, parseUuid, parseVariant, VARIANTS, HANDLE_PATTERN } from './domain';
+import { parseRole, parseSeekColor, parseTimeControl, parseUuid, parseVariant, VARIANTS, HANDLE_PATTERN, UUID_PATTERN } from './domain';
 import { HttpError } from './http/errors';
 import { json, noContent } from './http/context';
 import type { RequestContext } from './http/context';
@@ -25,7 +25,7 @@ import {
   parseCookies,
   REFRESH_COOKIE_NAME,
 } from './http/cookie';
-import { strictObject, oneOf, optInt, optString, parseLimit, reqString } from './http/validate';
+import { strictObject, oneOf, optInt, optString, parseLimit, reqBoolean, reqString } from './http/validate';
 import type { RateLimiter } from './ports/rate-limiter';
 import type { Metrics } from './ports/metrics';
 import type { Tracer } from './ports/tracer';
@@ -36,6 +36,7 @@ import { aggregatePlayer, BotDetectionService } from '@chess-platform/anti-cheat
 import { NoEngineForVariantError } from '@chess-platform/engine';
 import { SocialRuleError, type FriendRequestAction } from '@chess-platform/social';
 import { MessagingRuleError } from '@chess-platform/messaging';
+import { CommunityRuleError } from '@chess-platform/community';
 import {
   antiCheatAggregateView,
   antiCheatGameReportView,
@@ -48,15 +49,20 @@ import {
   conversationSummaryView,
   conversationView,
   followEdgeView,
+  forumPostView,
+  forumThreadView,
   friendRequestView,
   gameSummaryView,
+  joinRequestView,
   leaderboardEntry,
+  membershipView,
   messageView,
   publicUser,
   ratingView,
   seekView,
   selfUser,
   sessionView,
+  teamView,
 } from './presenters';
 import { TournamentService } from './tournament/service';
 import { ArenaService } from './tournament/arena.service';
@@ -100,6 +106,7 @@ export interface RouteDeps {
   readonly embeddingProvider?: EmbeddingProvider;
   readonly socialGraphRepository?: import('@chess-platform/social').SocialGraphRepository;
   readonly messagingRepository?: import('@chess-platform/messaging').MessagingRepository;
+  readonly communityRepository?: import('@chess-platform/community').CommunityRepository;
 }
 
 const PUBLIC: AuthPolicy = { required: false };
@@ -2105,6 +2112,764 @@ export function buildRouter(deps: RouteDeps): Router {
     },
   );
 
+  // --- Teams & Forums -------------------------------------------------------
+  function checkCommunityRepo() {
+    if (!deps.communityRepository) {
+      throw HttpError.unavailable('community repository is not configured');
+    }
+    return deps.communityRepository;
+  }
+
+  async function requirePlayerExists(playerId: string): Promise<void> {
+    const user = await deps.repos.users.findById(playerId);
+    if (!user) {
+      throw HttpError.notFound(`Player '${playerId}' not found`);
+    }
+  }
+
+  // 1. POST /v1/teams
+  router.post(
+    '/v1/teams',
+    doc({
+      summary: 'Create a team',
+      tags: ['community'],
+      security: 'bearer',
+      responses: {
+        201: ['TeamView', 'Team created successfully'],
+        400: ['Error', 'Malformed request body'],
+        409: ['Error', 'Slug already taken'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Community service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkCommunityRepo();
+      const actorId = requireAuth(ctx).userId;
+      const body = strictObject(ctx.body, ['slug', 'name', 'description', 'visibility']);
+      const slug = reqString(body, 'slug');
+      const name = reqString(body, 'name');
+      const description = optString(body, 'description') ?? '';
+      const visibility = oneOf(reqString(body, 'visibility'), ['public', 'private'] as const, 'visibility');
+
+      const teamId = deps.ids.next();
+      try {
+        const team = await repo.createTeam(teamId, slug, name, description, visibility, actorId, new Date(deps.clock.now()));
+        return json(201, teamView(team));
+      } catch (err) {
+        mapCommunityError(err);
+      }
+    },
+  );
+
+  // 2. GET /v1/teams
+  router.get(
+    '/v1/teams',
+    doc({
+      summary: 'List or search teams',
+      tags: ['community'],
+      params: [limitParam(), offsetParam()],
+      responses: {
+        200: ['TeamList', 'Paginated teams list'],
+        422: ['Error', 'Malformed pagination params'],
+        503: ['Error', 'Community service unavailable'],
+      },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const repo = checkCommunityRepo();
+      const actorId = ctx.auth?.userId;
+      const limit = parseLimit(ctx.query, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+      const offset = parseOffset(ctx.query);
+      const search = ctx.query.get('search') ?? undefined;
+
+      try {
+        const page = await repo.listTeams(actorId, { limit, offset, search });
+        return json(200, {
+          total: page.total,
+          items: page.items.map(teamView),
+        });
+      } catch (err) {
+        mapCommunityError(err);
+      }
+    },
+  );
+
+  // 3. GET /v1/teams/:id
+  router.get(
+    '/v1/teams/:id',
+    doc({
+      summary: 'Get team by ID or slug',
+      tags: ['community'],
+      params: [pathParam('id', 'Team ID (UUID) or slug')],
+      responses: {
+        200: ['TeamView', 'Team details'],
+        404: ['Error', 'Team not found or not visible'],
+        503: ['Error', 'Community service unavailable'],
+      },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const repo = checkCommunityRepo();
+      const actorId = ctx.auth?.userId;
+      const idOrSlug = ctx.params['id']!;
+
+      try {
+        // Decide which lookup to run BEFORE running one. Trying `getTeam` first and falling back on
+        // `not_found` reads as harmless, but it only works against the in-memory adapter, where an
+        // id is just a string. Postgres compares against a `uuid` column, so a slug does not miss —
+        // it raises `invalid input syntax for type uuid`, which is not a domain error, so the
+        // fallback is never reached and the request 500s. The two adapters disagreed and only one
+        // of them was under test.
+        const team = UUID_PATTERN.test(idOrSlug)
+          ? await repo.getTeam(idOrSlug, actorId)
+          : await repo.getTeamBySlug(idOrSlug, actorId);
+        return json(200, teamView(team));
+      } catch (err) {
+        mapCommunityError(err);
+      }
+    },
+  );
+
+  // 4. PATCH /v1/teams/:id
+  router.patch(
+    '/v1/teams/:id',
+    doc({
+      summary: 'Update team details',
+      tags: ['community'],
+      security: 'bearer',
+      params: [pathParam('id', 'Team ID (UUID)')],
+      responses: {
+        200: ['TeamView', 'Team updated'],
+        403: ['Error', 'Not authorized'],
+        404: ['Error', 'Team not found'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Community service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkCommunityRepo();
+      const actorId = requireAuth(ctx).userId;
+      const teamId = parseUuid(ctx.params['id']!, 'id');
+      const body = strictObject(ctx.body, ['name', 'description', 'visibility']);
+      const name = optString(body, 'name');
+      const description = optString(body, 'description');
+      const visibility = body['visibility'] !== undefined ? oneOf(reqString(body, 'visibility'), ['public', 'private'] as const, 'visibility') : undefined;
+
+      try {
+        const updated = await repo.updateTeam(teamId, actorId, { name, description, visibility }, new Date(deps.clock.now()));
+        return json(200, teamView(updated));
+      } catch (err) {
+        mapCommunityError(err);
+      }
+    },
+  );
+
+  // 5. GET /v1/teams/:id/members
+  router.get(
+    '/v1/teams/:id/members',
+    doc({
+      summary: 'List team members',
+      tags: ['community'],
+      params: [pathParam('id', 'Team ID (UUID)'), limitParam(), offsetParam()],
+      responses: {
+        200: ['MemberList', 'Paginated team members'],
+        404: ['Error', 'Team not found or not visible'],
+        503: ['Error', 'Community service unavailable'],
+      },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const repo = checkCommunityRepo();
+      const actorId = ctx.auth?.userId;
+      const teamId = parseUuid(ctx.params['id']!, 'id');
+      const limit = parseLimit(ctx.query, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+      const offset = parseOffset(ctx.query);
+
+      try {
+        const page = await repo.listMembers(teamId, actorId, { limit, offset });
+        return json(200, {
+          total: page.total,
+          items: page.items.map(membershipView),
+        });
+      } catch (err) {
+        mapCommunityError(err);
+      }
+    },
+  );
+
+  // 6. POST /v1/teams/:id/members
+  router.post(
+    '/v1/teams/:id/members',
+    doc({
+      summary: 'Join a public team directly',
+      tags: ['community'],
+      security: 'bearer',
+      params: [pathParam('id', 'Team ID (UUID)')],
+      responses: {
+        201: ['MembershipView', 'Joined team successfully'],
+        403: ['Error', 'Private teams require join request'],
+        404: ['Error', 'Team not found'],
+        409: ['Error', 'Already a member'],
+        503: ['Error', 'Community service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkCommunityRepo();
+      const actorId = requireAuth(ctx).userId;
+      const teamId = parseUuid(ctx.params['id']!, 'id');
+
+      try {
+        const mem = await repo.joinTeam(teamId, actorId, new Date(deps.clock.now()));
+        return json(201, membershipView(mem));
+      } catch (err) {
+        mapCommunityError(err);
+      }
+    },
+  );
+
+  // 7. DELETE /v1/teams/:id/members/:playerId
+  router.delete(
+    '/v1/teams/:id/members/:playerId',
+    doc({
+      summary: 'Leave team or remove member',
+      tags: ['community'],
+      security: 'bearer',
+      params: [pathParam('id', 'Team ID (UUID)'), pathParam('playerId', 'Target player ID (UUID)')],
+      responses: {
+        204: [undefined, 'Member left or removed successfully'],
+        403: ['Error', 'Not authorized'],
+        404: ['Error', 'Team or player not found'],
+        409: ['Error', 'Owner cannot leave without transferring ownership'],
+        503: ['Error', 'Community service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkCommunityRepo();
+      const actorId = requireAuth(ctx).userId;
+      const teamId = parseUuid(ctx.params['id']!, 'id');
+      const targetPlayerId = parseUuid(ctx.params['playerId']!, 'playerId');
+
+      if (targetPlayerId !== actorId) {
+        await requirePlayerExists(targetPlayerId);
+      }
+
+      try {
+        await repo.leaveOrRemoveMember(teamId, actorId, targetPlayerId);
+        return noContent();
+      } catch (err) {
+        mapCommunityError(err);
+      }
+    },
+  );
+
+  // 8. PATCH /v1/teams/:id/members/:playerId
+  router.patch(
+    '/v1/teams/:id/members/:playerId',
+    doc({
+      summary: 'Update member role',
+      tags: ['community'],
+      security: 'bearer',
+      params: [pathParam('id', 'Team ID (UUID)'), pathParam('playerId', 'Target player ID (UUID)')],
+      responses: {
+        200: ['MembershipView', 'Role updated'],
+        403: ['Error', 'Not authorized'],
+        404: ['Error', 'Team or member not found'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Community service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkCommunityRepo();
+      const actorId = requireAuth(ctx).userId;
+      const teamId = parseUuid(ctx.params['id']!, 'id');
+      const targetPlayerId = parseUuid(ctx.params['playerId']!, 'playerId');
+      const body = strictObject(ctx.body, ['role']);
+      const newRole = oneOf(reqString(body, 'role'), ['admin', 'member'] as const, 'role');
+
+      await requirePlayerExists(targetPlayerId);
+
+      try {
+        const mem = await repo.updateMemberRole(teamId, actorId, targetPlayerId, newRole);
+        return json(200, membershipView(mem));
+      } catch (err) {
+        mapCommunityError(err);
+      }
+    },
+  );
+
+  // 9. POST /v1/teams/:id/transfer-ownership
+  router.post(
+    '/v1/teams/:id/transfer-ownership',
+    doc({
+      summary: 'Transfer team ownership',
+      tags: ['community'],
+      security: 'bearer',
+      params: [pathParam('id', 'Team ID (UUID)')],
+      responses: {
+        200: ['OwnershipTransferView', 'Ownership transferred'],
+        403: ['Error', 'Only owner can transfer ownership'],
+        404: ['Error', 'Team or target member not found'],
+        503: ['Error', 'Community service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkCommunityRepo();
+      const actorId = requireAuth(ctx).userId;
+      const teamId = parseUuid(ctx.params['id']!, 'id');
+      const body = strictObject(ctx.body, ['newOwnerId']);
+      const newOwnerId = reqString(body, 'newOwnerId');
+
+      await requirePlayerExists(newOwnerId);
+
+      try {
+        const res = await repo.transferOwnership(teamId, actorId, newOwnerId);
+        return json(200, {
+          oldOwner: membershipView(res.oldOwner),
+          newOwner: membershipView(res.newOwner),
+        });
+      } catch (err) {
+        mapCommunityError(err);
+      }
+    },
+  );
+
+  // 10. POST /v1/teams/:id/join-requests
+  router.post(
+    '/v1/teams/:id/join-requests',
+    doc({
+      summary: 'Request to join a private team',
+      tags: ['community'],
+      security: 'bearer',
+      params: [pathParam('id', 'Team ID (UUID)')],
+      responses: {
+        201: ['JoinRequestView', 'Join request submitted'],
+        404: ['Error', 'Team not found'],
+        409: ['Error', 'Already a member or request pending'],
+        503: ['Error', 'Community service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkCommunityRepo();
+      const actorId = requireAuth(ctx).userId;
+      const teamId = parseUuid(ctx.params['id']!, 'id');
+      const requestId = deps.ids.next();
+
+      try {
+        const req = await repo.createJoinRequest(requestId, teamId, actorId, new Date(deps.clock.now()));
+        return json(201, joinRequestView(req));
+      } catch (err) {
+        mapCommunityError(err);
+      }
+    },
+  );
+
+  // 11. GET /v1/teams/:id/join-requests
+  router.get(
+    '/v1/teams/:id/join-requests',
+    doc({
+      summary: 'List join requests for team',
+      tags: ['community'],
+      security: 'bearer',
+      params: [pathParam('id', 'Team ID (UUID)'), limitParam(), offsetParam()],
+      responses: {
+        200: ['JoinRequestList', 'Paginated join requests'],
+        403: ['Error', 'Only admins and owners can view join requests'],
+        404: ['Error', 'Team not found'],
+        503: ['Error', 'Community service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkCommunityRepo();
+      const actorId = requireAuth(ctx).userId;
+      const teamId = parseUuid(ctx.params['id']!, 'id');
+      const limit = parseLimit(ctx.query, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+      const offset = parseOffset(ctx.query);
+
+      try {
+        const page = await repo.listJoinRequests(teamId, actorId, { limit, offset });
+        return json(200, {
+          total: page.total,
+          items: page.items.map(joinRequestView),
+        });
+      } catch (err) {
+        mapCommunityError(err);
+      }
+    },
+  );
+
+  // 12. POST /v1/teams/:id/join-requests/:reqId/respond
+  router.post(
+    '/v1/teams/:id/join-requests/:reqId/respond',
+    doc({
+      summary: 'Respond to join request',
+      tags: ['community'],
+      security: 'bearer',
+      params: [pathParam('id', 'Team ID (UUID)'), pathParam('reqId', 'Join request ID (UUID)')],
+      responses: {
+        200: ['JoinRequestView', 'Join request updated'],
+        403: ['Error', 'Only admins and owners can respond to join requests'],
+        404: ['Error', 'Join request not found'],
+        409: ['Error', 'Join request is not pending'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Community service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkCommunityRepo();
+      const actorId = requireAuth(ctx).userId;
+      const reqId = parseUuid(ctx.params['reqId']!, 'reqId');
+      const body = strictObject(ctx.body, ['status']);
+      const status = oneOf(reqString(body, 'status'), ['accepted', 'declined'] as const, 'status');
+
+      try {
+        const req = await repo.respondToJoinRequest(reqId, actorId, status, new Date(deps.clock.now()));
+        return json(200, joinRequestView(req));
+      } catch (err) {
+        mapCommunityError(err);
+      }
+    },
+  );
+
+  // 13. DELETE /v1/teams/:id/join-requests/:reqId
+  router.delete(
+    '/v1/teams/:id/join-requests/:reqId',
+    doc({
+      summary: 'Cancel join request',
+      tags: ['community'],
+      security: 'bearer',
+      params: [pathParam('id', 'Team ID (UUID)'), pathParam('reqId', 'Join request ID (UUID)')],
+      responses: {
+        200: ['JoinRequestView', 'Join request cancelled'],
+        403: ['Error', 'Only requester can cancel join request'],
+        404: ['Error', 'Join request not found'],
+        409: ['Error', 'Join request is not pending'],
+        503: ['Error', 'Community service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkCommunityRepo();
+      const actorId = requireAuth(ctx).userId;
+      const reqId = parseUuid(ctx.params['reqId']!, 'reqId');
+
+      try {
+        const req = await repo.cancelJoinRequest(reqId, actorId, new Date(deps.clock.now()));
+        return json(200, joinRequestView(req));
+      } catch (err) {
+        mapCommunityError(err);
+      }
+    },
+  );
+
+  // 14. GET /v1/teams/:id/forum/threads
+  router.get(
+    '/v1/teams/:id/forum/threads',
+    doc({
+      summary: 'List forum threads in a team',
+      tags: ['community'],
+      params: [pathParam('id', 'Team ID (UUID)'), limitParam(), offsetParam()],
+      responses: {
+        200: ['ForumThreadList', 'Paginated forum threads'],
+        404: ['Error', 'Team not found or not visible'],
+        503: ['Error', 'Community service unavailable'],
+      },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const repo = checkCommunityRepo();
+      const actorId = ctx.auth?.userId;
+      const teamId = parseUuid(ctx.params['id']!, 'id');
+      const limit = parseLimit(ctx.query, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+      const offset = parseOffset(ctx.query);
+
+      try {
+        const page = await repo.listThreads(teamId, actorId, { limit, offset });
+        return json(200, {
+          total: page.total,
+          items: page.items.map(forumThreadView),
+        });
+      } catch (err) {
+        mapCommunityError(err);
+      }
+    },
+  );
+
+  // 15. POST /v1/teams/:id/forum/threads
+  router.post(
+    '/v1/teams/:id/forum/threads',
+    doc({
+      summary: 'Create a new forum thread',
+      tags: ['community'],
+      security: 'bearer',
+      params: [pathParam('id', 'Team ID (UUID)')],
+      responses: {
+        201: ['ForumThreadCreateView', 'Thread created successfully'],
+        403: ['Error', 'Only team members can create threads'],
+        404: ['Error', 'Team not found'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Community service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkCommunityRepo();
+      const actorId = requireAuth(ctx).userId;
+      const teamId = parseUuid(ctx.params['id']!, 'id');
+      const body = strictObject(ctx.body, ['title', 'body']);
+      const title = reqString(body, 'title');
+      const postBody = reqString(body, 'body');
+
+      const threadId = deps.ids.next();
+      const firstPostId = deps.ids.next();
+
+      try {
+        const res = await repo.createThread(threadId, teamId, actorId, title, postBody, firstPostId, new Date(deps.clock.now()));
+        return json(201, {
+          thread: forumThreadView(res.thread),
+          firstPost: forumPostView(res.post),
+        });
+      } catch (err) {
+        mapCommunityError(err);
+      }
+    },
+  );
+
+  // 16. GET /v1/teams/:id/forum/threads/:threadId
+  router.get(
+    '/v1/teams/:id/forum/threads/:threadId',
+    doc({
+      summary: 'Get forum thread by ID',
+      tags: ['community'],
+      params: [pathParam('id', 'Team ID (UUID)'), pathParam('threadId', 'Thread ID (UUID)')],
+      responses: {
+        200: ['ForumThreadView', 'Forum thread details'],
+        404: ['Error', 'Thread not found or not visible'],
+        503: ['Error', 'Community service unavailable'],
+      },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const repo = checkCommunityRepo();
+      const actorId = ctx.auth?.userId;
+      const threadId = parseUuid(ctx.params['threadId']!, 'threadId');
+
+      try {
+        const thread = await repo.getThread(threadId, actorId);
+        return json(200, forumThreadView(thread));
+      } catch (err) {
+        mapCommunityError(err);
+      }
+    },
+  );
+
+  // 17. PATCH /v1/teams/:id/forum/threads/:threadId
+  router.patch(
+    '/v1/teams/:id/forum/threads/:threadId',
+    doc({
+      summary: 'Update forum thread (title, locked, pinned)',
+      tags: ['community'],
+      security: 'bearer',
+      params: [pathParam('id', 'Team ID (UUID)'), pathParam('threadId', 'Thread ID (UUID)')],
+      responses: {
+        200: ['ForumThreadView', 'Thread updated'],
+        403: ['Error', 'Not authorized to update thread'],
+        404: ['Error', 'Thread not found'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Community service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkCommunityRepo();
+      const actorId = requireAuth(ctx).userId;
+      const threadId = parseUuid(ctx.params['threadId']!, 'threadId');
+      const body = strictObject(ctx.body, ['title', 'locked', 'pinned']);
+      const title = optString(body, 'title');
+      const locked = body['locked'] !== undefined ? reqBoolean(body, 'locked') : undefined;
+      const pinned = body['pinned'] !== undefined ? reqBoolean(body, 'pinned') : undefined;
+
+      try {
+        const thread = await repo.updateThread(threadId, actorId, { title, locked, pinned }, new Date(deps.clock.now()));
+        return json(200, forumThreadView(thread));
+      } catch (err) {
+        mapCommunityError(err);
+      }
+    },
+  );
+
+  // 18. DELETE /v1/teams/:id/forum/threads/:threadId
+  router.delete(
+    '/v1/teams/:id/forum/threads/:threadId',
+    doc({
+      summary: 'Delete forum thread',
+      tags: ['community'],
+      security: 'bearer',
+      params: [pathParam('id', 'Team ID (UUID)'), pathParam('threadId', 'Thread ID (UUID)')],
+      responses: {
+        200: ['ForumThreadView', 'Thread tombstoned'],
+        403: ['Error', 'Not authorized to delete thread'],
+        404: ['Error', 'Thread not found'],
+        409: ['Error', 'Thread already deleted'],
+        503: ['Error', 'Community service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkCommunityRepo();
+      const actorId = requireAuth(ctx).userId;
+      const threadId = parseUuid(ctx.params['threadId']!, 'threadId');
+
+      try {
+        const thread = await repo.deleteThread(threadId, actorId, new Date(deps.clock.now()));
+        return json(200, forumThreadView(thread));
+      } catch (err) {
+        mapCommunityError(err);
+      }
+    },
+  );
+
+  // 19. GET /v1/teams/:id/forum/threads/:threadId/posts
+  router.get(
+    '/v1/teams/:id/forum/threads/:threadId/posts',
+    doc({
+      summary: 'List posts in a forum thread',
+      tags: ['community'],
+      params: [pathParam('id', 'Team ID (UUID)'), pathParam('threadId', 'Thread ID (UUID)'), limitParam(), offsetParam()],
+      responses: {
+        200: ['ForumPostList', 'Paginated posts'],
+        404: ['Error', 'Thread not found or not visible'],
+        503: ['Error', 'Community service unavailable'],
+      },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const repo = checkCommunityRepo();
+      const actorId = ctx.auth?.userId;
+      const threadId = parseUuid(ctx.params['threadId']!, 'threadId');
+      const limit = parseLimit(ctx.query, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+      const offset = parseOffset(ctx.query);
+
+      try {
+        const page = await repo.listPosts(threadId, actorId, { limit, offset });
+        return json(200, {
+          total: page.total,
+          items: page.items.map(forumPostView),
+        });
+      } catch (err) {
+        mapCommunityError(err);
+      }
+    },
+  );
+
+  // 20. POST /v1/teams/:id/forum/threads/:threadId/posts
+  router.post(
+    '/v1/teams/:id/forum/threads/:threadId/posts',
+    doc({
+      summary: 'Create a post in a forum thread',
+      tags: ['community'],
+      security: 'bearer',
+      params: [pathParam('id', 'Team ID (UUID)'), pathParam('threadId', 'Thread ID (UUID)')],
+      responses: {
+        201: ['ForumPostView', 'Post created'],
+        403: ['Error', 'Only members can post or thread is locked'],
+        404: ['Error', 'Thread not found'],
+        409: ['Error', 'Thread is deleted'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Community service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkCommunityRepo();
+      const actorId = requireAuth(ctx).userId;
+      const threadId = parseUuid(ctx.params['threadId']!, 'threadId');
+      const body = strictObject(ctx.body, ['body']);
+      const postBody = reqString(body, 'body');
+      const postId = deps.ids.next();
+
+      try {
+        const post = await repo.createPost(postId, threadId, actorId, postBody, new Date(deps.clock.now()));
+        return json(201, forumPostView(post));
+      } catch (err) {
+        mapCommunityError(err);
+      }
+    },
+  );
+
+  // 21. PATCH /v1/forum/posts/:postId
+  router.patch(
+    '/v1/forum/posts/:postId',
+    doc({
+      summary: 'Edit a forum post',
+      tags: ['community'],
+      security: 'bearer',
+      params: [pathParam('postId', 'Post ID (UUID)')],
+      responses: {
+        200: ['ForumPostView', 'Post edited'],
+        403: ['Error', 'Only post author can edit'],
+        404: ['Error', 'Post not found'],
+        409: ['Error', 'Post is deleted'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Community service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkCommunityRepo();
+      const actorId = requireAuth(ctx).userId;
+      const postId = parseUuid(ctx.params['postId']!, 'postId');
+      const body = strictObject(ctx.body, ['body']);
+      const postBody = reqString(body, 'body');
+
+      try {
+        const post = await repo.editPost(postId, actorId, postBody, new Date(deps.clock.now()));
+        return json(200, forumPostView(post));
+      } catch (err) {
+        mapCommunityError(err);
+      }
+    },
+  );
+
+  // 22. DELETE /v1/forum/posts/:postId
+  router.delete(
+    '/v1/forum/posts/:postId',
+    doc({
+      summary: 'Delete a forum post (tombstone)',
+      tags: ['community'],
+      security: 'bearer',
+      params: [pathParam('postId', 'Post ID (UUID)')],
+      responses: {
+        200: ['ForumPostView', 'Post tombstoned'],
+        403: ['Error', 'Not authorized to delete post'],
+        404: ['Error', 'Post not found'],
+        409: ['Error', 'Post already deleted'],
+        503: ['Error', 'Community service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkCommunityRepo();
+      const actorId = requireAuth(ctx).userId;
+      const postId = parseUuid(ctx.params['postId']!, 'postId');
+
+      try {
+        const post = await repo.deletePost(postId, actorId, new Date(deps.clock.now()));
+        return json(200, forumPostView(post));
+      } catch (err) {
+        mapCommunityError(err);
+      }
+    },
+  );
+
   return router;
 
 }
@@ -2157,6 +2922,34 @@ function mapMessagingError(err: unknown): never {
         throw HttpError.forbidden(err.message);
       case 'invalid_body':
         throw HttpError.validation(err.message, { body: 'invalid' });
+      case 'invalid_transition':
+        throw HttpError.conflict(err.message);
+    }
+  }
+  throw err;
+}
+
+function mapCommunityError(err: unknown): never {
+  if (err instanceof CommunityRuleError) {
+    switch (err.code) {
+      case 'not_found':
+        throw HttpError.notFound(err.message);
+      case 'not_authorized':
+        throw HttpError.forbidden(err.message);
+      case 'invalid_slug':
+        throw HttpError.validation(err.message, { slug: 'invalid' });
+      case 'slug_taken':
+        throw HttpError.conflict(err.message);
+      case 'invalid_input':
+        throw HttpError.validation(err.message);
+      case 'already_member':
+        throw HttpError.conflict(err.message);
+      case 'already_requested':
+        throw HttpError.conflict(err.message);
+      case 'cannot_leave_as_owner':
+        throw HttpError.conflict(err.message);
+      case 'invalid_role_transition':
+        throw HttpError.forbidden(err.message);
       case 'invalid_transition':
         throw HttpError.conflict(err.message);
     }

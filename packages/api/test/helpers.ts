@@ -35,6 +35,7 @@ import {
 } from '@chess-platform/search';
 import { InMemorySocialGraphRepository } from '@chess-platform/social';
 import { InMemoryMessagingRepository } from '@chess-platform/messaging';
+import { InMemoryCommunityRepository } from '@chess-platform/community';
 
 
 export const TEST_SECRET = 'test-access-token-secret-0123456789abcdef';
@@ -60,6 +61,7 @@ export interface Harness {
   readonly embeddingProvider?: HashingEmbeddingProvider;
   readonly socialGraphRepository?: InMemorySocialGraphRepository;
   readonly messagingRepository?: InMemoryMessagingRepository;
+  readonly communityRepository?: InMemoryCommunityRepository;
   readonly clock: ManualClock;
   readonly tokens: AccessTokenService;
   readonly emailSender: InMemoryEmailSender;
@@ -91,6 +93,8 @@ export interface HarnessOptions {
   readonly withoutSocial?: boolean;
   /** Pass true to simulate a server constructed without messaging repository. */
   readonly withoutMessaging?: boolean;
+  /** Pass true to simulate a server constructed without community repository. */
+  readonly withoutCommunity?: boolean;
   /** Override the anti-cheat evaluator (e.g. to make it throw) for edge-case tests. */
   readonly antiCheatEvaluator?: PositionEvaluator;
 }
@@ -154,6 +158,9 @@ export async function startHarness(
   const messagingRepository = harnessOptions.withoutMessaging || !socialGraphRepository
     ? undefined
     : new InMemoryMessagingRepository(socialGraphRepository);
+  const communityRepository = harnessOptions.withoutCommunity
+    ? undefined
+    : new InMemoryCommunityRepository();
   const server = createApiServer({
     repos, hasher, tokens, clock, ids, rateLimiter, tournamentRepo, gameLauncher, liveView, emailSender,
     config: resolved,
@@ -164,6 +171,7 @@ export async function startHarness(
     ...(embeddingProvider ? { embeddingProvider } : {}),
     ...(socialGraphRepository ? { socialGraphRepository } : {}),
     ...(messagingRepository ? { messagingRepository } : {}),
+    ...(communityRepository ? { communityRepository } : {}),
     ...(harnessOptions.readiness ? { readiness: harnessOptions.readiness } : {}),
     ...(harnessOptions.logger ? { logger: harnessOptions.logger } : {}),
     ...(harnessOptions.tracer ? { tracer: harnessOptions.tracer } : {}),
@@ -187,6 +195,7 @@ export async function startHarness(
     embeddingProvider,
     socialGraphRepository,
     messagingRepository,
+    communityRepository,
     clock,
     tokens,
     emailSender,

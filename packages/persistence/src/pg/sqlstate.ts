@@ -25,3 +25,16 @@ export function isUniqueViolation(err: unknown): boolean {
 export function isForeignKeyViolation(err: unknown): boolean {
   return sqlstate(err) === '23503';
 }
+
+/**
+ * SQLSTATE 22P02 — invalid_text_representation. Raised when a value that is not a UUID is compared
+ * against a `uuid` column, which is what a malformed id from a path parameter does.
+ *
+ * Routes are supposed to stop these at the edge with `parseUuid`, and that remains the right place
+ * — a 422 says more than a 404. But a repository that answers 500 whenever a route forgets is a
+ * repository that turns one missing call into an outage, so an id that cannot name any row is
+ * treated here as naming no row.
+ */
+export function isInvalidTextRepresentation(err: unknown): boolean {
+  return sqlstate(err) === '22P02';
+}

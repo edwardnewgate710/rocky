@@ -16,3 +16,4 @@ export * from './search-helpers';
 export * from './search-backfill';
 export * from './social';
 export * from './messaging';
+export * from './community';

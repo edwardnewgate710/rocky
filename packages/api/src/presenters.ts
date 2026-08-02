@@ -434,4 +434,110 @@ export function conversationReadStateView(
   };
 }
 
+export interface TeamView {
+  readonly id: string;
+  readonly slug: string;
+  readonly name: string;
+  readonly description: string;
+  readonly visibility: string;
+  readonly createdBy: string;
+  readonly createdAt: string;
+}
+
+export function teamView(t: import('@chess-platform/community').Team): TeamView {
+  return {
+    id: t.id,
+    slug: t.slug,
+    name: t.name,
+    description: t.description,
+    visibility: t.visibility,
+    createdBy: t.createdBy,
+    createdAt: t.createdAt.toISOString(),
+  };
+}
+
+export interface MembershipView {
+  readonly teamId: string;
+  readonly playerId: string;
+  readonly role: string;
+  readonly joinedAt: string;
+}
+
+export function membershipView(m: import('@chess-platform/community').Membership): MembershipView {
+  return {
+    teamId: m.teamId,
+    playerId: m.playerId,
+    role: m.role,
+    joinedAt: m.joinedAt.toISOString(),
+  };
+}
+
+export interface JoinRequestView {
+  readonly id: string;
+  readonly teamId: string;
+  readonly playerId: string;
+  readonly status: string;
+  readonly createdAt: string;
+  readonly respondedAt: string | null;
+}
+
+export function joinRequestView(j: import('@chess-platform/community').JoinRequest): JoinRequestView {
+  return {
+    id: j.id,
+    teamId: j.teamId,
+    playerId: j.playerId,
+    status: j.status,
+    createdAt: j.createdAt.toISOString(),
+    respondedAt: j.respondedAt ? j.respondedAt.toISOString() : null,
+  };
+}
+
+export interface ForumThreadView {
+  readonly id: string;
+  readonly teamId: string;
+  readonly authorId: string;
+  readonly title: string;
+  readonly createdAt: string;
+  readonly lastPostAt: string;
+  readonly locked: boolean;
+  readonly pinned: boolean;
+  readonly deletedAt: string | null;
+}
+
+export function forumThreadView(th: import('@chess-platform/community').ForumThread): ForumThreadView {
+  return {
+    id: th.id,
+    teamId: th.teamId,
+    authorId: th.authorId,
+    title: th.title,
+    createdAt: th.createdAt.toISOString(),
+    lastPostAt: th.lastPostAt.toISOString(),
+    locked: th.locked,
+    pinned: th.pinned,
+    deletedAt: th.deletedAt ? th.deletedAt.toISOString() : null,
+  };
+}
+
+export interface ForumPostView {
+  readonly id: string;
+  readonly threadId: string;
+  readonly authorId: string;
+  readonly body: string;
+  readonly createdAt: string;
+  readonly editedAt: string | null;
+  readonly deletedAt: string | null;
+}
+
+export function forumPostView(p: import('@chess-platform/community').ForumPost): ForumPostView {
+  return {
+    id: p.id,
+    threadId: p.threadId,
+    authorId: p.authorId,
+    body: p.body,
+    createdAt: p.createdAt.toISOString(),
+    editedAt: p.editedAt ? p.editedAt.toISOString() : null,
+    deletedAt: p.deletedAt ? p.deletedAt.toISOString() : null,
+  };
+}
+
 

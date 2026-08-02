@@ -1,0 +1,39 @@
+{
+  "name": "@chess-platform/community",
+  "version": "0.1.0",
+  "description": "Pure, dependency-free domain core for teams/communities and forums.",
+  "license": "AGPL-3.0-or-later",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/test/**/*.test.js\"",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist dist-test"
+  },
+  "keywords": [
+    "chess",
+    "community",
+    "teams",
+    "forums"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^20.0.0"
+  }
+}

@@ -448,6 +448,72 @@ CREATE TABLE messaging_reads (
 
 Stores 1:1 direct conversations, direct messages (including `edited_at` and tombstone `deleted_at`), and per-participant monotonic read states. A partial-free unique index on `(LEAST(participant_a, participant_b), GREATEST(participant_a, participant_b))` guarantees that exactly one conversation exists per player pair. `ON DELETE CASCADE` cleans up all conversation, message, and read records when users or conversations are deleted. Every referencing foreign key side is covered so cascading deletions do not scan these tables — but three of them are covered by the composite list indexes rather than by dedicated ones, since an index on `(a, b, c)` already serves a lookup on `a`; only `messaging_messages.sender_id` and `messaging_reads.participant_id` need an index of their own.
 
+### 4.11 Teams, Communities & Team Forums tables (`0017_community.sql`, M10 inc 4)
+
+```sql
+CREATE TABLE community_teams (
+  id          UUID        NOT NULL PRIMARY KEY,
+  slug        TEXT        NOT NULL,
+  name        TEXT        NOT NULL,
+  description TEXT        NOT NULL DEFAULT '',
+  visibility  TEXT        NOT NULL CHECK (visibility IN ('public', 'private')),
+  created_by  UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at  TIMESTAMPTZ NOT NULL,
+  updated_at  TIMESTAMPTZ NOT NULL
+);
+
+CREATE UNIQUE INDEX community_teams_slug_idx ON community_teams (slug);
+
+CREATE TABLE community_memberships (
+  id        UUID        NOT NULL PRIMARY KEY,
+  team_id   UUID        NOT NULL REFERENCES community_teams(id) ON DELETE CASCADE,
+  player_id UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role      TEXT        NOT NULL CHECK (role IN ('owner', 'admin', 'member')),
+  joined_at TIMESTAMPTZ NOT NULL,
+  CONSTRAINT community_memberships_team_player_key UNIQUE (team_id, player_id)
+);
+
+CREATE UNIQUE INDEX community_memberships_one_owner_per_team
+  ON community_memberships (team_id) WHERE role = 'owner';
+
+CREATE TABLE community_join_requests (
+  id         UUID        NOT NULL PRIMARY KEY,
+  team_id    UUID        NOT NULL REFERENCES community_teams(id) ON DELETE CASCADE,
+  player_id  UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status     TEXT        NOT NULL CHECK (status IN ('pending', 'accepted', 'declined', 'cancelled')),
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE UNIQUE INDEX community_join_requests_one_pending_per_player
+  ON community_join_requests (team_id, player_id) WHERE status = 'pending';
+
+CREATE TABLE community_forum_threads (
+  id           UUID        NOT NULL PRIMARY KEY,
+  team_id      UUID        NOT NULL REFERENCES community_teams(id) ON DELETE CASCADE,
+  author_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title        TEXT        NOT NULL,
+  pinned       BOOLEAN     NOT NULL DEFAULT FALSE,
+  locked       BOOLEAN     NOT NULL DEFAULT FALSE,
+  created_at   TIMESTAMPTZ NOT NULL,
+  updated_at   TIMESTAMPTZ NOT NULL,
+  last_post_at TIMESTAMPTZ NOT NULL,
+  deleted_at   TIMESTAMPTZ
+);
+
+CREATE TABLE community_forum_posts (
+  id         UUID        NOT NULL PRIMARY KEY,
+  thread_id  UUID        NOT NULL REFERENCES community_forum_threads(id) ON DELETE CASCADE,
+  author_id  UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  body       TEXT        NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  deleted_at TIMESTAMPTZ
+);
+```
+
+Stores teams, memberships, join requests, forum threads, and forum posts. Enforces single-owner invariant per team via partial unique index `community_memberships_one_owner_per_team` and at-most-one pending join request per player per team via `community_join_requests_one_pending_per_player`. All referencing FK columns are indexed to avoid full table scans on cascading user or team deletions.
+
 
 
 **Secrets never stored in plaintext:** passwords are argon2id **encoded strings**

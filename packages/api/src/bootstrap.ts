@@ -29,11 +29,13 @@ import {
   PgSemanticSearchRepository,
   PgSocialGraphRepository,
   PgMessagingRepository,
+  PgCommunityRepository,
 } from '@chess-platform/persistence/pg';
 import { HashingEmbeddingProvider, SEARCH_EMBEDDING_DIMENSIONS } from '@chess-platform/search';
 import type { EmbeddingProvider, SearchRepository, SemanticSearchRepository } from '@chess-platform/search';
 import type { SocialGraphRepository } from '@chess-platform/social';
 import type { MessagingRepository } from '@chess-platform/messaging';
+import type { CommunityRepository } from '@chess-platform/community';
 import { ConsoleEmailSender } from './ports/email';
 import type { EmailSender } from './ports/email';
 import { JsonLogger } from './ports/logger';
@@ -142,6 +144,7 @@ export interface PgBootstrapOptions {
   readonly embeddingProvider?: EmbeddingProvider;
   readonly socialGraphRepository?: SocialGraphRepository;
   readonly messagingRepository?: MessagingRepository;
+  readonly communityRepository?: CommunityRepository;
   readonly logger?: Logger;
   readonly metrics?: Metrics;
   readonly tracer?: Tracer;
@@ -207,6 +210,11 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ? (options.messagingRepository ?? new PgMessagingRepository(pool, socialGraphRepository))
     : undefined;
 
+  const communityEnabled = process.env['COMMUNITY_ENABLED'] !== '0';
+  const communityRepository = communityEnabled
+    ? (options.communityRepository ?? new PgCommunityRepository(pool))
+    : undefined;
+
   const logger = options.logger ?? new JsonLogger({ service: 'api' }, { level: resolveLogLevel() });
   const metrics = options.metrics ?? new InMemoryMetrics();
   const logExporter = new LoggingSpanExporter(logger);
@@ -260,6 +268,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ...(embeddingProvider ? { embeddingProvider } : {}),
     ...(socialGraphRepository ? { socialGraphRepository } : {}),
     ...(messagingRepository ? { messagingRepository } : {}),
+    ...(communityRepository ? { communityRepository } : {}),
     botTimingSource: new EventStoreBotTimingSource(eventStore),
     // Production observability (M13): structured logs to stdout, a scrape
     // registry backing GET /v1/metrics, and tracer emitting spans to logs.

@@ -38,6 +38,7 @@ import type { BotGameTimingSource } from './bot-detection/source';
 import type { EmbeddingProvider, SearchRepository, SemanticSearchRepository } from '@chess-platform/search';
 import type { SocialGraphRepository } from '@chess-platform/social';
 import type { MessagingRepository } from '@chess-platform/messaging';
+import type { CommunityRepository } from '@chess-platform/community';
 
 /** The full set of repositories the API consumes. */
 export interface Repositories {
@@ -80,6 +81,8 @@ export interface ApiDependencies {
   readonly socialGraphRepository?: SocialGraphRepository;
   /** Optional messaging repository (M10 inc 3). When absent, `/v1/messages/*` responds 503. */
   readonly messagingRepository?: MessagingRepository;
+  /** Optional community repository (M10 inc 4). When absent, `/v1/teams/*` and `/v1/forum/*` respond 503. */
+  readonly communityRepository?: CommunityRepository;
   /** Structured logger (M13). Defaults to a silent {@link NullLogger}. */
   readonly logger?: Logger;
   /** Metrics registry + scrape target (M13). Defaults to {@link InMemoryMetrics}. */

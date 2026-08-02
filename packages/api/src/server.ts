@@ -93,6 +93,7 @@ export function createApiServer(deps: ApiDependencies, options: ApiServerOptions
     embeddingProvider: deps.embeddingProvider,
     socialGraphRepository: deps.socialGraphRepository,
     messagingRepository: deps.messagingRepository,
+    communityRepository: deps.communityRepository,
   });
 
   const authenticate = (authorization: string | undefined): Identity | null => {
