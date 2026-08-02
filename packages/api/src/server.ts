@@ -92,6 +92,7 @@ export function createApiServer(deps: ApiDependencies, options: ApiServerOptions
     semanticSearchRepository: deps.semanticSearchRepository,
     embeddingProvider: deps.embeddingProvider,
     socialGraphRepository: deps.socialGraphRepository,
+    messagingRepository: deps.messagingRepository,
   });
 
   const authenticate = (authorization: string | undefined): Identity | null => {

@@ -362,3 +362,76 @@ export function blockEdgeView(edge: import('@chess-platform/social').BlockEdge):
   };
 }
 
+export interface ConversationView {
+  readonly id: string;
+  readonly participantA: string;
+  readonly participantB: string;
+  readonly createdAt: string;
+  readonly lastMessageAt: string;
+}
+
+export function conversationView(c: import('@chess-platform/messaging').Conversation): ConversationView {
+  return {
+    id: c.id,
+    participantA: c.participantA,
+    participantB: c.participantB,
+    createdAt: c.createdAt.toISOString(),
+    lastMessageAt: c.lastMessageAt.toISOString(),
+  };
+}
+
+export interface MessageView {
+  readonly id: string;
+  readonly conversationId: string;
+  readonly senderId: string;
+  readonly body: string;
+  readonly sentAt: string;
+  readonly editedAt: string | null;
+  readonly deletedAt: string | null;
+}
+
+export function messageView(m: import('@chess-platform/messaging').Message): MessageView {
+  return {
+    id: m.id,
+    conversationId: m.conversationId,
+    senderId: m.senderId,
+    body: m.body,
+    sentAt: m.sentAt.toISOString(),
+    editedAt: m.editedAt ? m.editedAt.toISOString() : null,
+    deletedAt: m.deletedAt ? m.deletedAt.toISOString() : null,
+  };
+}
+
+export interface ConversationSummaryView {
+  readonly conversation: ConversationView;
+  readonly unreadCount: number;
+  readonly lastMessage: MessageView | null;
+}
+
+export function conversationSummaryView(
+  s: import('@chess-platform/messaging').ConversationSummary
+): ConversationSummaryView {
+  return {
+    conversation: conversationView(s.conversation),
+    unreadCount: s.unreadCount,
+    lastMessage: s.lastMessage ? messageView(s.lastMessage) : null,
+  };
+}
+
+export interface ConversationReadStateView {
+  readonly conversationId: string;
+  readonly participantId: string;
+  readonly lastReadAt: string;
+}
+
+export function conversationReadStateView(
+  r: import('@chess-platform/messaging').ConversationReadState
+): ConversationReadStateView {
+  return {
+    conversationId: r.conversationId,
+    participantId: r.participantId,
+    lastReadAt: r.lastReadAt.toISOString(),
+  };
+}
+
+

@@ -878,6 +878,111 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     },
     additionalProperties: false,
   },
+
+  ConversationView: {
+    type: 'object',
+    required: ['id', 'participantA', 'participantB', 'createdAt', 'lastMessageAt'],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      participantA: { type: 'string', format: 'uuid' },
+      participantB: { type: 'string', format: 'uuid' },
+      createdAt: dateTime,
+      lastMessageAt: dateTime,
+    },
+  },
+
+  MessageView: {
+    type: 'object',
+    required: ['id', 'conversationId', 'senderId', 'body', 'sentAt', 'editedAt', 'deletedAt'],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      conversationId: { type: 'string', format: 'uuid' },
+      senderId: { type: 'string', format: 'uuid' },
+      body: { type: 'string' },
+      sentAt: dateTime,
+      editedAt: { ...dateTime, nullable: true },
+      deletedAt: { ...dateTime, nullable: true },
+    },
+  },
+
+  ConversationSummaryView: {
+    type: 'object',
+    required: ['conversation', 'unreadCount', 'lastMessage'],
+    properties: {
+      conversation: { $ref: '#/components/schemas/ConversationView' },
+      unreadCount: { type: 'integer' },
+      lastMessage: {
+        oneOf: [
+          { $ref: '#/components/schemas/MessageView' },
+          { type: 'null' },
+        ],
+      },
+    },
+  },
+
+  ConversationList: {
+    type: 'object',
+    required: ['total', 'items'],
+    properties: {
+      total: { type: 'integer' },
+      items: { type: 'array', items: { $ref: '#/components/schemas/ConversationSummaryView' } },
+    },
+  },
+
+  MessageList: {
+    type: 'object',
+    required: ['total', 'items'],
+    properties: {
+      total: { type: 'integer' },
+      items: { type: 'array', items: { $ref: '#/components/schemas/MessageView' } },
+    },
+  },
+
+  ConversationReadStateView: {
+    type: 'object',
+    required: ['conversationId', 'participantId', 'lastReadAt'],
+    properties: {
+      conversationId: { type: 'string', format: 'uuid' },
+      participantId: { type: 'string', format: 'uuid' },
+      lastReadAt: dateTime,
+    },
+  },
+
+  UnreadCountView: {
+    type: 'object',
+    required: ['unreadCount'],
+    properties: {
+      unreadCount: { type: 'integer' },
+    },
+  },
+
+  CreateConversationRequest: {
+    type: 'object',
+    required: ['playerId'],
+    properties: {
+      playerId: { type: 'string', format: 'uuid' },
+    },
+    additionalProperties: false,
+  },
+
+  SendMessageRequest: {
+    type: 'object',
+    required: ['body'],
+    properties: {
+      body: { type: 'string' },
+    },
+    additionalProperties: false,
+  },
+
+  EditMessageRequest: {
+    type: 'object',
+    required: ['body'],
+    properties: {
+      body: { type: 'string' },
+    },
+    additionalProperties: false,
+  },
 };
+
 
 

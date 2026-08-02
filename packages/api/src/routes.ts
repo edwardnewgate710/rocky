@@ -35,6 +35,7 @@ import type { IdGenerator } from './ports/ids';
 import { aggregatePlayer, BotDetectionService } from '@chess-platform/anti-cheat';
 import { NoEngineForVariantError } from '@chess-platform/engine';
 import { SocialRuleError, type FriendRequestAction } from '@chess-platform/social';
+import { MessagingRuleError } from '@chess-platform/messaging';
 import {
   antiCheatAggregateView,
   antiCheatGameReportView,
@@ -43,10 +44,14 @@ import {
   botAggregateView,
   botGameReportView,
   botGameAnalysisView,
+  conversationReadStateView,
+  conversationSummaryView,
+  conversationView,
   followEdgeView,
   friendRequestView,
   gameSummaryView,
   leaderboardEntry,
+  messageView,
   publicUser,
   ratingView,
   seekView,
@@ -94,6 +99,7 @@ export interface RouteDeps {
   readonly semanticSearchRepository?: SemanticSearchRepository;
   readonly embeddingProvider?: EmbeddingProvider;
   readonly socialGraphRepository?: import('@chess-platform/social').SocialGraphRepository;
+  readonly messagingRepository?: import('@chess-platform/messaging').MessagingRepository;
 }
 
 const PUBLIC: AuthPolicy = { required: false };
@@ -1816,7 +1822,291 @@ export function buildRouter(deps: RouteDeps): Router {
     },
   );
 
+  // --- Direct Messaging -----------------------------------------------------
+  function checkMessagingRepo() {
+    if (!deps.messagingRepository) {
+      throw HttpError.unavailable('messaging repository is not configured');
+    }
+    return deps.messagingRepository;
+  }
+
+  // 1. GET /v1/messages/conversations
+  router.get(
+    '/v1/messages/conversations',
+    doc({
+      summary: "List caller's conversations",
+      tags: ['messaging'],
+      security: 'bearer',
+      params: [limitParam(), offsetParam()],
+      responses: {
+        200: ['ConversationList', 'Paginated caller conversations'],
+        422: ['Error', 'Malformed pagination params'],
+        503: ['Error', 'Messaging service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkMessagingRepo();
+      const actorId = requireAuth(ctx).userId;
+      const limit = parseLimit(ctx.query, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+      const offset = parseOffset(ctx.query);
+      const page = await repo.listConversations(actorId, { limit, offset });
+      return json(200, {
+        total: page.total,
+        items: page.items.map(conversationSummaryView),
+      });
+    },
+  );
+
+  // 2. GET /v1/messages/conversations/:id
+  router.get(
+    '/v1/messages/conversations/:id',
+    doc({
+      summary: 'Get conversation by ID',
+      tags: ['messaging'],
+      security: 'bearer',
+      params: [pathParam('id', 'Conversation ID (UUID)')],
+      responses: {
+        200: ['ConversationView', 'Conversation details'],
+        404: ['Error', 'Not found'],
+        503: ['Error', 'Messaging service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkMessagingRepo();
+      const actorId = requireAuth(ctx).userId;
+      const convId = parseUuid(ctx.params['id']!, 'id');
+      try {
+        const conv = await repo.getConversation(convId, actorId);
+        return json(200, conversationView(conv));
+      } catch (err) {
+        mapMessagingError(err);
+      }
+    },
+  );
+
+  // 3. POST /v1/messages/conversations
+  router.post(
+    '/v1/messages/conversations',
+    doc({
+      summary: 'Open or fetch conversation with a player',
+      tags: ['messaging'],
+      security: 'bearer',
+      requestSchema: 'CreateConversationRequest',
+      responses: {
+        200: ['ConversationView', 'Existing or newly created conversation'],
+        403: ['Error', 'Blocked'],
+        404: ['Error', 'No such player'],
+        422: ['Error', 'Self conversation or malformed input'],
+        503: ['Error', 'Messaging service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkMessagingRepo();
+      const actorId = requireAuth(ctx).userId;
+      const body = strictObject(ctx.body, ['playerId']);
+      const targetId = parseUuid(reqString(body, 'playerId'), 'playerId');
+      // `parseUuid` proved the shape, not that anyone is behind it. The Postgres adapter would
+      // catch this on the users foreign key, but the in-memory adapter has no users to key
+      // against and would happily open a conversation with nobody — so the check belongs here,
+      // where the answer is the same whichever adapter is wired in.
+      if (!(await repos.users.findById(targetId))) throw HttpError.notFound('user not found');
+      try {
+        const conv = await repo.getOrCreateConversation(ids.next(), actorId, targetId, new Date(clock.now()));
+        return json(200, conversationView(conv));
+      } catch (err) {
+        mapMessagingError(err);
+      }
+    },
+  );
+
+  // 4. GET /v1/messages/conversations/:id/messages
+  router.get(
+    '/v1/messages/conversations/:id/messages',
+    doc({
+      summary: 'List messages in a conversation thread',
+      tags: ['messaging'],
+      security: 'bearer',
+      params: [pathParam('id', 'Conversation ID (UUID)'), limitParam(), offsetParam()],
+      responses: {
+        200: ['MessageList', 'Paginated thread messages'],
+        404: ['Error', 'Not found'],
+        422: ['Error', 'Malformed pagination params'],
+        503: ['Error', 'Messaging service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkMessagingRepo();
+      const actorId = requireAuth(ctx).userId;
+      const convId = parseUuid(ctx.params['id']!, 'id');
+      const limit = parseLimit(ctx.query, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+      const offset = parseOffset(ctx.query);
+      try {
+        const page = await repo.listMessages(convId, actorId, { limit, offset });
+        return json(200, {
+          total: page.total,
+          items: page.items.map(messageView),
+        });
+      } catch (err) {
+        mapMessagingError(err);
+      }
+    },
+  );
+
+  // 5. POST /v1/messages/conversations/:id/messages
+  router.post(
+    '/v1/messages/conversations/:id/messages',
+    doc({
+      summary: 'Send a direct message in a conversation',
+      tags: ['messaging'],
+      security: 'bearer',
+      params: [pathParam('id', 'Conversation ID (UUID)')],
+      requestSchema: 'SendMessageRequest',
+      responses: {
+        201: ['MessageView', 'Sent message'],
+        403: ['Error', 'Blocked or not authorized'],
+        404: ['Error', 'Not found'],
+        422: ['Error', 'Invalid body'],
+        503: ['Error', 'Messaging service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkMessagingRepo();
+      const actorId = requireAuth(ctx).userId;
+      const convId = parseUuid(ctx.params['id']!, 'id');
+      const body = strictObject(ctx.body, ['body']);
+      const messageText = reqString(body, 'body');
+      const msgId = ids.next();
+      try {
+        const msg = await repo.sendMessage(msgId, convId, actorId, messageText, new Date(clock.now()));
+        return json(201, messageView(msg));
+      } catch (err) {
+        mapMessagingError(err);
+      }
+    },
+  );
+
+  // 6. PATCH /v1/messages/messages/:id
+  router.patch(
+    '/v1/messages/messages/:id',
+    doc({
+      summary: 'Edit own message body',
+      tags: ['messaging'],
+      security: 'bearer',
+      params: [pathParam('id', 'Message ID (UUID)')],
+      requestSchema: 'EditMessageRequest',
+      responses: {
+        200: ['MessageView', 'Edited message'],
+        403: ['Error', 'Not authorized'],
+        404: ['Error', 'Not found'],
+        409: ['Error', 'Deleted message cannot be edited'],
+        422: ['Error', 'Invalid body'],
+        503: ['Error', 'Messaging service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkMessagingRepo();
+      const actorId = requireAuth(ctx).userId;
+      const msgId = parseUuid(ctx.params['id']!, 'id');
+      const body = strictObject(ctx.body, ['body']);
+      const messageText = reqString(body, 'body');
+      try {
+        const msg = await repo.editMessage(msgId, actorId, messageText, new Date(clock.now()));
+        return json(200, messageView(msg));
+      } catch (err) {
+        mapMessagingError(err);
+      }
+    },
+  );
+
+
+  // 7. DELETE /v1/messages/messages/:id
+  router.delete(
+    '/v1/messages/messages/:id',
+    doc({
+      summary: 'Tombstone own message',
+      tags: ['messaging'],
+      security: 'bearer',
+      params: [pathParam('id', 'Message ID (UUID)')],
+      responses: {
+        200: ['MessageView', 'Tombstoned message'],
+        403: ['Error', 'Not authorized'],
+        404: ['Error', 'Not found'],
+        409: ['Error', 'Already deleted'],
+        503: ['Error', 'Messaging service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkMessagingRepo();
+      const actorId = requireAuth(ctx).userId;
+      const msgId = parseUuid(ctx.params['id']!, 'id');
+      try {
+        const msg = await repo.deleteMessage(msgId, actorId, new Date(clock.now()));
+        return json(200, messageView(msg));
+      } catch (err) {
+        mapMessagingError(err);
+      }
+    },
+  );
+
+  // 8. POST /v1/messages/conversations/:id/read
+  router.post(
+    '/v1/messages/conversations/:id/read',
+    doc({
+      summary: 'Mark conversation read',
+      tags: ['messaging'],
+      security: 'bearer',
+      params: [pathParam('id', 'Conversation ID (UUID)')],
+      responses: {
+        200: ['ConversationReadStateView', 'Updated read state'],
+        403: ['Error', 'Not authorized'],
+        404: ['Error', 'Not found'],
+        503: ['Error', 'Messaging service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkMessagingRepo();
+      const actorId = requireAuth(ctx).userId;
+      const convId = parseUuid(ctx.params['id']!, 'id');
+      try {
+        const readState = await repo.markAsRead(convId, actorId, new Date(clock.now()));
+        return json(200, conversationReadStateView(readState));
+      } catch (err) {
+        mapMessagingError(err);
+      }
+    },
+  );
+
+  // 9. GET /v1/messages/unread-count
+  router.get(
+    '/v1/messages/unread-count',
+    doc({
+      summary: "Get caller's total unread count across all conversations",
+      tags: ['messaging'],
+      security: 'bearer',
+      responses: {
+        200: ['UnreadCountView', 'Total unread count'],
+        503: ['Error', 'Messaging service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkMessagingRepo();
+      const actorId = requireAuth(ctx).userId;
+      const count = await repo.getUnreadCount(actorId);
+      return json(200, { unreadCount: count });
+    },
+  );
+
   return router;
+
 }
 
 // --- helpers ---------------------------------------------------------------
@@ -1853,6 +2143,27 @@ function mapSocialError(err: unknown): never {
   }
   throw err;
 }
+
+function mapMessagingError(err: unknown): never {
+  if (err instanceof MessagingRuleError) {
+    switch (err.code) {
+      case 'self_conversation':
+        throw HttpError.validation(err.message, { actor: 'self_conversation' });
+      case 'blocked':
+        throw HttpError.forbidden(err.message);
+      case 'not_found':
+        throw HttpError.notFound(err.message);
+      case 'not_authorized':
+        throw HttpError.forbidden(err.message);
+      case 'invalid_body':
+        throw HttpError.validation(err.message, { body: 'invalid' });
+      case 'invalid_transition':
+        throw HttpError.conflict(err.message);
+    }
+  }
+  throw err;
+}
+
 
 
 /**

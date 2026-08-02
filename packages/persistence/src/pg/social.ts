@@ -20,6 +20,8 @@ import {
   SocialRuleError,
   terminateFriendship,
 } from '@chess-platform/social';
+import { lockPlayerPair } from './pair-lock';
+import { isForeignKeyViolation, isUniqueViolation } from './sqlstate';
 
 async function rollback(client: PoolClient): Promise<void> {
   try {
@@ -42,12 +44,7 @@ async function rollback(client: PoolClient): Promise<void> {
  * other. A hash collision costs two unrelated pairs a little serialization and nothing else.
  */
 async function lockPair(client: PoolClient, a: PlayerId, b: PlayerId): Promise<void> {
-  await client.query(
-    `SELECT pg_advisory_xact_lock(
-       hashtextextended(LEAST($1::text, $2::text) || '|' || GREATEST($1::text, $2::text), 0)
-     )`,
-    [a, b]
-  );
+  await lockPlayerPair(client, a, b);
 }
 
 function normalizeOffset(offset?: number): number {
@@ -78,13 +75,16 @@ function normalizeLimit(limit?: number): number | undefined {
   return Math.max(0, Math.trunc(limit));
 }
 
-/** Postgres SQLSTATE 23505 — unique_violation. */
-function isUniqueViolation(err: unknown): boolean {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    (err as { code?: unknown }).code === '23505'
-  );
+/**
+ * Turns "that player row is not there" into `not_found` instead of letting the driver error escape
+ * as a 500. Every one of these ids arrives from a request path where `parseUuid` proved the shape
+ * and nothing proved the player exists.
+ */
+function rethrowMissingPlayer(err: unknown): never {
+  if (isForeignKeyViolation(err)) {
+    throw new SocialRuleError('not_found', 'One of the players does not exist');
+  }
+  throw err;
 }
 
 /**
@@ -180,7 +180,7 @@ export class PgSocialGraphRepository implements SocialGraphRepository {
          DO UPDATE SET followed_at = social_follows.followed_at
          RETURNING followed_at`,
         [followerId, followeeId, at]
-      );
+      ).catch(rethrowMissingPlayer);
 
       await client.query('COMMIT');
       return { followerId, followeeId, followedAt: new Date(upsertRes.rows[0].followed_at) };
@@ -355,7 +355,7 @@ export class PgSocialGraphRepository implements SocialGraphRepository {
           'A friend request or friendship already exists for these players'
         );
       }
-      throw err;
+      rethrowMissingPlayer(err);
     } finally {
       client.release();
     }
@@ -563,7 +563,7 @@ export class PgSocialGraphRepository implements SocialGraphRepository {
          DO UPDATE SET blocked_at = social_blocks.blocked_at
          RETURNING blocked_at`,
         [blockerId, blockedId, at]
-      );
+      ).catch(rethrowMissingPlayer);
 
       await client.query('COMMIT');
       return { blockerId, blockedId, blockedAt: new Date(upsertRes.rows[0].blocked_at) };

@@ -28,10 +28,12 @@ import {
   PgSearchRepository,
   PgSemanticSearchRepository,
   PgSocialGraphRepository,
+  PgMessagingRepository,
 } from '@chess-platform/persistence/pg';
 import { HashingEmbeddingProvider, SEARCH_EMBEDDING_DIMENSIONS } from '@chess-platform/search';
 import type { EmbeddingProvider, SearchRepository, SemanticSearchRepository } from '@chess-platform/search';
 import type { SocialGraphRepository } from '@chess-platform/social';
+import type { MessagingRepository } from '@chess-platform/messaging';
 import { ConsoleEmailSender } from './ports/email';
 import type { EmailSender } from './ports/email';
 import { JsonLogger } from './ports/logger';
@@ -139,6 +141,7 @@ export interface PgBootstrapOptions {
   readonly semanticSearchRepository?: SemanticSearchRepository;
   readonly embeddingProvider?: EmbeddingProvider;
   readonly socialGraphRepository?: SocialGraphRepository;
+  readonly messagingRepository?: MessagingRepository;
   readonly logger?: Logger;
   readonly metrics?: Metrics;
   readonly tracer?: Tracer;
@@ -199,6 +202,11 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ? (options.socialGraphRepository ?? new PgSocialGraphRepository(pool))
     : undefined;
 
+  const messagingEnabled = socialEnabled && process.env['MESSAGING_ENABLED'] !== '0';
+  const messagingRepository = messagingEnabled && socialGraphRepository
+    ? (options.messagingRepository ?? new PgMessagingRepository(pool, socialGraphRepository))
+    : undefined;
+
   const logger = options.logger ?? new JsonLogger({ service: 'api' }, { level: resolveLogLevel() });
   const metrics = options.metrics ?? new InMemoryMetrics();
   const logExporter = new LoggingSpanExporter(logger);
@@ -251,6 +259,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ...(semanticSearchRepository ? { semanticSearchRepository } : {}),
     ...(embeddingProvider ? { embeddingProvider } : {}),
     ...(socialGraphRepository ? { socialGraphRepository } : {}),
+    ...(messagingRepository ? { messagingRepository } : {}),
     botTimingSource: new EventStoreBotTimingSource(eventStore),
     // Production observability (M13): structured logs to stdout, a scrape
     // registry backing GET /v1/metrics, and tracer emitting spans to logs.

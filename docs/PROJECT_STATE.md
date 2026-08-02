@@ -4,7 +4,7 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-01 — M10 Social Graph Increment 2: persistence & REST API (ADR-0067)._
+_Last updated: 2026-08-02 — M10 Direct Messaging Increment 3: domain + Postgres + REST API (ADR-0068)._
 
 ## M10 Social Graph Increment 1 — Pure Social Graph Domain Core (ADR-0066)
 
@@ -948,6 +948,17 @@ Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
 - **OpenAPI & Build Chain**: Exported presenters (`followEdgeView`, `friendRequestView`, `blockEdgeView`) and OpenAPI 3.1 schemas (`COMPONENT_SCHEMAS`). Regenerated `packages/api/openapi.json` with zero drift. Updated `package.json` `build:server` and Dockerfiles (`Dockerfile.api`, `Dockerfile.gateway`). Verified check:build-order script passes.
 - **Tests**: DB-gated integration tests in `packages/persistence/test/social.integration.test.ts` (29/29 pass) and HTTP REST tests in `packages/api/test/social-api.test.ts` (255/255 pass).
 - Detailed in `docs/adr/0067-social-persistence-api.md`.
+
+## M10 Direct Messaging Increment 3 — Direct 1:1 Messaging (ADR-0068)
+- **Domain Core Package (`@chess-platform/messaging`)**: Created pure TypeScript domain package with zero runtime dependencies. Defined `Conversation`, `Message`, `ConversationReadState`, and `ConversationSummary` interfaces. Inverted block dependency via `BlockChecker` port interface. Defined `MessagingRuleError` with codes `self_conversation`, `blocked`, `not_found`, `not_authorized`, `invalid_body`, `invalid_transition`. Code-point tie-break sorting (`compareOldestThenId`, `compareRecentActivityThenId`) and `paginate` pagination helper.
+- **Migration `0016_messaging.sql`**: Created tables `messaging_conversations`, `messaging_messages`, and `messaging_reads`. `ON DELETE CASCADE` foreign key references to `users(id)` and `messaging_conversations(id)`. Partial-free unique index on `(LEAST(participant_a, participant_b), GREATEST(participant_a, participant_b))` enforcing one conversation per pair. Every referencing FK side is covered, three of them by the composite list indexes that already lead with the same column rather than by narrow duplicates.
+- **Postgres Adapter (`PgMessagingRepository`)**: Implemented `MessagingRepository` in `packages/persistence/src/pg/messaging.ts` and re-exported from `@chess-platform/persistence/pg`. Transaction pair locks via the shared `pair-lock.ts` key (the same key the social graph adapter uses, which is what makes the cross-connection block check meaningful), a fixed lock order — pair lock before any row lock, after the reverse order in `sendMessage` was found to deadlock against `getOrCreateConversation` — single-statement idempotent upsert for `getOrCreateConversation`, `GREATEST` for both the read marker and `last_message_at`, `listConversations` as one query with a `LATERAL` instead of two per row, and safe `NaN`/`Infinity` pagination handling.
+- **REST API Endpoints**: Registered 9 `/v1/messages/...` endpoints in `packages/api/src/routes.ts` (`GET/POST /v1/messages/conversations`, `GET /v1/messages/conversations/:id`, `GET/POST /v1/messages/conversations/:id/messages`, `PATCH/DELETE /v1/messages/messages/:id`, `POST /v1/messages/conversations/:id/read`, `GET /v1/messages/unread-count`).
+- **Authorization & Privacy**: Actor strictly derived from `requireAuth(ctx).userId`. Server-generated `uuidv7()` message and conversation IDs. Uniform `not_found` (404) returned for non-existent vs unauthorized conversation access to prevent conversation ID probing.
+- **Wiring & OpenAPI**: Added presenters in `presenters.ts` and OpenAPI component schemas in `schemas.ts`. Updated `deps.ts`, `server.ts`, `bootstrap.ts` (with optional dependency 503 fallback), and test `helpers.ts` (`withoutMessaging`). Regenerated `packages/api/openapi.json` with zero drift. Updated workspace dependencies, `package.json` scripts, `test-counts.mjs`, `Dockerfile.api`, `Dockerfile.gateway`, and verified `check:build-order`.
+- **Tests**: Domain unit tests in `packages/messaging/test/messaging.test.ts` (10/10), DB-gated integration tests in `packages/persistence/test/messaging.integration.test.ts` (persistence 30/30 against a real Postgres), and REST API tests in `packages/api/test/messaging-api.test.ts` (api 263/263). Two of them were checked against deliberately broken code before being trusted: the deadlock test fails with Postgres' own `deadlock detected` under the original lock order, and the stranger-probing tests compare a real id against an invented one so they cannot pass by accident.
+- Detailed in `docs/adr/0068-direct-messaging.md`.
+
 
 
 

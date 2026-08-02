@@ -279,6 +279,23 @@ test('pg social graph repository integration tests', { skip }, async () => {
     const reqCheck = await pool.query(`SELECT 1 FROM social_friend_requests WHERE requester_id = $1 OR addressee_id = $1`, [cascadeUser]);
     assert.equal(reqCheck.rowCount, 0);
 
+    // --- A player id that is well-formed but belongs to nobody ---
+    // `parseUuid` at the route proves the shape and nothing proves the player exists, so the users
+    // FK is what catches it. Unmapped it escapes as a raw driver error and the caller gets a 500
+    // for what is really "no such player".
+    const ghost = uuidv7();
+    for (const [label, act] of [
+      ['follow', async () => repo.follow(alice, ghost, new Date())],
+      ['block', async () => repo.block(alice, ghost, new Date())],
+      ['sendFriendRequest', async () => repo.sendFriendRequest(uuidv7(), alice, ghost, new Date())],
+    ] as const) {
+      await assert.rejects(
+        act,
+        (err: any) => err instanceof SocialRuleError && err.code === 'not_found',
+        `${label} against a non-existent player must be not_found, not a driver error`
+      );
+    }
+
     // --- Concurrency: two responses to one request must not both win ---
     // Read-then-write across two pool connections is a lost update: both callers see 'pending',
     // both compute a legal transition, and the second UPDATE overwrites the first — so an accepted

@@ -413,6 +413,42 @@ CREATE TABLE social_friend_requests (
 
 Stores directed follow edges, directed block edges, and directed friend requests with status transitions (`pending`, `accepted`, `declined`, `cancelled`, `ended`). `ON DELETE CASCADE` ensures foreign key cleanup when users are deleted. Partial unique indexes enforce one pending request per pair and one accepted request per pair. Collation for UUID columns uses standard Postgres byte-wise comparison matching code-point `compareIds` order.
 
+### 4.10 Direct Messaging tables (`0016_messaging.sql`, M10 inc 3)
+
+```sql
+CREATE TABLE messaging_conversations (
+  id              UUID        NOT NULL PRIMARY KEY,
+  participant_a   UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  participant_b   UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at      TIMESTAMPTZ NOT NULL,
+  last_message_at TIMESTAMPTZ NOT NULL,
+  CONSTRAINT messaging_conversations_not_self CHECK (participant_a <> participant_b)
+);
+
+CREATE UNIQUE INDEX messaging_conversations_pair_idx
+  ON messaging_conversations (LEAST(participant_a, participant_b), GREATEST(participant_a, participant_b));
+
+CREATE TABLE messaging_messages (
+  id              UUID        NOT NULL PRIMARY KEY,
+  conversation_id UUID        NOT NULL REFERENCES messaging_conversations(id) ON DELETE CASCADE,
+  sender_id       UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  body            TEXT        NOT NULL,
+  sent_at         TIMESTAMPTZ NOT NULL,
+  edited_at       TIMESTAMPTZ,
+  deleted_at      TIMESTAMPTZ
+);
+
+CREATE TABLE messaging_reads (
+  conversation_id UUID        NOT NULL REFERENCES messaging_conversations(id) ON DELETE CASCADE,
+  participant_id  UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  last_read_at    TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (conversation_id, participant_id)
+);
+```
+
+Stores 1:1 direct conversations, direct messages (including `edited_at` and tombstone `deleted_at`), and per-participant monotonic read states. A partial-free unique index on `(LEAST(participant_a, participant_b), GREATEST(participant_a, participant_b))` guarantees that exactly one conversation exists per player pair. `ON DELETE CASCADE` cleans up all conversation, message, and read records when users or conversations are deleted. Every referencing foreign key side is covered so cascading deletions do not scan these tables — but three of them are covered by the composite list indexes rather than by dedicated ones, since an index on `(a, b, c)` already serves a lookup on `a`; only `messaging_messages.sender_id` and `messaging_reads.participant_id` need an index of their own.
+
+
 
 **Secrets never stored in plaintext:** passwords are argon2id **encoded strings**
 (salt + params embedded); refresh tokens are stored only as hashes; `email_hash`

@@ -37,6 +37,7 @@ import type { AntiCheatAnalysisService } from './anti-cheat/analysis-service';
 import type { BotGameTimingSource } from './bot-detection/source';
 import type { EmbeddingProvider, SearchRepository, SemanticSearchRepository } from '@chess-platform/search';
 import type { SocialGraphRepository } from '@chess-platform/social';
+import type { MessagingRepository } from '@chess-platform/messaging';
 
 /** The full set of repositories the API consumes. */
 export interface Repositories {
@@ -77,6 +78,8 @@ export interface ApiDependencies {
   readonly embeddingProvider?: EmbeddingProvider;
   /** Optional social graph repository (M10 inc 2). When absent, `/v1/social/*` responds 503. */
   readonly socialGraphRepository?: SocialGraphRepository;
+  /** Optional messaging repository (M10 inc 3). When absent, `/v1/messages/*` responds 503. */
+  readonly messagingRepository?: MessagingRepository;
   /** Structured logger (M13). Defaults to a silent {@link NullLogger}. */
   readonly logger?: Logger;
   /** Metrics registry + scrape target (M13). Defaults to {@link InMemoryMetrics}. */
