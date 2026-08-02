@@ -204,3 +204,58 @@ export interface ApiErrorEnvelope {
     readonly details?: Record<string, unknown>;
   };
 }
+
+// --- Social graph (M10) -----------------------------------------------------
+
+/** A paginated list as the social endpoints return it: a total plus one page. */
+export interface SocialPage<T> {
+  readonly total: number;
+  readonly items: readonly T[];
+}
+
+export interface FollowEdge {
+  readonly followerId: string;
+  readonly followeeId: string;
+  readonly followedAt: string;
+}
+
+/**
+ * The states a friend request can hold. `ended` is reachable only from
+ * `accepted` (a friendship being terminated), which is why it appears in a
+ * request's status rather than in a separate model — see ADR-0066.
+ */
+export type FriendRequestStatus = 'pending' | 'accepted' | 'declined' | 'cancelled' | 'ended';
+
+/** The actions a caller may take on a request; the server decides which are legal. */
+export type FriendRequestAction = 'accept' | 'decline' | 'cancel';
+
+export interface FriendRequest {
+  readonly id: string;
+  readonly requesterId: string;
+  readonly addresseeId: string;
+  readonly status: FriendRequestStatus;
+  readonly createdAt: string;
+  readonly respondedAt: string | null;
+}
+
+export interface BlockEdge {
+  readonly blockerId: string;
+  readonly blockedId: string;
+  readonly blockedAt: string;
+}
+
+/**
+ * A player as the read layer names them. The social REST endpoints return bare
+ * ids — there is no id-to-handle lookup in REST, only `player(id:)` in GraphQL
+ * — so a display name is available exactly when the read layer is reachable.
+ */
+export interface SocialPlayer {
+  readonly id: string;
+  readonly handle: string;
+}
+
+/** Followers and following for one player, resolved to display names. */
+export interface SocialConnections {
+  readonly followers: SocialPage<SocialPlayer>;
+  readonly following: SocialPage<SocialPlayer>;
+}

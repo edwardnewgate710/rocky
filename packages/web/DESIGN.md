@@ -159,7 +159,8 @@ Flat at rest, everywhere. There is no `box-shadow` in the current implementation
 
 ### Buttons
 - **Shape:** 6px radius (`{rounded.base}`), same as every other rounded element in the system — there is no separate button radius scale.
-- **Default:** transparent background, 1px border in the current text color (`currentColor`), `padding: 6px 14px`. Every button in the app — sign in, register, create seek, cancel seek, flip board, theme toggle, sign out — uses this one style. There is no separate "primary button" treatment; hierarchy comes from placement and copy, not a second button color.
+- **Default:** transparent background, 1px border in the current text color (`currentColor`), `padding: 6px 14px`. Every standalone button in the app — sign in, register, create seek, flip board, theme toggle, sign out — uses this one style. There is no separate "primary button" treatment; hierarchy comes from placement and copy, not a second button color.
+- **Row action** (`padding: 2px 10px`, `Label` typography): the compact form used *only* for a control that sits inside a list row — the seek-list cancel, and the accept/decline/cancel/unblock controls in the social lists. Identical shape, border, hover and focus treatment; padding and type step down so a control never out-weighs the row it belongs to. This is a size, not a second button style, and it is the only size variant that exists. A control outside a row uses the default.
 - **Hover / Focus:** `Panel Tint` background fill plus **Interactive Lift** shadow on hover; a 3px Grandmaster Teal outline on `:focus-visible`. Both are additive to the flat default, never a permanent state.
 - **Ghost / disabled:** disabled buttons (e.g. "Create seek" before sign-in) keep the same shape but drop to reduced opacity with a `title` tooltip explaining why — never hidden entirely.
 

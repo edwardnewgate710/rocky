@@ -4,7 +4,7 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-02 — M10 Increment 8: read-only GraphQL layer (ADR-0073). **M10 complete.**_
+_Last updated: 2026-08-02 — M10 Increment 9: social UI on the profile page (ADR-0074), the first web increment of M10._
 
 ## M10 Social Graph Increment 1 — Pure Social Graph Domain Core (ADR-0066)
 
@@ -1000,6 +1000,19 @@ Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
 - **Wiring**: `deps.ts`, `routes.ts`, `server.ts`, `bootstrap.ts` (`GRAPHQL_ENABLED`), `openapi/schemas.ts` (`GraphQLRequest`), and test `helpers.ts` (`withoutGraphql`, `graphqlIntrospection`).
 - **Tests**: `packages/api/test/graphql.test.ts` (29) and DB-gated `packages/persistence/test/users-batch.integration.test.ts`. Eight rules were mutation-tested — each broken in turn, covering test confirmed to fail. That pass caught a flattening test that proved nothing (the studies adapter already flattens both codes, so it passed against broken code); it was replaced with a direct unit test.
 - Detailed in `docs/adr/0073-graphql-read-layer.md`.
+
+## M10 Increment 9 — Social UI on the Profile Page (ADR-0074) — first WEB increment
+- **The gap it closes**: increments 1–8 were all backend. 91 M10 endpoints existed with **zero UI**; the web app spoke only `/v1/auth`, `/v1/health`, `/v1/seeks`, `/v1/users` across four routes. This is the first increment of the web track.
+- **Surface**: the existing `/profile/:handle` route, extended — no new route. Follower/following lists with counts, follow/unfollow, friend requests (send, accept, decline, cancel), block/unblock, and on the viewer's own profile their pending requests, friends and blocked players. All 12 social endpoints reachable.
+- **Read path** (`packages/web/src/api/graphql.ts`): `POST /v1/graphql` for nested reads, REST for writes. The binding reason is not round trips — the social endpoints return **bare ids and REST has no id-to-handle lookup** (`/v1/users/:handle` goes the other way), so `player(id:)` is the only route to a display name. `resolvePlayers` batches aliased lookups 20 at a time, well under the endpoint's 50-alias and 1000-complexity limits.
+- **Degradation**: `GRAPHQL_ENABLED` is opt-in, so every GraphQL failure becomes `null` rather than an exception, latched after the first attempt. Flag off ⇒ counts, lists and actions all still work; only names fall back to truncated ids under an explanatory note.
+- **Derived relationship** (`packages/web/src/app/social-controller.ts`): there is no "do I follow this player" endpoint, so the viewer's own following/blocks/requests are read once (`RELATIONSHIP_SCAN_LIMIT = 100`) and the relationship derived. Knowingly approximate past 100 follows, and safe because `follow` is an idempotent upsert and `unfollow` reports "nothing removed" without failing.
+- **Writes reload rather than patch** — a follow can be refused by an unseen block, and a request can be answered from the other side between render and click.
+- **Sign-out clears the region**: it holds one account's friends, requests and blocks; leaving it rendered would be a disclosure, not a stale view.
+- **Design (Impeccable v4, Operate mode)**: `.rating-row`/`.game-row`/`.panel-row` consolidated onto one shared rule per DESIGN.md's one-row-style requirement; counts sit beside their heading rather than in stat tiles (the SaaS-dashboard anti-reference); follow state carried by the verb, never colour (one accent, and colour-only state fails colourblind users); a signed-out visitor gets an empty action bar rather than disabled buttons.
+- **Tests**: `social-controller.test.ts` (15) plus 3 a11y assertions; 305/305 web tests pass. Eight rules mutation-tested, 8/8 caught — the pass caught a stale-load test that proved nothing (identical fakes on both loads meant it passed with the generation guard removed) and it was rewritten with a gated slow response.
+- **Recorded gaps**: GraphQL `Player` has no `teams` field despite ADR-0073's Context claiming it; five pre-existing design-system findings in `style.css` are reported, not repaired (fixing drift inside a feature PR is how a design-system change ships unreviewed).
+- Detailed in `docs/adr/0074-social-ui-profile.md`.
 
 
 

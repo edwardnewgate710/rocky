@@ -462,7 +462,12 @@ button:disabled {
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.seek-cancel {
+/* Row action — the compact button that sits inside a list row. Same shape,
+   border and states as every other button; only the padding and type step down
+   so a control does not out-weigh the row it belongs to. Shared by the seek
+   list and every social list rather than restated per feature. */
+.seek-cancel,
+.panel-row button {
   font-size: 0.75rem;
   padding: 2px 10px;
 }
@@ -483,22 +488,74 @@ button:disabled {
   flex-direction: column;
   gap: 4px;
 }
-.rating-row {
-  padding: 6px 12px;
-  border-radius: 6px;
-  background: var(--panel);
-  font-size: 0.875rem;
-}
-.game-list {
+.game-list,
+.panel-list {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
-.game-row {
+
+/* The one row treatment for every list in the app (ratings, games, followers,
+   requests, friends, blocks). DESIGN.md keeps these identical on purpose — a
+   per-list variant reads as inconsistency, not craft — so they share a selector
+   rather than three copies that can drift. */
+.rating-row,
+.game-row,
+.panel-row {
   padding: 6px 12px;
   border-radius: 6px;
   background: var(--panel);
   font-size: 0.875rem;
+}
+
+/* --- Social (M10) --- */
+/* A row that carries an action keeps the label and the control on one line,
+   with the control hugging the trailing edge so a column of rows has a single
+   predictable target position. */
+.panel-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
+}
+.panel-row-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.social-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+/* Push the destructive action away from the connective ones. DESIGN.md puts
+   hierarchy in placement and copy, not in a second button colour — so Block is
+   separated by distance rather than tinted, which also keeps the one-accent
+   rule intact and stays legible without colour vision. */
+.social-action-destructive {
+  margin-left: auto;
+}
+
+/* Counts sit beside their heading rather than in a tile. A standalone number
+   with a label under it is the dashboard template this product rejects. */
+.count {
+  font-weight: 400;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+/* Says why names are missing when the read layer is off. Muted because it
+   explains the view rather than reporting a fault — errors get Ember. */
+.social-note {
+  margin: 8px 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.social-note:empty {
+  display: none;
 }
 
 /* --- Error display --- */

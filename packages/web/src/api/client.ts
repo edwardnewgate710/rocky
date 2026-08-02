@@ -28,6 +28,8 @@ import { UnauthorizedError } from '../net/errors.js';
 import { SessionManager } from '../net/session.js';
 import type { TokenStore } from '../net/session.js';
 import { DEFAULT_RETRY_POLICY } from '../net/retry.js';
+import { SocialApi } from './social.js';
+import { GraphQLApi } from './graphql.js';
 import type { RetryPolicy } from '../net/retry.js';
 import type {
   AuthResponse,
@@ -70,6 +72,9 @@ export class GambitClient {
   readonly users: UsersApi;
   readonly games: GamesApi;
   readonly seeks: SeeksApi;
+  readonly social: SocialApi;
+  /** The read layer (ADR-0073). Degrades to null answers when the flag is off. */
+  readonly graphql: GraphQLApi;
   private readonly http: HttpClient;
 
   constructor(options: GambitClientOptions) {
@@ -100,6 +105,8 @@ export class GambitClient {
     this.users = new UsersApi(this.execute);
     this.games = new GamesApi(this.execute);
     this.seeks = new SeeksApi(this.execute);
+    this.social = new SocialApi(this.execute);
+    this.graphql = new GraphQLApi(this.execute);
   }
 
   health(): Promise<Health> {

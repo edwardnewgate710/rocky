@@ -25,6 +25,9 @@ import type { LobbyController as LobbyControllerType } from './lobby-controller.
 import { CreateGamePanel } from './create-game-panel.js';
 import { ProfileController } from './profile-controller.js';
 import type { ProfileController as ProfileControllerType } from './profile-controller.js';
+import { SocialController } from './social-controller.js';
+import type { Relationship, SelfSocial } from './social-controller.js';
+import type { SocialPlayer } from '../api/models.js';
 import { ThemeToggle } from './theme-toggle.js';
 import type { ThemeToggle as ThemeToggleType } from './theme-toggle.js';
 import { AuthController } from './auth-controller.js';
@@ -141,6 +144,134 @@ function renderEmpty(container: HTMLElement, opts: EmptyStateOptions): void {
   }
 
   container.appendChild(wrap);
+}
+
+/** A row action: a label plus what it does. */
+interface RowAction {
+  readonly label: string;
+  readonly run: () => void;
+  /** Severs a relationship; separated from the connective actions by position. */
+  readonly destructive?: boolean;
+}
+
+/**
+ * Render one `panel-row` — the single row treatment every list in the app
+ * shares. Actions are optional; a row without them is a plain label.
+ */
+function appendPanelRow(
+  container: HTMLElement,
+  label: string,
+  actions: readonly RowAction[],
+  busy: boolean,
+): void {
+  const row = document.createElement('div');
+  row.className = 'panel-row';
+
+  const name = document.createElement('span');
+  name.textContent = label;
+  row.appendChild(name);
+
+  if (actions.length > 0) {
+    const group = document.createElement('div');
+    group.className = 'panel-row-actions';
+    for (const action of actions) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = action.label;
+      button.disabled = busy;
+      // The accessible name has to say who the action applies to: a column of
+      // buttons all reading "Accept" is unusable without the surrounding row.
+      button.setAttribute('aria-label', `${action.label} ${label}`);
+      button.addEventListener('click', action.run);
+      group.appendChild(button);
+    }
+    row.appendChild(group);
+  }
+
+  container.appendChild(row);
+}
+
+/**
+ * Render the action bar shown on another player's profile.
+ *
+ * A relationship of `null` means there is nothing to offer — the viewer is
+ * signed out, or looking at their own profile — so the bar is emptied rather
+ * than filled with disabled controls that suggest a signed-in affordance.
+ *
+ * Follow state is carried by the verb ("Follow" vs "Unfollow"), never by colour
+ * alone: this system has exactly one accent and it means "active", so a colour
+ * difference here would be both off-system and invisible to a colourblind user.
+ */
+function renderSocialActions(
+  container: HTMLElement,
+  relationship: Relationship | null,
+  social: SocialController,
+  busy: boolean,
+): void {
+  container.innerHTML = '';
+  if (relationship === null) return;
+
+  const actions: RowAction[] = [];
+
+  if (relationship.blocked) {
+    // A block supersedes everything else, so offering follow or friend controls
+    // beside it would advertise actions the server will refuse.
+    actions.push({ label: 'Unblock', run: () => void social.unblockSubject() });
+  } else {
+    actions.push(
+      relationship.following
+        ? { label: 'Unfollow', run: () => void social.unfollow() }
+        : { label: 'Follow', run: () => void social.follow() },
+    );
+
+    if (relationship.incomingRequestId !== null) {
+      const id = relationship.incomingRequestId;
+      actions.push(
+        { label: 'Accept friend request', run: () => void social.respond(id, 'accept') },
+        { label: 'Decline friend request', run: () => void social.respond(id, 'decline') },
+      );
+    } else if (relationship.outgoingRequestId !== null) {
+      const id = relationship.outgoingRequestId;
+      actions.push({ label: 'Cancel friend request', run: () => void social.respond(id, 'cancel') });
+    } else {
+      actions.push({ label: 'Add friend', run: () => void social.sendFriendRequest() });
+    }
+
+    actions.push({ label: 'Block', run: () => void social.block(), destructive: true });
+  }
+
+  for (const action of actions) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = action.label;
+    button.disabled = busy;
+    // Block is destructive and must not sit flush against the connective
+    // actions, where a mis-aimed click is one pixel away from severing a
+    // relationship. DESIGN.md is explicit that hierarchy here comes from
+    // placement and copy rather than a second button treatment, so it is
+    // separated by position — not by colour or weight.
+    if (action.destructive) button.classList.add('social-action-destructive');
+    button.addEventListener('click', action.run);
+    container.appendChild(button);
+  }
+}
+
+/** Render a list of players, each with the actions that apply to them. */
+function renderPlayerList(
+  container: HTMLElement,
+  players: readonly SocialPlayer[],
+  empty: { readonly title: string; readonly body: string },
+  busy: boolean,
+  actionsFor: (player: SocialPlayer) => readonly RowAction[] = () => [],
+): void {
+  container.innerHTML = '';
+  if (players.length === 0) {
+    renderEmpty(container, { ...empty, inline: true });
+    return;
+  }
+  for (const player of players) {
+    appendPanelRow(container, player.handle, actionsFor(player), busy);
+  }
 }
 
 /**
@@ -751,11 +882,158 @@ export function bootstrap(
     const gamesEl = doc.getElementById('profile-games');
     const profileErrorEl = doc.getElementById('profile-error');
 
+    // --- Social region (M10 inc 9) ---
+    const socialActionsEl = doc.getElementById('social-actions');
+    const followersEl = doc.getElementById('social-followers');
+    const followingEl = doc.getElementById('social-following');
+    const followerCountEl = doc.getElementById('social-follower-count');
+    const followingCountEl = doc.getElementById('social-following-count');
+    const socialSelfEl = doc.getElementById('social-self');
+    const incomingEl = doc.getElementById('social-incoming');
+    const outgoingEl = doc.getElementById('social-outgoing');
+    const friendsEl = doc.getElementById('social-friends');
+    const friendCountEl = doc.getElementById('social-friend-count');
+    const blockedEl = doc.getElementById('social-blocked');
+    const socialNoteEl = doc.getElementById('social-note');
+    const socialErrorEl = doc.getElementById('social-error');
+
+    let socialBusy = false;
+    let lastRelationship: Relationship | null = null;
+    let lastSelfSocial: SelfSocial | null = null;
+
+    const social = new SocialController({
+      client: app.api,
+      callbacks: {
+        onConnections: (c) => {
+          if (followerCountEl) followerCountEl.textContent = String(c.followerCount);
+          if (followingCountEl) followingCountEl.textContent = String(c.followingCount);
+          if (followersEl) {
+            renderPlayerList(
+              followersEl,
+              c.followers,
+              { title: 'No followers yet', body: 'Followers appear here once someone follows this player.' },
+              socialBusy,
+            );
+          }
+          if (followingEl) {
+            renderPlayerList(
+              followingEl,
+              c.following,
+              { title: 'Not following anyone yet', body: 'Players this account follows appear here.' },
+              socialBusy,
+            );
+          }
+          if (socialNoteEl) {
+            // Names come only from the read layer. Saying so beats showing
+            // truncated ids with no explanation.
+            socialNoteEl.textContent = c.named
+              ? ''
+              : 'Player names are unavailable while the read layer is disabled; showing partial ids.';
+          }
+        },
+        onRelationship: (r) => {
+          lastRelationship = r;
+          if (socialActionsEl) renderSocialActions(socialActionsEl, r, social, socialBusy);
+        },
+        onSelfSocial: (s) => {
+          lastSelfSocial = s;
+          if (socialSelfEl) socialSelfEl.hidden = s === null;
+          if (s === null) return;
+          if (incomingEl) {
+            incomingEl.innerHTML = '';
+            if (s.incoming.length === 0) {
+              renderEmpty(incomingEl, {
+                title: 'No requests waiting',
+                body: 'Friend requests sent to you appear here.',
+                inline: true,
+              });
+            } else {
+              for (const { request, player } of s.incoming) {
+                appendPanelRow(
+                  incomingEl,
+                  player.handle,
+                  [
+                    { label: 'Accept', run: () => void social.respond(request.id, 'accept') },
+                    { label: 'Decline', run: () => void social.respond(request.id, 'decline') },
+                  ],
+                  socialBusy,
+                );
+              }
+            }
+          }
+          if (outgoingEl) {
+            outgoingEl.innerHTML = '';
+            if (s.outgoing.length === 0) {
+              renderEmpty(outgoingEl, {
+                title: 'Nothing pending',
+                body: 'Requests you send appear here until they are answered.',
+                inline: true,
+              });
+            } else {
+              for (const { request, player } of s.outgoing) {
+                appendPanelRow(
+                  outgoingEl,
+                  player.handle,
+                  [{ label: 'Cancel', run: () => void social.respond(request.id, 'cancel') }],
+                  socialBusy,
+                );
+              }
+            }
+          }
+          if (friendCountEl) friendCountEl.textContent = String(s.friends.length);
+          if (friendsEl) {
+            renderPlayerList(
+              friendsEl,
+              s.friends,
+              { title: 'No friends yet', body: 'Accepted friend requests appear here.' },
+              socialBusy,
+            );
+          }
+          if (blockedEl) {
+            renderPlayerList(
+              blockedEl,
+              s.blocked,
+              { title: 'No blocked players', body: 'Players you block appear here.' },
+              socialBusy,
+              (player) => [{ label: 'Unblock', run: () => void social.unblock(player.id) }],
+            );
+          }
+        },
+        onBusy: (busy) => {
+          socialBusy = busy;
+          // Re-render only what carries controls, so a click cannot land twice.
+          if (socialActionsEl) renderSocialActions(socialActionsEl, lastRelationship, social, busy);
+          if (lastSelfSocial !== null && socialSelfEl && !socialSelfEl.hidden) {
+            for (const el of [incomingEl, outgoingEl, blockedEl]) {
+              if (!el) continue;
+              for (const button of el.querySelectorAll('button')) button.disabled = busy;
+            }
+          }
+        },
+        onError: (msg) => {
+          if (socialErrorEl) socialErrorEl.textContent = msg;
+        },
+      },
+    });
+
+    // Remembered so a later sign-in or sign-out can reload the region for the
+    // new viewer. Without this the relationship is a snapshot of whoever was
+    // signed in when the profile rendered: signing out would leave working
+    // Follow/Block controls on screen, and signing in would show none at all,
+    // until the visitor happened to navigate.
+    let socialSubject: SocialPlayer | null = null;
+    const loadSocialFor = (player: SocialPlayer): void => {
+      socialSubject = player;
+      if (socialErrorEl) socialErrorEl.textContent = '';
+      void social.load(player, auth.currentSession?.userId ?? null);
+    };
+
     const profile = new ProfileController({
       client: app.api,
       callbacks: {
         onProfile: (p) => {
           if (handleEl) handleEl.textContent = p.user.handle;
+          loadSocialFor({ id: p.user.id, handle: p.user.handle });
           if (ratingsEl) {
             if (p.ratings.length === 0) {
               renderEmpty(ratingsEl, {
@@ -803,6 +1081,12 @@ export function bootstrap(
     const handle = route.name === 'profile' ? route.handle : null;
     if (handle) {
       void profile.load(handle);
+      // Another player's profile: the page itself does not change when the
+      // viewer's session does, but who they are to this player does — so the
+      // social region reloads while the profile above it stays put.
+      selfProfileSessionHandler = () => {
+        if (socialSubject !== null) loadSocialFor(socialSubject);
+      };
     } else {
       // Session restoration rotates the httpOnly refresh cookie and is
       // asynchronous. Loading /users/me before it finishes produces a false
@@ -815,6 +1099,17 @@ export function bootstrap(
         if (ratingsEl) ratingsEl.innerHTML = '';
         if (gamesEl) gamesEl.innerHTML = '';
         if (profileErrorEl) profileErrorEl.textContent = '';
+        // Signing out must take the social region with it — leaving one
+        // account's friends and blocked list on screen for the next visitor
+        // would be a disclosure, not a stale render.
+        social.reset();
+        for (const el of [socialActionsEl, followersEl, followingEl, incomingEl, outgoingEl, friendsEl, blockedEl]) {
+          if (el) el.innerHTML = '';
+        }
+        for (const el of [followerCountEl, followingCountEl, friendCountEl, socialNoteEl, socialErrorEl]) {
+          if (el) el.textContent = '';
+        }
+        if (socialSelfEl) socialSelfEl.hidden = true;
       };
       selfProfileSessionHandler = (session) => {
         if (session === null) {

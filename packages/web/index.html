@@ -122,6 +122,31 @@
     <section id="profile" class="profile" aria-label="Profile" hidden>
       <h2 id="profile-handle">Profile</h2>
       <div id="profile-ratings" class="ratings" aria-label="Ratings"></div>
+      <div id="social-actions" class="social-actions"></div>
+
+      <h3>Followers <span id="social-follower-count" class="count"></span></h3>
+      <div id="social-followers" class="panel-list" aria-label="Followers"></div>
+
+      <h3>Following <span id="social-following-count" class="count"></span></h3>
+      <div id="social-following" class="panel-list" aria-label="Following"></div>
+
+      <div id="social-self" hidden>
+        <h3>Friend requests received</h3>
+        <div id="social-incoming" class="panel-list" aria-label="Friend requests received"></div>
+
+        <h3>Friend requests sent</h3>
+        <div id="social-outgoing" class="panel-list" aria-label="Friend requests sent"></div>
+
+        <h3>Friends <span id="social-friend-count" class="count"></span></h3>
+        <div id="social-friends" class="panel-list" aria-label="Friends"></div>
+
+        <h3>Blocked</h3>
+        <div id="social-blocked" class="panel-list" aria-label="Blocked players"></div>
+      </div>
+
+      <p id="social-note" class="social-note"></p>
+      <p id="social-error" class="error" role="alert"></p>
+
       <h3>Recent games</h3>
       <div id="profile-games" class="game-list" aria-label="Recent games"></div>
       <p id="profile-error" class="error" role="alert"></p>

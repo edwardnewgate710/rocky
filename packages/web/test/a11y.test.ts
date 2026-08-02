@@ -114,3 +114,31 @@ test('lobby mounts the create-a-game panel', () => {
   // authenticated — which the Playwright/Lighthouse suite exercises live.
   assert.ok(HTML_TEMPLATE.includes('id="create-game"'));
 });
+
+// --- Social region (M10 inc 9) ---
+
+test('every social list region carries an aria-label', () => {
+  // Six lists sit on one page with visually similar rows; without labels a
+  // screen-reader user cannot tell followers from blocked players.
+  for (const label of [
+    'aria-label="Followers"',
+    'aria-label="Following"',
+    'aria-label="Friend requests received"',
+    'aria-label="Friend requests sent"',
+    'aria-label="Friends"',
+    'aria-label="Blocked players"',
+  ]) {
+    assert.ok(HTML_TEMPLATE.includes(label), `missing ${label}`);
+  }
+});
+
+test('social errors are announced', () => {
+  assert.match(HTML_TEMPLATE, /id="social-error"[^>]*role="alert"/);
+});
+
+test('the viewer-only social block starts hidden', () => {
+  // It holds the viewer's own requests, friends and blocks. Rendering it before
+  // the controller decides whose profile this is would expose one account's
+  // relationships on another account's page.
+  assert.match(HTML_TEMPLATE, /id="social-self"[^>]*hidden/);
+});
