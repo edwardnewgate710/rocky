@@ -45,6 +45,8 @@ COPY --from=builder --chown=node:node /app/packages/achievements/package.json ./
 COPY --from=builder --chown=node:node /app/packages/achievements/dist/ ./packages/achievements/dist/
 COPY --from=builder --chown=node:node /app/packages/studies/package.json ./packages/studies/package.json
 COPY --from=builder --chown=node:node /app/packages/studies/dist/ ./packages/studies/dist/
+COPY --from=builder --chown=node:node /app/packages/learning/package.json ./packages/learning/package.json
+COPY --from=builder --chown=node:node /app/packages/learning/dist/ ./packages/learning/dist/
 COPY --from=builder --chown=node:node /app/packages/engine/package.json ./packages/engine/package.json
 COPY --from=builder --chown=node:node /app/packages/engine/dist/ ./packages/engine/dist/
 COPY --from=builder --chown=node:node /app/packages/anti-cheat/package.json ./packages/anti-cheat/package.json

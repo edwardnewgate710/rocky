@@ -4,7 +4,7 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-02 — M10 Studies & PGN Increment 6: domain + Postgres + REST API (ADR-0071)._
+_Last updated: 2026-08-02 — M10 Lessons & Courses Increment 7: domain + Postgres + REST API (ADR-0072)._
 
 ## M10 Social Graph Increment 1 — Pure Social Graph Domain Core (ADR-0066)
 
@@ -979,6 +979,15 @@ Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
 - **Wiring & OpenAPI**: Added presenter functions in `presenters.ts` and OpenAPI component schemas in `schemas.ts` (`StudyView`, `StudyPage`, `CollaboratorView`, `CollaboratorPage`, `StudyOwnershipTransferView`, `ChapterView`, `ChapterList`, `TreeNodeView`, `ChapterDetailView`, `PgnExport`). Updated `deps.ts`, `server.ts`, `bootstrap.ts` (`STUDIES_ENABLED === '1'`), and test `helpers.ts` (`withoutStudies`). Regenerated `packages/api/openapi.json` with zero drift. Updated workspace dependencies, `package.json` scripts (`build`, `test`, `lint`, `clean`, `build:server`), `scripts/test-counts.mjs`, `Dockerfile.api`, `Dockerfile.gateway`, and verified `check:build-order`.
 - **Tests**: Domain unit tests in `packages/studies/test/` (43/43 pass), DB-gated integration tests in `packages/persistence/test/studies.integration.test.ts` (14/14 pass against Postgres), and REST API integration tests in `packages/api/test/studies-api.test.ts` (303/303 `@chess-platform/api` tests pass cleanly).
 - Detailed in `docs/adr/0071-pgn-and-studies.md`.
+
+## M10 Lessons & Courses Increment 7 — Structured Courses & Interactive Lessons (ADR-0072)
+- **Domain Core Package (`@chess-platform/learning`)**: Created pure TypeScript domain package with zero runtime dependencies (8/8 unit tests passing). Defined `Course`, `Lesson`, `LessonStep`, `Progress`, `CourseProgressSummary`, `AttemptResult` interfaces, and step discriminators (`text`, `move`, `quiz`). Reused `@chess-platform/studies`'s `PositionReader` port for move step authoring-time legality check. Implemented slug validation and normalization (`/^[a-z0-9]+(?:-[a-z0-9]+)*$/`), code-point deterministic comparators (`compareCourses`, `compareLessons`, `compareSteps`, `compareProgress`), `paginate` helper, and `LearningRepository` port with `InMemoryLearningRepository` implementation.
+- **Migration `0020_learning.sql`**: Created tables `learning_courses`, `learning_lessons`, `learning_steps`, and `learning_progress`. All player/course/lesson/step foreign keys specify `ON DELETE CASCADE`. Partial unique indexes on active course slugs (`learning_courses_slug_idx`), active lesson order indexes (`learning_lessons_course_id_order_index_idx`), and active step order indexes (`learning_steps_lesson_id_order_index_idx`). Dedicated full indexes on all foreign key columns cover cascading deletions on tombstoned rows.
+- **Postgres Adapter (`PgLearningRepository`)**: Implemented `LearningRepository` in `packages/persistence/src/pg/learning.ts` re-exported from `@chess-platform/persistence/pg`. Transaction advisory locking (`lockCourse` via `pg_advisory_xact_lock`) acquired before row locks (`FOR UPDATE`). Dense order index reordering shifts active rows to negative indices (`-1 - i`) first to avoid partial unique index collisions. Single atomic SQL statement attempt recording (`INSERT INTO learning_progress ... ON CONFLICT (player_id, step_id) DO UPDATE SET attempts = ..., completed_at = COALESCE(...)`) with verified concurrent execution semantics.
+- **REST API Endpoints**: Registered 23 `/v1/courses/*`, `/v1/lessons/*`, `/v1/steps/*` endpoints in `packages/api/src/routes.ts`. Enforced authentication matrix (`AUTHED` / `PUBLIC`), `requirePlayerExists` validation, server-generated `uuidv7()` IDs via `deps.ids.next()`, presenter functions in `presenters.ts`, and `mapLearningError` error translation.
+- **Wiring & OpenAPI**: Added presenter functions in `presenters.ts` and OpenAPI component schemas in `schemas.ts` (`CourseView`, `CoursePage`, `LessonView`, `LessonList`, `StepView`, `StepList`, `ProgressView`, `ProgressList`, `CourseProgressSummaryView`, `AttemptResultView`). Updated `deps.ts`, `server.ts`, `bootstrap.ts` (`LEARNING_ENABLED === '1'`), and test `helpers.ts` (`withoutLearning`). Regenerated `packages/api/openapi.json` with zero drift. Updated workspace dependencies, `package.json` scripts (`build`, `test`, `lint`, `clean`, `build:server`), `scripts/test-counts.mjs`, `Dockerfile.api`, `Dockerfile.gateway`, and verified `check:build-order`.
+- **Tests**: Domain unit tests in `packages/learning/test/learning.test.ts` (8/8 pass), DB-gated integration tests in `packages/persistence/test/learning.integration.test.ts` (including real N-concurrent attempt submission test), and REST API integration tests in `packages/api/test/learning-api.test.ts` (54/54 `@chess-platform/api` test suites pass cleanly).
+- Detailed in `docs/adr/0072-lessons-and-courses.md`.
 
 
 

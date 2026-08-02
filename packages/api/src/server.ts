@@ -96,6 +96,7 @@ export function createApiServer(deps: ApiDependencies, options: ApiServerOptions
     communityRepository: deps.communityRepository,
     achievementsRepository: deps.achievementsRepository,
     studiesRepository: deps.studiesRepository,
+    learningRepository: deps.learningRepository,
   });
 
   const authenticate = (authorization: string | undefined): Identity | null => {

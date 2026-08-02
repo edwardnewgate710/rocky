@@ -1298,6 +1298,114 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     type: 'string',
     description: 'PGN exported text',
   },
+
+  // --- Learning & Courses ---
+  CourseView: {
+    type: 'object',
+    required: ['id', 'authorId', 'slug', 'title', 'description', 'difficulty', 'published', 'createdAt', 'updatedAt'],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      authorId: { type: 'string', format: 'uuid' },
+      slug: { type: 'string' },
+      title: { type: 'string' },
+      description: { type: 'string' },
+      difficulty: { type: 'string', enum: ['beginner', 'intermediate', 'advanced'] },
+      published: { type: 'boolean' },
+      createdAt: dateTime,
+      updatedAt: dateTime,
+      deletedAt: { ...dateTime, nullable: true },
+    },
+  },
+
+  CoursePage: {
+    type: 'object',
+    required: ['total', 'items'],
+    properties: {
+      total: { type: 'integer' },
+      items: { type: 'array', items: { $ref: '#/components/schemas/CourseView' } },
+    },
+  },
+
+  LessonView: {
+    type: 'object',
+    required: ['id', 'courseId', 'title', 'orderIndex'],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      courseId: { type: 'string', format: 'uuid' },
+      title: { type: 'string' },
+      orderIndex: { type: 'integer' },
+      deletedAt: { ...dateTime, nullable: true },
+    },
+  },
+
+  LessonList: {
+    type: 'array',
+    items: { $ref: '#/components/schemas/LessonView' },
+  },
+
+  StepView: {
+    type: 'object',
+    required: ['id', 'lessonId', 'orderIndex', 'kind'],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      lessonId: { type: 'string', format: 'uuid' },
+      orderIndex: { type: 'integer' },
+      kind: { type: 'string', enum: ['text', 'move', 'quiz'] },
+      prose: { type: 'string' },
+      fen: { type: 'string' },
+      expectedSan: { type: 'string' },
+      hint: { type: 'string' },
+      question: { type: 'string' },
+      options: { type: 'array', items: { type: 'string' } },
+      correctIndex: { type: 'integer' },
+      deletedAt: { ...dateTime, nullable: true },
+    },
+  },
+
+  StepList: {
+    type: 'array',
+    items: { $ref: '#/components/schemas/StepView' },
+  },
+
+  ProgressView: {
+    type: 'object',
+    required: ['playerId', 'courseId', 'lessonId', 'stepId', 'attempts'],
+    properties: {
+      playerId: { type: 'string', format: 'uuid' },
+      courseId: { type: 'string', format: 'uuid' },
+      lessonId: { type: 'string', format: 'uuid' },
+      stepId: { type: 'string', format: 'uuid' },
+      completedAt: { ...dateTime, nullable: true },
+      attempts: { type: 'integer' },
+    },
+  },
+
+  ProgressList: {
+    type: 'array',
+    items: { $ref: '#/components/schemas/ProgressView' },
+  },
+
+  CourseProgressSummaryView: {
+    type: 'object',
+    required: ['courseId', 'playerId', 'totalSteps', 'completedSteps'],
+    properties: {
+      courseId: { type: 'string', format: 'uuid' },
+      playerId: { type: 'string', format: 'uuid' },
+      totalSteps: { type: 'integer' },
+      completedSteps: { type: 'integer' },
+    },
+  },
+
+  AttemptResultView: {
+    type: 'object',
+    required: ['stepId', 'correct', 'attempts'],
+    properties: {
+      stepId: { type: 'string', format: 'uuid' },
+      correct: { type: 'boolean' },
+      completedAt: { ...dateTime, nullable: true },
+      attempts: { type: 'integer' },
+    },
+  },
 };
 
 

@@ -32,6 +32,7 @@ import {
   PgCommunityRepository,
   PgAchievementsRepository,
   PgStudiesRepository,
+  PgLearningRepository,
 } from '@chess-platform/persistence/pg';
 import { HashingEmbeddingProvider, SEARCH_EMBEDDING_DIMENSIONS } from '@chess-platform/search';
 import type { EmbeddingProvider, SearchRepository, SemanticSearchRepository } from '@chess-platform/search';
@@ -149,6 +150,7 @@ export interface PgBootstrapOptions {
   readonly communityRepository?: CommunityRepository;
   readonly achievementsRepository?: import('@chess-platform/achievements').AchievementsRepository;
   readonly studiesRepository?: import('@chess-platform/studies').StudiesRepository;
+  readonly learningRepository?: import('@chess-platform/learning').LearningRepository;
   readonly logger?: Logger;
   readonly metrics?: Metrics;
   readonly tracer?: Tracer;
@@ -233,6 +235,11 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ? (options.studiesRepository ?? new PgStudiesRepository(pool))
     : undefined;
 
+  const learningEnabled = process.env['LEARNING_ENABLED'] === '1';
+  const learningRepository = learningEnabled
+    ? (options.learningRepository ?? new PgLearningRepository(pool))
+    : undefined;
+
   const logger = options.logger ?? new JsonLogger({ service: 'api' }, { level: resolveLogLevel() });
   const metrics = options.metrics ?? new InMemoryMetrics();
   const logExporter = new LoggingSpanExporter(logger);
@@ -289,6 +296,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ...(communityRepository ? { communityRepository } : {}),
     ...(achievementsRepository ? { achievementsRepository } : {}),
     ...(studiesRepository ? { studiesRepository } : {}),
+    ...(learningRepository ? { learningRepository } : {}),
     botTimingSource: new EventStoreBotTimingSource(eventStore),
     // Production observability (M13): structured logs to stdout, a scrape
     // registry backing GET /v1/metrics, and tracer emitting spans to logs.

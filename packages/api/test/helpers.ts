@@ -65,6 +65,7 @@ export interface Harness {
   readonly communityRepository?: InMemoryCommunityRepository;
   readonly achievementsRepository?: InMemoryAchievementsRepository;
   readonly studiesRepository?: import('@chess-platform/studies').StudiesRepository;
+  readonly learningRepository?: import('@chess-platform/learning').LearningRepository;
   readonly clock: ManualClock;
   readonly tokens: AccessTokenService;
   readonly emailSender: InMemoryEmailSender;
@@ -102,6 +103,8 @@ export interface HarnessOptions {
   readonly withoutAchievements?: boolean;
   /** Pass true to simulate a server constructed without studies repository. */
   readonly withoutStudies?: boolean;
+  /** Pass true to simulate a server constructed without learning repository. */
+  readonly withoutLearning?: boolean;
   /** Override the anti-cheat evaluator (e.g. to make it throw) for edge-case tests. */
   readonly antiCheatEvaluator?: PositionEvaluator;
 }
@@ -174,6 +177,9 @@ export async function startHarness(
   const studiesRepository = harnessOptions.withoutStudies
     ? undefined
     : repos.studies;
+  const learningRepository = harnessOptions.withoutLearning
+    ? undefined
+    : repos.learning;
   const server = createApiServer({
     repos, hasher, tokens, clock, ids, rateLimiter, tournamentRepo, gameLauncher, liveView, emailSender,
     config: resolved,
@@ -187,6 +193,7 @@ export async function startHarness(
     ...(communityRepository ? { communityRepository } : {}),
     ...(achievementsRepository ? { achievementsRepository } : {}),
     ...(studiesRepository ? { studiesRepository } : {}),
+    ...(learningRepository ? { learningRepository } : {}),
     ...(harnessOptions.readiness ? { readiness: harnessOptions.readiness } : {}),
     ...(harnessOptions.logger ? { logger: harnessOptions.logger } : {}),
     ...(harnessOptions.tracer ? { tracer: harnessOptions.tracer } : {}),

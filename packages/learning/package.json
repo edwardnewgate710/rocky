@@ -1,0 +1,36 @@
+{
+  "name": "@chess-platform/learning",
+  "version": "0.1.0",
+  "description": "Pure domain core for courses, lessons, steps, and learner progress.",
+  "license": "AGPL-3.0-or-later",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/test/**/*.test.js\"",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist dist-test"
+  },
+  "dependencies": {
+    "@chess-platform/studies": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

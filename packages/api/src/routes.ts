@@ -25,7 +25,7 @@ import {
   parseCookies,
   REFRESH_COOKIE_NAME,
 } from './http/cookie';
-import { strictObject, oneOf, optInt, optString, parseLimit, reqBoolean, reqString } from './http/validate';
+import { strictObject, oneOf, optBoolean, optInt, optString, parseLimit, reqBoolean, reqString } from './http/validate';
 import type { RateLimiter } from './ports/rate-limiter';
 import type { Metrics } from './ports/metrics';
 import type { Tracer } from './ports/tracer';
@@ -39,6 +39,7 @@ import { MessagingRuleError } from '@chess-platform/messaging';
 import { CommunityRuleError } from '@chess-platform/community';
 import { AchievementRuleError } from '@chess-platform/achievements';
 import { StudyRuleError, MAX_PGN_BYTES } from '@chess-platform/studies';
+import { LearningRuleError } from '@chess-platform/learning';
 import { CorePositionReader } from './studies/position-reader';
 import {
   antiCheatAggregateView,
@@ -74,6 +75,12 @@ import {
   chapterView,
   treeNodeView,
   chapterDetailView,
+  courseView,
+  lessonView,
+  stepView,
+  progressView,
+  courseProgressSummaryView,
+  attemptResultView,
 } from './presenters';
 import { TournamentService } from './tournament/service';
 import { ArenaService } from './tournament/arena.service';
@@ -120,6 +127,7 @@ export interface RouteDeps {
   readonly communityRepository?: import('@chess-platform/community').CommunityRepository;
   readonly achievementsRepository?: import('@chess-platform/achievements').AchievementsRepository;
   readonly studiesRepository?: import('@chess-platform/studies').StudiesRepository;
+  readonly learningRepository?: import('@chess-platform/learning').LearningRepository;
 }
 
 const PUBLIC: AuthPolicy = { required: false };
@@ -3761,6 +3769,878 @@ export function buildRouter(deps: RouteDeps): Router {
     },
   );
 
+  // --- Learning & Courses ----------------------------------------------------
+  function checkLearningRepo() {
+    if (!deps.learningRepository) {
+      throw HttpError.unavailable('learning repository is not configured');
+    }
+    return deps.learningRepository;
+  }
+
+  const learningPositionReader = new CorePositionReader();
+
+  // 1. POST /v1/courses
+  router.post(
+    '/v1/courses',
+    doc({
+      summary: 'Create a course',
+      tags: ['courses'],
+      security: 'bearer',
+      responses: {
+        201: ['CourseView', 'Course created successfully'],
+        400: ['Error', 'Malformed request body'],
+        409: ['Error', 'Duplicate slug'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Learning service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkLearningRepo();
+      const actorId = requireAuth(ctx).userId;
+      const body = strictObject(ctx.body, ['slug', 'title', 'description', 'difficulty', 'published']);
+      const slug = reqString(body, 'slug');
+      const title = reqString(body, 'title');
+      const description = optString(body, 'description') ?? '';
+      const difficulty = oneOf(reqString(body, 'difficulty'), ['beginner', 'intermediate', 'advanced'] as const, 'difficulty');
+      const published = optBoolean(body, 'published', false);
+
+      const courseId = deps.ids.next();
+
+      try {
+        const course = await repo.createCourse(courseId, actorId, slug, title, description, difficulty, published);
+        return json(201, courseView(course));
+      } catch (err) {
+        mapLearningError(err);
+      }
+    },
+  );
+
+  // 2. GET /v1/courses
+  router.get(
+    '/v1/courses',
+    doc({
+      summary: 'List courses',
+      tags: ['courses'],
+      params: [
+        limitParam(),
+        offsetParam(),
+        { name: 'search', in: 'query', required: false, schema: { type: 'string' }, description: 'Search term for title or description' },
+        { name: 'authorId', in: 'query', required: false, schema: { type: 'string', format: 'uuid' }, description: 'Filter by author ID' },
+        { name: 'difficulty', in: 'query', required: false, schema: { type: 'string', enum: ['beginner', 'intermediate', 'advanced'] }, description: 'Filter by difficulty' },
+      ],
+      responses: {
+        200: ['CoursePage', 'Page of courses'],
+        404: ['Error', 'Author not found'],
+        422: ['Error', 'Malformed query parameter'],
+        503: ['Error', 'Learning service unavailable'],
+      },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const repo = checkLearningRepo();
+      const actorId = ctx.auth?.userId;
+      const limit = parseLimit(ctx.query, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+      const offset = parseOffset(ctx.query);
+      const search = ctx.query.get('search') ?? undefined;
+      const rawAuthorId = ctx.query.get('authorId') ?? undefined;
+      const authorId = rawAuthorId ? parseUuid(rawAuthorId, 'authorId') : undefined;
+      if (authorId) {
+        const user = await deps.repos.users.findById(authorId);
+        if (!user) throw HttpError.notFound('author not found');
+      }
+
+      const rawDifficulty = ctx.query.get('difficulty') ?? undefined;
+      const difficulty = rawDifficulty ? oneOf(rawDifficulty, ['beginner', 'intermediate', 'advanced'] as const, 'difficulty') : undefined;
+
+      try {
+        const page = await repo.listCourses(actorId, { limit, offset, search, authorId, difficulty });
+        return json(200, {
+          total: page.total,
+          items: page.items.map(courseView),
+        });
+      } catch (err) {
+        mapLearningError(err);
+      }
+    },
+  );
+
+  // 3. GET /v1/courses/slug/:slug
+  router.get(
+    '/v1/courses/slug/:slug',
+    doc({
+      summary: 'Get course by slug',
+      tags: ['courses'],
+      params: [{ name: 'slug', in: 'path', required: true, description: 'Course slug', schema: { type: 'string' } }],
+      responses: {
+        200: ['CourseView', 'Course details'],
+        404: ['Error', 'Course not found'],
+        422: ['Error', 'Invalid slug'],
+        503: ['Error', 'Learning service unavailable'],
+      },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const repo = checkLearningRepo();
+      const actorId = ctx.auth?.userId;
+      const slug = ctx.params['slug']!;
+
+      try {
+        const course = await repo.getCourseBySlug(slug, actorId);
+        return json(200, courseView(course));
+      } catch (err) {
+        mapLearningError(err);
+      }
+    },
+  );
+
+  // 4. GET /v1/courses/:id
+  router.get(
+    '/v1/courses/:id',
+    doc({
+      summary: 'Get course by ID',
+      tags: ['courses'],
+      params: [pathParam('id', 'Course ID (UUID)')],
+      responses: {
+        200: ['CourseView', 'Course details'],
+        404: ['Error', 'Course not found'],
+        422: ['Error', 'Malformed ID'],
+        503: ['Error', 'Learning service unavailable'],
+      },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const repo = checkLearningRepo();
+      const actorId = ctx.auth?.userId;
+      const courseId = parseUuid(ctx.params['id']!, 'id');
+
+      try {
+        const course = await repo.getCourse(courseId, actorId);
+        return json(200, courseView(course));
+      } catch (err) {
+        mapLearningError(err);
+      }
+    },
+  );
+
+  // 5. PATCH /v1/courses/:id
+  router.patch(
+    '/v1/courses/:id',
+    doc({
+      summary: 'Update course',
+      tags: ['courses'],
+      security: 'bearer',
+      params: [pathParam('id', 'Course ID (UUID)')],
+      responses: {
+        200: ['CourseView', 'Updated course'],
+        403: ['Error', 'Not authorized'],
+        404: ['Error', 'Course not found'],
+        409: ['Error', 'Duplicate slug'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Learning service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkLearningRepo();
+      const actorId = requireAuth(ctx).userId;
+      const courseId = parseUuid(ctx.params['id']!, 'id');
+      const body = strictObject(ctx.body, ['slug', 'title', 'description', 'difficulty', 'published']);
+
+      const slug = optString(body, 'slug');
+      const title = optString(body, 'title');
+      const description = optString(body, 'description');
+      const rawDifficulty = optString(body, 'difficulty');
+      const difficulty = rawDifficulty !== undefined ? oneOf(rawDifficulty, ['beginner', 'intermediate', 'advanced'] as const, 'difficulty') : undefined;
+      const published = body['published'] !== undefined ? reqBoolean(body, 'published') : undefined;
+
+      try {
+        const updated = await repo.updateCourse(courseId, actorId, {
+          ...(slug !== undefined ? { slug } : {}),
+          ...(title !== undefined ? { title } : {}),
+          ...(description !== undefined ? { description } : {}),
+          ...(difficulty !== undefined ? { difficulty } : {}),
+          ...(published !== undefined ? { published } : {}),
+        });
+        return json(200, courseView(updated));
+      } catch (err) {
+        mapLearningError(err);
+      }
+    },
+  );
+
+  // 6. DELETE /v1/courses/:id
+  router.delete(
+    '/v1/courses/:id',
+    doc({
+      summary: 'Delete course',
+      tags: ['courses'],
+      security: 'bearer',
+      params: [pathParam('id', 'Course ID (UUID)')],
+      responses: {
+        200: ['CourseView', 'Deleted course tombstone'],
+        403: ['Error', 'Not authorized'],
+        404: ['Error', 'Course not found'],
+        409: ['Error', 'Already deleted'],
+        422: ['Error', 'Malformed ID'],
+        503: ['Error', 'Learning service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkLearningRepo();
+      const actorId = requireAuth(ctx).userId;
+      const courseId = parseUuid(ctx.params['id']!, 'id');
+
+      try {
+        const deleted = await repo.deleteCourse(courseId, actorId);
+        return json(200, courseView(deleted));
+      } catch (err) {
+        mapLearningError(err);
+      }
+    },
+  );
+
+  // 7. POST /v1/courses/:id/publish
+  router.post(
+    '/v1/courses/:id/publish',
+    doc({
+      summary: 'Publish course',
+      tags: ['courses'],
+      security: 'bearer',
+      params: [pathParam('id', 'Course ID (UUID)')],
+      responses: {
+        200: ['CourseView', 'Published course'],
+        403: ['Error', 'Not authorized'],
+        404: ['Error', 'Course not found'],
+        422: ['Error', 'Malformed ID'],
+        503: ['Error', 'Learning service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkLearningRepo();
+      const actorId = requireAuth(ctx).userId;
+      const courseId = parseUuid(ctx.params['id']!, 'id');
+
+      try {
+        const updated = await repo.updateCourse(courseId, actorId, { published: true });
+        return json(200, courseView(updated));
+      } catch (err) {
+        mapLearningError(err);
+      }
+    },
+  );
+
+  // 8. POST /v1/courses/:id/unpublish
+  router.post(
+    '/v1/courses/:id/unpublish',
+    doc({
+      summary: 'Unpublish course',
+      tags: ['courses'],
+      security: 'bearer',
+      params: [pathParam('id', 'Course ID (UUID)')],
+      responses: {
+        200: ['CourseView', 'Unpublished course'],
+        403: ['Error', 'Not authorized'],
+        404: ['Error', 'Course not found'],
+        422: ['Error', 'Malformed ID'],
+        503: ['Error', 'Learning service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkLearningRepo();
+      const actorId = requireAuth(ctx).userId;
+      const courseId = parseUuid(ctx.params['id']!, 'id');
+
+      try {
+        const updated = await repo.updateCourse(courseId, actorId, { published: false });
+        return json(200, courseView(updated));
+      } catch (err) {
+        mapLearningError(err);
+      }
+    },
+  );
+
+  // 9. POST /v1/courses/:id/lessons
+  router.post(
+    '/v1/courses/:id/lessons',
+    doc({
+      summary: 'Create a lesson in a course',
+      tags: ['lessons'],
+      security: 'bearer',
+      params: [pathParam('id', 'Course ID (UUID)')],
+      responses: {
+        201: ['LessonView', 'Lesson created successfully'],
+        403: ['Error', 'Not authorized'],
+        404: ['Error', 'Course not found'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Learning service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkLearningRepo();
+      const actorId = requireAuth(ctx).userId;
+      const courseId = parseUuid(ctx.params['id']!, 'id');
+      const body = strictObject(ctx.body, ['title']);
+      const title = reqString(body, 'title');
+      const lessonId = deps.ids.next();
+
+      try {
+        const lesson = await repo.createLesson(lessonId, courseId, actorId, title);
+        return json(201, lessonView(lesson));
+      } catch (err) {
+        mapLearningError(err);
+      }
+    },
+  );
+
+  // 10. GET /v1/courses/:id/lessons
+  router.get(
+    '/v1/courses/:id/lessons',
+    doc({
+      summary: 'List lessons in a course',
+      tags: ['lessons'],
+      params: [pathParam('id', 'Course ID (UUID)')],
+      responses: {
+        200: ['LessonList', 'List of lessons'],
+        404: ['Error', 'Course not found'],
+        422: ['Error', 'Malformed ID'],
+        503: ['Error', 'Learning service unavailable'],
+      },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const repo = checkLearningRepo();
+      const actorId = ctx.auth?.userId;
+      const courseId = parseUuid(ctx.params['id']!, 'id');
+
+      try {
+        const lessons = await repo.listLessons(courseId, actorId);
+        return json(200, lessons.map(lessonView));
+      } catch (err) {
+        mapLearningError(err);
+      }
+    },
+  );
+
+  // 11. GET /v1/lessons/:id
+  router.get(
+    '/v1/lessons/:id',
+    doc({
+      summary: 'Get lesson by ID',
+      tags: ['lessons'],
+      params: [pathParam('id', 'Lesson ID (UUID)')],
+      responses: {
+        200: ['LessonView', 'Lesson details'],
+        404: ['Error', 'Lesson not found'],
+        422: ['Error', 'Malformed ID'],
+        503: ['Error', 'Learning service unavailable'],
+      },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const repo = checkLearningRepo();
+      const actorId = ctx.auth?.userId;
+      const lessonId = parseUuid(ctx.params['id']!, 'id');
+
+      try {
+        const lesson = await repo.getLesson(lessonId, actorId);
+        return json(200, lessonView(lesson));
+      } catch (err) {
+        mapLearningError(err);
+      }
+    },
+  );
+
+  // 12. PATCH /v1/lessons/:id
+  router.patch(
+    '/v1/lessons/:id',
+    doc({
+      summary: 'Update lesson',
+      tags: ['lessons'],
+      security: 'bearer',
+      params: [pathParam('id', 'Lesson ID (UUID)')],
+      responses: {
+        200: ['LessonView', 'Updated lesson'],
+        403: ['Error', 'Not authorized'],
+        404: ['Error', 'Lesson not found'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Learning service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkLearningRepo();
+      const actorId = requireAuth(ctx).userId;
+      const lessonId = parseUuid(ctx.params['id']!, 'id');
+      const body = strictObject(ctx.body, ['title']);
+      const title = optString(body, 'title');
+
+      try {
+        const updated = await repo.updateLesson(lessonId, actorId, {
+          ...(title !== undefined ? { title } : {}),
+        });
+        return json(200, lessonView(updated));
+      } catch (err) {
+        mapLearningError(err);
+      }
+    },
+  );
+
+  // 13. POST /v1/courses/:id/lessons/reorder
+  router.post(
+    '/v1/courses/:id/lessons/reorder',
+    doc({
+      summary: 'Reorder lessons in a course',
+      tags: ['lessons'],
+      security: 'bearer',
+      params: [pathParam('id', 'Course ID (UUID)')],
+      responses: {
+        200: ['LessonList', 'Reordered lessons list'],
+        403: ['Error', 'Not authorized'],
+        404: ['Error', 'Course not found'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Learning service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkLearningRepo();
+      const actorId = requireAuth(ctx).userId;
+      const courseId = parseUuid(ctx.params['id']!, 'id');
+      const body = strictObject(ctx.body, ['lessonIds']);
+      const rawIds = body['lessonIds'];
+      if (!Array.isArray(rawIds)) {
+        throw HttpError.validation('"lessonIds" must be an array of strings', { lessonIds: 'invalid' });
+      }
+      const lessonIds = rawIds.map((item, idx) => {
+        if (typeof item !== 'string') throw HttpError.validation(`lessonIds[${idx}] must be a string`, { lessonIds: 'invalid' });
+        return parseUuid(item, `lessonIds[${idx}]`);
+      });
+
+      try {
+        const reordered = await repo.reorderLessons(courseId, actorId, lessonIds);
+        return json(200, reordered.map(lessonView));
+      } catch (err) {
+        mapLearningError(err);
+      }
+    },
+  );
+
+  // 14. DELETE /v1/lessons/:id
+  router.delete(
+    '/v1/lessons/:id',
+    doc({
+      summary: 'Delete lesson',
+      tags: ['lessons'],
+      security: 'bearer',
+      params: [pathParam('id', 'Lesson ID (UUID)')],
+      responses: {
+        200: ['LessonView', 'Deleted lesson tombstone'],
+        403: ['Error', 'Not authorized'],
+        404: ['Error', 'Lesson not found'],
+        422: ['Error', 'Malformed ID'],
+        503: ['Error', 'Learning service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkLearningRepo();
+      const actorId = requireAuth(ctx).userId;
+      const lessonId = parseUuid(ctx.params['id']!, 'id');
+
+      try {
+        const deleted = await repo.deleteLesson(lessonId, actorId);
+        return json(200, lessonView(deleted));
+      } catch (err) {
+        mapLearningError(err);
+      }
+    },
+  );
+
+  // 15. POST /v1/lessons/:id/steps
+  router.post(
+    '/v1/lessons/:id/steps',
+    doc({
+      summary: 'Create a step in a lesson',
+      tags: ['steps'],
+      security: 'bearer',
+      params: [pathParam('id', 'Lesson ID (UUID)')],
+      responses: {
+        201: ['StepView', 'Step created successfully'],
+        403: ['Error', 'Not authorized'],
+        404: ['Error', 'Lesson not found'],
+        422: ['Error', 'Validation or move legality error'],
+        503: ['Error', 'Learning service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkLearningRepo();
+      const actorId = requireAuth(ctx).userId;
+      const lessonId = parseUuid(ctx.params['id']!, 'id');
+      const body = strictObject(ctx.body, [
+        'kind',
+        'prose',
+        'fen',
+        'expectedSan',
+        'hint',
+        'question',
+        'options',
+        'correctIndex',
+      ]);
+      const kind = oneOf(reqString(body, 'kind'), ['text', 'move', 'quiz'] as const, 'kind');
+      const stepId = deps.ids.next();
+
+      try {
+        if (kind === 'text') {
+          const prose = reqString(body, 'prose');
+          const step = await repo.createStep(stepId, lessonId, actorId, { kind: 'text', prose }, learningPositionReader);
+          return json(201, stepView(step));
+        } else if (kind === 'move') {
+          const fen = reqString(body, 'fen');
+          const expectedSan = reqString(body, 'expectedSan');
+          const hint = optString(body, 'hint');
+          const step = await repo.createStep(stepId, lessonId, actorId, { kind: 'move', fen, expectedSan, hint }, learningPositionReader);
+          return json(201, stepView(step));
+        } else {
+          const question = reqString(body, 'question');
+          const rawOpts = body['options'];
+          if (!Array.isArray(rawOpts)) {
+            throw HttpError.validation('"options" must be an array of strings', { options: 'invalid' });
+          }
+          const options = rawOpts.map((o, idx) => {
+            if (typeof o !== 'string') throw HttpError.validation(`options[${idx}] must be a string`, { options: 'invalid' });
+            return o;
+          });
+          const rawIdx = body['correctIndex'];
+          if (typeof rawIdx !== 'number' || !Number.isInteger(rawIdx)) {
+            throw HttpError.validation('"correctIndex" must be an integer', { correctIndex: 'invalid' });
+          }
+          const step = await repo.createStep(stepId, lessonId, actorId, { kind: 'quiz', question, options, correctIndex: rawIdx }, learningPositionReader);
+          return json(201, stepView(step));
+        }
+      } catch (err) {
+        mapLearningError(err);
+      }
+    },
+  );
+
+  // 16. GET /v1/lessons/:id/steps
+  router.get(
+    '/v1/lessons/:id/steps',
+    doc({
+      summary: 'List steps in a lesson',
+      tags: ['steps'],
+      params: [pathParam('id', 'Lesson ID (UUID)')],
+      responses: {
+        200: ['StepList', 'List of steps'],
+        404: ['Error', 'Lesson not found'],
+        422: ['Error', 'Malformed ID'],
+        503: ['Error', 'Learning service unavailable'],
+      },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const repo = checkLearningRepo();
+      const actorId = ctx.auth?.userId;
+      const lessonId = parseUuid(ctx.params['id']!, 'id');
+
+      try {
+        const steps = await repo.listSteps(lessonId, actorId);
+        return json(200, steps.map(stepView));
+      } catch (err) {
+        mapLearningError(err);
+      }
+    },
+  );
+
+  // 17. GET /v1/steps/:id
+  router.get(
+    '/v1/steps/:id',
+    doc({
+      summary: 'Get step by ID',
+      tags: ['steps'],
+      params: [pathParam('id', 'Step ID (UUID)')],
+      responses: {
+        200: ['StepView', 'Step details'],
+        404: ['Error', 'Step not found'],
+        422: ['Error', 'Malformed ID'],
+        503: ['Error', 'Learning service unavailable'],
+      },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const repo = checkLearningRepo();
+      const actorId = ctx.auth?.userId;
+      const stepId = parseUuid(ctx.params['id']!, 'id');
+
+      try {
+        const step = await repo.getStep(stepId, actorId);
+        return json(200, stepView(step));
+      } catch (err) {
+        mapLearningError(err);
+      }
+    },
+  );
+
+  // 18. PATCH /v1/steps/:id
+  router.patch(
+    '/v1/steps/:id',
+    doc({
+      summary: 'Update step',
+      tags: ['steps'],
+      security: 'bearer',
+      params: [pathParam('id', 'Step ID (UUID)')],
+      responses: {
+        200: ['StepView', 'Updated step'],
+        403: ['Error', 'Not authorized'],
+        404: ['Error', 'Step not found'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Learning service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkLearningRepo();
+      const actorId = requireAuth(ctx).userId;
+      const stepId = parseUuid(ctx.params['id']!, 'id');
+      const body = strictObject(ctx.body, [
+        'prose',
+        'fen',
+        'expectedSan',
+        'hint',
+        'question',
+        'options',
+        'correctIndex',
+      ]);
+
+      const prose = optString(body, 'prose');
+      const fen = optString(body, 'fen');
+      const expectedSan = optString(body, 'expectedSan');
+      const hint = optString(body, 'hint');
+      const question = optString(body, 'question');
+
+      let options: string[] | undefined = undefined;
+      if (body['options'] !== undefined) {
+        if (!Array.isArray(body['options'])) {
+          throw HttpError.validation('"options" must be an array of strings', { options: 'invalid' });
+        }
+        options = (body['options'] as unknown[]).map((o, idx) => {
+          if (typeof o !== 'string') throw HttpError.validation(`options[${idx}] must be a string`, { options: 'invalid' });
+          return o;
+        });
+      }
+
+      let correctIndex: number | undefined = undefined;
+      if (body['correctIndex'] !== undefined) {
+        const rawIdx = body['correctIndex'];
+        if (typeof rawIdx !== 'number' || !Number.isInteger(rawIdx)) {
+          throw HttpError.validation('"correctIndex" must be an integer', { correctIndex: 'invalid' });
+        }
+        correctIndex = rawIdx;
+      }
+
+      try {
+        const updated = await repo.updateStep(
+          stepId,
+          actorId,
+          {
+            ...(prose !== undefined ? { prose } : {}),
+            ...(fen !== undefined ? { fen } : {}),
+            ...(expectedSan !== undefined ? { expectedSan } : {}),
+            ...(hint !== undefined ? { hint } : {}),
+            ...(question !== undefined ? { question } : {}),
+            ...(options !== undefined ? { options } : {}),
+            ...(correctIndex !== undefined ? { correctIndex } : {}),
+          },
+          learningPositionReader
+        );
+        return json(200, stepView(updated));
+      } catch (err) {
+        mapLearningError(err);
+      }
+    },
+  );
+
+  // 19. POST /v1/lessons/:id/steps/reorder
+  router.post(
+    '/v1/lessons/:id/steps/reorder',
+    doc({
+      summary: 'Reorder steps in a lesson',
+      tags: ['steps'],
+      security: 'bearer',
+      params: [pathParam('id', 'Lesson ID (UUID)')],
+      responses: {
+        200: ['StepList', 'Reordered steps list'],
+        403: ['Error', 'Not authorized'],
+        404: ['Error', 'Lesson not found'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Learning service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkLearningRepo();
+      const actorId = requireAuth(ctx).userId;
+      const lessonId = parseUuid(ctx.params['id']!, 'id');
+      const body = strictObject(ctx.body, ['stepIds']);
+      const rawIds = body['stepIds'];
+      if (!Array.isArray(rawIds)) {
+        throw HttpError.validation('"stepIds" must be an array of strings', { stepIds: 'invalid' });
+      }
+      const stepIds = rawIds.map((item, idx) => {
+        if (typeof item !== 'string') throw HttpError.validation(`stepIds[${idx}] must be a string`, { stepIds: 'invalid' });
+        return parseUuid(item, `stepIds[${idx}]`);
+      });
+
+      try {
+        const reordered = await repo.reorderSteps(lessonId, actorId, stepIds);
+        return json(200, reordered.map(stepView));
+      } catch (err) {
+        mapLearningError(err);
+      }
+    },
+  );
+
+  // 20. DELETE /v1/steps/:id
+  router.delete(
+    '/v1/steps/:id',
+    doc({
+      summary: 'Delete step',
+      tags: ['steps'],
+      security: 'bearer',
+      params: [pathParam('id', 'Step ID (UUID)')],
+      responses: {
+        200: ['StepView', 'Deleted step tombstone'],
+        403: ['Error', 'Not authorized'],
+        404: ['Error', 'Step not found'],
+        422: ['Error', 'Malformed ID'],
+        503: ['Error', 'Learning service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkLearningRepo();
+      const actorId = requireAuth(ctx).userId;
+      const stepId = parseUuid(ctx.params['id']!, 'id');
+
+      try {
+        const deleted = await repo.deleteStep(stepId, actorId);
+        return json(200, stepView(deleted));
+      } catch (err) {
+        mapLearningError(err);
+      }
+    },
+  );
+
+  // 21. POST /v1/steps/:id/attempt
+  router.post(
+    '/v1/steps/:id/attempt',
+    doc({
+      summary: 'Submit a step attempt',
+      tags: ['progress'],
+      security: 'bearer',
+      params: [pathParam('id', 'Step ID (UUID)')],
+      responses: {
+        200: ['AttemptResultView', 'Attempt evaluated successfully'],
+        404: ['Error', 'Step not found'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Learning service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkLearningRepo();
+      const playerId = requireAuth(ctx).userId;
+      const stepId = parseUuid(ctx.params['id']!, 'id');
+      const body = strictObject(ctx.body, ['san', 'selectedIndex']);
+
+      const san = optString(body, 'san');
+      let selectedIndex: number | undefined = undefined;
+      if (body['selectedIndex'] !== undefined) {
+        const rawIdx = body['selectedIndex'];
+        if (typeof rawIdx !== 'number' || !Number.isInteger(rawIdx)) {
+          throw HttpError.validation('"selectedIndex" must be an integer', { selectedIndex: 'invalid' });
+        }
+        selectedIndex = rawIdx;
+      }
+
+      try {
+        const result = await repo.submitAttempt(playerId, stepId, {
+          ...(san !== undefined ? { san } : {}),
+          ...(selectedIndex !== undefined ? { selectedIndex } : {}),
+        });
+        return json(200, attemptResultView(result));
+      } catch (err) {
+        mapLearningError(err);
+      }
+    },
+  );
+
+  // 22. GET /v1/courses/:id/progress
+  router.get(
+    '/v1/courses/:id/progress',
+    doc({
+      summary: 'Read own course progress summary',
+      tags: ['progress'],
+      security: 'bearer',
+      params: [pathParam('id', 'Course ID (UUID)')],
+      responses: {
+        200: ['CourseProgressSummaryView', 'Course progress summary'],
+        404: ['Error', 'Course not found'],
+        422: ['Error', 'Malformed ID'],
+        503: ['Error', 'Learning service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkLearningRepo();
+      const playerId = requireAuth(ctx).userId;
+      const courseId = parseUuid(ctx.params['id']!, 'id');
+
+      try {
+        const summary = await repo.getProgressSummary(playerId, courseId);
+        return json(200, courseProgressSummaryView(summary));
+      } catch (err) {
+        mapLearningError(err);
+      }
+    },
+  );
+
+  // 23. GET /v1/courses/:id/progress/details
+  router.get(
+    '/v1/courses/:id/progress/details',
+    doc({
+      summary: 'List own step progress rows for a course',
+      tags: ['progress'],
+      security: 'bearer',
+      params: [pathParam('id', 'Course ID (UUID)')],
+      responses: {
+        200: ['ProgressList', 'List of step progress rows'],
+        404: ['Error', 'Course not found'],
+        422: ['Error', 'Malformed ID'],
+        503: ['Error', 'Learning service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkLearningRepo();
+      const playerId = requireAuth(ctx).userId;
+      const courseId = parseUuid(ctx.params['id']!, 'id');
+
+      try {
+        const list = await repo.listProgress(playerId, courseId);
+        return json(200, list.map(progressView));
+      } catch (err) {
+        mapLearningError(err);
+      }
+    },
+  );
+
   return router;
 
 }
@@ -3903,6 +4783,26 @@ function mapAchievementError(err: unknown): never {
         throw HttpError.notFound(err.message);
       case 'unknown_achievement':
       case 'invalid_progress':
+        throw HttpError.validation(err.message);
+    }
+  }
+  throw err;
+}
+
+function mapLearningError(err: unknown): never {
+  if (err instanceof LearningRuleError) {
+    switch (err.code) {
+      case 'not_found':
+        throw HttpError.notFound(err.message);
+      case 'not_authorized':
+        throw HttpError.forbidden(err.message);
+      case 'invalid_input':
+        throw HttpError.validation(err.message);
+      case 'invalid_transition':
+        throw HttpError.conflict(err.message);
+      case 'duplicate_slug':
+        throw HttpError.conflict(err.message);
+      case 'invalid_move':
         throw HttpError.validation(err.message);
     }
   }

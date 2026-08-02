@@ -87,6 +87,8 @@ export interface ApiDependencies {
   readonly achievementsRepository?: import('@chess-platform/achievements').AchievementsRepository;
   /** Optional studies repository (M10 inc 6). When absent, `/v1/studies/*` responds 503. */
   readonly studiesRepository?: import('@chess-platform/studies').StudiesRepository;
+  /** Optional learning repository (M10 inc 7). When absent, `/v1/courses/*` responds 503. */
+  readonly learningRepository?: import('@chess-platform/learning').LearningRepository;
   /** Structured logger (M13). Defaults to a silent {@link NullLogger}. */
   readonly logger?: Logger;
   /** Metrics registry + scrape target (M13). Defaults to {@link InMemoryMetrics}. */

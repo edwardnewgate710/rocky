@@ -585,6 +585,59 @@ CREATE TABLE study_tree_nodes (
 
 Stores interactive studies, study collaborators, study chapters, and chapter move tree nodes. `studies` supports tombstones (`deleted_at`) and visibility levels (`public`, `unlisted`, `private`). `study_collaborators` uses partial unique index `study_collaborators_one_owner_per_study` to enforce single-ownership. `study_chapters` uses partial unique index `study_chapters_study_id_order_index_idx` for active chapter ordering. `study_tree_nodes` forms an adjacency-list move tree per chapter with parent-child cascade deletions (`parent_id REFERENCES study_tree_nodes(id) ON DELETE CASCADE`).
 
+### 4.20 Structured Courses & Lessons Tables (M10 inc 7)
+
+```sql
+CREATE TABLE learning_courses (
+  id          UUID        NOT NULL PRIMARY KEY,
+  author_id   UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  slug        TEXT        NOT NULL,
+  title       TEXT        NOT NULL,
+  description TEXT        NOT NULL DEFAULT '',
+  difficulty  TEXT        NOT NULL CHECK (difficulty IN ('beginner', 'intermediate', 'advanced')),
+  published   BOOLEAN     NOT NULL DEFAULT FALSE,
+  created_at  TIMESTAMPTZ NOT NULL,
+  updated_at  TIMESTAMPTZ NOT NULL,
+  deleted_at  TIMESTAMPTZ
+);
+
+CREATE TABLE learning_lessons (
+  id          UUID        NOT NULL PRIMARY KEY,
+  course_id   UUID        NOT NULL REFERENCES learning_courses(id) ON DELETE CASCADE,
+  title       TEXT        NOT NULL,
+  order_index INTEGER     NOT NULL,
+  deleted_at  TIMESTAMPTZ
+);
+
+CREATE TABLE learning_steps (
+  id            UUID        NOT NULL PRIMARY KEY,
+  lesson_id     UUID        NOT NULL REFERENCES learning_lessons(id) ON DELETE CASCADE,
+  order_index   INTEGER     NOT NULL,
+  kind          TEXT        NOT NULL CHECK (kind IN ('text', 'move', 'quiz')),
+  prose         TEXT,
+  fen           TEXT,
+  expected_san  TEXT,
+  hint          TEXT,
+  question      TEXT,
+  options       JSONB,
+  correct_index INTEGER,
+  deleted_at    TIMESTAMPTZ
+);
+
+CREATE TABLE learning_progress (
+  player_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  course_id    UUID        NOT NULL REFERENCES learning_courses(id) ON DELETE CASCADE,
+  lesson_id    UUID        NOT NULL REFERENCES learning_lessons(id) ON DELETE CASCADE,
+  step_id      UUID        NOT NULL REFERENCES learning_steps(id) ON DELETE CASCADE,
+  completed_at TIMESTAMPTZ,
+  attempts     INTEGER     NOT NULL DEFAULT 0,
+  PRIMARY KEY (player_id, step_id)
+);
+```
+
+Stores structured curriculum courses, lessons, interactive steps (text, move, quiz), and per-player progress history. Active course slugs are constrained by partial unique index `learning_courses_slug_idx WHERE deleted_at IS NULL`. Active lesson and step order indexes within their parent containers use partial unique indexes `WHERE deleted_at IS NULL`. Dedicated full indexes on foreign key columns (`author_id`, `course_id`, `lesson_id`, `step_id`) guarantee cascade deletion performance on tombstoned rows.
+
+
 
 
 

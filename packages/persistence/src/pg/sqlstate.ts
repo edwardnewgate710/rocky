@@ -27,6 +27,21 @@ export function isForeignKeyViolation(err: unknown): boolean {
 }
 
 /**
+ * The index or constraint a violation names, when the driver reported one.
+ *
+ * A table with several unique constraints cannot map all of them onto one domain error without
+ * telling the caller to fix the wrong field. `pg` puts the offending constraint in `err.constraint`,
+ * so the mapping can be specific instead of hopeful.
+ */
+export function uniqueConstraintName(err: unknown): string | undefined {
+  if (typeof err !== 'object' || err === null) {
+    return undefined;
+  }
+  const name = (err as { constraint?: unknown }).constraint;
+  return typeof name === 'string' ? name : undefined;
+}
+
+/**
  * SQLSTATE 22P02 — invalid_text_representation. Raised when a value that is not a UUID is compared
  * against a `uuid` column, which is what a malformed id from a path parameter does.
  *

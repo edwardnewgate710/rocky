@@ -20,4 +20,4 @@ export * from './community';
 export * from './achievements';
 export * from './achievements-game-source';
 export * from './studies';
-
+export * from './learning';

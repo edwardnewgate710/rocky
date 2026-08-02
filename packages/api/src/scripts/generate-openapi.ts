@@ -43,6 +43,7 @@ function main(): void {
     liveView: { activeGames: () => [] },
     emailSender: new ConsoleEmailSender(),
     studiesRepository: repos.studies,
+    learningRepository: repos.learning,
   });
 
   const doc = server.openapiDocument();

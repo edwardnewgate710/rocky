@@ -701,5 +701,134 @@ export function chapterDetailView(detail: {
   };
 }
 
+export interface CourseView {
+  readonly id: string;
+  readonly authorId: string;
+  readonly slug: string;
+  readonly title: string;
+  readonly description: string;
+  readonly difficulty: string;
+  readonly published: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly deletedAt?: string;
+}
+
+export function courseView(c: import('@chess-platform/learning').Course): CourseView {
+  return {
+    id: c.id,
+    authorId: c.authorId,
+    slug: c.slug,
+    title: c.title,
+    description: c.description,
+    difficulty: c.difficulty,
+    published: c.published,
+    createdAt: c.createdAt.toISOString(),
+    updatedAt: c.updatedAt.toISOString(),
+    ...(c.deletedAt ? { deletedAt: c.deletedAt.toISOString() } : {}),
+  };
+}
+
+export interface LessonView {
+  readonly id: string;
+  readonly courseId: string;
+  readonly title: string;
+  readonly orderIndex: number;
+  readonly deletedAt?: string;
+}
+
+export function lessonView(l: import('@chess-platform/learning').Lesson): LessonView {
+  return {
+    id: l.id,
+    courseId: l.courseId,
+    title: l.title,
+    orderIndex: l.orderIndex,
+    ...(l.deletedAt ? { deletedAt: l.deletedAt.toISOString() } : {}),
+  };
+}
+
+export interface StepView {
+  readonly id: string;
+  readonly lessonId: string;
+  readonly orderIndex: number;
+  readonly kind: 'text' | 'move' | 'quiz';
+  readonly prose?: string;
+  readonly fen?: string;
+  readonly expectedSan?: string;
+  readonly hint?: string;
+  readonly question?: string;
+  readonly options?: readonly string[];
+  readonly correctIndex?: number;
+  readonly deletedAt?: string;
+}
+
+export function stepView(s: import('@chess-platform/learning').LessonStep): StepView {
+  return {
+    id: s.id,
+    lessonId: s.lessonId,
+    orderIndex: s.orderIndex,
+    kind: s.kind,
+    ...(s.kind === 'text' ? { prose: s.prose } : {}),
+    ...(s.kind === 'move' ? { fen: s.fen, expectedSan: s.expectedSan, ...(s.hint ? { hint: s.hint } : {}) } : {}),
+    ...(s.kind === 'quiz' ? { question: s.question, options: [...s.options], correctIndex: s.correctIndex } : {}),
+    ...(s.deletedAt ? { deletedAt: s.deletedAt.toISOString() } : {}),
+  };
+}
+
+export interface ProgressView {
+  readonly playerId: string;
+  readonly courseId: string;
+  readonly lessonId: string;
+  readonly stepId: string;
+  readonly completedAt?: string;
+  readonly attempts: number;
+}
+
+export function progressView(p: import('@chess-platform/learning').Progress): ProgressView {
+  return {
+    playerId: p.playerId,
+    courseId: p.courseId,
+    lessonId: p.lessonId,
+    stepId: p.stepId,
+    attempts: p.attempts,
+    ...(p.completedAt ? { completedAt: p.completedAt.toISOString() } : {}),
+  };
+}
+
+export interface CourseProgressSummaryView {
+  readonly courseId: string;
+  readonly playerId: string;
+  readonly totalSteps: number;
+  readonly completedSteps: number;
+}
+
+export function courseProgressSummaryView(
+  s: import('@chess-platform/learning').CourseProgressSummary
+): CourseProgressSummaryView {
+  return {
+    courseId: s.courseId,
+    playerId: s.playerId,
+    totalSteps: s.totalSteps,
+    completedSteps: s.completedSteps,
+  };
+}
+
+export interface AttemptResultView {
+  readonly stepId: string;
+  readonly correct: boolean;
+  readonly completedAt?: string;
+  readonly attempts: number;
+}
+
+export function attemptResultView(r: import('@chess-platform/learning').AttemptResult): AttemptResultView {
+  return {
+    stepId: r.stepId,
+    correct: r.correct,
+    attempts: r.attempts,
+    ...(r.completedAt ? { completedAt: r.completedAt.toISOString() } : {}),
+  };
+}
+
+
 
 
