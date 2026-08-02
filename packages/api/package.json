@@ -41,6 +41,7 @@
     "node": ">=22"
   },
   "dependencies": {
+    "@chess-platform/achievements": "file:../achievements",
     "@chess-platform/anti-cheat": "file:../anti-cheat",
     "@chess-platform/community": "file:../community",
     "@chess-platform/core": "file:../chess-core",

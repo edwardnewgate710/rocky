@@ -356,6 +356,35 @@ async function main(): Promise<void> {
     }
   }
 
+  // --- Achievements Award Worker (M10 inc 5, ADR-0070) ---
+  let achievementsAwardWorker: { stop(): void } | undefined;
+  // Opt-in, like SEARCH_INDEXER and BOT_AUTO_ANALYZE above, not opt-out. A worker that writes to
+  // the database on every finished game should not appear in every deployment because a commit
+  // landed; and defaulting it on means every gateway without a DATABASE_URL logs a warning about a
+  // subsystem nobody asked for. A warning is worth reading when it answers a request.
+  if (process.env['ACHIEVEMENTS_ENABLED'] === '1') {
+    if (!pgPool) {
+      logger.warn('ACHIEVEMENTS_ENABLED requires DATABASE_URL to be set');
+    } else {
+      const { PgAchievementsRepository, PgAchievementsGameSource } = await import('@chess-platform/persistence/pg');
+      const { gamesEndedChannel } = await import('@chess-platform/realtime-gateway');
+      const api = await import('@chess-platform/api');
+
+      const achievementsRepo = new PgAchievementsRepository(pgPool);
+      const gameSource = new PgAchievementsGameSource(pgPool);
+
+      const worker = new api.AchievementsAwardWorker(
+        pubsub,
+        gamesEndedChannel(),
+        gameSource,
+        achievementsRepo,
+      );
+      worker.start();
+      achievementsAwardWorker = worker;
+      logger.info('AchievementsAwardWorker is enabled');
+    }
+  }
+
   // --- Command router: local (single-node) or Redis (multi-node) (M14 inc 5) ---
   let commandRouter: CommandRouter;
   let ownershipRegistry: { releaseAll: () => Promise<void>; startRenewal: () => void; stopRenewal: () => void; ownedCount: number } | undefined;
@@ -567,6 +596,7 @@ async function main(): Promise<void> {
     botAutoAnalyzer?.stop();
     antiCheatAutoAnalyzer?.stop();
     searchIndexWorker?.stop();
+    achievementsAwardWorker?.stop();
     // Start engine (subprocess) shutdown now so it runs concurrently with the
     // socket drain, but await it below before process.exit so cleanup can't be cut short.
     const engineShutdown = antiCheatEngine?.shutdown().catch((err: unknown) =>

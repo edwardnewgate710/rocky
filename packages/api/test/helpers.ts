@@ -36,6 +36,7 @@ import {
 import { InMemorySocialGraphRepository } from '@chess-platform/social';
 import { InMemoryMessagingRepository } from '@chess-platform/messaging';
 import { InMemoryCommunityRepository } from '@chess-platform/community';
+import { InMemoryAchievementsRepository } from '@chess-platform/achievements';
 
 
 export const TEST_SECRET = 'test-access-token-secret-0123456789abcdef';
@@ -62,6 +63,7 @@ export interface Harness {
   readonly socialGraphRepository?: InMemorySocialGraphRepository;
   readonly messagingRepository?: InMemoryMessagingRepository;
   readonly communityRepository?: InMemoryCommunityRepository;
+  readonly achievementsRepository?: InMemoryAchievementsRepository;
   readonly clock: ManualClock;
   readonly tokens: AccessTokenService;
   readonly emailSender: InMemoryEmailSender;
@@ -95,6 +97,8 @@ export interface HarnessOptions {
   readonly withoutMessaging?: boolean;
   /** Pass true to simulate a server constructed without community repository. */
   readonly withoutCommunity?: boolean;
+  /** Pass true to simulate a server constructed without achievements repository. */
+  readonly withoutAchievements?: boolean;
   /** Override the anti-cheat evaluator (e.g. to make it throw) for edge-case tests. */
   readonly antiCheatEvaluator?: PositionEvaluator;
 }
@@ -161,6 +165,9 @@ export async function startHarness(
   const communityRepository = harnessOptions.withoutCommunity
     ? undefined
     : new InMemoryCommunityRepository();
+  const achievementsRepository = harnessOptions.withoutAchievements
+    ? undefined
+    : new InMemoryAchievementsRepository();
   const server = createApiServer({
     repos, hasher, tokens, clock, ids, rateLimiter, tournamentRepo, gameLauncher, liveView, emailSender,
     config: resolved,
@@ -172,6 +179,7 @@ export async function startHarness(
     ...(socialGraphRepository ? { socialGraphRepository } : {}),
     ...(messagingRepository ? { messagingRepository } : {}),
     ...(communityRepository ? { communityRepository } : {}),
+    ...(achievementsRepository ? { achievementsRepository } : {}),
     ...(harnessOptions.readiness ? { readiness: harnessOptions.readiness } : {}),
     ...(harnessOptions.logger ? { logger: harnessOptions.logger } : {}),
     ...(harnessOptions.tracer ? { tracer: harnessOptions.tracer } : {}),
@@ -196,6 +204,7 @@ export async function startHarness(
     socialGraphRepository,
     messagingRepository,
     communityRepository,
+    achievementsRepository,
     clock,
     tokens,
     emailSender,

@@ -16,6 +16,7 @@
     "node": ">=22"
   },
   "dependencies": {
+    "@chess-platform/achievements": "file:../../packages/achievements",
     "@chess-platform/api": "file:../../packages/api",
     "@chess-platform/core": "file:../../packages/chess-core",
     "@chess-platform/game": "file:../../packages/game",

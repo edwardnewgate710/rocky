@@ -540,4 +540,69 @@ export function forumPostView(p: import('@chess-platform/community').ForumPost):
   };
 }
 
+export interface AchievementDefinitionView {
+  readonly key: string;
+  readonly name: string;
+  readonly description: string;
+  readonly category: string;
+  readonly tier: 'bronze' | 'silver' | 'gold';
+  readonly points: number;
+  readonly hidden: boolean;
+  readonly target?: number;
+}
+
+export function achievementDefinitionView(def: import('@chess-platform/achievements').AchievementDefinition): AchievementDefinitionView {
+  return {
+    key: def.key,
+    name: def.name,
+    description: def.description,
+    category: def.category,
+    tier: def.tier,
+    points: def.points,
+    hidden: def.hidden,
+    ...(def.target !== undefined ? { target: def.target } : {}),
+  };
+}
+
+export interface PlayerAchievementViewPresenter {
+  readonly key: string;
+  readonly name: string;
+  readonly description: string;
+  readonly category: string;
+  readonly tier: 'bronze' | 'silver' | 'gold';
+  readonly points: number;
+  readonly hidden: boolean;
+  readonly target?: number;
+  readonly progress: number;
+  readonly unlockedAt: string | null;
+}
+
+export function playerAchievementView(item: import('@chess-platform/achievements').PlayerAchievementView): PlayerAchievementViewPresenter {
+  return {
+    key: item.key,
+    name: item.name,
+    description: item.description,
+    category: item.category,
+    tier: item.tier,
+    points: item.points,
+    hidden: item.hidden,
+    ...(item.target !== undefined ? { target: item.target } : {}),
+    progress: item.progress,
+    unlockedAt: item.unlockedAt ? item.unlockedAt.toISOString() : null,
+  };
+}
+
+export interface AchievementSummaryView {
+  readonly unlockedCount: number;
+  readonly pointsTotal: number;
+}
+
+export function achievementSummaryView(summary: import('@chess-platform/achievements').AchievementSummary): AchievementSummaryView {
+  return {
+    unlockedCount: summary.unlockedCount,
+    pointsTotal: summary.pointsTotal,
+  };
+}
+
+
 

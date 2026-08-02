@@ -1131,6 +1131,70 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       total: { type: 'integer' },
     },
   },
+
+  AchievementDefinitionView: {
+    type: 'object',
+    required: ['key', 'name', 'description', 'category', 'tier', 'points', 'hidden'],
+    properties: {
+      key: { type: 'string' },
+      name: { type: 'string' },
+      description: { type: 'string' },
+      category: { type: 'string' },
+      tier: { type: 'string', enum: ['bronze', 'silver', 'gold'] },
+      points: { type: 'integer' },
+      hidden: { type: 'boolean' },
+      target: { type: 'integer' },
+    },
+  },
+
+  AchievementDefinitionList: {
+    type: 'object',
+    required: ['items'],
+    properties: {
+      items: {
+        type: 'array',
+        items: { $ref: '#/components/schemas/AchievementDefinitionView' },
+      },
+    },
+  },
+
+  PlayerAchievementView: {
+    type: 'object',
+    required: ['key', 'name', 'description', 'category', 'tier', 'points', 'hidden', 'progress', 'unlockedAt'],
+    properties: {
+      key: { type: 'string' },
+      name: { type: 'string' },
+      description: { type: 'string' },
+      category: { type: 'string' },
+      tier: { type: 'string', enum: ['bronze', 'silver', 'gold'] },
+      points: { type: 'integer' },
+      hidden: { type: 'boolean' },
+      target: { type: 'integer' },
+      progress: { type: 'integer' },
+      unlockedAt: { ...dateTime, nullable: true },
+    },
+  },
+
+  PlayerAchievementList: {
+    type: 'object',
+    required: ['items', 'total'],
+    properties: {
+      items: {
+        type: 'array',
+        items: { $ref: '#/components/schemas/PlayerAchievementView' },
+      },
+      total: { type: 'integer' },
+    },
+  },
+
+  AchievementSummaryView: {
+    type: 'object',
+    required: ['unlockedCount', 'pointsTotal'],
+    properties: {
+      unlockedCount: { type: 'integer' },
+      pointsTotal: { type: 'integer' },
+    },
+  },
 };
 
 

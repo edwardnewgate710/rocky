@@ -514,6 +514,23 @@ CREATE TABLE community_forum_posts (
 
 Stores teams, memberships, join requests, forum threads, and forum posts. Enforces single-owner invariant per team via partial unique index `community_memberships_one_owner_per_team` and at-most-one pending join request per player per team via `community_join_requests_one_pending_per_player`. All referencing FK columns are indexed to avoid full table scans on cascading user or team deletions.
 
+### 4.18 Achievements (`achievement_progress` table, Migration 0018)
+
+```sql
+CREATE TABLE achievement_progress (
+  player_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  achievement_key TEXT NOT NULL,
+  progress        INTEGER NOT NULL CHECK (progress >= 0),
+  unlocked_at     TIMESTAMPTZ,
+  PRIMARY KEY (player_id, achievement_key)
+);
+```
+
+Stores player achievement progress and unlock timestamps. A single `INSERT ... ON CONFLICT DO UPDATE` keeps progress monotonic and sets `unlocked_at` once, when `progress` first reaches the definition's target.
+
+**No secondary index, deliberately.** The primary key `(player_id, achievement_key)` leads with `player_id`, so it already serves both the cascading delete and the only query this table has — `WHERE player_id = $1`. That query carries no `ORDER BY`: the catalogue lives in code rather than in rows, so a listing has to merge these rows with definitions the database has never seen, including achievements with no row at all. The merge and the ordering therefore happen in the adapter, and an ordering index here would never be consulted while still costing a write on every award.
+
+
 
 
 **Secrets never stored in plaintext:** passwords are argon2id **encoded strings**

@@ -17,3 +17,6 @@ export * from './search-backfill';
 export * from './social';
 export * from './messaging';
 export * from './community';
+export * from './achievements';
+export * from './achievements-game-source';
+

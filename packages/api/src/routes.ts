@@ -37,6 +37,7 @@ import { NoEngineForVariantError } from '@chess-platform/engine';
 import { SocialRuleError, type FriendRequestAction } from '@chess-platform/social';
 import { MessagingRuleError } from '@chess-platform/messaging';
 import { CommunityRuleError } from '@chess-platform/community';
+import { AchievementRuleError } from '@chess-platform/achievements';
 import {
   antiCheatAggregateView,
   antiCheatGameReportView,
@@ -63,6 +64,9 @@ import {
   selfUser,
   sessionView,
   teamView,
+  achievementDefinitionView,
+  playerAchievementView,
+  achievementSummaryView,
 } from './presenters';
 import { TournamentService } from './tournament/service';
 import { ArenaService } from './tournament/arena.service';
@@ -107,6 +111,7 @@ export interface RouteDeps {
   readonly socialGraphRepository?: import('@chess-platform/social').SocialGraphRepository;
   readonly messagingRepository?: import('@chess-platform/messaging').MessagingRepository;
   readonly communityRepository?: import('@chess-platform/community').CommunityRepository;
+  readonly achievementsRepository?: import('@chess-platform/achievements').AchievementsRepository;
 }
 
 const PUBLIC: AuthPolicy = { required: false };
@@ -2870,6 +2875,101 @@ export function buildRouter(deps: RouteDeps): Router {
     },
   );
 
+  // --- Achievements ---------------------------------------------------------
+  function checkAchievementsRepo() {
+    if (!deps.achievementsRepository) {
+      throw HttpError.unavailable('achievements repository is not configured');
+    }
+    return deps.achievementsRepository;
+  }
+
+  // 1. GET /v1/achievements
+  router.get(
+    '/v1/achievements',
+    doc({
+      summary: 'List static achievement catalogue',
+      tags: ['achievements'],
+      responses: {
+        200: ['AchievementDefinitionList', 'Public achievement definitions'],
+        503: ['Error', 'Achievements service unavailable'],
+      },
+    }),
+    PUBLIC,
+    async () => {
+      const repo = checkAchievementsRepo();
+      const catalogue = repo.getCatalogue();
+      return json(200, {
+        items: catalogue
+          .filter((def: import('@chess-platform/achievements').AchievementDefinition) => !def.hidden)
+          .map(achievementDefinitionView),
+      });
+    },
+  );
+
+  // 2. GET /v1/players/:playerId/achievements
+  router.get(
+    '/v1/players/:playerId/achievements',
+    doc({
+      summary: 'List player achievements with progress',
+      tags: ['achievements'],
+      params: [pathParam('playerId', 'Player ID (UUID)'), limitParam(), offsetParam()],
+      responses: {
+        200: ['PlayerAchievementList', 'Paginated player achievements'],
+        404: ['Error', 'Player not found'],
+        422: ['Error', 'Malformed pagination params'],
+        503: ['Error', 'Achievements service unavailable'],
+      },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const repo = checkAchievementsRepo();
+      const playerId = parseUuid(ctx.params['playerId']!, 'playerId');
+      const limit = parseLimit(ctx.query, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+      const offset = parseOffset(ctx.query);
+
+      await requirePlayerExists(playerId);
+
+      try {
+        const page = await repo.listPlayerAchievements(playerId, { limit, offset });
+        return json(200, {
+          total: page.total,
+          items: page.items.map(playerAchievementView),
+        });
+      } catch (err) {
+        mapAchievementError(err);
+      }
+    },
+  );
+
+  // 3. GET /v1/players/:playerId/achievements/summary
+  router.get(
+    '/v1/players/:playerId/achievements/summary',
+    doc({
+      summary: 'Get player achievement summary',
+      tags: ['achievements'],
+      params: [pathParam('playerId', 'Player ID (UUID)')],
+      responses: {
+        200: ['AchievementSummaryView', 'Player achievement summary'],
+        404: ['Error', 'Player not found'],
+        503: ['Error', 'Achievements service unavailable'],
+      },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const repo = checkAchievementsRepo();
+      const playerId = parseUuid(ctx.params['playerId']!, 'playerId');
+
+      await requirePlayerExists(playerId);
+
+      try {
+        const summary = await repo.getSummary(playerId);
+        return json(200, achievementSummaryView(summary));
+      } catch (err) {
+        mapAchievementError(err);
+      }
+    },
+  );
+
   return router;
 
 }
@@ -2952,6 +3052,19 @@ function mapCommunityError(err: unknown): never {
         throw HttpError.forbidden(err.message);
       case 'invalid_transition':
         throw HttpError.conflict(err.message);
+    }
+  }
+  throw err;
+}
+
+function mapAchievementError(err: unknown): never {
+  if (err instanceof AchievementRuleError) {
+    switch (err.code) {
+      case 'not_found':
+        throw HttpError.notFound(err.message);
+      case 'unknown_achievement':
+      case 'invalid_progress':
+        throw HttpError.validation(err.message);
     }
   }
   throw err;

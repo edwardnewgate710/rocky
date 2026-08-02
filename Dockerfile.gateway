@@ -45,6 +45,8 @@ COPY --from=builder --chown=node:node /app/packages/messaging/package.json ./pac
 COPY --from=builder --chown=node:node /app/packages/messaging/dist/ ./packages/messaging/dist/
 COPY --from=builder --chown=node:node /app/packages/community/package.json ./packages/community/package.json
 COPY --from=builder --chown=node:node /app/packages/community/dist/ ./packages/community/dist/
+COPY --from=builder --chown=node:node /app/packages/achievements/package.json ./packages/achievements/package.json
+COPY --from=builder --chown=node:node /app/packages/achievements/dist/ ./packages/achievements/dist/
 COPY --from=builder --chown=node:node /app/packages/engine/package.json ./packages/engine/package.json
 COPY --from=builder --chown=node:node /app/packages/engine/dist/ ./packages/engine/dist/
 COPY --from=builder --chown=node:node /app/packages/anti-cheat/package.json ./packages/anti-cheat/package.json

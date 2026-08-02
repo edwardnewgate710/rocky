@@ -32,6 +32,7 @@ export * from './bot-detection/auto-analyzer';
 
 export * from './search/reindex';
 export * from './search/index-worker';
+export * from './achievements/award-worker';
 
 
 

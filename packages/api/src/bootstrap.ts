@@ -30,6 +30,7 @@ import {
   PgSocialGraphRepository,
   PgMessagingRepository,
   PgCommunityRepository,
+  PgAchievementsRepository,
 } from '@chess-platform/persistence/pg';
 import { HashingEmbeddingProvider, SEARCH_EMBEDDING_DIMENSIONS } from '@chess-platform/search';
 import type { EmbeddingProvider, SearchRepository, SemanticSearchRepository } from '@chess-platform/search';
@@ -145,6 +146,7 @@ export interface PgBootstrapOptions {
   readonly socialGraphRepository?: SocialGraphRepository;
   readonly messagingRepository?: MessagingRepository;
   readonly communityRepository?: CommunityRepository;
+  readonly achievementsRepository?: import('@chess-platform/achievements').AchievementsRepository;
   readonly logger?: Logger;
   readonly metrics?: Metrics;
   readonly tracer?: Tracer;
@@ -215,6 +217,15 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ? (options.communityRepository ?? new PgCommunityRepository(pool))
     : undefined;
 
+  // Opt-in, and the same flag the gateway worker reads. Defaulted on, the routes would come up
+  // against any database that has not applied migration 0018 — a table that does not exist, behind
+  // an endpoint that answers 200 until someone calls it. A 503 from an unconfigured subsystem is a
+  // better answer than a 500 from a missing table.
+  const achievementsEnabled = process.env['ACHIEVEMENTS_ENABLED'] === '1';
+  const achievementsRepository = achievementsEnabled
+    ? (options.achievementsRepository ?? new PgAchievementsRepository(pool))
+    : undefined;
+
   const logger = options.logger ?? new JsonLogger({ service: 'api' }, { level: resolveLogLevel() });
   const metrics = options.metrics ?? new InMemoryMetrics();
   const logExporter = new LoggingSpanExporter(logger);
@@ -269,6 +280,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ...(socialGraphRepository ? { socialGraphRepository } : {}),
     ...(messagingRepository ? { messagingRepository } : {}),
     ...(communityRepository ? { communityRepository } : {}),
+    ...(achievementsRepository ? { achievementsRepository } : {}),
     botTimingSource: new EventStoreBotTimingSource(eventStore),
     // Production observability (M13): structured logs to stdout, a scrape
     // registry backing GET /v1/metrics, and tracer emitting spans to logs.
