@@ -1,0 +1,268 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { setTimeout } from 'node:timers/promises';
+import { join } from 'node:path';
+import { createPool } from '../src/pg/pool';
+import { migrate } from '../src/pg/migrate';
+import { PgStudiesRepository } from '../src/pg/studies';
+import { uuidv7 } from '../src/ids';
+import { StudyRuleError, type PositionReader } from '@chess-platform/studies';
+import { Position } from '@chess-platform/core';
+
+const DATABASE_URL = process.env['DATABASE_URL'];
+const skip = DATABASE_URL ? false : 'DATABASE_URL not set';
+
+class CorePositionReader implements PositionReader {
+  legalSans(fen: string): readonly string[] {
+    const pos = Position.fromFen(fen);
+    return pos.legalMoves().map((m) => pos.toSan(m));
+  }
+  play(fen: string, san: string): string {
+    const pos = Position.fromFen(fen);
+    const moves = pos.legalMoves();
+    const move = moves.find((m) => pos.toSan(m) === san);
+    if (!move) {
+      throw new Error(`Illegal move ${san}`);
+    }
+    return pos.play(move).fen();
+  }
+}
+
+test('pg studies repository integration tests', { skip }, async () => {
+  const pool = createPool();
+  await migrate(pool, join(process.cwd(), 'migrations'));
+
+  const repo = new PgStudiesRepository(pool);
+  const reader = new CorePositionReader();
+
+  const createdUserIds: string[] = [];
+  const createUser = async (name: string): Promise<string> => {
+    const id = uuidv7();
+    const handle = `usr-${name.toLowerCase()}-${id.slice(0, 8)}`;
+    await pool.query(
+      `INSERT INTO users (id, handle, email_hash, created_at) VALUES ($1, $2, $3, NOW())`,
+      [id, handle, Buffer.from(id)]
+    );
+    createdUserIds.push(id);
+    return id;
+  };
+
+  try {
+    const alice = await createUser('Alice');
+    const bob = await createUser('Bob');
+    const charlie = await createUser('Charlie');
+
+    const t0 = new Date('2026-08-02T10:00:00Z');
+    const t1 = new Date('2026-08-02T10:01:00Z');
+    const t2 = new Date('2026-08-02T10:02:00Z');
+
+    // 1. Invariant 1 & 2: Study creation, single owner index, authority matrix
+    const studyId1 = uuidv7();
+    const study1 = await repo.createStudy(studyId1, alice, 'Sicilian Defense', 'Repertoire for Black', 'public', t0);
+    assert.equal(study1.id, studyId1);
+    assert.equal(study1.ownerId, alice);
+
+    // Partial unique index enforcement on study_collaborators (one owner per study)
+    await assert.rejects(
+      async () =>
+        pool.query(
+          `INSERT INTO study_collaborators (study_id, player_id, role) VALUES ($1, $2, 'owner')`,
+          [studyId1, bob]
+        ),
+      (err: any) => err && err.code === '23505'
+    );
+
+    // 2. Collaborators and Ownership Transfer (demotes before promoting)
+    await repo.addCollaborator(studyId1, alice, bob, 'contributor', t1);
+    const collabs = await repo.listCollaborators(studyId1, alice);
+    assert.equal(collabs.total, 2);
+
+    // New owner must already be a collaborator
+    await assert.rejects(
+      async () => repo.transferOwnership(studyId1, alice, charlie, t2),
+      (err: any) => err instanceof StudyRuleError && err.code === 'not_found'
+    );
+
+    // Transfer ownership from Alice to Bob
+    const transferRes = await repo.transferOwnership(studyId1, alice, bob, t2);
+    assert.equal(transferRes.oldOwner.role, 'contributor');
+    assert.equal(transferRes.newOwner.role, 'owner');
+    assert.equal(transferRes.study.ownerId, bob);
+
+    // 3. Invariant 3: Visibility levels (private invisible to non-collaborators => not_found; unlisted excluded from list)
+    const privStudyId = uuidv7();
+    await repo.createStudy(privStudyId, alice, 'Private Study', 'Secret prep', 'private', t0);
+
+    // Non-collaborator gets not_found
+    await assert.rejects(
+      async () => repo.getStudy(privStudyId, charlie),
+      (err: any) => err instanceof StudyRuleError && err.code === 'not_found'
+    );
+
+    // Unlisted study
+    const unlistedId = uuidv7();
+    await repo.createStudy(unlistedId, alice, 'Unlisted Prep', 'Shared link only', 'unlisted', t0);
+
+    const publicList = await repo.listStudies();
+    const idsInList = publicList.items.map((s) => s.id);
+    assert.ok(idsInList.includes(studyId1));
+    assert.ok(!idsInList.includes(privStudyId));
+    assert.ok(!idsInList.includes(unlistedId));
+
+    // 4. Chapter Management (orderIndex density, reordering, tombstoning)
+    const chId1 = uuidv7();
+    const ch1 = await repo.createChapter(chId1, studyId1, bob, 'Mainline e4', undefined, t0);
+    assert.equal(ch1.orderIndex, 0);
+
+    const chId2 = uuidv7();
+    const ch2 = await repo.createChapter(chId2, studyId1, bob, 'Sideline d4', undefined, t1);
+    assert.equal(ch2.orderIndex, 1);
+
+    // Unique index on study_id + order_index (when deleted_at IS NULL)
+    await assert.rejects(
+      async () =>
+        pool.query(
+          `INSERT INTO study_chapters (id, study_id, name, order_index, starting_fen) VALUES ($1, $2, 'Bad Order', 0, $3)`,
+          [uuidv7(), studyId1, ch1.startingFen]
+        ),
+      (err: any) => err && err.code === '23505'
+    );
+
+    // Reorder chapters
+    const reordered = await repo.reorderChapters(studyId1, bob, [chId2, chId1], t2);
+    assert.equal(reordered[0].id, chId2);
+    assert.equal(reordered[0].orderIndex, 0);
+    assert.equal(reordered[1].id, chId1);
+    assert.equal(reordered[1].orderIndex, 1);
+
+    // Delete chapter (tombstone & re-compact active indices)
+    const deletedCh = await repo.deleteChapter(chId2, bob, t2);
+    assert.ok(deletedCh.deletedAt);
+
+    await assert.rejects(
+      async () => repo.deleteChapter(chId2, bob, t2),
+      (err: any) => err instanceof StudyRuleError && err.code === 'invalid_transition'
+    );
+
+    // 5. Tree Node Management (append, resolve SAN, return existing child, delete node cascade)
+    const node1 = await repo.appendNode(chId1, bob, null, 'e4', reader);
+    assert.equal(node1.san, 'e4');
+
+    // Duplicate append returns existing child
+    const node1Dup = await repo.appendNode(chId1, bob, null, 'e4', reader);
+    assert.equal(node1Dup.id, node1.id);
+
+    // Sub-move
+    const node2 = await repo.appendNode(chId1, bob, node1.id, 'c5', reader, { comment: 'Sicilian' });
+    assert.equal(node2.san, 'c5');
+    assert.equal(node2.comment, 'Sicilian');
+
+    // Delete root node cascades to sub-move
+    await repo.deleteNode(node1.id, bob);
+    const { tree } = await repo.getChapter(chId1, bob);
+    assert.equal(tree.length, 0);
+
+    // 6. Import & Export PGN
+    const pgnSample = `[Event "Test Import"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "Player1"]
+[Black "Player2"]
+[Result "*"]
+
+1. e4 e5 (1... c5 2. Nf3) 2. Nf3 Nc6 *`;
+
+    const importedChapters = await repo.importPgn(studyId1, bob, pgnSample, reader, t2);
+    assert.equal(importedChapters.length, 1);
+    assert.equal(importedChapters[0].name, 'Player1 vs Player2');
+
+    const exportedPgn = await repo.exportPgn(studyId1, bob, importedChapters[0].id);
+    assert.ok(exportedPgn.includes('1. e4 e5'));
+    assert.ok(exportedPgn.includes('1... c5'));
+
+    // Two different rejections, and the difference is the point. A token that cannot be SAN under
+    // any position is a malformed FILE, caught while parsing and pointing at the offset. A token
+    // that is well-formed SAN but not playable HERE is a malformed GAME, caught while resolving
+    // against the board. Collapsing them would leave whoever uploaded the file guessing which of
+    // the two they have.
+    const chaptersBeforeFailures = await repo.listChapters(studyId1, bob);
+
+    await assert.rejects(
+      async () => repo.importPgn(studyId1, bob, `[Event "Bad"]\n\n1. e4 invalidmove *`, reader, t2),
+      (err: any) => err instanceof StudyRuleError && err.code === 'invalid_input'
+    );
+
+    // `Nf6` is perfectly good SAN — there is simply no white knight that can reach f6 on move 2.
+    await assert.rejects(
+      async () => repo.importPgn(studyId1, bob, `[Event "Bad"]\n\n1. e4 e5 2. Nf6 *`, reader, t2),
+      (err: any) =>
+        err instanceof StudyRuleError && err.code === 'invalid_move' && /Nf6/.test(err.message)
+    );
+
+    // And neither rejected import may leave anything behind. A half-written chapter looks complete
+    // to a reader, who cannot tell it from a game that really ended where the import stopped.
+    const chaptersAfterFailures = await repo.listChapters(studyId1, bob);
+    assert.equal(
+      chaptersAfterFailures.length,
+      chaptersBeforeFailures.length,
+      'a rejected import must not create a chapter'
+    );
+
+    // 7. Staged Concurrency Test: outside transaction holding study advisory lock
+    const concurStudyId = uuidv7();
+    await repo.createStudy(concurStudyId, alice, 'Concur Study', 'Test', 'private', t0);
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `SELECT pg_advisory_xact_lock(hashtextextended('study:' || $1::text, 0))`,
+        [concurStudyId]
+      );
+
+      const updating = repo
+        .updateStudy(concurStudyId, alice, { name: 'Updated Concur' }, t1)
+        .then((s) => s.name, (err: unknown) => (err instanceof Error ? err.message : String(err)));
+
+      await setTimeout(250); // let the update call reach its wait on advisory lock
+
+      await client.query(`SELECT id FROM studies WHERE id = $1 FOR UPDATE`, [concurStudyId]);
+      await client.query('COMMIT');
+
+      assert.equal(
+        await updating,
+        'Updated Concur',
+        'updateStudy must acquire the advisory lock before row locks, or staged locks deadlock'
+      );
+    } finally {
+      client.release();
+    }
+
+    // 8. Malformed UUID parameter handling (must answer not_found, not 500 driver error)
+    for (const badId of ['not-a-uuid', 'bad-id-123']) {
+      await assert.rejects(
+        async () => repo.getStudy(badId, alice),
+        (err: any) => err instanceof StudyRuleError && err.code === 'not_found',
+        `getStudy('${badId}') must yield not_found`
+      );
+    }
+
+    // 9. Foreign Key Cascades: Deleting user cascades to studies
+    const cascadeUser = await createUser('CascadeUser');
+    const cascadeStudyId = uuidv7();
+    await repo.createStudy(cascadeStudyId, cascadeUser, 'Cascade Study', 'Desc', 'public', t0);
+
+    await pool.query(`DELETE FROM users WHERE id = $1`, [cascadeUser]);
+
+    await assert.rejects(
+      async () => repo.getStudy(cascadeStudyId, alice),
+      (err: any) => err instanceof StudyRuleError && err.code === 'not_found'
+    );
+  } finally {
+    if (createdUserIds.length > 0) {
+      await pool.query(`DELETE FROM users WHERE id = ANY($1)`, [createdUserIds]);
+    }
+    await pool.end();
+  }
+});

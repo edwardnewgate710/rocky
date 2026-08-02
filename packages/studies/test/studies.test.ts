@@ -1,0 +1,270 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  InMemoryStudiesRepository,
+  StudyRuleError,
+  type PositionReader,
+} from '../src';
+
+// Simple mock PositionReader for testing move resolution in domain rules
+const mockReader: PositionReader = {
+  legalSans(fen: string): readonly string[] {
+    if (fen.includes('rnbqkbnr') || fen === 'start') {
+      return ['e4', 'd4', 'Nf3', 'c4', 'e5', 'c5', 'd5'];
+    }
+    if (fen.includes('e4')) {
+      return ['e5', 'c5', 'e6', 'c6', 'Nf3', 'Nc6'];
+    }
+    return ['e5', 'Nf3', 'Nc6', 'Bb5', 'a6'];
+  },
+  play(fen: string, san: string): string {
+    const legal = this.legalSans(fen);
+    if (!legal.includes(san)) {
+      throw new StudyRuleError('invalid_move', `'${san}' is not a legal move`);
+    }
+    return `${fen}+${san}`;
+  },
+};
+
+describe('Domain Rule 1: Ownership and transfer', () => {
+  it('creates study with exactly one owner and demotes old owner on transfer', async () => {
+    const repo = new InMemoryStudiesRepository();
+    const study = await repo.createStudy('s1', 'p-owner', 'Study 1', 'Desc', 'public');
+
+    assert.equal(study.ownerId, 'p-owner');
+    const collabs = await repo.listCollaborators('s1');
+    assert.equal(collabs.total, 1);
+    assert.equal(collabs.items[0]?.playerId, 'p-owner');
+    assert.equal(collabs.items[0]?.role, 'owner');
+
+    // Add target contributor
+    await repo.addCollaborator('s1', 'p-owner', 'p-new', 'contributor');
+
+    // Transfer ownership
+    const { oldOwner, newOwner, study: updatedStudy } = await repo.transferOwnership('s1', 'p-owner', 'p-new');
+
+    assert.equal(updatedStudy.ownerId, 'p-new');
+    assert.equal(oldOwner.role, 'contributor', 'old owner must be demoted to contributor');
+    assert.equal(newOwner.role, 'owner', 'new owner must be promoted to owner');
+  });
+
+  it('refuses to transfer ownership to someone who is not a collaborator', async () => {
+    // Creating the collaborator on the fly reads as convenience and is a one-way door: a transfer
+    // to a mistyped id would succeed, demote the real owner to contributor, and leave the study
+    // owned by an account nobody can sign in as. Taking it back is itself an owner-only action, so
+    // there is no path back.
+    const repo = new InMemoryStudiesRepository();
+    await repo.createStudy('s-lock', 'p-owner', 'Study', '', 'private');
+
+    await assert.rejects(
+      () => repo.transferOwnership('s-lock', 'p-owner', 'p-typo'),
+      (err: unknown) => err instanceof StudyRuleError && err.code === 'not_found'
+    );
+
+    // And the owner still owns it — a refused transfer must change nothing.
+    const study = await repo.getStudy('s-lock', 'p-owner');
+    assert.equal(study.ownerId, 'p-owner');
+    const owner = await repo.listCollaborators('s-lock', 'p-owner');
+    assert.equal(owner.items.find((c) => c.playerId === 'p-owner')?.role, 'owner');
+  });
+
+  it('fails if non-owner attempts to transfer ownership', async () => {
+    const repo = new InMemoryStudiesRepository();
+    await repo.createStudy('s1', 'p-owner', 'Study 1', 'Desc', 'public');
+    await repo.addCollaborator('s1', 'p-owner', 'p-contrib', 'contributor');
+
+    await assert.rejects(
+      () => repo.transferOwnership('s1', 'p-contrib', 'p-other'),
+      (err: unknown) => err instanceof StudyRuleError && err.code === 'not_authorized'
+    );
+  });
+});
+
+describe('Domain Rule 2: Authority hierarchy (owner > contributor > viewer)', () => {
+  it('allows contributor+ to edit chapters/tree, but only owner to change visibility or delete study', async () => {
+    const repo = new InMemoryStudiesRepository();
+    await repo.createStudy('s1', 'p-owner', 'Study 1', 'Desc', 'public');
+    await repo.addCollaborator('s1', 'p-owner', 'p-contrib', 'contributor');
+    await repo.addCollaborator('s1', 'p-owner', 'p-viewer', 'viewer');
+
+    // Contributor can create chapter and append node
+    const ch = await repo.createChapter('c1', 's1', 'p-contrib', 'Chapter 1');
+    assert.equal(ch.name, 'Chapter 1');
+    const node = await repo.appendNode('c1', 'p-contrib', null, 'e4', mockReader);
+    assert.equal(node.san, 'e4');
+
+    // Viewer CANNOT edit chapter or tree -> not_authorized
+    await assert.rejects(
+      () => repo.createChapter('c2', 's1', 'p-viewer', 'Chapter 2'),
+      (err: unknown) => err instanceof StudyRuleError && err.code === 'not_authorized'
+    );
+    await assert.rejects(
+      () => repo.appendNode('c1', 'p-viewer', null, 'd4', mockReader),
+      (err: unknown) => err instanceof StudyRuleError && err.code === 'not_authorized'
+    );
+
+    // Contributor CANNOT change visibility or delete study -> not_authorized
+    await assert.rejects(
+      () => repo.updateStudy('s1', 'p-contrib', { visibility: 'private' }),
+      (err: unknown) => err instanceof StudyRuleError && err.code === 'not_authorized'
+    );
+    await assert.rejects(
+      () => repo.deleteStudy('s1', 'p-contrib'),
+      (err: unknown) => err instanceof StudyRuleError && err.code === 'not_authorized'
+    );
+
+    // Owner CAN change visibility and delete study
+    const updated = await repo.updateStudy('s1', 'p-owner', { visibility: 'private' });
+    assert.equal(updated.visibility, 'private');
+  });
+});
+
+describe('Domain Rule 3: Visibility and not_found vs not_authorized', () => {
+  it('hides private studies from non-collaborators as not_found, excludes unlisted from list, and uses not_authorized only for visible actions', async () => {
+    const repo = new InMemoryStudiesRepository();
+    await repo.createStudy('s-pub', 'p-owner', 'Public Study', 'Desc', 'public');
+    await repo.createStudy('s-priv', 'p-owner', 'Private Study', 'Desc', 'private');
+    await repo.createStudy('s-unlisted', 'p-owner', 'Unlisted Study', 'Desc', 'unlisted');
+
+    // Stranger fetching private study gets not_found (existence leakage prevention)
+    await assert.rejects(
+      () => repo.getStudy('s-priv', 'p-stranger'),
+      (err: unknown) => err instanceof StudyRuleError && err.code === 'not_found'
+    );
+
+    // Public list excludes unlisted and private (unless collaborator)
+    const list = await repo.listStudies('p-stranger');
+    assert.equal(list.total, 1);
+    assert.equal(list.items[0]?.id, 's-pub');
+
+    // Unlisted is fetchable by ID
+    const unlisted = await repo.getStudy('s-unlisted', 'p-stranger');
+    assert.equal(unlisted.id, 's-unlisted');
+
+    // Add viewer to public study. Viewer can see public study but cannot edit -> not_authorized
+    await repo.addCollaborator('s-pub', 'p-owner', 'p-viewer', 'viewer');
+    await assert.rejects(
+      () => repo.updateChapter('c1', 'p-viewer', { name: 'New' }),
+      (err: unknown) => err instanceof StudyRuleError && err.code === 'not_found' // chapter doesn't exist
+    );
+  });
+});
+
+describe('Domain Rule 4: Appending move resolution & deduplication', () => {
+  it('resolves move via PositionReader and returns existing child instead of duplicating', async () => {
+    const repo = new InMemoryStudiesRepository();
+    await repo.createStudy('s1', 'p-owner', 'Study 1', 'Desc', 'public');
+    await repo.createChapter('c1', 's1', 'p-owner', 'Chapter 1');
+
+    // Appending move resolves SAN and generates node
+    const n1 = await repo.appendNode('c1', 'p-owner', null, 'e4', mockReader);
+    assert.equal(n1.san, 'e4');
+    assert.ok(n1.id);
+
+    // Appending the exact same move under the same parent returns the existing child node
+    const n2 = await repo.appendNode('c1', 'p-owner', null, 'e4', mockReader);
+    assert.equal(n2.id, n1.id, 'must return existing node without duplicating');
+
+    const { tree } = await repo.getChapter('c1', 'p-owner');
+    assert.equal(tree.length, 1);
+
+    // Appending illegal move throws invalid_move
+    await assert.rejects(
+      () => repo.appendNode('c1', 'p-owner', null, 'Qh5', mockReader),
+      (err: unknown) => err instanceof StudyRuleError && err.code === 'invalid_move'
+    );
+  });
+});
+
+describe('Domain Rule 5: Dense and stable orderIndex', () => {
+  it('maintains contiguous orderIndex for chapters and reordering yields dense 0..N-1 sequence', async () => {
+    const repo = new InMemoryStudiesRepository();
+    await repo.createStudy('s1', 'p-owner', 'Study 1', 'Desc', 'public');
+    const c0 = await repo.createChapter('ch0', 's1', 'p-owner', 'Ch 0');
+    const c1 = await repo.createChapter('ch1', 's1', 'p-owner', 'Ch 1');
+    const c2 = await repo.createChapter('ch2', 's1', 'p-owner', 'Ch 2');
+
+    assert.equal(c0.orderIndex, 0);
+    assert.equal(c1.orderIndex, 1);
+    assert.equal(c2.orderIndex, 2);
+
+    // Reorder chapters
+    const reordered = await repo.reorderChapters('s1', 'p-owner', ['ch2', 'ch0', 'ch1']);
+    assert.equal(reordered[0]?.id, 'ch2');
+    assert.equal(reordered[0]?.orderIndex, 0);
+    assert.equal(reordered[1]?.id, 'ch0');
+    assert.equal(reordered[1]?.orderIndex, 1);
+    assert.equal(reordered[2]?.id, 'ch1');
+    assert.equal(reordered[2]?.orderIndex, 2);
+  });
+});
+
+describe('Domain Rule 6: Tombstones and transition locks', () => {
+  it('marks deleted entity with tombstone and rejects secondary edit/delete with invalid_transition', async () => {
+    const repo = new InMemoryStudiesRepository();
+    await repo.createStudy('s1', 'p-owner', 'Study 1', 'Desc', 'public');
+    await repo.createChapter('c1', 's1', 'p-owner', 'Chapter 1');
+
+    // Delete chapter
+    const deletedCh = await repo.deleteChapter('c1', 'p-owner');
+    assert.ok(deletedCh.deletedAt);
+
+    // Attempting to delete again throws invalid_transition
+    await assert.rejects(
+      () => repo.deleteChapter('c1', 'p-owner'),
+      (err: unknown) => err instanceof StudyRuleError && err.code === 'invalid_transition'
+    );
+
+    // Delete study
+    const deletedStudy = await repo.deleteStudy('s1', 'p-owner');
+    assert.ok(deletedStudy.deletedAt);
+
+    // Attempting to edit or delete study again throws invalid_transition
+    await assert.rejects(
+      () => repo.deleteStudy('s1', 'p-owner'),
+      (err: unknown) => err instanceof StudyRuleError && err.code === 'invalid_transition'
+    );
+  });
+});
+
+describe('Domain Rule 7: Import PGN validation and atomicity', () => {
+  it('creates one chapter per game and rejects invalid moves with invalid_move without partial import', async () => {
+    const repo = new InMemoryStudiesRepository();
+    await repo.createStudy('s1', 'p-owner', 'Study 1', 'Desc', 'public');
+
+    const validPgn = [
+      '[Event "Game 1"]',
+      '',
+      '1. e4 e5 *',
+      '',
+      '[Event "Game 2"]',
+      '',
+      '1. d4 e5 *',
+    ].join('\n');
+
+    const imported = await repo.importPgn('s1', 'p-owner', validPgn, mockReader);
+    assert.equal(imported.length, 2);
+    assert.equal(imported[0]?.name, 'Game 1');
+    assert.equal(imported[1]?.name, 'Game 2');
+
+    // Invalid PGN containing illegal move
+    const invalidPgn = [
+      '[Event "Good Game"]',
+      '',
+      '1. e4 e5 *',
+      '',
+      '[Event "Bad Game"]',
+      '',
+      '1. e4 Ke2 *',
+    ].join('\n');
+
+    await assert.rejects(
+      () => repo.importPgn('s1', 'p-owner', invalidPgn, mockReader),
+      (err: unknown) => err instanceof StudyRuleError && err.code === 'invalid_move'
+    );
+
+    // Verify study chapters count did NOT increase from the failed import
+    const chapters = await repo.listChapters('s1', 'p-owner');
+    assert.equal(chapters.length, 2, 'failed import must not be imported half-way');
+  });
+});

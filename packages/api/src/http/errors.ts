@@ -67,6 +67,10 @@ export class HttpError extends Error {
     });
   }
 
+  static payloadTooLarge(message = 'payload too large'): HttpError {
+    return new HttpError(413, 'payload_too_large', message);
+  }
+
   static unavailable(message = 'service unavailable'): HttpError {
     return new HttpError(503, 'service_unavailable', message);
   }

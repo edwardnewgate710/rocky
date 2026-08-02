@@ -38,6 +38,8 @@ import { SocialRuleError, type FriendRequestAction } from '@chess-platform/socia
 import { MessagingRuleError } from '@chess-platform/messaging';
 import { CommunityRuleError } from '@chess-platform/community';
 import { AchievementRuleError } from '@chess-platform/achievements';
+import { StudyRuleError, MAX_PGN_BYTES } from '@chess-platform/studies';
+import { CorePositionReader } from './studies/position-reader';
 import {
   antiCheatAggregateView,
   antiCheatGameReportView,
@@ -67,6 +69,11 @@ import {
   achievementDefinitionView,
   playerAchievementView,
   achievementSummaryView,
+  studyView,
+  collaboratorView,
+  chapterView,
+  treeNodeView,
+  chapterDetailView,
 } from './presenters';
 import { TournamentService } from './tournament/service';
 import { ArenaService } from './tournament/arena.service';
@@ -112,6 +119,7 @@ export interface RouteDeps {
   readonly messagingRepository?: import('@chess-platform/messaging').MessagingRepository;
   readonly communityRepository?: import('@chess-platform/community').CommunityRepository;
   readonly achievementsRepository?: import('@chess-platform/achievements').AchievementsRepository;
+  readonly studiesRepository?: import('@chess-platform/studies').StudiesRepository;
 }
 
 const PUBLIC: AuthPolicy = { required: false };
@@ -2970,6 +2978,789 @@ export function buildRouter(deps: RouteDeps): Router {
     },
   );
 
+  // --- Studies & PGN --------------------------------------------------------
+  function checkStudiesRepo() {
+    if (!deps.studiesRepository) {
+      throw HttpError.unavailable('studies repository is not configured');
+    }
+    return deps.studiesRepository;
+  }
+
+  const studiesPositionReader = new CorePositionReader();
+
+  // 1. POST /v1/studies
+  router.post(
+    '/v1/studies',
+    doc({
+      summary: 'Create a study',
+      tags: ['studies'],
+      security: 'bearer',
+      responses: {
+        201: ['StudyView', 'Study created successfully'],
+        400: ['Error', 'Malformed request body'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Studies service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkStudiesRepo();
+      const actorId = requireAuth(ctx).userId;
+      const body = strictObject(ctx.body, ['id', 'name', 'description', 'visibility']);
+      const rawId = optString(body, 'id');
+      const studyId = rawId !== undefined ? parseUuid(rawId, 'id') : deps.ids.next();
+      const name = reqString(body, 'name');
+      const description = optString(body, 'description') ?? '';
+      const visibility = oneOf(reqString(body, 'visibility'), ['public', 'unlisted', 'private'] as const, 'visibility');
+
+      try {
+        const study = await repo.createStudy(studyId, actorId, name, description, visibility);
+        return json(201, studyView(study));
+      } catch (err) {
+        mapStudyError(err);
+      }
+    },
+  );
+
+  // 2. GET /v1/studies
+  router.get(
+    '/v1/studies',
+    doc({
+      summary: 'List studies',
+      tags: ['studies'],
+      params: [
+        limitParam(),
+        offsetParam(),
+        { name: 'search', in: 'query', required: false, schema: { type: 'string' }, description: 'Search term for name or description' },
+        { name: 'ownerId', in: 'query', required: false, schema: { type: 'string', format: 'uuid' }, description: 'Filter by owner ID' },
+      ],
+      responses: {
+        200: ['StudyPage', 'Page of studies'],
+        404: ['Error', 'Owner not found'],
+        422: ['Error', 'Malformed query parameter'],
+        503: ['Error', 'Studies service unavailable'],
+      },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const repo = checkStudiesRepo();
+      const actorId = ctx.auth?.userId;
+      const limit = parseLimit(ctx.query, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+      const offset = parseOffset(ctx.query);
+      const search = ctx.query.get('search') ?? undefined;
+      const rawOwnerId = ctx.query.get('ownerId') ?? undefined;
+
+      let ownerId: string | undefined = undefined;
+      if (rawOwnerId) {
+        ownerId = parseUuid(rawOwnerId, 'ownerId');
+        await requirePlayerExists(ownerId);
+      }
+
+      try {
+        const page = await repo.listStudies(actorId, { limit, offset, search, ownerId });
+        return json(200, { total: page.total, items: page.items.map(studyView) });
+      } catch (err) {
+        mapStudyError(err);
+      }
+    },
+  );
+
+  // 3. GET /v1/studies/:id
+  router.get(
+    '/v1/studies/:id',
+    doc({
+      summary: 'Get study by ID',
+      tags: ['studies'],
+      params: [pathParam('id', 'Study ID (UUID)')],
+      responses: {
+        200: ['StudyView', 'Study details'],
+        404: ['Error', 'Study not found'],
+        422: ['Error', 'Malformed ID'],
+        503: ['Error', 'Studies service unavailable'],
+      },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const repo = checkStudiesRepo();
+      const actorId = ctx.auth?.userId;
+      const studyId = parseUuid(ctx.params['id']!, 'id');
+
+      try {
+        const study = await repo.getStudy(studyId, actorId);
+        return json(200, studyView(study));
+      } catch (err) {
+        mapStudyError(err);
+      }
+    },
+  );
+
+  // 4. PATCH /v1/studies/:id
+  router.patch(
+    '/v1/studies/:id',
+    doc({
+      summary: 'Update study',
+      tags: ['studies'],
+      security: 'bearer',
+      params: [pathParam('id', 'Study ID (UUID)')],
+      responses: {
+        200: ['StudyView', 'Updated study details'],
+        403: ['Error', 'Insufficient permissions'],
+        404: ['Error', 'Study not found'],
+        409: ['Error', 'Study already deleted'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Studies service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkStudiesRepo();
+      const actorId = requireAuth(ctx).userId;
+      const studyId = parseUuid(ctx.params['id']!, 'id');
+      const body = strictObject(ctx.body, ['name', 'description', 'visibility']);
+
+      const name = optString(body, 'name');
+      const description = optString(body, 'description');
+      const rawVis = optString(body, 'visibility');
+      const visibility = rawVis !== undefined ? oneOf(rawVis, ['public', 'unlisted', 'private'] as const, 'visibility') : undefined;
+
+      try {
+        const study = await repo.updateStudy(studyId, actorId, { name, description, visibility });
+        return json(200, studyView(study));
+      } catch (err) {
+        mapStudyError(err);
+      }
+    },
+  );
+
+  // 5. DELETE /v1/studies/:id
+  router.delete(
+    '/v1/studies/:id',
+    doc({
+      summary: 'Delete study',
+      tags: ['studies'],
+      security: 'bearer',
+      params: [pathParam('id', 'Study ID (UUID)')],
+      responses: {
+        200: ['StudyView', 'Tombstoned study'],
+        403: ['Error', 'Insufficient permissions'],
+        404: ['Error', 'Study not found'],
+        409: ['Error', 'Study already deleted'],
+        422: ['Error', 'Malformed ID'],
+        503: ['Error', 'Studies service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkStudiesRepo();
+      const actorId = requireAuth(ctx).userId;
+      const studyId = parseUuid(ctx.params['id']!, 'id');
+
+      try {
+        const study = await repo.deleteStudy(studyId, actorId);
+        return json(200, studyView(study));
+      } catch (err) {
+        mapStudyError(err);
+      }
+    },
+  );
+
+  // 6. POST /v1/studies/:id/collaborators
+  router.post(
+    '/v1/studies/:id/collaborators',
+    doc({
+      summary: 'Add a collaborator',
+      tags: ['studies'],
+      security: 'bearer',
+      params: [pathParam('id', 'Study ID (UUID)')],
+      responses: {
+        201: ['CollaboratorView', 'Collaborator added successfully'],
+        403: ['Error', 'Insufficient permissions'],
+        404: ['Error', 'Study or player not found'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Studies service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkStudiesRepo();
+      const actorId = requireAuth(ctx).userId;
+      const studyId = parseUuid(ctx.params['id']!, 'id');
+      const body = strictObject(ctx.body, ['playerId', 'role']);
+
+      const playerId = parseUuid(reqString(body, 'playerId'), 'playerId');
+      await requirePlayerExists(playerId);
+
+      const role = oneOf(reqString(body, 'role'), ['owner', 'contributor', 'viewer'] as const, 'role');
+
+      try {
+        const collaborator = await repo.addCollaborator(studyId, actorId, playerId, role);
+        return json(201, collaboratorView(collaborator));
+      } catch (err) {
+        mapStudyError(err);
+      }
+    },
+  );
+
+  // 7. GET /v1/studies/:id/collaborators
+  router.get(
+    '/v1/studies/:id/collaborators',
+    doc({
+      summary: 'List study collaborators',
+      tags: ['studies'],
+      params: [pathParam('id', 'Study ID (UUID)'), limitParam(), offsetParam()],
+      responses: {
+        200: ['CollaboratorPage', 'Page of collaborators'],
+        404: ['Error', 'Study not found'],
+        422: ['Error', 'Malformed ID or query parameter'],
+        503: ['Error', 'Studies service unavailable'],
+      },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const repo = checkStudiesRepo();
+      const actorId = ctx.auth?.userId;
+      const studyId = parseUuid(ctx.params['id']!, 'id');
+      const limit = parseLimit(ctx.query, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+      const offset = parseOffset(ctx.query);
+
+      try {
+        const page = await repo.listCollaborators(studyId, actorId, { limit, offset });
+        return json(200, { total: page.total, items: page.items.map(collaboratorView) });
+      } catch (err) {
+        mapStudyError(err);
+      }
+    },
+  );
+
+  // 8. PATCH /v1/studies/:id/collaborators/:playerId
+  router.patch(
+    '/v1/studies/:id/collaborators/:playerId',
+    doc({
+      summary: 'Update collaborator role',
+      tags: ['studies'],
+      security: 'bearer',
+      params: [pathParam('id', 'Study ID (UUID)'), pathParam('playerId', 'Player ID (UUID)')],
+      responses: {
+        200: ['CollaboratorView', 'Updated collaborator'],
+        403: ['Error', 'Insufficient permissions'],
+        404: ['Error', 'Study or collaborator not found'],
+        409: ['Error', 'Invalid role transition'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Studies service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkStudiesRepo();
+      const actorId = requireAuth(ctx).userId;
+      const studyId = parseUuid(ctx.params['id']!, 'id');
+      const targetPlayerId = parseUuid(ctx.params['playerId']!, 'playerId');
+
+      await requirePlayerExists(targetPlayerId);
+
+      const body = strictObject(ctx.body, ['role', 'newRole']);
+      const rawRole = optString(body, 'role') ?? optString(body, 'newRole');
+      if (!rawRole) {
+        throw HttpError.validation('Role is required', { role: 'required' });
+      }
+      const newRole = oneOf(rawRole, ['owner', 'contributor', 'viewer'] as const, 'role');
+
+      try {
+        const collaborator = await repo.updateCollaboratorRole(studyId, actorId, targetPlayerId, newRole);
+        return json(200, collaboratorView(collaborator));
+      } catch (err) {
+        mapStudyError(err);
+      }
+    },
+  );
+
+  // 9. DELETE /v1/studies/:id/collaborators/:playerId
+  router.delete(
+    '/v1/studies/:id/collaborators/:playerId',
+    doc({
+      summary: 'Remove collaborator',
+      tags: ['studies'],
+      security: 'bearer',
+      params: [pathParam('id', 'Study ID (UUID)'), pathParam('playerId', 'Player ID (UUID)')],
+      responses: {
+        204: [undefined, 'Collaborator removed successfully'],
+        403: ['Error', 'Insufficient permissions'],
+        404: ['Error', 'Study or collaborator not found'],
+        409: ['Error', 'Cannot remove owner'],
+        422: ['Error', 'Malformed ID'],
+        503: ['Error', 'Studies service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkStudiesRepo();
+      const actorId = requireAuth(ctx).userId;
+      const studyId = parseUuid(ctx.params['id']!, 'id');
+      const targetPlayerId = parseUuid(ctx.params['playerId']!, 'playerId');
+
+      await requirePlayerExists(targetPlayerId);
+
+      try {
+        await repo.removeCollaborator(studyId, actorId, targetPlayerId);
+        return noContent();
+      } catch (err) {
+        mapStudyError(err);
+      }
+    },
+  );
+
+  // 10. POST /v1/studies/:id/transfer-ownership
+  router.post(
+    '/v1/studies/:id/transfer-ownership',
+    doc({
+      summary: 'Transfer study ownership',
+      tags: ['studies'],
+      security: 'bearer',
+      params: [pathParam('id', 'Study ID (UUID)')],
+      responses: {
+        200: ['StudyOwnershipTransferView', 'Ownership transferred successfully'],
+        403: ['Error', 'Insufficient permissions'],
+        404: ['Error', 'Study or target owner not found'],
+        409: ['Error', 'Invalid transition'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Studies service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkStudiesRepo();
+      const actorId = requireAuth(ctx).userId;
+      const studyId = parseUuid(ctx.params['id']!, 'id');
+      const body = strictObject(ctx.body, ['newOwnerId']);
+
+      const newOwnerId = parseUuid(reqString(body, 'newOwnerId'), 'newOwnerId');
+      await requirePlayerExists(newOwnerId);
+
+      try {
+        const res = await repo.transferOwnership(studyId, actorId, newOwnerId);
+        return json(200, {
+          oldOwner: collaboratorView(res.oldOwner),
+          newOwner: collaboratorView(res.newOwner),
+          study: studyView(res.study),
+        });
+      } catch (err) {
+        mapStudyError(err);
+      }
+    },
+  );
+
+  // 11. POST /v1/studies/:id/chapters
+  router.post(
+    '/v1/studies/:id/chapters',
+    doc({
+      summary: 'Create a chapter',
+      tags: ['studies'],
+      security: 'bearer',
+      params: [pathParam('id', 'Study ID (UUID)')],
+      responses: {
+        201: ['ChapterView', 'Chapter created successfully'],
+        403: ['Error', 'Insufficient permissions'],
+        404: ['Error', 'Study not found'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Studies service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkStudiesRepo();
+      const actorId = requireAuth(ctx).userId;
+      const studyId = parseUuid(ctx.params['id']!, 'id');
+
+      const body = strictObject(ctx.body, ['id', 'name', 'startingFen']);
+      const rawId = optString(body, 'id');
+      const chapterId = rawId !== undefined ? parseUuid(rawId, 'id') : deps.ids.next();
+      const name = reqString(body, 'name');
+      const startingFen = optString(body, 'startingFen');
+
+      try {
+        const chapter = await repo.createChapter(chapterId, studyId, actorId, name, startingFen);
+        return json(201, chapterView(chapter));
+      } catch (err) {
+        mapStudyError(err);
+      }
+    },
+  );
+
+  // 12. GET /v1/studies/:id/chapters
+  router.get(
+    '/v1/studies/:id/chapters',
+    doc({
+      summary: 'List study chapters',
+      tags: ['studies'],
+      params: [pathParam('id', 'Study ID (UUID)')],
+      responses: {
+        200: ['ChapterList', 'List of active chapters'],
+        404: ['Error', 'Study not found'],
+        422: ['Error', 'Malformed ID'],
+        503: ['Error', 'Studies service unavailable'],
+      },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const repo = checkStudiesRepo();
+      const actorId = ctx.auth?.userId;
+      const studyId = parseUuid(ctx.params['id']!, 'id');
+
+      try {
+        const chapters = await repo.listChapters(studyId, actorId);
+        return json(200, { items: chapters.map(chapterView) });
+      } catch (err) {
+        mapStudyError(err);
+      }
+    },
+  );
+
+  // 13. GET /v1/studies/:id/chapters/:chapterId
+  router.get(
+    '/v1/studies/:id/chapters/:chapterId',
+    doc({
+      summary: 'Get chapter and move tree',
+      tags: ['studies'],
+      params: [pathParam('id', 'Study ID (UUID)'), pathParam('chapterId', 'Chapter ID (UUID)')],
+      responses: {
+        200: ['ChapterDetailView', 'Chapter details with move tree'],
+        404: ['Error', 'Study or chapter not found'],
+        422: ['Error', 'Malformed ID'],
+        503: ['Error', 'Studies service unavailable'],
+      },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const repo = checkStudiesRepo();
+      const actorId = ctx.auth?.userId;
+      const studyId = parseUuid(ctx.params['id']!, 'id');
+      const chapterId = parseUuid(ctx.params['chapterId']!, 'chapterId');
+
+      try {
+        const detail = await repo.getChapter(chapterId, actorId);
+        if (detail.chapter.studyId !== studyId) {
+          throw HttpError.notFound(`Chapter '${chapterId}' not found in study '${studyId}'`);
+        }
+        return json(200, chapterDetailView(detail));
+      } catch (err) {
+        mapStudyError(err);
+      }
+    },
+  );
+
+  // 14. PATCH /v1/studies/:id/chapters/:chapterId
+  router.patch(
+    '/v1/studies/:id/chapters/:chapterId',
+    doc({
+      summary: 'Update chapter',
+      tags: ['studies'],
+      security: 'bearer',
+      params: [pathParam('id', 'Study ID (UUID)'), pathParam('chapterId', 'Chapter ID (UUID)')],
+      responses: {
+        200: ['ChapterView', 'Updated chapter'],
+        403: ['Error', 'Insufficient permissions'],
+        404: ['Error', 'Study or chapter not found'],
+        409: ['Error', 'Chapter already deleted'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Studies service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkStudiesRepo();
+      const actorId = requireAuth(ctx).userId;
+      const studyId = parseUuid(ctx.params['id']!, 'id');
+      const chapterId = parseUuid(ctx.params['chapterId']!, 'chapterId');
+
+      const body = strictObject(ctx.body, ['name']);
+      const name = optString(body, 'name');
+
+      try {
+        const chapter = await repo.updateChapter(chapterId, actorId, { name });
+        if (chapter.studyId !== studyId) {
+          throw HttpError.notFound(`Chapter '${chapterId}' not found in study '${studyId}'`);
+        }
+        return json(200, chapterView(chapter));
+      } catch (err) {
+        mapStudyError(err);
+      }
+    },
+  );
+
+  // 15. DELETE /v1/studies/:id/chapters/:chapterId
+  router.delete(
+    '/v1/studies/:id/chapters/:chapterId',
+    doc({
+      summary: 'Delete chapter',
+      tags: ['studies'],
+      security: 'bearer',
+      params: [pathParam('id', 'Study ID (UUID)'), pathParam('chapterId', 'Chapter ID (UUID)')],
+      responses: {
+        200: ['ChapterView', 'Tombstoned chapter'],
+        403: ['Error', 'Insufficient permissions'],
+        404: ['Error', 'Study or chapter not found'],
+        409: ['Error', 'Chapter already deleted'],
+        422: ['Error', 'Malformed ID'],
+        503: ['Error', 'Studies service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkStudiesRepo();
+      const actorId = requireAuth(ctx).userId;
+      const studyId = parseUuid(ctx.params['id']!, 'id');
+      const chapterId = parseUuid(ctx.params['chapterId']!, 'chapterId');
+
+      try {
+        const chapter = await repo.deleteChapter(chapterId, actorId);
+        if (chapter.studyId !== studyId) {
+          throw HttpError.notFound(`Chapter '${chapterId}' not found in study '${studyId}'`);
+        }
+        return json(200, chapterView(chapter));
+      } catch (err) {
+        mapStudyError(err);
+      }
+    },
+  );
+
+  // 16. PUT /v1/studies/:id/chapters/reorder
+  router.put(
+    '/v1/studies/:id/chapters/reorder',
+    doc({
+      summary: 'Reorder chapters within a study',
+      tags: ['studies'],
+      security: 'bearer',
+      params: [pathParam('id', 'Study ID (UUID)')],
+      responses: {
+        200: ['ChapterList', 'Reordered chapters list'],
+        403: ['Error', 'Insufficient permissions'],
+        404: ['Error', 'Study not found'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Studies service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkStudiesRepo();
+      const actorId = requireAuth(ctx).userId;
+      const studyId = parseUuid(ctx.params['id']!, 'id');
+
+      const body = strictObject(ctx.body, ['chapterIds']);
+      const rawIds = body['chapterIds'];
+      if (!Array.isArray(rawIds)) {
+        throw HttpError.validation('"chapterIds" must be an array', { chapterIds: 'invalid' });
+      }
+      const chapterIds = rawIds.map((cId) => parseUuid(String(cId), 'chapterId'));
+
+      try {
+        const chapters = await repo.reorderChapters(studyId, actorId, chapterIds);
+        return json(200, { items: chapters.map(chapterView) });
+      } catch (err) {
+        mapStudyError(err);
+      }
+    },
+  );
+
+  // 17. POST /v1/studies/:id/chapters/:chapterId/nodes
+  router.post(
+    '/v1/studies/:id/chapters/:chapterId/nodes',
+    doc({
+      summary: 'Append a move node to a chapter',
+      tags: ['studies'],
+      security: 'bearer',
+      params: [pathParam('id', 'Study ID (UUID)'), pathParam('chapterId', 'Chapter ID (UUID)')],
+      responses: {
+        201: ['TreeNodeView', 'Appended node'],
+        403: ['Error', 'Insufficient permissions'],
+        404: ['Error', 'Study, chapter or parent node not found'],
+        422: ['Error', 'Validation error or illegal move'],
+        503: ['Error', 'Studies service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkStudiesRepo();
+      const actorId = requireAuth(ctx).userId;
+      const studyId = parseUuid(ctx.params['id']!, 'id');
+      const chapterId = parseUuid(ctx.params['chapterId']!, 'chapterId');
+
+      // `nodeId` is deliberately NOT accepted. The port lets an id be supplied so an import can
+      // mint them in a batch, but taking one from a request would let a caller name a node that
+      // already exists — which in the in-memory adapter is a `Map#set` straight over the top of
+      // someone else's move. Server-generated means generated by the server.
+      const body = strictObject(ctx.body, ['parentId', 'san', 'comment', 'nags']);
+      const rawParentId = body['parentId'];
+      const parentId = rawParentId !== null && rawParentId !== undefined
+        ? parseUuid(String(rawParentId), 'parentId')
+        : null;
+      const san = reqString(body, 'san');
+      const comment = optString(body, 'comment');
+      const nags = parseNags(body['nags']);
+
+      try {
+        const node = await repo.appendNode(chapterId, actorId, parentId, san, studiesPositionReader, {
+          comment,
+          nags,
+        });
+        if (node.chapterId !== chapterId) {
+          throw HttpError.notFound(`Chapter '${chapterId}' not found in study '${studyId}'`);
+        }
+        return json(201, treeNodeView(node));
+      } catch (err) {
+        mapStudyError(err);
+      }
+    },
+  );
+
+  // 18. PATCH /v1/studies/:id/nodes/:nodeId
+  router.patch(
+    '/v1/studies/:id/nodes/:nodeId',
+    doc({
+      summary: 'Annotate a tree node',
+      tags: ['studies'],
+      security: 'bearer',
+      params: [pathParam('id', 'Study ID (UUID)'), pathParam('nodeId', 'Node ID (UUID)')],
+      responses: {
+        200: ['TreeNodeView', 'Annotated node'],
+        403: ['Error', 'Insufficient permissions'],
+        404: ['Error', 'Study or node not found'],
+        422: ['Error', 'Validation error'],
+        503: ['Error', 'Studies service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkStudiesRepo();
+      const actorId = requireAuth(ctx).userId;
+      parseUuid(ctx.params['id']!, 'id');
+      const nodeId = parseUuid(ctx.params['nodeId']!, 'nodeId');
+
+      const body = strictObject(ctx.body, ['comment', 'nags']);
+      const comment = optString(body, 'comment');
+      const nags = parseNags(body['nags']);
+
+      try {
+        const node = await repo.annotateNode(nodeId, actorId, { comment, nags });
+        return json(200, treeNodeView(node));
+      } catch (err) {
+        mapStudyError(err);
+      }
+    },
+  );
+
+  // 19. DELETE /v1/studies/:id/nodes/:nodeId
+  router.delete(
+    '/v1/studies/:id/nodes/:nodeId',
+    doc({
+      summary: 'Delete a tree node and its subtree',
+      tags: ['studies'],
+      security: 'bearer',
+      params: [pathParam('id', 'Study ID (UUID)'), pathParam('nodeId', 'Node ID (UUID)')],
+      responses: {
+        204: [undefined, 'Node deleted successfully'],
+        403: ['Error', 'Insufficient permissions'],
+        404: ['Error', 'Study or node not found'],
+        422: ['Error', 'Malformed ID'],
+        503: ['Error', 'Studies service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkStudiesRepo();
+      const actorId = requireAuth(ctx).userId;
+      parseUuid(ctx.params['id']!, 'id');
+      const nodeId = parseUuid(ctx.params['nodeId']!, 'nodeId');
+
+      try {
+        await repo.deleteNode(nodeId, actorId);
+        return noContent();
+      } catch (err) {
+        mapStudyError(err);
+      }
+    },
+  );
+
+  // 20. POST /v1/studies/:id/import
+  router.post(
+    '/v1/studies/:id/import',
+    doc({
+      summary: 'Import PGN into study',
+      tags: ['studies'],
+      security: 'bearer',
+      params: [pathParam('id', 'Study ID (UUID)')],
+      responses: {
+        200: ['ChapterList', 'Imported chapters'],
+        403: ['Error', 'Insufficient permissions'],
+        404: ['Error', 'Study not found'],
+        413: ['Error', 'PGN payload exceeds maximum size limit'],
+        422: ['Error', 'Validation error or invalid PGN/move'],
+        503: ['Error', 'Studies service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkStudiesRepo();
+      const actorId = requireAuth(ctx).userId;
+      const studyId = parseUuid(ctx.params['id']!, 'id');
+
+      const body = strictObject(ctx.body, ['pgn']);
+      const pgnString = reqString(body, 'pgn');
+
+      // NON-NEGOTIABLE: Enforce MAX_PGN_BYTES at the route before reaching parser!
+      if (Buffer.byteLength(pgnString, 'utf8') > MAX_PGN_BYTES) {
+        throw HttpError.payloadTooLarge(`PGN exceeds max limit of ${MAX_PGN_BYTES} bytes`);
+      }
+
+      try {
+        const chapters = await repo.importPgn(studyId, actorId, pgnString, studiesPositionReader);
+        return json(200, { items: chapters.map(chapterView) });
+      } catch (err) {
+        mapStudyError(err);
+      }
+    },
+  );
+
+  // 21. GET /v1/studies/:id/export.pgn
+  router.get(
+    '/v1/studies/:id/export.pgn',
+    doc({
+      summary: 'Export study or chapter as PGN',
+      tags: ['studies'],
+      params: [
+        pathParam('id', 'Study ID (UUID)'),
+        { name: 'chapterId', in: 'query', required: false, schema: { type: 'string', format: 'uuid' }, description: 'Optional chapter ID' },
+      ],
+      responses: {
+        200: ['PgnExport', 'Exported PGN text'],
+        404: ['Error', 'Study or chapter not found'],
+        422: ['Error', 'Malformed ID'],
+        503: ['Error', 'Studies service unavailable'],
+      },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const repo = checkStudiesRepo();
+      const actorId = ctx.auth?.userId;
+      const studyId = parseUuid(ctx.params['id']!, 'id');
+      const rawChapterId = ctx.query.get('chapterId') ?? undefined;
+      const chapterId = rawChapterId ? parseUuid(rawChapterId, 'chapterId') : undefined;
+
+      try {
+        const pgnText = await repo.exportPgn(studyId, actorId, chapterId);
+        return {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/x-chess-pgn; charset=utf-8',
+            'Content-Disposition': `attachment; filename="study-${studyId}.pgn"`,
+          },
+          body: pgnText,
+        };
+      } catch (err) {
+        mapStudyError(err);
+      }
+    },
+  );
+
   return router;
 
 }
@@ -2987,6 +3778,54 @@ function parseOffset(query: URLSearchParams): number {
     throw HttpError.validation('"offset" must be a non-negative integer', { offset: 'invalid' });
   }
   return n;
+}
+
+/** The NAG range the PGN standard defines: `$0` through `$255`. */
+const MAX_NAG = 255;
+
+/**
+ * Parses the `nags` array from a request body.
+ *
+ * `Array.map(Number)` is not parsing. It turns `"abc"` into `NaN`, `[]` into `0`, and `1e400` into
+ * `Infinity`, and every one of those reaches an `INTEGER[]` column and comes back as an opaque
+ * driver error — a 500 for input the caller could have been told about. NAGs are a closed set of
+ * small integers, so the check is cheap and the rejection is specific.
+ */
+function parseNags(raw: unknown): readonly number[] | undefined {
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+  if (!Array.isArray(raw)) {
+    throw HttpError.validation('"nags" must be an array of integers', { nags: 'invalid' });
+  }
+  return raw.map((entry) => {
+    if (typeof entry !== 'number' || !Number.isInteger(entry) || entry < 0 || entry > MAX_NAG) {
+      throw HttpError.validation(`"nags" entries must be integers between 0 and ${MAX_NAG}`, {
+        nags: 'invalid',
+      });
+    }
+    return entry;
+  });
+}
+
+function mapStudyError(err: unknown): never {
+  if (err instanceof StudyRuleError) {
+    switch (err.code) {
+      case 'not_found':
+        throw HttpError.notFound(err.message);
+      case 'not_authorized':
+        throw HttpError.forbidden(err.message);
+      case 'invalid_input':
+        throw HttpError.validation(err.message);
+      case 'invalid_transition':
+        throw HttpError.conflict(err.message);
+      case 'invalid_move':
+        throw HttpError.validation(err.message);
+      case 'too_large':
+        throw HttpError.payloadTooLarge(err.message);
+    }
+  }
+  throw err;
 }
 
 function mapSocialError(err: unknown): never {

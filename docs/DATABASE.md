@@ -530,6 +530,61 @@ Stores player achievement progress and unlock timestamps. A single `INSERT ... O
 
 **No secondary index, deliberately.** The primary key `(player_id, achievement_key)` leads with `player_id`, so it already serves both the cascading delete and the only query this table has — `WHERE player_id = $1`. That query carries no `ORDER BY`: the catalogue lives in code rather than in rows, so a listing has to merge these rows with definitions the database has never seen, including achievements with no row at all. The merge and the ordering therefore happen in the adapter, and an ordering index here would never be consulted while still costing a write on every award.
 
+### 4.19 Interactive Studies & PGN tables (`0019_studies.sql`, M10 inc 6)
+
+```sql
+CREATE TABLE studies (
+  id          UUID        NOT NULL PRIMARY KEY,
+  owner_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name        TEXT        NOT NULL,
+  description TEXT        NOT NULL DEFAULT '',
+  visibility  TEXT        NOT NULL CHECK (visibility IN ('public', 'unlisted', 'private')),
+  created_at  TIMESTAMPTZ NOT NULL,
+  updated_at  TIMESTAMPTZ NOT NULL,
+  deleted_at  TIMESTAMPTZ
+);
+
+CREATE TABLE study_collaborators (
+  study_id   UUID        NOT NULL REFERENCES studies(id) ON DELETE CASCADE,
+  player_id  UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role       TEXT        NOT NULL CHECK (role IN ('owner', 'contributor', 'viewer')),
+  created_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (study_id, player_id)
+);
+
+CREATE UNIQUE INDEX study_collaborators_one_owner_per_study
+  ON study_collaborators (study_id) WHERE (role = 'owner');
+
+CREATE TABLE study_chapters (
+  id           UUID        NOT NULL PRIMARY KEY,
+  study_id     UUID        NOT NULL REFERENCES studies(id) ON DELETE CASCADE,
+  name         TEXT        NOT NULL,
+  order_index  INTEGER     NOT NULL,
+  starting_fen TEXT        NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL,
+  updated_at   TIMESTAMPTZ NOT NULL,
+  deleted_at   TIMESTAMPTZ
+);
+
+CREATE UNIQUE INDEX study_chapters_study_id_order_index_idx
+  ON study_chapters (study_id, order_index) WHERE (deleted_at IS NULL);
+
+CREATE TABLE study_tree_nodes (
+  id          UUID        NOT NULL PRIMARY KEY,
+  chapter_id  UUID        NOT NULL REFERENCES study_chapters(id) ON DELETE CASCADE,
+  parent_id   UUID        REFERENCES study_tree_nodes(id) ON DELETE CASCADE,
+  san         TEXT        NOT NULL,
+  fen_after   TEXT        NOT NULL,
+  comment     TEXT,
+  nags        INTEGER[]   NOT NULL DEFAULT '{}',
+  order_index INTEGER     NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL,
+  updated_at  TIMESTAMPTZ NOT NULL
+);
+```
+
+Stores interactive studies, study collaborators, study chapters, and chapter move tree nodes. `studies` supports tombstones (`deleted_at`) and visibility levels (`public`, `unlisted`, `private`). `study_collaborators` uses partial unique index `study_collaborators_one_owner_per_study` to enforce single-ownership. `study_chapters` uses partial unique index `study_chapters_study_id_order_index_idx` for active chapter ordering. `study_tree_nodes` forms an adjacency-list move tree per chapter with parent-child cascade deletions (`parent_id REFERENCES study_tree_nodes(id) ON DELETE CASCADE`).
+
 
 
 

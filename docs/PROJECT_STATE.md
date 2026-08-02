@@ -4,7 +4,7 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-02 — M10 Teams & Forums Increment 4: domain + Postgres + REST API (ADR-0069)._
+_Last updated: 2026-08-02 — M10 Studies & PGN Increment 6: domain + Postgres + REST API (ADR-0071)._
 
 ## M10 Social Graph Increment 1 — Pure Social Graph Domain Core (ADR-0066)
 
@@ -969,6 +969,16 @@ Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
 - **Wiring & OpenAPI**: Added presenter views in `presenters.ts` and OpenAPI component schemas in `schemas.ts`. Updated `deps.ts`, `server.ts`, `bootstrap.ts` (with optional dependency 503 fallback), and test `helpers.ts` (`withoutCommunity`). Regenerated `packages/api/openapi.json` with zero drift. Updated workspace dependencies, `package.json` scripts (`build`, `test`, `lint`, `clean`, `build:server`), `scripts/test-counts.mjs`, `Dockerfile.api`, `Dockerfile.gateway`, and verified `check:build-order`.
 - **Tests**: Domain unit tests in `packages/community/test/community.test.ts` (8/8 suites pass), DB-gated integration tests in `packages/persistence/test/community.integration.test.ts` (7/7 pass), and REST API tests in `packages/api/test/community-api.test.ts` (all auth matrix, 503 fallback, and full lifecycle tests pass).
 - Detailed in `docs/adr/0069-teams-and-forums.md`.
+
+## M10 Studies & PGN Increment 6 — Interactive Studies & PGN System (ADR-0071)
+- **Domain Core Package (`@chess-platform/studies`)**: Created pure TypeScript domain package with zero runtime dependencies (43/43 tests passing). Defined `Study`, `StudyCollaborator`, `StudyChapter`, `StudyTreeNode`, and PGN models (`PgnGame`, `PgnHeader`, `PgnMoveNode`). Defined `StudyRuleError` with code taxonomy (`not_found`, `not_authorized`, `invalid_input`, `invalid_san`, `cannot_remove_owner`, `already_collaborator`, `invalid_role_transition`, `illegal_move`, `cycle_detected`, `order_conflict`). Implemented PGN parser (`parsePgn`) and serializer (`serializePgn`), SAN move resolver, code-point deterministic comparators, and `StudiesRepository` port with `InMemoryStudiesRepository` implementation.
+- **SAN Move Resolution**: Adapted SAN move validation and position execution through an abstract `PositionReader` port (`legalSans`, `play`), decoupling domain move application from engine internals. Created `CorePositionReader` in `@chess-platform/api` using `@chess-platform/core`'s `Position`.
+- **Migration `0019_studies.sql`**: Created tables `studies`, `study_collaborators`, `study_chapters`, and `study_tree_nodes`. Foreign key constraints specify `ON DELETE CASCADE`. Partial unique indexes `study_collaborators_one_owner_per_study` (one owner per study) and `study_chapters_study_id_order_index_idx` (active chapter ordering).
+- **Postgres Adapter (`PgStudiesRepository`)**: Implemented `StudiesRepository` in `packages/persistence/src/pg/studies.ts` re-exported from `@chess-platform/persistence/pg`. Transaction advisory locking (`lockStudy` via `pg_advisory_xact_lock`) acquired before row locks (`FOR UPDATE`) to prevent cross-entity deadlocks. Ownership transfer demotes old owner to contributor before promoting target user to owner to maintain partial unique index compliance. Constraint-safe chapter reordering under advisory lock.
+- **REST API Endpoints**: Registered 21 `/v1/studies/*` endpoints in `packages/api/src/routes.ts`. Enforced authentication matrix (`AUTHED` / `PUBLIC`), `requirePlayerExists` validation, server-generated `uuidv7()` IDs, presenter functions in `presenters.ts`, `mapStudyError` error translation, and `MAX_PGN_BYTES` (5 MB) body size limit on PGN import returning 413 Payload Too Large.
+- **Wiring & OpenAPI**: Added presenter functions in `presenters.ts` and OpenAPI component schemas in `schemas.ts` (`StudyView`, `StudyPage`, `CollaboratorView`, `CollaboratorPage`, `StudyOwnershipTransferView`, `ChapterView`, `ChapterList`, `TreeNodeView`, `ChapterDetailView`, `PgnExport`). Updated `deps.ts`, `server.ts`, `bootstrap.ts` (`STUDIES_ENABLED === '1'`), and test `helpers.ts` (`withoutStudies`). Regenerated `packages/api/openapi.json` with zero drift. Updated workspace dependencies, `package.json` scripts (`build`, `test`, `lint`, `clean`, `build:server`), `scripts/test-counts.mjs`, `Dockerfile.api`, `Dockerfile.gateway`, and verified `check:build-order`.
+- **Tests**: Domain unit tests in `packages/studies/test/` (43/43 pass), DB-gated integration tests in `packages/persistence/test/studies.integration.test.ts` (14/14 pass against Postgres), and REST API integration tests in `packages/api/test/studies-api.test.ts` (303/303 `@chess-platform/api` tests pass cleanly).
+- Detailed in `docs/adr/0071-pgn-and-studies.md`.
 
 
 

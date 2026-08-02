@@ -42,6 +42,7 @@ function main(): void {
     gameLauncher: new InMemoryGameLauncher(ids),
     liveView: { activeGames: () => [] },
     emailSender: new ConsoleEmailSender(),
+    studiesRepository: repos.studies,
   });
 
   const doc = server.openapiDocument();

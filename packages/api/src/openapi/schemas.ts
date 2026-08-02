@@ -1195,6 +1195,109 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       pointsTotal: { type: 'integer' },
     },
   },
+
+  StudyView: {
+    type: 'object',
+    required: ['id', 'ownerId', 'name', 'description', 'visibility', 'createdAt', 'updatedAt'],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      ownerId: { type: 'string', format: 'uuid' },
+      name: { type: 'string' },
+      description: { type: 'string' },
+      visibility: { type: 'string', enum: ['public', 'unlisted', 'private'] },
+      createdAt: dateTime,
+      updatedAt: dateTime,
+      deletedAt: { ...dateTime, nullable: true },
+    },
+  },
+
+  StudyPage: {
+    type: 'object',
+    required: ['total', 'items'],
+    properties: {
+      total: { type: 'integer' },
+      items: { type: 'array', items: { $ref: '#/components/schemas/StudyView' } },
+    },
+  },
+
+  CollaboratorView: {
+    type: 'object',
+    required: ['studyId', 'playerId', 'role'],
+    properties: {
+      studyId: { type: 'string', format: 'uuid' },
+      playerId: { type: 'string', format: 'uuid' },
+      role: { type: 'string', enum: ['owner', 'contributor', 'viewer'] },
+    },
+  },
+
+  CollaboratorPage: {
+    type: 'object',
+    required: ['total', 'items'],
+    properties: {
+      total: { type: 'integer' },
+      items: { type: 'array', items: { $ref: '#/components/schemas/CollaboratorView' } },
+    },
+  },
+
+  StudyOwnershipTransferView: {
+    type: 'object',
+    required: ['oldOwner', 'newOwner', 'study'],
+    properties: {
+      oldOwner: { $ref: '#/components/schemas/CollaboratorView' },
+      newOwner: { $ref: '#/components/schemas/CollaboratorView' },
+      study: { $ref: '#/components/schemas/StudyView' },
+    },
+  },
+
+  ChapterView: {
+    type: 'object',
+    required: ['id', 'studyId', 'name', 'orderIndex', 'startingFen'],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      studyId: { type: 'string', format: 'uuid' },
+      name: { type: 'string' },
+      orderIndex: { type: 'integer' },
+      startingFen: { type: 'string' },
+      deletedAt: { ...dateTime, nullable: true },
+    },
+  },
+
+  ChapterList: {
+    type: 'object',
+    required: ['items'],
+    properties: {
+      items: { type: 'array', items: { $ref: '#/components/schemas/ChapterView' } },
+    },
+  },
+
+  TreeNodeView: {
+    type: 'object',
+    required: ['id', 'chapterId', 'parentId', 'san', 'fenAfter', 'nags', 'orderIndex'],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      chapterId: { type: 'string', format: 'uuid' },
+      parentId: { type: 'string', format: 'uuid', nullable: true },
+      san: { type: 'string' },
+      fenAfter: { type: 'string' },
+      comment: { type: 'string' },
+      nags: { type: 'array', items: { type: 'integer' } },
+      orderIndex: { type: 'integer' },
+    },
+  },
+
+  ChapterDetailView: {
+    type: 'object',
+    required: ['chapter', 'tree'],
+    properties: {
+      chapter: { $ref: '#/components/schemas/ChapterView' },
+      tree: { type: 'array', items: { $ref: '#/components/schemas/TreeNodeView' } },
+    },
+  },
+
+  PgnExport: {
+    type: 'string',
+    description: 'PGN exported text',
+  },
 };
 
 

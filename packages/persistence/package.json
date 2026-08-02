@@ -45,6 +45,7 @@
     "@chess-platform/messaging": "file:../messaging",
     "@chess-platform/search": "file:../search",
     "@chess-platform/social": "file:../social",
+    "@chess-platform/studies": "file:../studies",
     "@chess-platform/tournament": "file:../tournament",
     "pg": "^8.12.0"
   },

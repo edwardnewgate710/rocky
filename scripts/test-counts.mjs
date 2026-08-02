@@ -17,6 +17,7 @@ const suites = [
   ['messaging', ['test', '--workspace', '@chess-platform/messaging']],
   ['community', ['test', '--workspace', '@chess-platform/community']],
   ['achievements', ['test', '--workspace', '@chess-platform/achievements']],
+  ['studies', ['test', '--workspace', '@chess-platform/studies']],
   ['anti-cheat', ['test', '--workspace', '@chess-platform/anti-cheat']],
   ['game', ['test', '--workspace', '@chess-platform/game']],
   ['tournament', ['test', '--workspace', '@chess-platform/tournament']],

@@ -1,0 +1,374 @@
+import { describe, it, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { startHarness, type Harness } from './helpers.js';
+import { MAX_PGN_BYTES } from '@chess-platform/studies';
+
+describe('Studies REST API', () => {
+  let harness: Harness;
+  let owner: { userId: string; token: string };
+  let player2: { userId: string; token: string };
+  let player3: { userId: string; token: string };
+
+  before(async () => {
+    harness = await startHarness();
+    owner = await harness.makeUser('StudyOwner');
+    player2 = await harness.makeUser('StudyCollab');
+    player3 = await harness.makeUser('StudyOutsider');
+  });
+
+  after(async () => {
+    if (harness) {
+      await harness.close();
+    }
+  });
+
+  describe('Studies CRUD & Visibility', () => {
+    let publicStudyId: string;
+    let privateStudyId: string;
+
+    it('creates public and private studies', async () => {
+      const pubRes = await harness.json('POST', '/v1/studies', {
+        token: owner.token,
+        body: { name: 'Public Sicilian Study', description: 'Openings', visibility: 'public' },
+      });
+      assert.equal(pubRes.status, 201);
+      assert.ok(pubRes.body.id);
+      assert.equal(pubRes.body.ownerId, owner.userId);
+      assert.equal(pubRes.body.visibility, 'public');
+      publicStudyId = pubRes.body.id;
+
+      const privRes = await harness.json('POST', '/v1/studies', {
+        token: owner.token,
+        body: { name: 'Private Repertoire', description: 'Secret', visibility: 'private' },
+      });
+      assert.equal(privRes.status, 201);
+      assert.equal(privRes.body.visibility, 'private');
+      privateStudyId = privRes.body.id;
+    });
+
+    it('returns 401 when creating study without auth', async () => {
+      const res = await harness.json('POST', '/v1/studies', {
+        body: { name: 'Unauthed Study', visibility: 'public' },
+      });
+      assert.equal(res.status, 401);
+    });
+
+    it('returns 422 for malformed study ID or invalid body', async () => {
+      const res = await harness.json('GET', '/v1/studies/not-a-uuid');
+      assert.equal(res.status, 422);
+
+      const resBody = await harness.json('POST', '/v1/studies', {
+        token: owner.token,
+        body: { name: 'Invalid Vis', visibility: 'super_private' },
+      });
+      assert.equal(resBody.status, 422);
+    });
+
+    it('enforces visibility when fetching single study', async () => {
+      // Owner can view private study
+      const ownerFetch = await harness.json('GET', `/v1/studies/${privateStudyId}`, { token: owner.token });
+      assert.equal(ownerFetch.status, 200);
+
+      // Outsider receives 404 for private study
+      const outsiderFetch = await harness.json('GET', `/v1/studies/${privateStudyId}`, { token: player3.token });
+      assert.equal(outsiderFetch.status, 404);
+
+      // Public study is visible to anonymous
+      const anonFetch = await harness.json('GET', `/v1/studies/${publicStudyId}`);
+      assert.equal(anonFetch.status, 200);
+    });
+
+    it('lists studies filtering by owner and search', async () => {
+      const res = await harness.json('GET', `/v1/studies?ownerId=${owner.userId}&search=Sicilian`, { token: owner.token });
+      assert.equal(res.status, 200);
+      assert.ok(Array.isArray(res.body.items));
+      assert.equal(res.body.items.length, 1);
+      assert.equal(res.body.items[0].id, publicStudyId);
+    });
+
+    it('returns 404 when listing studies for non-existent owner', async () => {
+      const nonExistentId = '018f3a5b-7c9d-7000-8000-999999999999';
+      const res = await harness.json('GET', `/v1/studies?ownerId=${nonExistentId}`);
+      assert.equal(res.status, 404);
+    });
+
+    it('updates study metadata', async () => {
+      const patchRes = await harness.json('PATCH', `/v1/studies/${publicStudyId}`, {
+        token: owner.token,
+        body: { name: 'Updated Sicilian Study', description: 'Updated desc' },
+      });
+      assert.equal(patchRes.status, 200);
+      assert.equal(patchRes.body.name, 'Updated Sicilian Study');
+
+      // Outsider receives 403 trying to update
+      const forbiddenRes = await harness.json('PATCH', `/v1/studies/${publicStudyId}`, {
+        token: player3.token,
+        body: { name: 'Hacked Title' },
+      });
+      assert.equal(forbiddenRes.status, 403);
+    });
+
+    it('deletes (tombstones) study', async () => {
+      const delRes = await harness.json('DELETE', `/v1/studies/${privateStudyId}`, { token: owner.token });
+      assert.equal(delRes.status, 200);
+      assert.ok(delRes.body.deletedAt);
+
+      // Subsequent fetch returns 404
+      const fetchRes = await harness.json('GET', `/v1/studies/${privateStudyId}`, { token: owner.token });
+      assert.equal(fetchRes.status, 404);
+    });
+  });
+
+  describe('Collaborators & Ownership Transfer', () => {
+    let studyId: string;
+
+    before(async () => {
+      const res = await harness.json('POST', '/v1/studies', {
+        token: owner.token,
+        body: { name: 'Collaborative Study', visibility: 'public' },
+      });
+      studyId = res.body.id;
+    });
+
+    it('adds collaborator to study', async () => {
+      const res = await harness.json('POST', `/v1/studies/${studyId}/collaborators`, {
+        token: owner.token,
+        body: { playerId: player2.userId, role: 'contributor' },
+      });
+      assert.equal(res.status, 201);
+      assert.equal(res.body.playerId, player2.userId);
+      assert.equal(res.body.role, 'contributor');
+    });
+
+    it('returns 404 when adding non-existent player as collaborator', async () => {
+      const nonExistentId = '018f3a5b-7c9d-7000-8000-999999999999';
+      const res = await harness.json('POST', `/v1/studies/${studyId}/collaborators`, {
+        token: owner.token,
+        body: { playerId: nonExistentId, role: 'viewer' },
+      });
+      assert.equal(res.status, 404);
+    });
+
+    it('lists collaborators', async () => {
+      const res = await harness.json('GET', `/v1/studies/${studyId}/collaborators`);
+      assert.equal(res.status, 200);
+      assert.equal(res.body.total, 2);
+    });
+
+    it('updates collaborator role', async () => {
+      const res = await harness.json('PATCH', `/v1/studies/${studyId}/collaborators/${player2.userId}`, {
+        token: owner.token,
+        body: { role: 'viewer' },
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.role, 'viewer');
+    });
+
+    it('transfers ownership demoting old owner', async () => {
+      // First promote player2 to contributor
+      await harness.json('PATCH', `/v1/studies/${studyId}/collaborators/${player2.userId}`, {
+        token: owner.token,
+        body: { role: 'contributor' },
+      });
+
+      const res = await harness.json('POST', `/v1/studies/${studyId}/transfer-ownership`, {
+        token: owner.token,
+        body: { newOwnerId: player2.userId },
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.oldOwner.playerId, owner.userId);
+      assert.equal(res.body.oldOwner.role, 'contributor');
+      assert.equal(res.body.newOwner.playerId, player2.userId);
+      assert.equal(res.body.newOwner.role, 'owner');
+    });
+
+    it('removes collaborator', async () => {
+      // player2 is now owner, owner is contributor. player2 can remove owner.
+      const res = await harness.json('DELETE', `/v1/studies/${studyId}/collaborators/${owner.userId}`, {
+        token: player2.token,
+      });
+      assert.equal(res.status, 204);
+    });
+  });
+
+  describe('Chapters, Move Tree & PGN', () => {
+    let studyId: string;
+    let chapterId: string;
+    let rootNodeId: string;
+
+    before(async () => {
+      const res = await harness.json('POST', '/v1/studies', {
+        token: owner.token,
+        body: { name: 'Tree & PGN Study', visibility: 'public' },
+      });
+      studyId = res.body.id;
+    });
+
+    it('creates chapter', async () => {
+      const res = await harness.json('POST', `/v1/studies/${studyId}/chapters`, {
+        token: owner.token,
+        body: { name: 'Chapter 1: e4' },
+      });
+      assert.equal(res.status, 201);
+      assert.equal(res.body.name, 'Chapter 1: e4');
+      assert.equal(res.body.orderIndex, 0);
+      chapterId = res.body.id;
+    });
+
+    it('lists chapters', async () => {
+      const res = await harness.json('GET', `/v1/studies/${studyId}/chapters`);
+      assert.equal(res.status, 200);
+      assert.equal(res.body.items.length, 1);
+    });
+
+    it('appends move node to chapter', async () => {
+      const nodeRes = await harness.json('POST', `/v1/studies/${studyId}/chapters/${chapterId}/nodes`, {
+        token: owner.token,
+        body: { parentId: null, san: 'e4', comment: 'King pawn opening' },
+      });
+      assert.equal(nodeRes.status, 201);
+      assert.equal(nodeRes.body.san, 'e4');
+      assert.equal(nodeRes.body.comment, 'King pawn opening');
+      rootNodeId = nodeRes.body.id;
+    });
+
+    it('returns 422 for illegal move append', async () => {
+      const res = await harness.json('POST', `/v1/studies/${studyId}/chapters/${chapterId}/nodes`, {
+        token: owner.token,
+        body: { parentId: rootNodeId, san: 'Qxh7' }, // Qxh7 is illegal from 1. e4
+      });
+      assert.equal(res.status, 422);
+    });
+
+    it('annotates node', async () => {
+      const patchRes = await harness.json('PATCH', `/v1/studies/${studyId}/nodes/${rootNodeId}`, {
+        token: owner.token,
+        body: { comment: 'Best move', nags: [1] },
+      });
+      assert.equal(patchRes.status, 200);
+      assert.equal(patchRes.body.comment, 'Best move');
+      assert.deepEqual(patchRes.body.nags, [1]);
+    });
+
+    it('gets chapter with move tree', async () => {
+      const res = await harness.json('GET', `/v1/studies/${studyId}/chapters/${chapterId}`);
+      assert.equal(res.status, 200);
+      assert.equal(res.body.chapter.id, chapterId);
+      assert.equal(res.body.tree.length, 1);
+      assert.equal(res.body.tree[0].id, rootNodeId);
+    });
+
+    it('reorders chapters', async () => {
+      const ch2 = await harness.json('POST', `/v1/studies/${studyId}/chapters`, {
+        token: owner.token,
+        body: { name: 'Chapter 2: d4' },
+      });
+
+      const reorderRes = await harness.json('PUT', `/v1/studies/${studyId}/chapters/reorder`, {
+        token: owner.token,
+        body: { chapterIds: [ch2.body.id, chapterId] },
+      });
+      assert.equal(reorderRes.status, 200);
+      assert.equal(reorderRes.body.items[0].id, ch2.body.id);
+      assert.equal(reorderRes.body.items[1].id, chapterId);
+    });
+
+    it('imports PGN', async () => {
+      const pgn = `[Event "Test Import"]
+[Site "Shatarang"]
+[Date "2026.08.02"]
+[Round "1"]
+[White "Player1"]
+[Black "Player2"]
+[Result "1-0"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1-0`;
+
+      const importRes = await harness.json('POST', `/v1/studies/${studyId}/import`, {
+        token: owner.token,
+        body: { pgn },
+      });
+      assert.equal(importRes.status, 200);
+      assert.ok(importRes.body.items.length >= 1);
+    });
+
+    it('enforces MAX_PGN_BYTES limit returning 413 for oversized PGN', async () => {
+      const hugePgn = '1. e4 ' + ' '.repeat(MAX_PGN_BYTES + 100) + 'e5';
+      const res = await harness.json('POST', `/v1/studies/${studyId}/import`, {
+        token: owner.token,
+        body: { pgn: hugePgn },
+      });
+      assert.equal(res.status, 413);
+    });
+
+    it('exports PGN text', async () => {
+      const res = await fetch(`${harness.baseUrl}/v1/studies/${studyId}/export.pgn`);
+      assert.equal(res.status, 200);
+      const text = await res.text();
+      assert.ok(text.includes('Event'));
+    });
+
+    it('deletes node and subtree', async () => {
+      const delRes = await harness.json('DELETE', `/v1/studies/${studyId}/nodes/${rootNodeId}`, {
+        token: owner.token,
+      });
+      assert.equal(delRes.status, 204);
+    });
+
+    it('deletes chapter', async () => {
+      const delRes = await harness.json('DELETE', `/v1/studies/${studyId}/chapters/${chapterId}`, {
+        token: owner.token,
+      });
+      assert.equal(delRes.status, 200);
+      assert.ok(delRes.body.deletedAt);
+    });
+  });
+
+  describe('503 Fallback when studiesRepository is omitted', () => {
+    let unconfiguredHarness: Harness;
+
+    before(async () => {
+      unconfiguredHarness = await startHarness({}, { withoutStudies: true });
+    });
+
+    after(async () => {
+      if (unconfiguredHarness) {
+        await unconfiguredHarness.close();
+      }
+    });
+
+    it('returns 503 for every studies route', async () => {
+      const validUuid = '018f3a5b-7c9d-7000-8000-000000000001';
+      const unauthedUser = await unconfiguredHarness.makeUser('UnconfigUser');
+
+      const routes = [
+        ['POST', '/v1/studies'],
+        ['GET', '/v1/studies'],
+        ['GET', `/v1/studies/${validUuid}`],
+        ['PATCH', `/v1/studies/${validUuid}`],
+        ['DELETE', `/v1/studies/${validUuid}`],
+        ['POST', `/v1/studies/${validUuid}/collaborators`],
+        ['GET', `/v1/studies/${validUuid}/collaborators`],
+        ['PATCH', `/v1/studies/${validUuid}/collaborators/${validUuid}`],
+        ['DELETE', `/v1/studies/${validUuid}/collaborators/${validUuid}`],
+        ['POST', `/v1/studies/${validUuid}/transfer-ownership`],
+        ['POST', `/v1/studies/${validUuid}/chapters`],
+        ['GET', `/v1/studies/${validUuid}/chapters`],
+        ['GET', `/v1/studies/${validUuid}/chapters/${validUuid}`],
+        ['PATCH', `/v1/studies/${validUuid}/chapters/${validUuid}`],
+        ['DELETE', `/v1/studies/${validUuid}/chapters/${validUuid}`],
+        ['PUT', `/v1/studies/${validUuid}/chapters/reorder`],
+        ['POST', `/v1/studies/${validUuid}/chapters/${validUuid}/nodes`],
+        ['PATCH', `/v1/studies/${validUuid}/nodes/${validUuid}`],
+        ['DELETE', `/v1/studies/${validUuid}/nodes/${validUuid}`],
+        ['POST', `/v1/studies/${validUuid}/import`],
+        ['GET', `/v1/studies/${validUuid}/export.pgn`],
+      ];
+
+      for (const [method, path] of routes) {
+        const res = await unconfiguredHarness.json(method, path, { token: unauthedUser.token });
+        assert.equal(res.status, 503, `Route ${method} ${path} should respond 503 when repo unconfigured`);
+      }
+    });
+  });
+});

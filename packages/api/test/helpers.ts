@@ -64,6 +64,7 @@ export interface Harness {
   readonly messagingRepository?: InMemoryMessagingRepository;
   readonly communityRepository?: InMemoryCommunityRepository;
   readonly achievementsRepository?: InMemoryAchievementsRepository;
+  readonly studiesRepository?: import('@chess-platform/studies').StudiesRepository;
   readonly clock: ManualClock;
   readonly tokens: AccessTokenService;
   readonly emailSender: InMemoryEmailSender;
@@ -99,6 +100,8 @@ export interface HarnessOptions {
   readonly withoutCommunity?: boolean;
   /** Pass true to simulate a server constructed without achievements repository. */
   readonly withoutAchievements?: boolean;
+  /** Pass true to simulate a server constructed without studies repository. */
+  readonly withoutStudies?: boolean;
   /** Override the anti-cheat evaluator (e.g. to make it throw) for edge-case tests. */
   readonly antiCheatEvaluator?: PositionEvaluator;
 }
@@ -168,6 +171,9 @@ export async function startHarness(
   const achievementsRepository = harnessOptions.withoutAchievements
     ? undefined
     : new InMemoryAchievementsRepository();
+  const studiesRepository = harnessOptions.withoutStudies
+    ? undefined
+    : repos.studies;
   const server = createApiServer({
     repos, hasher, tokens, clock, ids, rateLimiter, tournamentRepo, gameLauncher, liveView, emailSender,
     config: resolved,
@@ -180,6 +186,7 @@ export async function startHarness(
     ...(messagingRepository ? { messagingRepository } : {}),
     ...(communityRepository ? { communityRepository } : {}),
     ...(achievementsRepository ? { achievementsRepository } : {}),
+    ...(studiesRepository ? { studiesRepository } : {}),
     ...(harnessOptions.readiness ? { readiness: harnessOptions.readiness } : {}),
     ...(harnessOptions.logger ? { logger: harnessOptions.logger } : {}),
     ...(harnessOptions.tracer ? { tracer: harnessOptions.tracer } : {}),
@@ -205,6 +212,7 @@ export async function startHarness(
     messagingRepository,
     communityRepository,
     achievementsRepository,
+    studiesRepository,
     clock,
     tokens,
     emailSender,

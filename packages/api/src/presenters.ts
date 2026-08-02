@@ -604,5 +604,102 @@ export function achievementSummaryView(summary: import('@chess-platform/achievem
   };
 }
 
+export interface StudyView {
+  readonly id: string;
+  readonly ownerId: string;
+  readonly name: string;
+  readonly description: string;
+  readonly visibility: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly deletedAt?: string;
+}
+
+export function studyView(s: import('@chess-platform/studies').Study): StudyView {
+  return {
+    id: s.id,
+    ownerId: s.ownerId,
+    name: s.name,
+    description: s.description,
+    visibility: s.visibility,
+    createdAt: s.createdAt.toISOString(),
+    updatedAt: s.updatedAt.toISOString(),
+    ...(s.deletedAt ? { deletedAt: s.deletedAt.toISOString() } : {}),
+  };
+}
+
+export interface CollaboratorView {
+  readonly studyId: string;
+  readonly playerId: string;
+  readonly role: string;
+}
+
+export function collaboratorView(c: import('@chess-platform/studies').Collaborator): CollaboratorView {
+  return {
+    studyId: c.studyId,
+    playerId: c.playerId,
+    role: c.role,
+  };
+}
+
+export interface ChapterView {
+  readonly id: string;
+  readonly studyId: string;
+  readonly name: string;
+  readonly orderIndex: number;
+  readonly startingFen: string;
+  readonly deletedAt?: string;
+}
+
+export function chapterView(c: import('@chess-platform/studies').Chapter): ChapterView {
+  return {
+    id: c.id,
+    studyId: c.studyId,
+    name: c.name,
+    orderIndex: c.orderIndex,
+    startingFen: c.startingFen,
+    ...(c.deletedAt ? { deletedAt: c.deletedAt.toISOString() } : {}),
+  };
+}
+
+export interface TreeNodeView {
+  readonly id: string;
+  readonly chapterId: string;
+  readonly parentId: string | null;
+  readonly san: string;
+  readonly fenAfter: string;
+  readonly comment?: string;
+  readonly nags: readonly number[];
+  readonly orderIndex: number;
+}
+
+export function treeNodeView(n: import('@chess-platform/studies').TreeNode): TreeNodeView {
+  return {
+    id: n.id,
+    chapterId: n.chapterId,
+    parentId: n.parentId,
+    san: n.san,
+    fenAfter: n.fenAfter,
+    ...(n.comment !== undefined ? { comment: n.comment } : {}),
+    nags: [...n.nags],
+    orderIndex: n.orderIndex,
+  };
+}
+
+export interface ChapterDetailView {
+  readonly chapter: ChapterView;
+  readonly tree: readonly TreeNodeView[];
+}
+
+export function chapterDetailView(detail: {
+  chapter: import('@chess-platform/studies').Chapter;
+  tree: readonly import('@chess-platform/studies').TreeNode[];
+}): ChapterDetailView {
+  return {
+    chapter: chapterView(detail.chapter),
+    tree: detail.tree.map(treeNodeView),
+  };
+}
+
 
 

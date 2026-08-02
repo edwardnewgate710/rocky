@@ -642,6 +642,8 @@ export class InMemoryWebAuthnCredentialsRepository implements WebAuthnCredential
 }
 
 /** A bundle of in-memory repositories plus the concrete audit repo for tests. */
+import { InMemoryStudiesRepository } from '@chess-platform/studies';
+
 export interface InMemoryRepositories extends Repositories {
   /** Shared event log so local API and realtime authority can use one source of truth. */
   readonly events: InMemoryEventStore;
@@ -658,6 +660,7 @@ export interface InMemoryRepositories extends Repositories {
   readonly seekAcceptor: InMemorySeekAcceptor;
   readonly antiCheat: InMemoryAntiCheatReportRepository;
   readonly botReports: InMemoryBotBehaviorReportRepository;
+  readonly studies: InMemoryStudiesRepository;
 }
 
 /** Construct a fresh set of in-memory repositories sharing a clock. */
@@ -681,5 +684,6 @@ export function createInMemoryRepositories(clock: Clock = systemClock): InMemory
     seekAcceptor: new InMemorySeekAcceptor(seeks, events, games, clock),
     antiCheat: new InMemoryAntiCheatReportRepository(),
     botReports: new InMemoryBotBehaviorReportRepository(),
+    studies: new InMemoryStudiesRepository(),
   };
 }
