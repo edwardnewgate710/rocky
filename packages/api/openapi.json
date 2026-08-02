@@ -11136,6 +11136,50 @@
           }
         ]
       }
+    },
+    "/v1/graphql": {
+      "post": {
+        "summary": "Execute a read-only GraphQL query",
+        "tags": [
+          "graphql"
+        ],
+        "operationId": "post_v1_graphql",
+        "responses": {
+          "200": {
+            "description": "Query result, with per-field errors when a field could not be resolved"
+          },
+          "400": {
+            "description": "Malformed query, or a depth/complexity/alias limit was exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "GraphQL endpoint is not enabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GraphQLRequest"
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -14421,6 +14465,23 @@
           },
           "attempts": {
             "type": "integer"
+          }
+        }
+      },
+      "GraphQLRequest": {
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "A read-only GraphQL query document"
+          },
+          "variables": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Values for the variables the query declares"
           }
         }
       }

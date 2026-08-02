@@ -138,6 +138,13 @@ The database architecture is defined and approved in
 > WebSocket gateway's job. A GraphQL read layer is introduced with the
 > features that justify nested, client-driven reads (studies, master-game
 > explorer, social graph) in **M10–M11**.
+>
+> **Resolved (M10 increment 8):** shipped as a read-only `POST /v1/graphql` behind
+> `GRAPHQL_ENABLED=1` — see [`docs/adr/0073-graphql-read-layer.md`](adr/0073-graphql-read-layer.md).
+> The two costs named above are paid explicitly: query cost is bounded by depth, complexity and
+> alias limits enforced before execution, and the surface is halved by staying queries-only, so
+> every write keeps its single REST authorization review. Persisted queries were not needed to
+> bound cost and are not implemented.
 
 ## ✅ Milestone 5 — Engine bridge (`@chess-platform/engine`)
 

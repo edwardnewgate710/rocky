@@ -34,7 +34,12 @@ testing approach. It refines and makes concrete the abbreviated model in
 
 **Non-goals (deferred, tracked)**
 
-- GraphQL read models — deferred to M10–M11 (roadmap decision).
+- GraphQL read models — **still a non-goal, and now deliberately so.** A read-only GraphQL layer
+  shipped in M10 increment 8 (ADR-0073), but it added no read-model tables and no denormalized
+  projections: resolvers read through the existing repositories, which is what keeps every
+  visibility rule in one place instead of two. The only schema-adjacent addition is a batched
+  lookup (`UsersRepository.findByIds`, `WHERE id = ANY($1::uuid[])`) over the existing `users`
+  table, so the loader can resolve a list of players without one query per node.
 - Search / pgvector embeddings — M11 (columns reserved, not populated).
 - Kafka/NATS event streaming — M14. The event store here is the system of record;
   streaming is an optional downstream projection later.

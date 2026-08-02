@@ -97,6 +97,19 @@ export class InMemoryUsersRepository implements UsersRepository {
     return this.byId.get(id) ?? null;
   }
 
+  async findByIds(ids: readonly string[]): Promise<readonly UserRow[]> {
+    // Unknown ids are dropped rather than yielding a null slot, matching the Postgres adapter:
+    // `WHERE id = ANY(...)` returns the rows that exist and says nothing about the rest. Callers
+    // key the result by id — neither adapter promises the input order, and relying on it would
+    // pass here and fail against a real query plan.
+    const found: UserRow[] = [];
+    for (const id of ids) {
+      const row = this.byId.get(id);
+      if (row) found.push(row);
+    }
+    return found;
+  }
+
   async findByEmail(email: string): Promise<UserRow | null> {
     const lower = email.toLowerCase();
     for (const row of this.byId.values()) {

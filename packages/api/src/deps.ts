@@ -89,6 +89,14 @@ export interface ApiDependencies {
   readonly studiesRepository?: import('@chess-platform/studies').StudiesRepository;
   /** Optional learning repository (M10 inc 7). When absent, `/v1/courses/*` responds 503. */
   readonly learningRepository?: import('@chess-platform/learning').LearningRepository;
+  /**
+   * Optional GraphQL read layer (M10 inc 8). When absent, `POST /v1/graphql` responds 503.
+   *
+   * The subsystem repositories it resolves against are the optional ones above — it adds no data
+   * source of its own, and a subsystem that is switched off degrades to an error on its own fields
+   * rather than failing the whole query.
+   */
+  readonly graphql?: import('./graphql').GraphQLOptions;
   /** Structured logger (M13). Defaults to a silent {@link NullLogger}. */
   readonly logger?: Logger;
   /** Metrics registry + scrape target (M13). Defaults to {@link InMemoryMetrics}. */

@@ -4,7 +4,7 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-02 — M10 Lessons & Courses Increment 7: domain + Postgres + REST API (ADR-0072)._
+_Last updated: 2026-08-02 — M10 Increment 8: read-only GraphQL layer (ADR-0073). **M10 complete.**_
 
 ## M10 Social Graph Increment 1 — Pure Social Graph Domain Core (ADR-0066)
 
@@ -988,6 +988,18 @@ Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
 - **Wiring & OpenAPI**: Added presenter functions in `presenters.ts` and OpenAPI component schemas in `schemas.ts` (`CourseView`, `CoursePage`, `LessonView`, `LessonList`, `StepView`, `StepList`, `ProgressView`, `ProgressList`, `CourseProgressSummaryView`, `AttemptResultView`). Updated `deps.ts`, `server.ts`, `bootstrap.ts` (`LEARNING_ENABLED === '1'`), and test `helpers.ts` (`withoutLearning`). Regenerated `packages/api/openapi.json` with zero drift. Updated workspace dependencies, `package.json` scripts (`build`, `test`, `lint`, `clean`, `build:server`), `scripts/test-counts.mjs`, `Dockerfile.api`, `Dockerfile.gateway`, and verified `check:build-order`.
 - **Tests**: Domain unit tests in `packages/learning/test/learning.test.ts` (8/8 pass), DB-gated integration tests in `packages/persistence/test/learning.integration.test.ts` (including real N-concurrent attempt submission test), and REST API integration tests in `packages/api/test/learning-api.test.ts` (54/54 `@chess-platform/api` test suites pass cleanly).
 - Detailed in `docs/adr/0072-lessons-and-courses.md`.
+
+## M10 Increment 8 — Read-Only GraphQL Layer (ADR-0073) — closes M10
+- **Endpoint**: `POST /v1/graphql`, behind `GRAPHQL_ENABLED=1`, registered with the same `AuthPolicy` machinery as the REST routes and open to anonymous callers. Delivers the nested reads REST answers badly — a player with their followers, teams, achievements and studies in one round trip. This closes the GraphQL deferral recorded in §4 decision 1.
+- **Queries only**: the parser refuses `mutation` and `subscription` by name. Writes stay on REST, where each already has an authorization review.
+- **Authorization delegated entirely to the repositories** (`packages/api/src/graphql/schema.ts`): every resolver passes `ctx.actorId` into the existing port and returns the answer, with no exceptions. `not_found` and `not_authorized` are flattened to one message so the endpoint is not an existence oracle (ADR-0069 §4). Review removed an invented rule: `Query.player` initially hid players who had blocked the caller, but ADR-0066 §3 scopes a block to follows and friend requests, and no REST read consults `isBlockedBetween` — the test now asserts GraphQL and REST return the *same* profile for a blocked pair. The repository bundle was also dropped from `ResolverContext` so resolvers reach subsystems only through accessors that fail the field rather than through a bundle they can branch on.
+- **Per-request batching** (`graphql/loaders.ts`): a dependency-free DataLoader-style `BatchLoader` coalescing every `load()` in a microtask tick and caching per key, created inside the request handler so the cache never outlives it. Required a new `UsersRepository.findByIds`, implemented in `PgUsersRepository` (filters non-canonical ids before `= ANY($1::uuid[])`, since the cast would fail the whole batch on one malformed element) and in `InMemoryUsersRepository`. 25 followers resolve in 2 batched reads, not 26.
+- **Three limits enforced before execution** (`graphql/limits.ts`): depth 8, complexity 1000 (list fields multiply their subtree by the page size they request), aliases 50. Validation *produces* the execution plan, so no field can resolve uncosted; each limit test asserts the repositories were not called. Plus a 16 KB query cap and argument-nesting bound in the parser.
+- **Introspection off by default** (`GRAPHQL_INTROSPECTION=1`); rejection messages never list the fields that exist. The `__schema` shape returned is this repo's own, not spec-compliant — stated as such in the ADR.
+- **No new runtime dependency**: parser, validator, executor and loader hand-written (~1,800 lines, 8 files). Fragments, directives, block strings and multi-operation documents are refused with explicit parse errors rather than misparsed; the fragment refusal avoids cyclic/exponential expansion that a depth bound cannot see.
+- **Wiring**: `deps.ts`, `routes.ts`, `server.ts`, `bootstrap.ts` (`GRAPHQL_ENABLED`), `openapi/schemas.ts` (`GraphQLRequest`), and test `helpers.ts` (`withoutGraphql`, `graphqlIntrospection`).
+- **Tests**: `packages/api/test/graphql.test.ts` (29) and DB-gated `packages/persistence/test/users-batch.integration.test.ts`. Eight rules were mutation-tested — each broken in turn, covering test confirmed to fail. That pass caught a flattening test that proved nothing (the studies adapter already flattens both codes, so it passed against broken code); it was replaced with a direct unit test.
+- Detailed in `docs/adr/0073-graphql-read-layer.md`.
 
 
 

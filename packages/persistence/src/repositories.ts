@@ -41,6 +41,16 @@ export interface UsersRepository {
   /** Atomically create the user, password credential, and initial role. */
   createWithPasswordAndRole(user: NewUser, secretHash: string, role: Role): Promise<UserRow>;
   findById(id: string): Promise<UserRow | null>;
+  /**
+   * Resolve many users in one round trip. Rows come back in an unspecified order and ids that
+   * name nobody are simply absent, so callers must key the result themselves rather than zip it
+   * against the input.
+   *
+   * This exists for the GraphQL read layer (ADR-0073): a query that walks a list of edges asks for
+   * one user per node, and without a multi-key read that is N queries no batching layer can fold
+   * into fewer. Deduplication alone cannot bound it — 200 distinct followers are 200 distinct ids.
+   */
+  findByIds(ids: readonly string[]): Promise<readonly UserRow[]>;
   findByHandle(handle: string): Promise<UserRow | null>;
   findByEmail(email: string): Promise<UserRow | null>;
   markEmailVerified(userId: string, at: Date): Promise<void>;

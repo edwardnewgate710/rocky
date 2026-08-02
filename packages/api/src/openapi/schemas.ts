@@ -1406,6 +1406,22 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       attempts: { type: 'integer' },
     },
   },
+
+  // --- GraphQL (ADR-0073) ---
+  // The response is deliberately not modelled: its shape is whatever the query selected, which is
+  // the point of GraphQL and not something OpenAPI can describe without describing every query.
+  GraphQLRequest: {
+    type: 'object',
+    required: ['query'],
+    properties: {
+      query: { type: 'string', description: 'A read-only GraphQL query document' },
+      variables: {
+        type: 'object',
+        additionalProperties: true,
+        description: 'Values for the variables the query declares',
+      },
+    },
+  },
 };
 
 

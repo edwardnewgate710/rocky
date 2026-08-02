@@ -151,6 +151,7 @@ export interface PgBootstrapOptions {
   readonly achievementsRepository?: import('@chess-platform/achievements').AchievementsRepository;
   readonly studiesRepository?: import('@chess-platform/studies').StudiesRepository;
   readonly learningRepository?: import('@chess-platform/learning').LearningRepository;
+  readonly graphql?: import('./graphql').GraphQLOptions;
   readonly logger?: Logger;
   readonly metrics?: Metrics;
   readonly tracer?: Tracer;
@@ -240,6 +241,13 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ? (options.learningRepository ?? new PgLearningRepository(pool))
     : undefined;
 
+  // The GraphQL layer owns no repository of its own — it reads through the optional ones above, so
+  // enabling it while a subsystem is switched off yields errors on that subsystem's fields and
+  // working answers everywhere else. Introspection is a second, separate opt-in (ADR-0073).
+  const graphql = process.env['GRAPHQL_ENABLED'] === '1'
+    ? (options.graphql ?? { introspection: process.env['GRAPHQL_INTROSPECTION'] === '1' })
+    : undefined;
+
   const logger = options.logger ?? new JsonLogger({ service: 'api' }, { level: resolveLogLevel() });
   const metrics = options.metrics ?? new InMemoryMetrics();
   const logExporter = new LoggingSpanExporter(logger);
@@ -297,6 +305,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ...(achievementsRepository ? { achievementsRepository } : {}),
     ...(studiesRepository ? { studiesRepository } : {}),
     ...(learningRepository ? { learningRepository } : {}),
+    ...(graphql ? { graphql } : {}),
     botTimingSource: new EventStoreBotTimingSource(eventStore),
     // Production observability (M13): structured logs to stdout, a scrape
     // registry backing GET /v1/metrics, and tracer emitting spans to logs.

@@ -262,6 +262,19 @@ export class PgUsersRepository implements UsersRepository {
     return res.rows[0] ? toUser(res.rows[0]) : null;
   }
 
+  async findByIds(ids: readonly string[]): Promise<readonly UserRow[]> {
+    // `= ANY($1::uuid[])` casts the whole array, so one malformed element fails the entire read
+    // with SQLSTATE 22P02 — a single bad id in a batch would take out every other id sharing it.
+    // An id that cannot name a row is dropped instead, which is the same answer `findById` gives.
+    const canonical = ids.filter(isCanonicalUuid);
+    if (canonical.length === 0) return [];
+    const res = await this.pool.query<UserDbRow>(
+      'SELECT id, handle, email, email_verified_at, email_hash, country, flags, created_at FROM users WHERE id = ANY($1::uuid[])',
+      [canonical],
+    );
+    return res.rows.map(toUser);
+  }
+
   async findByHandle(handle: string): Promise<UserRow | null> {
     const res = await this.pool.query<UserDbRow>(
       'SELECT id, handle, email, email_verified_at, email_hash, country, flags, created_at FROM users WHERE handle = $1',

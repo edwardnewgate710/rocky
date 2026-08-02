@@ -105,6 +105,10 @@ export interface HarnessOptions {
   readonly withoutStudies?: boolean;
   /** Pass true to simulate a server constructed without learning repository. */
   readonly withoutLearning?: boolean;
+  /** Pass true to simulate a server constructed with the GraphQL endpoint switched off. */
+  readonly withoutGraphql?: boolean;
+  /** Expose the gated `__schema` field. Off by default, as in production (ADR-0073). */
+  readonly graphqlIntrospection?: boolean;
   /** Override the anti-cheat evaluator (e.g. to make it throw) for edge-case tests. */
   readonly antiCheatEvaluator?: PositionEvaluator;
 }
@@ -180,6 +184,9 @@ export async function startHarness(
   const learningRepository = harnessOptions.withoutLearning
     ? undefined
     : repos.learning;
+  const graphql = harnessOptions.withoutGraphql
+    ? undefined
+    : { introspection: harnessOptions.graphqlIntrospection === true };
   const server = createApiServer({
     repos, hasher, tokens, clock, ids, rateLimiter, tournamentRepo, gameLauncher, liveView, emailSender,
     config: resolved,
@@ -194,6 +201,7 @@ export async function startHarness(
     ...(achievementsRepository ? { achievementsRepository } : {}),
     ...(studiesRepository ? { studiesRepository } : {}),
     ...(learningRepository ? { learningRepository } : {}),
+    ...(graphql ? { graphql } : {}),
     ...(harnessOptions.readiness ? { readiness: harnessOptions.readiness } : {}),
     ...(harnessOptions.logger ? { logger: harnessOptions.logger } : {}),
     ...(harnessOptions.tracer ? { tracer: harnessOptions.tracer } : {}),
@@ -220,6 +228,7 @@ export async function startHarness(
     communityRepository,
     achievementsRepository,
     studiesRepository,
+    learningRepository,
     clock,
     tokens,
     emailSender,

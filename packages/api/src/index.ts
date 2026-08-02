@@ -65,4 +65,6 @@ export * from './openapi/types';
 export * from './openapi/spec';
 export * from './openapi/schemas';
 
+export * from './graphql';
+
 export * from './fakes';

@@ -94,6 +94,7 @@ import type { TournamentLiveView } from './tournament/live-view';
 import type { AntiCheatAnalysisService } from './anti-cheat/analysis-service';
 import type { BotGameTimingSource } from './bot-detection/source';
 import { BotAnalysisService } from './bot-detection/analysis-service';
+import { createGraphQLHandler } from './graphql';
 import {
   parseNaturalQuery,
   type EmbeddingProvider,
@@ -128,6 +129,7 @@ export interface RouteDeps {
   readonly achievementsRepository?: import('@chess-platform/achievements').AchievementsRepository;
   readonly studiesRepository?: import('@chess-platform/studies').StudiesRepository;
   readonly learningRepository?: import('@chess-platform/learning').LearningRepository;
+  readonly graphql?: import('./graphql').GraphQLOptions;
 }
 
 const PUBLIC: AuthPolicy = { required: false };
@@ -4638,6 +4640,48 @@ export function buildRouter(deps: RouteDeps): Router {
       } catch (err) {
         mapLearningError(err);
       }
+    },
+  );
+
+  // --- GraphQL read layer ----------------------------------------------------
+  // One endpoint for the nested reads REST answers badly: a player with their followers, teams,
+  // achievements and studies in a single round trip. Read-only — every write stays on the REST
+  // routes above, where each one has its own authorization review. See ADR-0073.
+  const graphqlHandler = deps.graphql
+    ? createGraphQLHandler({
+        users: deps.repos.users,
+        repos: {
+          ...(deps.socialGraphRepository ? { social: deps.socialGraphRepository } : {}),
+          ...(deps.communityRepository ? { community: deps.communityRepository } : {}),
+          ...(deps.studiesRepository ? { studies: deps.studiesRepository } : {}),
+          ...(deps.learningRepository ? { learning: deps.learningRepository } : {}),
+          ...(deps.achievementsRepository ? { achievements: deps.achievementsRepository } : {}),
+          ...(deps.searchRepository ? { search: deps.searchRepository } : {}),
+        },
+        options: deps.graphql,
+      })
+    : undefined;
+
+  router.post(
+    '/v1/graphql',
+    doc({
+      summary: 'Execute a read-only GraphQL query',
+      tags: ['graphql'],
+      requestSchema: 'GraphQLRequest',
+      responses: {
+        200: [undefined, 'Query result, with per-field errors when a field could not be resolved'],
+        400: ['Error', 'Malformed query, or a depth/complexity/alias limit was exceeded'],
+        503: ['Error', 'GraphQL endpoint is not enabled'],
+      },
+    }),
+    // Anonymous callers are allowed: the schema exposes public data, and every resolver passes the
+    // actor (null included) to a repository that already knows what an anonymous caller may see.
+    PUBLIC,
+    async (ctx) => {
+      if (!graphqlHandler) {
+        throw HttpError.unavailable('graphql endpoint is not enabled');
+      }
+      return graphqlHandler(ctx);
     },
   );
 
