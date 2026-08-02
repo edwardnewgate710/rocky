@@ -39,6 +39,8 @@ COPY --from=builder --chown=node:node /app/packages/chess-core/package.json ./pa
 COPY --from=builder --chown=node:node /app/packages/chess-core/dist/ ./packages/chess-core/dist/
 COPY --from=builder --chown=node:node /app/packages/search/package.json ./packages/search/package.json
 COPY --from=builder --chown=node:node /app/packages/search/dist/ ./packages/search/dist/
+COPY --from=builder --chown=node:node /app/packages/social/package.json ./packages/social/package.json
+COPY --from=builder --chown=node:node /app/packages/social/dist/ ./packages/social/dist/
 COPY --from=builder --chown=node:node /app/packages/engine/package.json ./packages/engine/package.json
 COPY --from=builder --chown=node:node /app/packages/engine/dist/ ./packages/engine/dist/
 COPY --from=builder --chown=node:node /app/packages/anti-cheat/package.json ./packages/anti-cheat/package.json

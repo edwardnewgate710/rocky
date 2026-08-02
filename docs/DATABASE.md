@@ -381,11 +381,38 @@ CREATE INDEX search_embeddings_embedding_idx ON search_embeddings USING hnsw (em
 
 Durable semantic search index supporting pgvector vector similarity and RRF hybrid search over platform entities (games, players, tournaments). `id` is primary key referencing `search_documents(id)` with `ON DELETE CASCADE`. `embedding` stores fixed 256-dimensional vector embeddings (`vector(256)`). The HNSW index on `embedding` using `vector_cosine_ops` supports cosine distance queries (`<=>`) for approximate nearest-neighbour retrieval. Note that `PgSemanticSearchRepository` does not currently hit this index: it keeps an `id` tie-break for deterministic pagination, which measurably forces a sort over a full scan instead. The index exists for the deferred ANN fast path — see ADR-0059 for the measurements and the reasoning.
 
-### 4.9 Reserved for later milestones
+### 4.9 Social Graph tables (`0015_social_graph.sql`, M10 inc 2)
 
-Created only when their milestone lands (listed for design coherence):
-`studies*`, `follows`, `friends`, `messages`, `puzzles`,
-`openings(embedding vector)` (M11 pgvector).
+```sql
+CREATE TABLE social_follows (
+  follower_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  followee_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  followed_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (follower_id, followee_id),
+  CONSTRAINT social_follows_not_self CHECK (follower_id <> followee_id)
+);
+
+CREATE TABLE social_blocks (
+  blocker_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  blocked_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  blocked_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (blocker_id, blocked_id),
+  CONSTRAINT social_blocks_not_self CHECK (blocker_id <> blocked_id)
+);
+
+CREATE TABLE social_friend_requests (
+  id UUID PRIMARY KEY,
+  requester_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  addressee_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status VARCHAR(32) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  responded_at TIMESTAMPTZ,
+  CONSTRAINT social_friend_requests_not_self CHECK (requester_id <> addressee_id)
+);
+```
+
+Stores directed follow edges, directed block edges, and directed friend requests with status transitions (`pending`, `accepted`, `declined`, `cancelled`, `ended`). `ON DELETE CASCADE` ensures foreign key cleanup when users are deleted. Partial unique indexes enforce one pending request per pair and one accepted request per pair. Collation for UUID columns uses standard Postgres byte-wise comparison matching code-point `compareIds` order.
+
 
 **Secrets never stored in plaintext:** passwords are argon2id **encoded strings**
 (salt + params embedded); refresh tokens are stored only as hashes; `email_hash`

@@ -4,7 +4,7 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-01 — M10 Social Graph Increment 1: pure social graph domain core (ADR-0066)._
+_Last updated: 2026-08-01 — M10 Social Graph Increment 2: persistence & REST API (ADR-0067)._
 
 ## M10 Social Graph Increment 1 — Pure Social Graph Domain Core (ADR-0066)
 
@@ -939,6 +939,16 @@ Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
 - **Graceful Subprocess Shutdown**: Integrated `antiCheatAutoAnalyzer?.stop()` and engine pool shutdown (`antiCheatEngine.shutdown()`) into the gateway's `SIGINT`/`SIGTERM` shutdown handler.
 - **Documentation**: Added `docs/adr/0043-anticheat-engine-hosting.md` and updated `docs/ROADMAP.md` and `docs/PROJECT_STATE.md`.
 - **Hermetic Tests**: Added unit test suite in `packages/api/test/anti-cheat-engine-provider.test.ts` testing environment variable reading and end-to-end anti-cheat analysis/storage using a fake `AnalysisProvider`.
+
+## M10 Social Graph Increment 2 — Persistence & REST API (ADR-0067)
+- **Migration `0015_social_graph.sql`**: Created tables `social_follows` `(follower_id, followee_id, followed_at)`, `social_blocks` `(blocker_id, blocked_id, blocked_at)`, and `social_friend_requests` `(id, requester_id, addressee_id, status, created_at, responded_at)`. Added foreign keys with `ON DELETE CASCADE` to `users(id)`, NOT NULL timestamp fields, `not_self` CHECK constraints, and partial unique indexes (`social_friend_requests_one_pending_per_pair` and `social_friend_requests_one_accepted_per_pair`).
+- **Postgres Adapter (`PgSocialGraphRepository`)**: Implemented `SocialGraphRepository` port in `packages/persistence/src/pg/social.ts` and re-exported from `@chess-platform/persistence/pg`. Atomic `block()` execution within single SQL transactions (`BEGIN` ... `COMMIT`), block precedence checks in `follow()` and `sendFriendRequest()`, and error translation (handling unique violation `23505` to `already_exists`). Collation for UUID fields uses standard Postgres byte-wise comparison matching code-point `compareIds` order without `COLLATE "C"`.
+- **REST API Endpoints**: Registered 12 `/v1/social/...` endpoints in `packages/api/src/routes.ts` (`POST/DELETE /v1/social/follows/:playerId`, `GET /v1/social/players/:playerId/followers`, `GET /v1/social/players/:playerId/following`, `POST /v1/social/friend-requests`, `POST /v1/social/friend-requests/:id/respond`, `GET /v1/social/friend-requests/incoming`, `GET /v1/social/friend-requests/outgoing`, `GET /v1/social/friends`, `POST/DELETE /v1/social/blocks/:playerId`, `GET /v1/social/blocks`).
+- **Authorization & Wire Integration**: Enforced actor strictly as `requireAuth(ctx).userId`, server-generated `uuidv7()` request IDs, public follow lists, private caller-only friend/block/request lists, and `mapSocialError` helper converting `SocialRuleError` to 422, 403, 409, 404. Wired `socialGraphRepository` across `deps.ts`, `server.ts`, `bootstrap.ts` (with 503 fallback when omitted), and test `helpers.ts` (`withoutSocial`).
+- **OpenAPI & Build Chain**: Exported presenters (`followEdgeView`, `friendRequestView`, `blockEdgeView`) and OpenAPI 3.1 schemas (`COMPONENT_SCHEMAS`). Regenerated `packages/api/openapi.json` with zero drift. Updated `package.json` `build:server` and Dockerfiles (`Dockerfile.api`, `Dockerfile.gateway`). Verified check:build-order script passes.
+- **Tests**: DB-gated integration tests in `packages/persistence/test/social.integration.test.ts` (29/29 pass) and HTTP REST tests in `packages/api/test/social-api.test.ts` (255/255 pass).
+- Detailed in `docs/adr/0067-social-persistence-api.md`.
+
 
 
 

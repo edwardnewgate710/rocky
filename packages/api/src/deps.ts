@@ -36,6 +36,7 @@ import type { Tracer } from './ports/tracer';
 import type { AntiCheatAnalysisService } from './anti-cheat/analysis-service';
 import type { BotGameTimingSource } from './bot-detection/source';
 import type { EmbeddingProvider, SearchRepository, SemanticSearchRepository } from '@chess-platform/search';
+import type { SocialGraphRepository } from '@chess-platform/social';
 
 /** The full set of repositories the API consumes. */
 export interface Repositories {
@@ -74,6 +75,8 @@ export interface ApiDependencies {
   readonly semanticSearchRepository?: SemanticSearchRepository;
   /** Embeds the query text for semantic/hybrid modes. Absent => `mode=semantic|hybrid` responds 503. */
   readonly embeddingProvider?: EmbeddingProvider;
+  /** Optional social graph repository (M10 inc 2). When absent, `/v1/social/*` responds 503. */
+  readonly socialGraphRepository?: SocialGraphRepository;
   /** Structured logger (M13). Defaults to a silent {@link NullLogger}. */
   readonly logger?: Logger;
   /** Metrics registry + scrape target (M13). Defaults to {@link InMemoryMetrics}. */

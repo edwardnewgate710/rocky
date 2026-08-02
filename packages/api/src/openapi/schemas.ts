@@ -791,5 +791,93 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       },
     },
   },
+
+  FollowEdgeView: {
+    type: 'object',
+    required: ['followerId', 'followeeId', 'followedAt'],
+    properties: {
+      followerId: { type: 'string', format: 'uuid' },
+      followeeId: { type: 'string', format: 'uuid' },
+      followedAt: dateTime,
+    },
+  },
+
+  FollowEdgeList: {
+    type: 'object',
+    required: ['total', 'items'],
+    properties: {
+      total: { type: 'integer' },
+      items: { type: 'array', items: { $ref: '#/components/schemas/FollowEdgeView' } },
+    },
+  },
+
+  FriendRequestView: {
+    type: 'object',
+    required: ['id', 'requesterId', 'addresseeId', 'status', 'createdAt', 'respondedAt'],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      requesterId: { type: 'string', format: 'uuid' },
+      addresseeId: { type: 'string', format: 'uuid' },
+      status: { type: 'string', enum: ['pending', 'accepted', 'declined', 'cancelled', 'ended'] },
+      createdAt: dateTime,
+      respondedAt: { ...dateTime, nullable: true },
+    },
+  },
+
+  FriendRequestList: {
+    type: 'object',
+    required: ['total', 'items'],
+    properties: {
+      total: { type: 'integer' },
+      items: { type: 'array', items: { $ref: '#/components/schemas/FriendRequestView' } },
+    },
+  },
+
+  FriendList: {
+    type: 'object',
+    required: ['total', 'items'],
+    properties: {
+      total: { type: 'integer' },
+      items: { type: 'array', items: { type: 'string', format: 'uuid' } },
+    },
+  },
+
+  BlockEdgeView: {
+    type: 'object',
+    required: ['blockerId', 'blockedId', 'blockedAt'],
+    properties: {
+      blockerId: { type: 'string', format: 'uuid' },
+      blockedId: { type: 'string', format: 'uuid' },
+      blockedAt: dateTime,
+    },
+  },
+
+  BlockEdgeList: {
+    type: 'object',
+    required: ['total', 'items'],
+    properties: {
+      total: { type: 'integer' },
+      items: { type: 'array', items: { $ref: '#/components/schemas/BlockEdgeView' } },
+    },
+  },
+
+  SendFriendRequestRequest: {
+    type: 'object',
+    required: ['addresseeId'],
+    properties: {
+      addresseeId: { type: 'string', format: 'uuid' },
+    },
+    additionalProperties: false,
+  },
+
+  RespondFriendRequestRequest: {
+    type: 'object',
+    required: ['action'],
+    properties: {
+      action: { type: 'string', enum: ['accept', 'decline', 'cancel'] },
+    },
+    additionalProperties: false,
+  },
 };
+
 

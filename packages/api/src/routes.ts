@@ -34,13 +34,17 @@ import type { Clock } from './ports/clock';
 import type { IdGenerator } from './ports/ids';
 import { aggregatePlayer, BotDetectionService } from '@chess-platform/anti-cheat';
 import { NoEngineForVariantError } from '@chess-platform/engine';
+import { SocialRuleError, type FriendRequestAction } from '@chess-platform/social';
 import {
   antiCheatAggregateView,
   antiCheatGameReportView,
   antiCheatGameAnalysisView,
+  blockEdgeView,
   botAggregateView,
   botGameReportView,
   botGameAnalysisView,
+  followEdgeView,
+  friendRequestView,
   gameSummaryView,
   leaderboardEntry,
   publicUser,
@@ -89,6 +93,7 @@ export interface RouteDeps {
   readonly searchRepository?: SearchRepository;
   readonly semanticSearchRepository?: SemanticSearchRepository;
   readonly embeddingProvider?: EmbeddingProvider;
+  readonly socialGraphRepository?: import('@chess-platform/social').SocialGraphRepository;
 }
 
 const PUBLIC: AuthPolicy = { required: false };
@@ -1458,10 +1463,397 @@ export function buildRouter(deps: RouteDeps): Router {
     createLiveTournamentHandler(deps),
   );
 
+  // --- Social Graph --------------------------------------------------------
+  function checkSocialRepo() {
+    if (!deps.socialGraphRepository) {
+      throw HttpError.unavailable('social graph repository is not configured');
+    }
+    return deps.socialGraphRepository;
+  }
+
+  // 1. POST /v1/social/follows/:playerId
+  router.post(
+    '/v1/social/follows/:playerId',
+    doc({
+      summary: 'Follow a player',
+      tags: ['social'],
+      security: 'bearer',
+      params: [pathParam('playerId', 'Target player ID (UUID)')],
+      responses: {
+        200: ['FollowEdgeView', 'Follow edge created or existing'],
+        403: ['Error', 'Blocked'],
+        422: ['Error', 'Self relation or malformed ID'],
+        503: ['Error', 'Social service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkSocialRepo();
+      const actorId = requireAuth(ctx).userId;
+      const targetId = parseUuid(ctx.params['playerId']!, 'playerId');
+      try {
+        const edge = await repo.follow(actorId, targetId, new Date(clock.now()));
+        return json(200, followEdgeView(edge));
+      } catch (err) {
+        mapSocialError(err);
+      }
+    },
+  );
+
+  // 2. DELETE /v1/social/follows/:playerId
+  router.delete(
+    '/v1/social/follows/:playerId',
+    doc({
+      summary: 'Unfollow a player',
+      tags: ['social'],
+      security: 'bearer',
+      params: [pathParam('playerId', 'Target player ID (UUID)')],
+      responses: {
+        204: [undefined, 'Unfollowed'],
+        422: ['Error', 'Self relation or malformed ID'],
+        503: ['Error', 'Social service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkSocialRepo();
+      const actorId = requireAuth(ctx).userId;
+      const targetId = parseUuid(ctx.params['playerId']!, 'playerId');
+      try {
+        await repo.unfollow(actorId, targetId);
+        return noContent();
+      } catch (err) {
+        mapSocialError(err);
+      }
+    },
+  );
+
+  // 3. GET /v1/social/players/:playerId/followers
+  router.get(
+    '/v1/social/players/:playerId/followers',
+    doc({
+      summary: "List a player's followers",
+      tags: ['social'],
+      params: [pathParam('playerId', 'Target player ID (UUID)'), limitParam(), offsetParam()],
+      responses: {
+        200: ['FollowEdgeList', 'Page of follower edges'],
+        422: ['Error', 'Malformed ID or pagination params'],
+        503: ['Error', 'Social service unavailable'],
+      },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const repo = checkSocialRepo();
+      const targetId = parseUuid(ctx.params['playerId']!, 'playerId');
+      const limit = parseLimit(ctx.query, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+      const offset = parseOffset(ctx.query);
+      const page = await repo.listFollowers(targetId, { limit, offset });
+      return json(200, {
+        total: page.total,
+        items: page.items.map(followEdgeView),
+      });
+    },
+  );
+
+  // 4. GET /v1/social/players/:playerId/following
+  router.get(
+    '/v1/social/players/:playerId/following',
+    doc({
+      summary: 'List players followed by a player',
+      tags: ['social'],
+      params: [pathParam('playerId', 'Target player ID (UUID)'), limitParam(), offsetParam()],
+      responses: {
+        200: ['FollowEdgeList', 'Page of following edges'],
+        422: ['Error', 'Malformed ID or pagination params'],
+        503: ['Error', 'Social service unavailable'],
+      },
+    }),
+    PUBLIC,
+    async (ctx) => {
+      const repo = checkSocialRepo();
+      const targetId = parseUuid(ctx.params['playerId']!, 'playerId');
+      const limit = parseLimit(ctx.query, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+      const offset = parseOffset(ctx.query);
+      const page = await repo.listFollowing(targetId, { limit, offset });
+      return json(200, {
+        total: page.total,
+        items: page.items.map(followEdgeView),
+      });
+    },
+  );
+
+  // 5. POST /v1/social/friend-requests
+  router.post(
+    '/v1/social/friend-requests',
+    doc({
+      summary: 'Send a friend request',
+      tags: ['social'],
+      security: 'bearer',
+      requestSchema: 'SendFriendRequestRequest',
+      responses: {
+        201: ['FriendRequestView', 'Friend request created'],
+        403: ['Error', 'Blocked'],
+        409: ['Error', 'Conflict or already exists'],
+        422: ['Error', 'Self relation or malformed ID'],
+        503: ['Error', 'Social service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkSocialRepo();
+      const actorId = requireAuth(ctx).userId;
+      const body = strictObject(ctx.body, ['addresseeId']);
+      const addresseeId = parseUuid(reqString(body, 'addresseeId'), 'addresseeId');
+      const id = ids.next();
+      try {
+        const req = await repo.sendFriendRequest(id, actorId, addresseeId, new Date(clock.now()));
+        return json(201, friendRequestView(req));
+      } catch (err) {
+        mapSocialError(err);
+      }
+    },
+  );
+
+  // 6. POST /v1/social/friend-requests/:id/respond
+  router.post(
+    '/v1/social/friend-requests/:id/respond',
+    doc({
+      summary: 'Respond to a friend request',
+      tags: ['social'],
+      security: 'bearer',
+      params: [pathParam('id', 'Friend request ID (UUID)')],
+      requestSchema: 'RespondFriendRequestRequest',
+      responses: {
+        200: ['FriendRequestView', 'Friend request updated'],
+        403: ['Error', 'Not authorized for this request action'],
+        404: ['Error', 'Friend request not found'],
+        409: ['Error', 'Invalid transition'],
+        422: ['Error', 'Malformed ID or action'],
+        503: ['Error', 'Social service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkSocialRepo();
+      const actorId = requireAuth(ctx).userId;
+      const reqId = parseUuid(ctx.params['id']!, 'id');
+      const body = strictObject(ctx.body, ['action']);
+      const action = oneOf(reqString(body, 'action'), ['accept', 'decline', 'cancel'], 'action') as FriendRequestAction;
+      try {
+        const req = await repo.respondToFriendRequest(reqId, action, actorId, new Date(clock.now()));
+        return json(200, friendRequestView(req));
+      } catch (err) {
+        mapSocialError(err);
+      }
+    },
+  );
+
+  // 7. GET /v1/social/friend-requests/incoming
+  router.get(
+    '/v1/social/friend-requests/incoming',
+    doc({
+      summary: "List caller's incoming pending friend requests",
+      tags: ['social'],
+      security: 'bearer',
+      params: [limitParam(), offsetParam()],
+      responses: {
+        200: ['FriendRequestList', 'Page of incoming friend requests'],
+        422: ['Error', 'Malformed pagination params'],
+        503: ['Error', 'Social service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkSocialRepo();
+      const actorId = requireAuth(ctx).userId;
+      const limit = parseLimit(ctx.query, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+      const offset = parseOffset(ctx.query);
+      const page = await repo.listIncomingRequests(actorId, { limit, offset });
+      return json(200, {
+        total: page.total,
+        items: page.items.map(friendRequestView),
+      });
+    },
+  );
+
+  // 8. GET /v1/social/friend-requests/outgoing
+  router.get(
+    '/v1/social/friend-requests/outgoing',
+    doc({
+      summary: "List caller's outgoing pending friend requests",
+      tags: ['social'],
+      security: 'bearer',
+      params: [limitParam(), offsetParam()],
+      responses: {
+        200: ['FriendRequestList', 'Page of outgoing friend requests'],
+        422: ['Error', 'Malformed pagination params'],
+        503: ['Error', 'Social service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkSocialRepo();
+      const actorId = requireAuth(ctx).userId;
+      const limit = parseLimit(ctx.query, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+      const offset = parseOffset(ctx.query);
+      const page = await repo.listOutgoingRequests(actorId, { limit, offset });
+      return json(200, {
+        total: page.total,
+        items: page.items.map(friendRequestView),
+      });
+    },
+  );
+
+  // 9. GET /v1/social/friends
+  router.get(
+    '/v1/social/friends',
+    doc({
+      summary: "List caller's friends",
+      tags: ['social'],
+      security: 'bearer',
+      params: [limitParam(), offsetParam()],
+      responses: {
+        200: ['FriendList', 'Page of friend player IDs'],
+        422: ['Error', 'Malformed pagination params'],
+        503: ['Error', 'Social service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkSocialRepo();
+      const actorId = requireAuth(ctx).userId;
+      const limit = parseLimit(ctx.query, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+      const offset = parseOffset(ctx.query);
+      const page = await repo.listFriends(actorId, { limit, offset });
+      return json(200, {
+        total: page.total,
+        items: [...page.items],
+      });
+    },
+  );
+
+  // 10. POST /v1/social/blocks/:playerId
+  router.post(
+    '/v1/social/blocks/:playerId',
+    doc({
+      summary: 'Block a player',
+      tags: ['social'],
+      security: 'bearer',
+      params: [pathParam('playerId', 'Target player ID (UUID)')],
+      responses: {
+        200: ['BlockEdgeView', 'Block edge created or existing'],
+        422: ['Error', 'Self relation or malformed ID'],
+        503: ['Error', 'Social service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkSocialRepo();
+      const actorId = requireAuth(ctx).userId;
+      const targetId = parseUuid(ctx.params['playerId']!, 'playerId');
+      try {
+        const edge = await repo.block(actorId, targetId, new Date(clock.now()));
+        return json(200, blockEdgeView(edge));
+      } catch (err) {
+        mapSocialError(err);
+      }
+    },
+  );
+
+  // 11. DELETE /v1/social/blocks/:playerId
+  router.delete(
+    '/v1/social/blocks/:playerId',
+    doc({
+      summary: 'Unblock a player',
+      tags: ['social'],
+      security: 'bearer',
+      params: [pathParam('playerId', 'Target player ID (UUID)')],
+      responses: {
+        204: [undefined, 'Unblocked'],
+        422: ['Error', 'Self relation or malformed ID'],
+        503: ['Error', 'Social service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkSocialRepo();
+      const actorId = requireAuth(ctx).userId;
+      const targetId = parseUuid(ctx.params['playerId']!, 'playerId');
+      try {
+        await repo.unblock(actorId, targetId);
+        return noContent();
+      } catch (err) {
+        mapSocialError(err);
+      }
+    },
+  );
+
+  // 12. GET /v1/social/blocks
+  router.get(
+    '/v1/social/blocks',
+    doc({
+      summary: "List caller's blocked players",
+      tags: ['social'],
+      security: 'bearer',
+      params: [limitParam(), offsetParam()],
+      responses: {
+        200: ['BlockEdgeList', 'Page of block edges'],
+        422: ['Error', 'Malformed pagination params'],
+        503: ['Error', 'Social service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkSocialRepo();
+      const actorId = requireAuth(ctx).userId;
+      const limit = parseLimit(ctx.query, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+      const offset = parseOffset(ctx.query);
+      const page = await repo.listBlocked(actorId, { limit, offset });
+      return json(200, {
+        total: page.total,
+        items: page.items.map(blockEdgeView),
+      });
+    },
+  );
+
   return router;
 }
 
 // --- helpers ---------------------------------------------------------------
+
+function parseOffset(query: URLSearchParams): number {
+  const raw = query.get('offset');
+  if (raw === null) return 0;
+  if (raw.trim() === '') {
+    throw HttpError.validation('"offset" must be a non-negative integer', { offset: 'invalid' });
+  }
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    throw HttpError.validation('"offset" must be a non-negative integer', { offset: 'invalid' });
+  }
+  return n;
+}
+
+function mapSocialError(err: unknown): never {
+  if (err instanceof SocialRuleError) {
+    switch (err.code) {
+      case 'self_relation':
+        throw HttpError.validation(err.message, { actor: 'self_relation' });
+      case 'blocked':
+        throw HttpError.forbidden(err.message);
+      case 'already_exists':
+        throw HttpError.conflict(err.message);
+      case 'not_found':
+        throw HttpError.notFound(err.message);
+      case 'invalid_transition':
+        throw HttpError.conflict(err.message);
+      case 'not_authorized':
+        throw HttpError.forbidden(err.message);
+    }
+  }
+  throw err;
+}
+
 
 /**
  * Resolve the refresh token from the request, preferring the httpOnly cookie
@@ -1555,17 +1947,14 @@ function limitParam(): NonNullable<RouteDoc['params']>[number] {
   };
 }
 
-function parseSearchOffset(query: URLSearchParams): number {
-  const raw = query.get('offset');
-  if (raw === null) return 0;
-  if (raw.trim() === '') {
-    throw HttpError.validation('"offset" must be a non-negative integer', { offset: 'invalid' });
-  }
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < 0) {
-    throw HttpError.validation('"offset" must be a non-negative integer', { offset: 'invalid' });
-  }
-  return n;
+function offsetParam(): NonNullable<RouteDoc['params']>[number] {
+  return {
+    name: 'offset',
+    in: 'query',
+    required: false,
+    description: 'Number of results to skip.',
+    schema: { type: 'integer', minimum: 0, default: 0 },
+  };
 }
 
 /** The `q`/`limit`/`offset` parsing every `/v1/search` mode shares, so no mode can drift from it. */
@@ -1583,7 +1972,7 @@ function parseSearchParams(search: URLSearchParams): {
     q,
     query: parseNaturalQuery(q),
     limit: parseLimit(search, DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT),
-    offset: parseSearchOffset(search),
+    offset: parseOffset(search),
   };
 }
 

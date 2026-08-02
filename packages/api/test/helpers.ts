@@ -33,6 +33,7 @@ import {
   InMemorySemanticSearchRepository,
   SEARCH_EMBEDDING_DIMENSIONS,
 } from '@chess-platform/search';
+import { InMemorySocialGraphRepository } from '@chess-platform/social';
 
 
 export const TEST_SECRET = 'test-access-token-secret-0123456789abcdef';
@@ -56,6 +57,7 @@ export interface Harness {
   readonly searchRepository?: InMemorySearchRepository;
   readonly semanticSearchRepository?: InMemorySemanticSearchRepository;
   readonly embeddingProvider?: HashingEmbeddingProvider;
+  readonly socialGraphRepository?: InMemorySocialGraphRepository;
   readonly clock: ManualClock;
   readonly tokens: AccessTokenService;
   readonly emailSender: InMemoryEmailSender;
@@ -83,6 +85,8 @@ export interface HarnessOptions {
   readonly withoutSearch?: boolean;
   /** Pass true to simulate a server constructed without semantic search. */
   readonly withoutSemanticSearch?: boolean;
+  /** Pass true to simulate a server constructed without social graph repository. */
+  readonly withoutSocial?: boolean;
   /** Override the anti-cheat evaluator (e.g. to make it throw) for edge-case tests. */
   readonly antiCheatEvaluator?: PositionEvaluator;
 }
@@ -140,6 +144,9 @@ export async function startHarness(
   const embeddingProvider = harnessOptions.withoutSemanticSearch
     ? undefined
     : new HashingEmbeddingProvider(SEARCH_EMBEDDING_DIMENSIONS);
+  const socialGraphRepository = harnessOptions.withoutSocial
+    ? undefined
+    : new InMemorySocialGraphRepository();
   const server = createApiServer({
     repos, hasher, tokens, clock, ids, rateLimiter, tournamentRepo, gameLauncher, liveView, emailSender,
     config: resolved,
@@ -148,6 +155,7 @@ export async function startHarness(
     ...(searchRepository ? { searchRepository } : {}),
     ...(semanticSearchRepository ? { semanticSearchRepository } : {}),
     ...(embeddingProvider ? { embeddingProvider } : {}),
+    ...(socialGraphRepository ? { socialGraphRepository } : {}),
     ...(harnessOptions.readiness ? { readiness: harnessOptions.readiness } : {}),
     ...(harnessOptions.logger ? { logger: harnessOptions.logger } : {}),
     ...(harnessOptions.tracer ? { tracer: harnessOptions.tracer } : {}),
@@ -169,6 +177,7 @@ export async function startHarness(
     searchRepository,
     semanticSearchRepository,
     embeddingProvider,
+    socialGraphRepository,
     clock,
     tokens,
     emailSender,

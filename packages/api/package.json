@@ -48,6 +48,7 @@
     "@chess-platform/persistence": "file:../persistence",
     "@chess-platform/realtime-gateway": "file:../realtime-gateway",
     "@chess-platform/search": "file:../search",
+    "@chess-platform/social": "file:../social",
     "@chess-platform/tournament": "file:../tournament",
     "pg": "^8.12.0"
   },

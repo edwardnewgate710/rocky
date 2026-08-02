@@ -27,9 +27,11 @@ import {
   PgBotBehaviorReportRepository,
   PgSearchRepository,
   PgSemanticSearchRepository,
+  PgSocialGraphRepository,
 } from '@chess-platform/persistence/pg';
 import { HashingEmbeddingProvider, SEARCH_EMBEDDING_DIMENSIONS } from '@chess-platform/search';
 import type { EmbeddingProvider, SearchRepository, SemanticSearchRepository } from '@chess-platform/search';
+import type { SocialGraphRepository } from '@chess-platform/social';
 import { ConsoleEmailSender } from './ports/email';
 import type { EmailSender } from './ports/email';
 import { JsonLogger } from './ports/logger';
@@ -136,6 +138,7 @@ export interface PgBootstrapOptions {
   readonly searchRepository?: SearchRepository;
   readonly semanticSearchRepository?: SemanticSearchRepository;
   readonly embeddingProvider?: EmbeddingProvider;
+  readonly socialGraphRepository?: SocialGraphRepository;
   readonly logger?: Logger;
   readonly metrics?: Metrics;
   readonly tracer?: Tracer;
@@ -191,6 +194,11 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ? (options.embeddingProvider ?? new HashingEmbeddingProvider(SEARCH_EMBEDDING_DIMENSIONS))
     : undefined;
 
+  const socialEnabled = process.env['SOCIAL_ENABLED'] !== '0';
+  const socialGraphRepository = socialEnabled
+    ? (options.socialGraphRepository ?? new PgSocialGraphRepository(pool))
+    : undefined;
+
   const logger = options.logger ?? new JsonLogger({ service: 'api' }, { level: resolveLogLevel() });
   const metrics = options.metrics ?? new InMemoryMetrics();
   const logExporter = new LoggingSpanExporter(logger);
@@ -242,6 +250,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ...(searchRepository ? { searchRepository } : {}),
     ...(semanticSearchRepository ? { semanticSearchRepository } : {}),
     ...(embeddingProvider ? { embeddingProvider } : {}),
+    ...(socialGraphRepository ? { socialGraphRepository } : {}),
     botTimingSource: new EventStoreBotTimingSource(eventStore),
     // Production observability (M13): structured logs to stdout, a scrape
     // registry backing GET /v1/metrics, and tracer emitting spans to logs.

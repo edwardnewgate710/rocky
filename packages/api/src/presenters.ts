@@ -313,3 +313,52 @@ function round2(n: number): number {
 function round4(n: number): number {
   return Math.round(n * 10000) / 10000;
 }
+
+export interface FollowEdgeView {
+  readonly followerId: string;
+  readonly followeeId: string;
+  readonly followedAt: string;
+}
+
+export function followEdgeView(edge: import('@chess-platform/social').FollowEdge): FollowEdgeView {
+  return {
+    followerId: edge.followerId,
+    followeeId: edge.followeeId,
+    followedAt: edge.followedAt.toISOString(),
+  };
+}
+
+export interface FriendRequestView {
+  readonly id: string;
+  readonly requesterId: string;
+  readonly addresseeId: string;
+  readonly status: string;
+  readonly createdAt: string;
+  readonly respondedAt: string | null;
+}
+
+export function friendRequestView(req: import('@chess-platform/social').FriendRequest): FriendRequestView {
+  return {
+    id: req.id,
+    requesterId: req.requesterId,
+    addresseeId: req.addresseeId,
+    status: req.status,
+    createdAt: req.createdAt.toISOString(),
+    respondedAt: req.respondedAt ? req.respondedAt.toISOString() : null,
+  };
+}
+
+export interface BlockEdgeView {
+  readonly blockerId: string;
+  readonly blockedId: string;
+  readonly blockedAt: string;
+}
+
+export function blockEdgeView(edge: import('@chess-platform/social').BlockEdge): BlockEdgeView {
+  return {
+    blockerId: edge.blockerId,
+    blockedId: edge.blockedId,
+    blockedAt: edge.blockedAt.toISOString(),
+  };
+}
+

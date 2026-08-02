@@ -14,3 +14,4 @@ export * from './search';
 export * from './semantic-search';
 export * from './search-helpers';
 export * from './search-backfill';
+export * from './social';
