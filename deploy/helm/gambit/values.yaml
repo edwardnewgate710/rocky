@@ -39,6 +39,70 @@ images:
     tag: "0.1.0"
     pullPolicy: IfNotPresent
 
+# --- Progressive delivery (M14 inc 9, ADR-0075) ---
+# How a new version reaches production. Applies to the HTTP tier only — api and
+# web. The gateway is deliberately excluded: its connections are long-lived and
+# game-command ownership is coordinated across all replicas through Redis
+# (ADR-0010), so a version split there would drop live games at the cutover for
+# no benefit the rolling update does not already give.
+#
+#   rolling    Kubernetes' own rolling update. The default, and what this chart
+#              did before this block existed.
+#   blueGreen  Both versions run. A Service selector — not a pod rollout — picks
+#              which one takes traffic, so the cutover and the rollback are the
+#              same one-value change and neither restarts a pod.
+#   canary     A weighted share of ingress traffic goes to a second track.
+#
+# Blue/green and canary both run two versions of the API against one database at
+# once, so every schema change they carry must be backward compatible with the
+# version still serving (expand/contract). ADR-0075 spells out the constraint.
+rollout:
+  strategy: rolling
+
+  blueGreen:
+    # Which color the primary Service selects. Flipping this value is the
+    # cutover; setting it back is the rollback.
+    activeColor: blue
+    # Both colors fall back to images.<component>.tag, so in practice you set the
+    # incoming color's tag and leave images.*.tag at the version you would roll
+    # back to. The fallback is symmetric on purpose: requiring it on the standby
+    # only would make a flip fail to render the moment it was performed.
+    # Rendering is rejected if both colors resolve to the same image, since then
+    # the preview is a copy of what is live and a flip changes nothing.
+    colors:
+      blue:
+        tag: ""
+      green:
+        tag: ""
+    # The standby color. Rendered alongside the active one and reachable only
+    # through the -preview Service and its own Ingress host, so a new version can
+    # be smoke-tested against production dependencies before it takes traffic.
+    preview:
+      enabled: true
+      # Standby replica count. Empty means "the same as the active color", which
+      # is what makes the flip safe: the cutover is instantaneous, so a standby
+      # sized below production capacity would take all of the traffic on the
+      # replicas it happens to have and scale up afterwards. The cost of blue/
+      # green is that the idle side is a full second copy; setting this lower
+      # buys that cost back and turns the flip into a rescale — if you do, scale
+      # the standby up in a separate upgrade BEFORE flipping.
+      replicas: ""
+      # Preview Ingress hostname. Empty means preview.<web.ingress.host>.
+      host: ""
+
+  canary:
+    # Percentage of ingress traffic sent to the canary track.
+    weight: 10
+    replicas: 1
+    # Image tag for the canary track. Required when strategy=canary; there is no
+    # default, because a canary of the running version tests nothing.
+    tag: ""
+    # Optional deterministic opt-in. When set, a request carrying this header
+    # with the value "always" is routed to the canary regardless of weight
+    # (ingress-nginx canary-by-header), which is how you test the canary on
+    # purpose instead of waiting to be sampled into it.
+    header: ""
+
 # --- API service ---
 api:
   replicas: 2

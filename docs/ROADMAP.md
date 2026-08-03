@@ -762,10 +762,32 @@ these images. Both Dockerfiles now delegate to a root `build:server` script, and
 `scripts/check-docker-build-order.mjs` fails CI if the chain or the runtime copies drift from the
 real dependency graph again.
 
+### Increment 9: Blue/green + canary delivery (ADR-0075) ✅
+
+`rollout.strategy` — `rolling` (unchanged default), `blueGreen` or `canary` — for the api and web.
+Blue/green renders both colors and cuts over by rewriting a Service selector, so the flip and the
+rollback are the same one-value change and neither restarts a pod; the standby is reachable first on
+its own preview host. Canary weights traffic with ingress-nginx's `canary-weight` annotation rather
+than by replica ratio, so the split does not quantise with pod count, with optional header-based
+opt-in. Each web variant addresses the api variant of its own version, so a canary cohort never gets
+a new frontend against the old API. The gateway is deliberately excluded (long-lived WebSocket
+connections; game ownership is keyed by game, not version), as is the single-replica search indexer.
+
+Building it surfaced a bug that predates it: `docker/web/nginx.conf` hardcoded the **compose**
+service names, and nginx resolves an upstream literal at config load — so under Helm, where Services
+are release-prefixed, the web pod exited with `host not found in upstream "api"` before it ever
+listened. The public entrypoint had never worked in Kubernetes. The config is now an envsubst
+template whose upstreams the chart injects, which is also what makes the version pairing above
+possible.
+
+32 new assertions in `scripts/helm-snapshot-test.sh` (82 total), including the flip-invariance check
+that caught the standby being sized at one replica — which would have moved all production traffic
+onto a single pod at the cutover — and a name-disjointness check keeping strategy switches
+upgradable, since a Deployment's selector is immutable.
+
 ### Deferred (later M14 increments)
 
 - Terraform IaC for cloud provisioning
-- Blue/green + canary deployment strategy
 - GitHub Actions CI/CD pipeline with deploy gates
 - 100k-user load testing + chaos validation
 - Sharded game authority with durable state

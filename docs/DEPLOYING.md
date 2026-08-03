@@ -89,6 +89,16 @@ helm install gambit deploy/helm/gambit \
 | `tracing.otlpEndpoint` | `""` | Base OTLP collector URL (`/v1/traces` appended) |
 | `tracing.otlpTracesEndpoint` | `""` | Signal-specific OTLP traces URL (verbatim) |
 | `tracing.samplerArg` | `""` | Trace sampling probability ratio in [0, 1] |
+| `rollout.strategy` | `rolling` | `rolling`, `blueGreen` or `canary` (ADR-0075) |
+| `rollout.blueGreen.activeColor` | `blue` | Color the primary Service selects; flipping it is the cutover |
+| `rollout.blueGreen.colors.<color>.tag` | `""` | Image tag per color; falls back to `images.<component>.tag` |
+| `rollout.blueGreen.preview.enabled` | `true` | Render the standby color and its preview host |
+| `rollout.blueGreen.preview.replicas` | `""` | Standby size; empty means the same as the active color |
+| `rollout.blueGreen.preview.host` | `""` | Preview hostname; empty means `preview.<web.ingress.host>` |
+| `rollout.canary.weight` | `10` | Percent of ingress traffic to the canary track |
+| `rollout.canary.tag` | `""` | Canary image tag — required when `strategy=canary` |
+| `rollout.canary.replicas` | `1` | Canary replica count |
+| `rollout.canary.header` | `""` | Header enabling deterministic canary opt-in |
 
 ### Secrets
 
@@ -181,6 +191,109 @@ without Redis.
 
 See `docs/adr/0010-game-authority-ownership.md` for the decision record.
 
+## Release strategies (blue/green, canary)
+
+`rollout.strategy` chooses how a new version reaches production. It covers the
+**api and web** only — the gateway keeps its rolling update because a flip would
+sever every live WebSocket connection, and its game-command ownership registry
+(ADR-0010) is keyed by game rather than by version. See
+`docs/adr/0075-progressive-delivery.md`.
+
+**Before using either strategy:** both run two API versions against one database,
+so any migration in the release must be backward compatible with the version
+still serving (add columns, backfill, drop in a later release). Concurrent
+migration runs are safe — the runner takes a database-wide advisory lock.
+
+**Keep these values in a values file.** `helm upgrade` does not carry previous
+`--set` flags forward, so the `...` in the examples below is not shorthand you can
+drop — omitting the earlier flags reverts them to chart defaults. Put the release's
+values in a file and pass `-f`, then a cutover really is one changed value:
+
+```bash
+helm upgrade gambit deploy/helm/gambit -f prod-values.yaml \
+  --set rollout.blueGreen.activeColor=green
+```
+
+### Blue/green
+
+Deploy the new version to the standby color, exercise it on the preview host,
+then flip. Neither the flip nor the rollback restarts a pod.
+
+```bash
+# 1. Install/upgrade with both colors. Blue is active on 1.0.0;
+#    green is the incoming 1.1.0, reachable only at preview.gambit.local.
+helm upgrade gambit deploy/helm/gambit \
+  --set rollout.strategy=blueGreen \
+  --set rollout.blueGreen.activeColor=blue \
+  --set rollout.blueGreen.colors.blue.tag=1.0.0 \
+  --set rollout.blueGreen.colors.green.tag=1.1.0
+
+# 2. Smoke-test the standby against production dependencies.
+curl -H 'Host: preview.gambit.local' http://<ingress-ip>/v1/health
+
+# 3. Cut over. This rewrites Service selectors and nothing else.
+helm upgrade gambit deploy/helm/gambit ... --set rollout.blueGreen.activeColor=green
+
+# 4. Roll back, if needed, at the same speed.
+helm upgrade gambit deploy/helm/gambit ... --set rollout.blueGreen.activeColor=blue
+```
+
+The standby runs at the active color's replica count so it can absorb the flip
+immediately. If you set `preview.replicas` lower to save cost, scale it back up
+in a separate upgrade **before** flipping — otherwise the cutover moves all
+traffic onto an under-provisioned fleet and scales up afterwards.
+
+Keep the old color on its old tag after a flip. It is the rollback.
+
+### Canary
+
+A weighted share of ingress traffic goes to a second track. **Requires
+ingress-nginx** — the split is its `canary-weight` annotation; other controllers
+ignore it and would send full traffic to both Ingresses.
+
+```bash
+# 10% of traffic to 1.1.0, plus deterministic opt-in by header.
+helm upgrade gambit deploy/helm/gambit \
+  --set rollout.strategy=canary \
+  --set rollout.canary.tag=1.1.0 \
+  --set rollout.canary.weight=10 \
+  --set rollout.canary.header=X-Gambit-Canary
+
+# Test the canary on purpose rather than waiting to be sampled into it.
+curl -H 'X-Gambit-Canary: always' http://<ingress-ip>/v1/health
+
+# Ramp: 10 -> 25 -> 50 -> 100, watching the SLO dashboards (docs/SLO.md) at each step.
+helm upgrade gambit deploy/helm/gambit ... --set rollout.canary.weight=25
+
+# Abort: weight 0 leaves the canary staged and header-reachable but takes it out
+# of sampled traffic immediately.
+helm upgrade gambit deploy/helm/gambit ... --set rollout.canary.weight=0
+```
+
+Promote by making the canary tag the stable tag (`images.*.tag`) and returning
+`rollout.strategy` to `rolling`, or by moving to blue/green for the cutover.
+
+Each web variant is paired with the api variant of its own version, so a canary
+user gets the canary frontend and the canary API — never a new SPA against the
+old API.
+
+### Notes
+
+- Rendering is fail-closed: an unknown strategy, a preview whose two colors
+  resolve to the same image, a canary with no tag, a canary with no Ingress, or a
+  weight outside 0–100 all fail `helm template` rather than producing a release
+  that looks progressive and is not.
+- You only have to set the incoming color's tag. The other color falls back to
+  `images.<component>.tag`, so leave that at the version you would roll back to —
+  and a flip never newly breaks the render.
+- Switching *strategies* on a live release renames Deployments (`…-api` becomes
+  `…-api-blue` or `…-api-stable`), so Helm deletes and recreates them. This is
+  deliberate: a Deployment's `spec.selector` is immutable, so keeping the name
+  would make the upgrade fail instead. Flips within blue/green and canary weight
+  changes do not have this effect.
+- With TLS enabled, the preview host reuses the primary certificate secret, so
+  that certificate must cover the preview hostname (wildcard or explicit SAN).
+
 ## Search indexer and reindex CLI
 
 The live search indexer (ADR-0056, ADR-0061) keeps `search_documents` and `search_embeddings` current by consuming game-ended broadcasts. Its dedup set is process-local, so it runs in a dedicated single-replica Deployment instead of on the gateway replicas:
@@ -230,6 +343,22 @@ helm template deploy/helm/gambit \
 helm template deploy/helm/gambit \
   --set secrets.accessTokenSecret="$(openssl rand -base64 48)" \
   --set secrets.postgresPassword="$(openssl rand -base64 24)" \
+  | kubeconform -strict -summary
+
+# Render the progressive-delivery strategies (they add objects the default
+# render does not have, so each needs its own schema pass)
+helm template deploy/helm/gambit \
+  --set secrets.accessTokenSecret="$(openssl rand -base64 48)" \
+  --set secrets.postgresPassword="$(openssl rand -base64 24)" \
+  --set rollout.strategy=blueGreen \
+  --set rollout.blueGreen.colors.green.tag=0.2.0 \
+  | kubeconform -strict -summary
+
+helm template deploy/helm/gambit \
+  --set secrets.accessTokenSecret="$(openssl rand -base64 48)" \
+  --set secrets.postgresPassword="$(openssl rand -base64 24)" \
+  --set rollout.strategy=canary \
+  --set rollout.canary.tag=0.2.0 \
   | kubeconform -strict -summary
 
 # Run the snapshot test (verifies key wiring)

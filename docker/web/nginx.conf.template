@@ -28,9 +28,17 @@ server {
         return 404;
     }
 
-    # Proxy REST API requests to the API service
+    # Proxy REST API requests to the API service.
+    #
+    # ${API_UPSTREAM} and ${GATEWAY_UPSTREAM} are substituted at container start by the
+    # nginx image's envsubst entrypoint (this file is mounted at
+    # /etc/nginx/templates/default.conf.template). They default to the compose service
+    # names; Kubernetes overrides them with the chart's Service names, which are
+    # release-prefixed and therefore cannot be hardcoded here. nginx resolves an upstream
+    # literal at config load, so a wrong value is a startup failure ("host not found in
+    # upstream"), not a runtime 502 — see ADR-0075.
     location /v1/ {
-        proxy_pass http://api:8080;
+        proxy_pass http://${API_UPSTREAM};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -39,7 +47,7 @@ server {
 
     # Proxy WebSocket connections to the gateway service
     location /ws {
-        proxy_pass http://gateway:4175;
+        proxy_pass http://${GATEWAY_UPSTREAM};
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";

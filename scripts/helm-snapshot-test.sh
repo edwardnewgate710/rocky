@@ -333,6 +333,193 @@ else
   check "Fail-closed: tracing.enabled=true with no endpoint is rejected" 0
 fi
 
+# --- Progressive delivery (M14 inc 9, ADR-0075) -----------------------------
+# Three properties matter here and none of them are schema-checkable:
+#   1. `rolling` renders what the chart rendered before this existed.
+#   2. A blue/green flip changes Service selectors and NOTHING else — that is
+#      the entire reason to prefer it over a rolling update for rollback.
+#   3. Each web variant addresses the api variant of its own version, so a
+#      canary cohort never gets a new frontend against the old API.
+echo ""
+echo "Progressive delivery (ADR-0075):"
+
+# Reads a whole document by kind + exact name, so assertions can be scoped to one
+# variant now that a component can render more than one Deployment.
+doc_by_name() {
+  yq "select(.kind==\"$2\" and .metadata.name==\"$3\")" "$1" 2>/dev/null || echo ""
+}
+
+BG_SET=(
+  --set rollout.strategy=blueGreen
+  --set rollout.blueGreen.colors.blue.tag=0.1.0
+  --set rollout.blueGreen.colors.green.tag=0.2.0
+)
+CANARY_SET=(
+  --set rollout.strategy=canary
+  --set rollout.canary.tag=0.2.0
+  --set rollout.canary.weight=25
+)
+
+helm template "$CHART_DIR" "${HELM_SECRETS[@]}" "${BG_SET[@]}" \
+  --set rollout.blueGreen.activeColor=blue > "$TMPDIR/bg-blue.yaml" 2>/dev/null
+helm template "$CHART_DIR" "${HELM_SECRETS[@]}" "${BG_SET[@]}" \
+  --set rollout.blueGreen.activeColor=green > "$TMPDIR/bg-green.yaml" 2>/dev/null
+helm template "$CHART_DIR" "${HELM_SECRETS[@]}" "${CANARY_SET[@]}" > "$TMPDIR/canary.yaml" 2>/dev/null
+
+# 1. The default strategy stays inert: no variant labels, one Deployment each.
+VARIANT_LABELS_DEFAULT=$(grep -c 'gambit.dev/\(color\|track\)' "$TMPDIR/default.yaml" || true)
+check "Default render: no variant labels (rolling is unchanged behaviour)" "$([ "$VARIANT_LABELS_DEFAULT" = "0" ] && echo 0 || echo 1)"
+
+API_DEPS_DEFAULT=$(yq 'select(.kind=="Deployment" and .metadata.labels."app.kubernetes.io/component"=="api") | .metadata.name' "$TMPDIR/default.yaml" 2>/dev/null | grep -c . || true)
+check "Default render: exactly one api Deployment" "$([ "$API_DEPS_DEFAULT" = "1" ] && echo 0 || echo 1)"
+
+# 2. REGRESSION GUARD: the web proxy upstreams must be the chart's Service names.
+# The image ships compose defaults (api:8080), which do not resolve in Kubernetes
+# — and nginx resolves an upstream literal at config load, so the wrong value is a
+# CrashLoopBackOff, not a 502. This is the bug ADR-0075 fixes.
+WEB_API_UP=$(doc_by_name "$TMPDIR/default.yaml" Deployment release-name-gambit-web | yq '.spec.template.spec.containers[] | select(.name=="web") | .env[] | select(.name=="API_UPSTREAM") | .value' 2>/dev/null || echo "")
+WEB_GW_UP=$(doc_by_name "$TMPDIR/default.yaml" Deployment release-name-gambit-web | yq '.spec.template.spec.containers[] | select(.name=="web") | .env[] | select(.name=="GATEWAY_UPSTREAM") | .value' 2>/dev/null || echo "")
+check "Web API_UPSTREAM is the release-prefixed api Service" "$([ "$WEB_API_UP" = "release-name-gambit-api:8080" ] && echo 0 || echo 1)"
+check "Web GATEWAY_UPSTREAM is the release-prefixed gateway Service" "$([ "$WEB_GW_UP" = "release-name-gambit-gateway:4175" ] && echo 0 || echo 1)"
+
+# 3. Blue/green: the primary Service selects the active color, preview the standby.
+BG_PRIMARY_COLOR=$(doc_by_name "$TMPDIR/bg-blue.yaml" Service release-name-gambit-api | yq '.spec.selector."gambit.dev/color"' 2>/dev/null || echo "")
+BG_PREVIEW_COLOR=$(doc_by_name "$TMPDIR/bg-blue.yaml" Service release-name-gambit-api-preview | yq '.spec.selector."gambit.dev/color"' 2>/dev/null || echo "")
+check "Blue/green: primary api Service selects the active color" "$([ "$BG_PRIMARY_COLOR" = "blue" ] && echo 0 || echo 1)"
+check "Blue/green: preview api Service selects the standby color" "$([ "$BG_PREVIEW_COLOR" = "green" ] && echo 0 || echo 1)"
+
+# 4. A Deployment's selector must carry the variant label. Without it, the two
+# colors' ReplicaSets select each other's pods and fight over one fleet.
+BG_DEP_SELECTOR=$(doc_by_name "$TMPDIR/bg-blue.yaml" Deployment release-name-gambit-api-green | yq '.spec.selector.matchLabels."gambit.dev/color"' 2>/dev/null || echo "")
+check "Blue/green: Deployment selector carries the color (colors cannot claim each other's pods)" "$([ "$BG_DEP_SELECTOR" = "green" ] && echo 0 || echo 1)"
+
+# 5. THE flip property: changing activeColor rewrites selectors and nothing else.
+# Same Deployments, same images, same replica counts before and after.
+bg_pod_specs() {
+  yq 'select(.kind=="Deployment") | .metadata.name + " " + (.spec.replicas|tostring) + " " + .spec.template.spec.containers[0].image' "$1" 2>/dev/null | sort
+}
+BLUE_SPECS=$(bg_pod_specs "$TMPDIR/bg-blue.yaml")
+GREEN_SPECS=$(bg_pod_specs "$TMPDIR/bg-green.yaml")
+check "Blue/green: a flip changes no Deployment name, image or replica count" "$([ "$BLUE_SPECS" = "$GREEN_SPECS" ] && echo 0 || echo 1)"
+
+FLIPPED_COLOR=$(doc_by_name "$TMPDIR/bg-green.yaml" Service release-name-gambit-api | yq '.spec.selector."gambit.dev/color"' 2>/dev/null || echo "")
+check "Blue/green: a flip does change the primary Service selector" "$([ "$FLIPPED_COLOR" = "green" ] && echo 0 || echo 1)"
+
+# 6. Version pairing: each web variant addresses the api variant of its own version.
+BG_WEB_ACTIVE_UP=$(doc_by_name "$TMPDIR/bg-blue.yaml" Deployment release-name-gambit-web-blue | yq '.spec.template.spec.containers[0].env[] | select(.name=="API_UPSTREAM") | .value' 2>/dev/null || echo "")
+BG_WEB_PREVIEW_UP=$(doc_by_name "$TMPDIR/bg-blue.yaml" Deployment release-name-gambit-web-green | yq '.spec.template.spec.containers[0].env[] | select(.name=="API_UPSTREAM") | .value' 2>/dev/null || echo "")
+check "Blue/green: active web addresses the primary api Service" "$([ "$BG_WEB_ACTIVE_UP" = "release-name-gambit-api:8080" ] && echo 0 || echo 1)"
+check "Blue/green: preview web addresses the preview api Service" "$([ "$BG_WEB_PREVIEW_UP" = "release-name-gambit-api-preview:8080" ] && echo 0 || echo 1)"
+
+CANARY_WEB_UP=$(doc_by_name "$TMPDIR/canary.yaml" Deployment release-name-gambit-web-canary | yq '.spec.template.spec.containers[0].env[] | select(.name=="API_UPSTREAM") | .value' 2>/dev/null || echo "")
+check "Canary: canary web addresses the canary api Service (no mixed pair)" "$([ "$CANARY_WEB_UP" = "release-name-gambit-api-canary:8080" ] && echo 0 || echo 1)"
+
+# 7. Canary: stable Service must exclude canary pods, or the weight means nothing.
+CANARY_STABLE_TRACK=$(doc_by_name "$TMPDIR/canary.yaml" Service release-name-gambit-api | yq '.spec.selector."gambit.dev/track"' 2>/dev/null || echo "")
+check "Canary: stable api Service selects only the stable track" "$([ "$CANARY_STABLE_TRACK" = "stable" ] && echo 0 || echo 1)"
+
+# 8. The weight reaches the ingress controller.
+CANARY_ANN=$(doc_by_name "$TMPDIR/canary.yaml" Ingress release-name-gambit-web-canary | yq '.metadata.annotations."nginx.ingress.kubernetes.io/canary"' 2>/dev/null || echo "")
+CANARY_WEIGHT=$(doc_by_name "$TMPDIR/canary.yaml" Ingress release-name-gambit-web-canary | yq '.metadata.annotations."nginx.ingress.kubernetes.io/canary-weight"' 2>/dev/null || echo "")
+check "Canary: Ingress is annotated canary=true" "$([ "$CANARY_ANN" = "true" ] && echo 0 || echo 1)"
+check "Canary: canary-weight matches rollout.canary.weight" "$([ "$CANARY_WEIGHT" = "25" ] && echo 0 || echo 1)"
+
+CANARY_HEADER_OFF=$(doc_by_name "$TMPDIR/canary.yaml" Ingress release-name-gambit-web-canary | grep -c 'canary-by-header' || true)
+check "Canary: canary-by-header is absent unless configured" "$([ "$CANARY_HEADER_OFF" = "0" ] && echo 0 || echo 1)"
+
+# 9. The exclusions hold. The gateway is never versioned by this mechanism (long-
+# lived connections + Redis-coordinated game ownership), and the search indexer
+# must stay a single process however the HTTP tier is being rolled out.
+for f in bg-blue canary; do
+  GW_DEPS=$(yq 'select(.kind=="Deployment" and .metadata.labels."app.kubernetes.io/component"=="gateway") | .metadata.name' "$TMPDIR/$f.yaml" 2>/dev/null | grep -c . || true)
+  check "$f: exactly one gateway Deployment (gateway is excluded from rollouts)" "$([ "$GW_DEPS" = "1" ] && echo 0 || echo 1)"
+done
+
+helm template "$CHART_DIR" "${HELM_SECRETS[@]}" "${CANARY_SET[@]}" \
+  --set gateway.searchIndexer.enabled=true > "$TMPDIR/canary-indexer.yaml" 2>/dev/null
+IX_DEPS=$(yq 'select(.kind=="Deployment" and .metadata.labels."app.kubernetes.io/component"=="search-indexer") | .spec.replicas' "$TMPDIR/canary-indexer.yaml" 2>/dev/null | tr -d '\n' || true)
+check "Canary + indexer: still exactly one indexer replica" "$([ "$IX_DEPS" = "1" ] && echo 0 || echo 1)"
+
+# 9b. A Deployment's spec.selector is immutable in apps/v1, and every strategy
+# puts different variant labels in it. So no two strategies may share a
+# Deployment NAME: if they did, switching strategy on a live release would try to
+# mutate the selector of an existing object and Kubernetes would reject the
+# upgrade. Distinct names make every switch a replace instead.
+# yq separates multi-document results with `---`; that line is not a name and
+# would make every pair of lists look like it shares an element.
+http_deployment_names() {
+  yq 'select(.kind=="Deployment" and (.metadata.labels."app.kubernetes.io/component"=="api" or .metadata.labels."app.kubernetes.io/component"=="web")) | .metadata.name' "$1" 2>/dev/null | grep -vx -- '---' | sort
+}
+ROLLING_NAMES=$(http_deployment_names "$TMPDIR/default.yaml")
+BG_NAMES=$(http_deployment_names "$TMPDIR/bg-blue.yaml")
+CANARY_NAMES=$(http_deployment_names "$TMPDIR/canary.yaml")
+SHARED=$(comm -12 <(printf '%s\n' "$ROLLING_NAMES") <(printf '%s\n' "$BG_NAMES"); \
+         comm -12 <(printf '%s\n' "$ROLLING_NAMES") <(printf '%s\n' "$CANARY_NAMES"); \
+         comm -12 <(printf '%s\n' "$BG_NAMES") <(printf '%s\n' "$CANARY_NAMES"))
+# Empty name lists would make the disjointness trivially true, so this must also
+# prove it read something: 2 Deployments under rolling, 4 under each of the others.
+NAME_COUNTS="$(printf '%s\n' "$ROLLING_NAMES" | grep -c .)/$(printf '%s\n' "$BG_NAMES" | grep -c .)/$(printf '%s\n' "$CANARY_NAMES" | grep -c .)"
+check "No two strategies share a Deployment name (selectors are immutable)" "$([ -z "$SHARED" ] && [ "$NAME_COUNTS" = "2/4/4" ] && echo 0 || echo 1)"
+
+# 10. Fail-closed guards. Each of these renders a release that would look
+# progressive while doing nothing of the sort.
+reject() {
+  local desc="$1"; shift
+  if helm template "$CHART_DIR" "${HELM_SECRETS[@]}" "$@" >/dev/null 2>&1; then
+    check "$desc" 1
+  else
+    check "$desc" 0
+  fi
+}
+reject "Fail-closed: unknown rollout.strategy is rejected" --set rollout.strategy=bogus
+reject "Fail-closed: activeColor outside blue/green is rejected" "${BG_SET[@]}" --set rollout.blueGreen.activeColor=purple
+reject "Fail-closed: both colors resolving to the same image is rejected" --set rollout.strategy=blueGreen
+
+# A flip must never be the thing that first fails to render. An operator who sets
+# only the incoming color's tag — letting the outgoing one fall back to
+# images.<component>.tag, which is the version they would roll back to — has a
+# valid release, and it has to stay valid after activeColor changes.
+for COLOR in blue green; do
+  if helm template "$CHART_DIR" "${HELM_SECRETS[@]}" \
+       --set rollout.strategy=blueGreen \
+       --set rollout.blueGreen.colors.green.tag=0.2.0 \
+       --set rollout.blueGreen.activeColor="$COLOR" >/dev/null 2>&1; then
+    check "Blue/green renders with activeColor=$COLOR when only the incoming tag is set (a flip cannot newly break the render)" 0
+  else
+    check "Blue/green renders with activeColor=$COLOR when only the incoming tag is set (a flip cannot newly break the render)" 1
+  fi
+done
+reject "Fail-closed: canary without its own tag is rejected" --set rollout.strategy=canary
+reject "Fail-closed: canary without an Ingress is rejected" --set rollout.strategy=canary --set rollout.canary.tag=0.2.0 --set web.ingress.enabled=false
+reject "Fail-closed: canary weight above 100 is rejected" "${CANARY_SET[@]}" --set rollout.canary.weight=150
+reject "Fail-closed: canary weight below 0 is rejected" "${CANARY_SET[@]}" --set rollout.canary.weight=-1
+
+# Weight 0 is legitimate: the canary is staged and reachable by header, taking no
+# sampled traffic yet. It must NOT be rejected.
+if helm template "$CHART_DIR" "${HELM_SECRETS[@]}" "${CANARY_SET[@]}" \
+     --set rollout.canary.weight=0 >/dev/null 2>&1; then
+  check "Canary weight 0 renders (staged canary, header-only access)" 0
+else
+  check "Canary weight 0 renders (staged canary, header-only access)" 1
+fi
+
+# An explicit standby size must be honoured — including 0, which stages the
+# standby's manifests without running it. `default` would treat 0 as unset and
+# silently give it the active color's full replica count.
+helm template "$CHART_DIR" "${HELM_SECRETS[@]}" "${BG_SET[@]}" \
+  --set rollout.blueGreen.preview.replicas=0 > "$TMPDIR/bg-zero.yaml" 2>/dev/null
+BG_ZERO=$(doc_by_name "$TMPDIR/bg-zero.yaml" Deployment release-name-gambit-api-green | yq '.spec.replicas' 2>/dev/null || echo "")
+check "Blue/green: an explicit standby replica count of 0 is honoured" "$([ "$BG_ZERO" = "0" ] && echo 0 || echo 1)"
+
+# Turning the preview off leaves a single-color release — the standby tag is then
+# not required, because there is no standby.
+if helm template "$CHART_DIR" "${HELM_SECRETS[@]}" \
+     --set rollout.strategy=blueGreen --set rollout.blueGreen.preview.enabled=false >/dev/null 2>&1; then
+  check "Blue/green with preview disabled needs no standby tag" 0
+else
+  check "Blue/green with preview disabled needs no standby tag" 1
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 

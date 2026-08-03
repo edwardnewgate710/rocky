@@ -3,8 +3,35 @@
 M14 Increment 4 — Kubernetes manifests + Helm chart.
 M14 Increment 6 — External Secrets Operator (external-secrets.io) integration.
 M14 Increment 7 — Dedicated single-replica Deployment for the live search indexer.
+M14 Increment 9 — Blue/green and canary release strategies for the HTTP tier.
 
 See `docs/DEPLOYING.md` for the full install guide.
+
+## Release strategies
+
+`rollout.strategy` is `rolling` (default), `blueGreen` or `canary`, and applies to the
+api and web. The gateway is excluded on purpose: a flip would sever every live
+WebSocket connection, and game-command ownership (ADR-0010) is keyed by game rather
+than version.
+
+```bash
+# Blue/green: both colors up, cut over by rewriting a Service selector.
+helm upgrade gambit deploy/helm/gambit \
+  --set rollout.strategy=blueGreen \
+  --set rollout.blueGreen.colors.blue.tag=1.0.0 \
+  --set rollout.blueGreen.colors.green.tag=1.1.0 \
+  --set rollout.blueGreen.activeColor=green
+
+# Canary: a weighted share of ingress traffic (requires ingress-nginx).
+helm upgrade gambit deploy/helm/gambit \
+  --set rollout.strategy=canary \
+  --set rollout.canary.tag=1.1.0 \
+  --set rollout.canary.weight=10
+```
+
+Both run two API versions against one database, so migrations in the release must be
+backward compatible with the version still serving. See
+`docs/adr/0075-progressive-delivery.md`.
 
 ## External secrets
 

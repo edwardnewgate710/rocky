@@ -396,6 +396,28 @@ jobs:
             --set secrets.externalSecrets.accessTokenSecret.key=gambit/access-token \
             | kubeconform -strict -ignore-missing-schemas -summary
 
+      # M14 inc 9 (ADR-0075): the progressive-delivery strategies render more
+      # objects than the default does — a second Deployment and Service per HTTP
+      # component, and an extra Ingress — so each one needs its own schema pass.
+      - name: Helm template (blue/green) + kubeconform
+        run: |
+          helm template deploy/helm/gambit \
+            --set secrets.accessTokenSecret=test-only-access-token-secret-32-bytes-minimum \
+            --set secrets.postgresPassword=test-only-postgres-password \
+            --set rollout.strategy=blueGreen \
+            --set rollout.blueGreen.colors.green.tag=0.2.0 \
+            | kubeconform -strict -summary
+
+      - name: Helm template (canary) + kubeconform
+        run: |
+          helm template deploy/helm/gambit \
+            --set secrets.accessTokenSecret=test-only-access-token-secret-32-bytes-minimum \
+            --set secrets.postgresPassword=test-only-postgres-password \
+            --set rollout.strategy=canary \
+            --set rollout.canary.tag=0.2.0 \
+            --set rollout.canary.weight=25 \
+            | kubeconform -strict -summary
+
       # kubeconform only proves the manifests are SCHEMA-valid. It cannot tell that
       # POSTGRES_PASSWORD is declared before DATABASE_URL (Kubernetes only expands
       # $(VAR) for earlier entries), that the search kill switches reach the right

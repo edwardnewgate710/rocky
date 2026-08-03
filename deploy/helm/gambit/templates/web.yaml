@@ -1,55 +1,83 @@
 {{/*
-Web Deployment + Service + Ingress.
+Web Deployment(s) + Service(s) + Ingress(es).
 - Stateless, defaults to 2 replicas.
-- nginx inside the image proxies /v1 -> api and /ws -> gateway.
+- nginx inside the image proxies /v1 -> api and /ws -> gateway. The upstreams
+  come from API_UPSTREAM / GATEWAY_UPSTREAM, which the image renders into its
+  config at startup (ADR-0075). They cannot be baked into the image: the chart's
+  Service names are release-prefixed, and nginx resolves an upstream literal when
+  it loads its config, so a hardcoded compose name is a pod that never starts.
 - Liveness/readiness probes hit GET /.
 - Ingress is optional (gated behind web.ingress.enabled).
+
+M14 inc 9 (ADR-0075): rendered once per rollout variant, mirroring api.yaml. Each
+web variant addresses the api variant of its own version, because both lists use
+the same Service suffix — so a canary or preview cohort gets a matched
+frontend/API pair rather than a new frontend against the old API.
+
+GATEWAY_UPSTREAM is the single gateway Service for every variant. The gateway is
+not versioned by this mechanism (see values.yaml), so a change that alters the
+gateway's wire contract must stay compatible across one release.
 */}}
+{{- $variants := include "gambit.variants" (dict "root" . "component" "web") | fromYamlArray }}
+{{- range $v := $variants }}
+---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "gambit.fullname" . }}-web
+  name: {{ include "gambit.fullname" $ }}-web{{ $v.service }}
   labels:
-    {{- include "gambit.labels" . | nindent 4 }}
+    {{- include "gambit.labels" $ | nindent 4 }}
     app.kubernetes.io/component: web
 spec:
   type: ClusterIP
   ports:
     - name: http
-      port: {{ .Values.web.port }}
+      port: {{ $.Values.web.port }}
       targetPort: http
       protocol: TCP
   selector:
-    {{- include "gambit.selectorLabels" . | nindent 4 }}
+    {{- include "gambit.selectorLabels" $ | nindent 4 }}
     app.kubernetes.io/component: web
+    {{- with (include "gambit.variantSelectorLabels" $v) }}{{ . | nindent 4 }}{{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "gambit.fullname" . }}-web
+  name: {{ include "gambit.fullname" $ }}-web{{ $v.name }}
   labels:
-    {{- include "gambit.labels" . | nindent 4 }}
+    {{- include "gambit.labels" $ | nindent 4 }}
     app.kubernetes.io/component: web
+    {{- with (include "gambit.variantSelectorLabels" $v) }}{{ . | nindent 4 }}{{- end }}
 spec:
-  replicas: {{ .Values.web.replicas }}
+  replicas: {{ $v.replicas }}
   selector:
     matchLabels:
-      {{- include "gambit.selectorLabels" . | nindent 6 }}
+      {{- include "gambit.selectorLabels" $ | nindent 6 }}
       app.kubernetes.io/component: web
+      {{- with (include "gambit.variantSelectorLabels" $v) }}{{ . | nindent 6 }}{{- end }}
   template:
     metadata:
       labels:
-        {{- include "gambit.labels" . | nindent 8 }}
+        {{- include "gambit.labels" $ | nindent 8 }}
         app.kubernetes.io/component: web
+        {{- with (include "gambit.variantSelectorLabels" $v) }}{{ . | nindent 8 }}{{- end }}
     spec:
       containers:
         - name: web
-          image: "{{ .Values.images.web.repository }}:{{ .Values.images.web.tag }}"
-          imagePullPolicy: {{ .Values.images.web.pullPolicy | quote }}
+          image: "{{ $.Values.images.web.repository }}:{{ $v.tag }}"
+          imagePullPolicy: {{ $.Values.images.web.pullPolicy | quote }}
           ports:
             - name: http
-              containerPort: {{ .Values.web.port }}
+              containerPort: {{ $.Values.web.port }}
               protocol: TCP
+          env:
+            # Same-variant API pairing: $v.service is "" for the primary,
+            # "-preview" or "-canary" for the alternate, and the api Service of
+            # the matching variant carries the same suffix.
+            - name: API_UPSTREAM
+              value: "{{ include "gambit.fullname" $ }}-api{{ $v.service }}:{{ $.Values.api.port }}"
+            - name: GATEWAY_UPSTREAM
+              value: "{{ include "gambit.fullname" $ }}-gateway:{{ $.Values.gateway.port }}"
           livenessProbe:
             httpGet:
               path: /
@@ -65,9 +93,10 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
           resources:
-            {{- toYaml .Values.web.resources | nindent 12 }}
----
+            {{- toYaml $.Values.web.resources | nindent 12 }}
+{{- end }}
 {{- if .Values.web.ingress.enabled }}
+---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -90,10 +119,89 @@ spec:
                 name: {{ include "gambit.fullname" . }}-web
                 port:
                   number: {{ .Values.web.port }}
-  {{- if .Values.web.ingress.tls.enabled }}
-  tls:
-    - hosts:
-        - {{ .Values.web.ingress.host | quote }}
-      secretName: {{ .Values.web.ingress.tls.secretName | quote }}
+  {{- include "gambit.ingressTls" (dict "root" . "host" .Values.web.ingress.host) | nindent 2 }}
+{{- if eq .Values.rollout.strategy "canary" }}
+---
+{{/*
+Canary Ingress (M14 inc 9, ADR-0075).
+
+Same host and path as the primary Ingress. ingress-nginx treats an Ingress
+annotated `canary: "true"` as a weighted overlay on the matching rule rather than
+a conflicting one, and routes `canary-weight` percent of requests to this
+backend. The weight is real percentage routing, not a replica-count ratio, so it
+does not quantise with the number of pods.
+
+This is ingress-nginx-specific. Another controller ignores these annotations,
+which would send full traffic to both Ingresses — hence the ingressClassName is
+carried over unchanged and DEPLOYING.md states the requirement.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "gambit.fullname" . }}-web-canary
+  labels:
+    {{- include "gambit.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+    gambit.dev/track: "canary"
+  annotations:
+    nginx.ingress.kubernetes.io/canary: "true"
+    nginx.ingress.kubernetes.io/canary-weight: {{ .Values.rollout.canary.weight | quote }}
+    {{- if .Values.rollout.canary.header }}
+    nginx.ingress.kubernetes.io/canary-by-header: {{ .Values.rollout.canary.header | quote }}
+    {{- end }}
+spec:
+  {{- if .Values.web.ingress.className }}
+  ingressClassName: {{ .Values.web.ingress.className | quote }}
   {{- end }}
+  rules:
+    - host: {{ .Values.web.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "gambit.fullname" . }}-web-canary
+                port:
+                  number: {{ .Values.web.port }}
+  {{- include "gambit.ingressTls" (dict "root" . "host" .Values.web.ingress.host) | nindent 2 }}
+{{- end }}
+{{- if and (eq .Values.rollout.strategy "blueGreen") .Values.rollout.blueGreen.preview.enabled }}
+---
+{{/*
+Preview Ingress (M14 inc 9, ADR-0075).
+
+A separate hostname for the standby color, so the version that is about to take
+production traffic can be exercised against production dependencies first. It
+carries no canary annotations: nothing is split, this host simply resolves to the
+other color.
+
+With TLS enabled the preview host reuses the primary certificate secret, so that
+certificate has to cover the preview hostname too (a wildcard, or an explicit SAN).
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "gambit.fullname" . }}-web-preview
+  labels:
+    {{- include "gambit.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+    gambit.dev/track: "preview"
+spec:
+  {{- if .Values.web.ingress.className }}
+  ingressClassName: {{ .Values.web.ingress.className | quote }}
+  {{- end }}
+  rules:
+    - host: {{ include "gambit.previewHost" . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "gambit.fullname" . }}-web-preview
+                port:
+                  number: {{ .Values.web.port }}
+  {{- include "gambit.ingressTls" (dict "root" . "host" (include "gambit.previewHost" .)) | nindent 2 }}
+{{- end }}
 {{- end }}

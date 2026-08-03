@@ -22,7 +22,7 @@ future auditor does not have to re-derive it.
 | 3 | Cross-node command queue (Redis lists, ADR-0010) | forwarded command envelopes from peer gateway pods |
 | 4 | Postgres adapters (`packages/persistence/src/pg`) | everything above, once it reaches SQL |
 | 5 | Engine subprocess (`packages/engine`) | UCI traffic to/from a Stockfish binary |
-| 6 | Public web proxy (`docker/web/nginx.conf`) | any internet request |
+| 6 | Public web proxy (`docker/web/nginx.conf.template`) | any internet request |
 | 7 | Supply chain | npm dependencies |
 
 Assets worth protecting: password hashes, refresh tokens, email addresses, moderation verdicts
@@ -34,7 +34,7 @@ Assets worth protecting: password hashes, refresh tokens, email addresses, moder
 
 ### SEC-1 — Prometheus registry publicly exposed (Medium) — FIXED
 
-`docker/web/nginx.conf` proxied the whole of `/v1/` to the API, and `GET /v1/metrics` is a `PUBLIC`
+`docker/web/nginx.conf.template` proxied the whole of `/v1/` to the API, and `GET /v1/metrics` is a `PUBLIC`
 route. The Helm Ingress routes `/` to the web service, so on any deployed Gambit the full Prometheus
 registry was retrievable unauthenticated from the internet.
 

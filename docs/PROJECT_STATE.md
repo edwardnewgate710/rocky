@@ -4,7 +4,92 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-02 — M10 Increment 9: social UI on the profile page (ADR-0074), the first web increment of M10._
+_Last updated: 2026-08-03 — M14 Increment 9: blue/green + canary delivery, and the web proxy repair it uncovered (ADR-0075)._
+
+## M14 Increment 9 — Blue/green + canary delivery (ADR-0075)
+
+### The web tier had never worked in Kubernetes
+
+`docker/web/nginx.conf` hardcoded its upstreams as the **compose** service names (`proxy_pass
+http://api:8080`). The Helm chart names Services after the release (`release-name-gambit-api`), and
+nginx resolves an upstream literal when it loads its config — not per request. So the web pod exited
+with `[emerg] host not found in upstream "api"` before it ever listened, taking the SPA, `/v1` and
+`/ws` with it, since all three arrive through that proxy. Reproduced directly against the built
+image before the fix, and again after.
+
+No gate saw it: CI proves the manifests are schema-valid and that the image builds, and neither runs
+the image against the manifests. This is the third instance of one failure mode — a hand-maintained
+copy of a name that lives somewhere else (see M14 inc 8's Dockerfile build order, and the runtime
+`COPY` list before it).
+
+`docker/web/nginx.conf` is now `docker/web/nginx.conf.template`, rendered by the nginx image's
+envsubst entrypoint from `API_UPSTREAM` / `GATEWAY_UPSTREAM`. `Dockerfile.web` sets the compose names
+as ENV defaults (so `docker compose up` is unchanged) and the chart injects the release-prefixed
+Service names. `NGINX_ENVSUBST_FILTER` restricts substitution to those two variables so envsubst
+cannot rewrite nginx's own `$host` / `$uri` / `$scheme`.
+
+### Progressive delivery
+
+- **`rollout.strategy`**: `rolling` (the unchanged default — the default render is byte-identical to
+  the previous chart apart from the upstream fix), `blueGreen`, or `canary`. Applies to **api and
+  web only**.
+- **Blue/green**: both colors render as separate Deployments; the primary Service selects
+  `gambit.dev/color: <activeColor>`. The cutover and the rollback are the same one-value upgrade and
+  neither restarts a pod or pulls an image. The standby has its own Service and preview hostname so
+  the incoming version can be exercised against production dependencies first.
+- **Canary**: a second track behind ingress-nginx's `canary`/`canary-weight` annotations — real
+  percentage routing rather than a replica ratio, which would quantise the smallest possible canary
+  at 33% with two stable pods and couple the traffic decision to the capacity decision. Optional
+  `canary-by-header` for deterministic opt-in; weight 0 is valid (staged, header-only).
+- **Version pairing**: the api and web variant lists are parallel, so each web pod's `API_UPSTREAM`
+  addresses the api variant of its own version. A canary cohort gets the canary frontend *and* the
+  canary API. This is only expressible because of the upstream fix above.
+- **Exclusions, deliberate**: the gateway keeps its rolling update (a flip severs every live
+  WebSocket connection, and game-command ownership per ADR-0010 is keyed by game, not version — two
+  versions would both be legitimate owners), and the search indexer stays pinned at one replica.
+- **Fail-closed**: unknown strategy, `activeColor` outside blue/green, a preview color with no tag of
+  its own, a canary with no tag, a canary with no Ingress, and a weight outside 0–100 all fail the
+  render.
+- **Standing constraint**: both strategies run two API versions against one database, so migrations
+  in such a release must be backward compatible with the version still serving (expand/contract).
+  Concurrent migration runs are already safe — `migrate()` holds a database-wide advisory lock.
+
+### What the tests caught
+
+32 new assertions in `scripts/helm-snapshot-test.sh` (82 total, all passing). Four real defects were
+caught before merge, each by a different reviewer:
+
+- **The flip-invariance assertion** — *a flip changes no Deployment name, image or replica count* —
+  failed on the first draft: the standby was sized at `preview.replicas: 1`, so the cutover would
+  have moved all production traffic onto a single pod and scaled up afterwards. The standby now
+  matches the active color's count.
+- **clean-code-guard** found the preview hostname and the Ingress TLS stanza duplicated across three
+  Ingresses (now `gambit.previewHost` / `gambit.ingressTls`), and that `default` swallowed a
+  deliberate `preview.replicas: 0`, silently giving a staged standby full capacity.
+- **Qodo (2)** found that requiring an explicit tag on the *standby* color while the active one fell
+  back to `images.<component>.tag` meant a release configured with only the incoming tag rendered
+  fine and then failed to render **at the moment of the flip** — the newly-inactive color having no
+  tag. Both colors now fall back; what is rejected is the two resolving to the same image, which is
+  the condition that actually makes a preview pointless.
+- **Qodo (1)** found the one that would have broken a live cluster: under `canary` the stable track kept
+  the unsuffixed Deployment name while adding `gambit.dev/track: stable` to `spec.selector`, which is
+  **immutable** in `apps/v1` — so `rolling` → `canary` would have been rejected on upgrade. The
+  stable track is now `…-api-stable`, so every strategy owns a distinct name set and each switch is a
+  replace. A new assertion holds the strategies' Deployment names disjoint.
+
+Every guard added here was mutation-tested by reintroducing the bug it covers (`API_UPSTREAM` back to
+`api:8080`; dropping the stable track label; restoring `default` on the standby count; putting the
+canary's stable track back on the unsuffixed name) and confirming it fails.
+
+**CodeRabbit produced no review verdict on this PR** — walkthrough comment only, no
+`Actionable comments posted:` line. That is the known free-plan failure mode, not a clean review.
+
+CI's helm job gained kubeconform passes for the blue/green and canary renders, which contain objects
+the default render does not.
+
+Detailed in `docs/adr/0075-progressive-delivery.md`.
+
+Prior: _Last updated: 2026-08-02 — M10 Increment 9: social UI on the profile page (ADR-0074), the first web increment of M10._
 
 ## M10 Social Graph Increment 1 — Pure Social Graph Domain Core (ADR-0066)
 
