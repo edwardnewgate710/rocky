@@ -189,6 +189,12 @@ async function main(): Promise<void> {
   const connectionsCounter = metrics.counter('gateway_connections_opened_total');
   const messagesCounter = metrics.counter('gateway_messages_received_total');
   const authFailuresCounter = metrics.counter('gateway_auth_failures_total');
+  const ownedGamesGauge = metrics.gauge('gateway_owned_games');
+  const forwardedCommandsCounter = metrics.counter('gateway_forwarded_commands_total');
+  const forwardTimeoutsCounter = metrics.counter('gateway_forward_timeouts_total');
+  const claimsCounter = metrics.counter('gateway_ownership_claims_total');
+  const releasesCounter = metrics.counter('gateway_ownership_releases_total');
+  const forwardLatencyHistogram = metrics.histogram('gateway_forward_latency_seconds', [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5]);
   if (!secret || secret.length < 32) {
     logger.error('ACCESS_TOKEN_SECRET is required and must be at least 32 bytes');
     process.exit(1);
@@ -404,6 +410,9 @@ async function main(): Promise<void> {
       nodeId,
       leaseTtlSec: ownershipLeaseTtlSec,
       renewalIntervalSec: ownershipRenewalIntervalSec,
+      claimsCounter,
+      releasesCounter,
+      ownedGamesGauge,
     });
     // Consumer must exist before the router so ownership hooks can start it.
     const consumer = new OwnerCommandConsumer(authority, cmdRedis, tracer);
@@ -417,6 +426,9 @@ async function main(): Promise<void> {
       forwardTimeoutMs: cmdForwardTimeoutMs,
       consumer,
       tracer,
+      forwardedCommandsCounter,
+      forwardTimeoutsCounter,
+      forwardLatencyHistogram,
     });
     commandConsumer = consumer;
     ownershipRegistry = registry;
@@ -442,6 +454,7 @@ async function main(): Promise<void> {
         eventLog: process.env['DATABASE_URL'] ? 'postgres' : 'memory',
         commandRouting: redisUrl ? 'redis' : 'local',
         ownedGames: ownershipRegistry?.ownedCount ?? 0,
+        ownershipRegistry: redisUrl ? 'redis' : 'local',
       }));
       return;
     }

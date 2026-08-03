@@ -1,0 +1,35 @@
+name: Chaos & Failover Validation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  chaos-test:
+    name: Chaos & Failover Test (Two-Node Stack)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Build gateway package
+        run: npm run build -w @chess-platform/realtime-gateway
+
+      - name: Bring up two-node Docker stack
+        run: docker compose -f docker-compose.yml -f docker-compose.chaos.yml up -d --build
+
+      - name: Run chaos test suite
+        run: node scripts/chaos-test.mjs
+
+      - name: Teardown Docker stack
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.chaos.yml down -v

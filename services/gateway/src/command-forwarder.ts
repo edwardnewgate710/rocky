@@ -32,6 +32,8 @@ import type { GameEvent } from '@chess-platform/game';
 import {
   type Span,
   type Tracer,
+  type Counter,
+  type Histogram,
   NullTracer,
   generateTraceId,
   formatTraceparent,
@@ -58,6 +60,12 @@ export interface RedisCommandRouterOptions {
   consumer: OwnerCommandConsumer;
   /** Tracer for span instrumentation. Defaults to NullTracer. */
   tracer?: Tracer;
+  /** Optional metric counter for forwarded commands total. */
+  forwardedCommandsCounter?: Counter;
+  /** Optional metric counter for forward timeouts total. */
+  forwardTimeoutsCounter?: Counter;
+  /** Optional metric histogram for command forwarding latency in seconds. */
+  forwardLatencyHistogram?: Histogram;
 }
 
 const DEFAULT_FORWARD_TIMEOUT_MS = 5000;
@@ -170,6 +178,13 @@ export class RedisCommandRouter implements CommandRouter {
   private readonly forwardTimeoutMs: number;
   private readonly consumer: OwnerCommandConsumer;
   private readonly tracer: Tracer;
+  /** Games newly claimed by this node whose cached aggregate has not been rehydrated yet. */
+  private readonly staleAfterClaim = new Set<string>();
+  /** In-flight rehydrations, so concurrent commands for one game share a single log read. */
+  private readonly rehydrations = new Map<string, Promise<void>>();
+  private readonly forwardedCommandsCounter: Counter | undefined;
+  private readonly forwardTimeoutsCounter: Counter | undefined;
+  private readonly forwardLatencyHistogram: Histogram | undefined;
   private hooksInstalled = false;
 
   constructor(opts: RedisCommandRouterOptions) {
@@ -180,6 +195,9 @@ export class RedisCommandRouter implements CommandRouter {
     this.forwardTimeoutMs = opts.forwardTimeoutMs ?? DEFAULT_FORWARD_TIMEOUT_MS;
     this.consumer = opts.consumer;
     this.tracer = opts.tracer ?? new NullTracer();
+    this.forwardedCommandsCounter = opts.forwardedCommandsCounter;
+    this.forwardTimeoutsCounter = opts.forwardTimeoutsCounter;
+    this.forwardLatencyHistogram = opts.forwardLatencyHistogram;
     this.installHooks();
   }
 
@@ -191,15 +209,60 @@ export class RedisCommandRouter implements CommandRouter {
     if (this.hooksInstalled) return;
     this.hooksInstalled = true;
     this.registry.setHooks({
-      onClaimed: (gameId) => this.consumer.startConsumer(gameId),
+      onClaimed: (gameId) => {
+        // Taking ownership means this node may hold a stale aggregate: while another node
+        // owned the game, its moves arrived here as pub/sub BROADCASTS, which fan out to
+        // rooms and never touch the local authority. Applying a command against that copy
+        // rejects legal moves — the exact failure ADR-0010 was written to eliminate,
+        // reappearing at the moment of failover.
+        //
+        // The reload cannot happen here: this hook is synchronous, and rehydrating is not.
+        // Evicting alone is worse than doing nothing, because apply() does not hydrate on a
+        // cache miss — it answers `unknown_game`. So record the debt and settle it on the
+        // async command path, in route().
+        this.staleAfterClaim.add(gameId);
+        this.consumer.startConsumer(gameId);
+      },
       onReleased: (gameId) => this.consumer.stopConsumer(gameId),
     });
+  }
+
+  /**
+   * Settle the reload debt recorded by `onClaimed` before this node acts as the authority for a
+   * game it has only just taken over.
+   *
+   * Every path that can acquire ownership must go through here, not just the common one: the
+   * forward-timeout path claims the game too, and `ensureLoaded()` is a no-op on a cache hit, so
+   * reaching `apply()` from there without this would validate against exactly the stale copy this
+   * whole mechanism exists to discard.
+   *
+   * Concurrent commands for the same game share one log read rather than each issuing their own.
+   * The stale mark is cleared only on success, so a failed reload is retried by the next command
+   * instead of being silently forgotten.
+   */
+  private async rehydrateIfStale(gameId: string): Promise<void> {
+    if (!this.staleAfterClaim.has(gameId)) return;
+
+    let inFlight = this.rehydrations.get(gameId);
+    if (!inFlight) {
+      inFlight = this.authority
+        .reloadFromLog(gameId)
+        .then(() => {
+          this.staleAfterClaim.delete(gameId);
+        })
+        .finally(() => {
+          this.rehydrations.delete(gameId);
+        });
+      this.rehydrations.set(gameId, inFlight);
+    }
+    await inFlight;
   }
 
   async route(gameId: string, userId: string, cmd: Command): Promise<ApplyResult> {
     const claim = await this.registry.claim(gameId);
 
     if (claim.owned) {
+      await this.rehydrateIfStale(gameId);
       // Consumer was started by the onClaimed hook (or already running).
       return withCommandSpan(this.tracer, cmd.kind, { traceId: generateTraceId() }, () =>
         this.authority.apply(gameId, userId, cmd),
@@ -232,6 +295,9 @@ export class RedisCommandRouter implements CommandRouter {
     const requestId = `${this.nodeId}-${randomUUID()}`;
     const cmdKey = `${CMD_PREFIX}:${gameId}`;
     const respKey = `${RESP_PREFIX}:${requestId}`;
+
+    this.forwardedCommandsCounter?.inc();
+    const startTime = performance.now();
 
     const forwardSpan = this.tracer.startSpan('gateway.forward', {
       traceId: parentTraceId,
@@ -289,6 +355,10 @@ export class RedisCommandRouter implements CommandRouter {
       // an error; the enclosing gateway.command span is what records the command's real outcome.
       const reclaimed = await this.registry.claim(gameId);
       if (reclaimed.owned) {
+        // This is a takeover: the previous owner stopped answering. Whatever this node has cached
+        // predates its ownership, so it must be replaced from the log before the command that
+        // triggered the takeover is applied.
+        await this.rehydrateIfStale(gameId);
         await this.authority.ensureLoaded(gameId);
         return this.authority.apply(gameId, userId, cmd);
       }
@@ -328,6 +398,11 @@ export class RedisCommandRouter implements CommandRouter {
       forwardSpan.setStatus('error');
       throw err;
     } finally {
+      const latencySec = (performance.now() - startTime) / 1000;
+      this.forwardLatencyHistogram?.observe(latencySec);
+      if (timedOut) {
+        this.forwardTimeoutsCounter?.inc();
+      }
       forwardSpan.end();
     }
   }

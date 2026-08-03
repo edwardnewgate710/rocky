@@ -1,0 +1,46 @@
+services:
+  gateway:
+    environment:
+      NODE_ID: "node1"
+      OWNERSHIP_LEASE_TTL_SEC: "3"
+      OWNERSHIP_RENEWAL_INTERVAL_SEC: "1"
+      TOURNAMENT_REPORTER: "1"
+      SEARCH_INDEXER: "0"
+    ports:
+      - "${GATEWAY_PORT:-4175}:4175"
+      - "${GATEWAY_HEALTH_PORT:-4176}:4176"
+
+  gateway-node2:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://gambit:${POSTGRES_PASSWORD:-gambit_dev}@postgres:5432/gambit
+      ACCESS_TOKEN_SECRET: ${ACCESS_TOKEN_SECRET:-dev-secret-change-me-in-production-at-least-32-bytes!!}
+      ACCESS_TOKEN_TTL_SEC: "900"
+      PORT: "4175"
+      HEALTH_PORT: "4176"
+      HOST: "0.0.0.0"
+      NODE_ENV: production
+      REDIS_URL: redis://redis:6379
+      NODE_ID: "node2"
+      OWNERSHIP_LEASE_TTL_SEC: "3"
+      OWNERSHIP_RENEWAL_INTERVAL_SEC: "1"
+      TOURNAMENT_REPORTER: "0"
+      SEARCH_INDEXER: "0"
+    ports:
+      - "${GATEWAY_NODE2_PORT:-4177}:4175"
+      - "${GATEWAY_NODE2_HEALTH_PORT:-4178}:4176"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4176/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s

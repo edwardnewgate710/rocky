@@ -801,12 +801,26 @@ Helm with `-f deploy/environments/<env>.values.yaml`, runs a pre-flight `helm te
 
 Eight safety invariants are statically asserted by `scripts/check-deploy-gates.mjs` (`npm run check:deploy-gates`), wired into CI (`ci.yml`) under the `helm` job, and workflow flag compositions are asserted in `scripts/helm-snapshot-test.sh`. Reconciled chart `values.yaml` image references to `ghcr.io/senasehs19-oss/gambit-{api,gateway,web}` matching published repositories.
 
+### Increment 11: Multi-node game authority chaos & failover validation (ADR-0077) ✅
+
+Validates the multi-node game-authority design (ADR-0010) against a real two-node stack (`docker-compose.chaos.yml`) driven by `scripts/chaos-test.mjs`.
+
+- **Observability metrics**: Added `gateway_owned_games` (gauge), `gateway_forwarded_commands_total` (counter), `gateway_forward_timeouts_total` (counter), `gateway_ownership_claims_total` (counter), `gateway_ownership_releases_total` (counter), `gateway_forward_latency_seconds` (histogram) to the gateway's `/metrics` output, and added `ownedGames` count + `ownershipRegistry: 'redis' | 'local'` to `/health`. Metric surface verified against `scripts/check-observability-drift.mjs`.
+- **Two-node stack (`docker-compose.chaos.yml`)**: Applied as a Docker Compose override adding `gateway-node2` alongside `gateway`, setting `OWNERSHIP_LEASE_TTL_SEC=3` and `OWNERSHIP_RENEWAL_INTERVAL_SEC=1` on both nodes for fast, observable failover in tests. Exactly one node hosts `TOURNAMENT_REPORTER` and `SEARCH_INDEXER`.
+- **Chaos test script (`scripts/chaos-test.mjs`)**: Plain Node ESM script verifying 4 scenarios against the real stack:
+  - Cross-node correctness (players on different gateway nodes play alternating moves, zero rejections, positions match).
+  - Ungraceful owner loss (`docker kill` owner, surviving node claims ownership within lease TTL + margin, play continues without lost/duplicated moves).
+  - Graceful drain (`docker stop` owner, `releaseAll` compare-and-delete runs, successor claims immediately).
+  - Redis loss (`docker stop redis`, non-owner forwarding fails; owner behavior checked vs ADR-0010 claims; recovery verified when Redis returns).
+- **Opt-in CI (`.github/workflows/chaos.yml`)**: `workflow_dispatch`-only workflow running the chaos test on demand.
+- **Architectural record (`docs/adr/0077-chaos-failover-validation.md`)**: Records findings, scenarios, metric additions, and Redis loss behavior differences.
+
 ### Deferred (later M14 increments)
 
 - Terraform IaC for cloud provisioning
-- 100k-user load testing + chaos validation
-- Sharded game authority with durable state
-- Sticky per-game routing for horizontal gateway scaling
+- 100k-user cluster load testing (chaos and failover mechanisms validated in Increment 11)
+- Dedicated game authority shards separate from gateway processes (ADR-0010 §3/§9; single-owner authority with Redis ownership registry and command forwarding is implemented)
+- Optional sticky per-game routing as an optimization (ADR-0010 rejected sticky routing as primary authority architecture in favor of command forwarding; preserved as optional future load-balancing optimization)
 
 ---
 

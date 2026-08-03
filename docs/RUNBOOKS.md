@@ -216,3 +216,41 @@ Two very different causes, and the first is far more likely:
 Expired tokens produce a low background rate; that is normal and should not reach one per second.
 
 **Recovered when:** `rate(gateway_auth_failures_total[5m])` returns to its baseline.
+
+---
+
+## Gateway Chaos & Multi-Node Failover Runbook
+
+### Running the Chaos Test Suite Locally
+
+The chaos test suite exercises multi-node game authority ownership, command forwarding, ungraceful crash failover, graceful drain handoff, and Redis loss recovery using a two-node Docker Compose stack.
+
+**Execution:**
+```bash
+# Bring up the two-node chaos stack
+docker compose -f docker-compose.yml -f docker-compose.chaos.yml up -d --build
+
+# Run the automated chaos test suite
+node scripts/chaos-test.mjs
+
+# Teardown the stack when done
+docker compose -f docker-compose.yml -f docker-compose.chaos.yml down -v
+```
+
+### Production Failure Modes & Observability Signs
+
+1. **Ungraceful Gateway Node Crash (SIGKILL / OOM / Host Failure)**:
+   - **Production Symptom**: Active WebSocket connections on the failed node drop. Clients automatically reconnect (or open new connections) to surviving gateway nodes.
+   - **Observability Signal**: `gateway_owned_games` gauge drops on crashed pod (or pod disappears from Prometheus scrape target). `gateway_ownership_claims_total` counter increments on surviving nodes as commands arrive for orphaned games and the 30s lease TTL (or shortened test TTL) expires.
+   - **Recovery Verification**: Ensure surviving nodes successfully claim ownership and process commands. Verify Postgres event log has zero missing or duplicate events for active games.
+
+2. **Graceful Node Drain / Maintenance (SIGTERM / Helm Rollout)**:
+   - **Production Symptom**: Gateway replica receives SIGTERM. `OwnershipRegistry.releaseAll()` runs compare-and-delete Lua scripts for all owned games before exit.
+   - **Observability Signal**: `gateway_ownership_releases_total` counter increments on terminating node; `gateway_owned_games` drops to 0. Successor node claims ownership immediately on the next client command without waiting for lease TTL expiry.
+   - **Recovery Verification**: Forwarding latency and claim latency remain low during rolling gateway upgrades.
+
+3. **Redis Outage / Connectivity Loss**:
+   - **Production Symptom**: Non-owner command forwarding fails with queue/connection timeouts. Inter-node pub/sub broadcasts stall.
+   - **Observability Signal**: `gateway_forward_timeouts_total` counter spikes on non-owner gateway nodes. Log messages report `[OwnershipRegistry] renewal failed` or Redis connection failures.
+   - **Recovery Verification**: Once Redis connectivity is restored, `pingRedis` health checks succeed, `OwnershipRegistry.startRenewal()` resumes lease renewals, and non-owner command forwarding recovers automatically.
+

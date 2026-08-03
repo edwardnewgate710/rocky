@@ -15,6 +15,7 @@
  */
 
 import type { Redis } from 'ioredis';
+import type { Counter, Gauge } from '@chess-platform/api';
 
 /** Result of an ownership claim attempt. */
 export type ClaimResult =
@@ -30,6 +31,12 @@ export interface OwnershipRegistryOptions {
   leaseTtlSec?: number;
   /** Renewal interval in seconds (default 15). */
   renewalIntervalSec?: number;
+  /** Optional metric counter for successful ownership claims. */
+  claimsCounter?: Counter;
+  /** Optional metric counter for ownership releases. */
+  releasesCounter?: Counter;
+  /** Optional metric gauge for owned games count. */
+  ownedGamesGauge?: Gauge;
 }
 
 const DEFAULT_LEASE_TTL_SEC = 30;
@@ -65,6 +72,9 @@ export class OwnershipRegistry {
   private readonly nodeId: string;
   private readonly leaseTtlSec: number;
   private readonly renewalIntervalSec: number;
+  private readonly claimsCounter: Counter | undefined;
+  private readonly releasesCounter: Counter | undefined;
+  private readonly ownedGamesGauge: Gauge | undefined;
   private readonly ownedGames = new Set<string>();
   private renewalTimer: ReturnType<typeof setInterval> | undefined;
   private onClaimed: ((gameId: string) => void) | undefined;
@@ -75,6 +85,9 @@ export class OwnershipRegistry {
     this.nodeId = opts.nodeId;
     this.leaseTtlSec = opts.leaseTtlSec ?? DEFAULT_LEASE_TTL_SEC;
     this.renewalIntervalSec = opts.renewalIntervalSec ?? DEFAULT_RENEWAL_INTERVAL_SEC;
+    this.claimsCounter = opts.claimsCounter;
+    this.releasesCounter = opts.releasesCounter;
+    this.ownedGamesGauge = opts.ownedGamesGauge;
   }
 
   /**
@@ -99,9 +112,7 @@ export class OwnershipRegistry {
     // SET NX EX — atomic claim with a real key-level TTL.
     const set = await this.redis.set(key, this.nodeId, 'EX', this.leaseTtlSec, 'NX');
     if (set === 'OK') {
-      const wasNew = !this.ownedGames.has(gameId);
-      this.ownedGames.add(gameId);
-      if (wasNew) this.onClaimed?.(gameId);
+      this.markClaimed(gameId);
       return { owned: true, nodeId: this.nodeId };
     }
 
@@ -109,28 +120,34 @@ export class OwnershipRegistry {
     const ownerNodeId = await this.redis.get(key);
     if (ownerNodeId === this.nodeId) {
       // We already own it (e.g. re-claim after local state loss). Ensure local set.
-      const wasNew = !this.ownedGames.has(gameId);
-      this.ownedGames.add(gameId);
-      if (wasNew) this.onClaimed?.(gameId);
+      this.markClaimed(gameId);
       return { owned: true, nodeId: this.nodeId };
     }
     if (!ownerNodeId) {
       // Race: key expired between SET NX and GET. Retry once.
       const retry = await this.redis.set(key, this.nodeId, 'EX', this.leaseTtlSec, 'NX');
       if (retry === 'OK') {
-        const wasNew = !this.ownedGames.has(gameId);
-        this.ownedGames.add(gameId);
-        if (wasNew) this.onClaimed?.(gameId);
+        this.markClaimed(gameId);
         return { owned: true, nodeId: this.nodeId };
       }
       const retryOwner = await this.redis.get(key);
       if (retryOwner === this.nodeId) {
-        this.ownedGames.add(gameId);
+        this.markClaimed(gameId);
         return { owned: true, nodeId: this.nodeId };
       }
       return { owned: false, ownerNodeId: retryOwner ?? 'unknown' };
     }
     return { owned: false, ownerNodeId };
+  }
+
+  private markClaimed(gameId: string): void {
+    const wasNew = !this.ownedGames.has(gameId);
+    this.ownedGames.add(gameId);
+    if (wasNew) {
+      this.claimsCounter?.inc();
+      this.ownedGamesGauge?.set(this.ownedGames.size);
+      this.onClaimed?.(gameId);
+    }
   }
 
   /**
@@ -155,6 +172,8 @@ export class OwnershipRegistry {
     const key = ownerKey(gameId);
     await this.redis.eval(RELEASE_LUA, 1, key, this.nodeId);
     if (this.ownedGames.delete(gameId)) {
+      this.releasesCounter?.inc();
+      this.ownedGamesGauge?.set(this.ownedGames.size);
       this.onReleased?.(gameId);
     }
   }
@@ -165,6 +184,7 @@ export class OwnershipRegistry {
     for (const gameId of games) {
       await this.release(gameId);
     }
+    this.ownedGamesGauge?.set(0);
   }
 
   /**
@@ -214,8 +234,10 @@ export class OwnershipRegistry {
         );
         if (renewed === 0 || renewed === '0') {
           // Lost ownership — another node claimed after our key expired.
-          this.ownedGames.delete(gameId);
-          this.onReleased?.(gameId);
+          if (this.ownedGames.delete(gameId)) {
+            this.ownedGamesGauge?.set(this.ownedGames.size);
+            this.onReleased?.(gameId);
+          }
         }
       } catch (err) {
         console.error(`[OwnershipRegistry] renewal failed for ${gameId}:`, err);

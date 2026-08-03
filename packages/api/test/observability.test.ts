@@ -81,6 +81,17 @@ test('InMemoryMetrics counter increments and renders as Prometheus text', () => 
   assert.ok(out.includes('reqs_total{route="/b"} 1'));
 });
 
+test('InMemoryMetrics gauge sets, increments, decrements, and renders as Prometheus text', () => {
+  const m = new InMemoryMetrics();
+  const g = m.gauge('active_games');
+  g.set(5);
+  g.inc(2);
+  g.dec(1);
+  const out = m.render();
+  assert.ok(out.includes('# TYPE active_games gauge'));
+  assert.ok(out.includes('active_games 6'));
+});
+
 test('InMemoryMetrics histogram buckets and renders _bucket/_sum/_count', () => {
   const m = new InMemoryMetrics();
   const h = m.histogram('lat_seconds', [0.1, 0.5, 1], { route: '/a' });

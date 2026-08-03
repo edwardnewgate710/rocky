@@ -64,7 +64,7 @@ function walk(dir, predicate) {
 /** Metric names the application actually registers. */
 function collectEmitted() {
   const emitted = new Map(); // name -> file it was found in
-  const call = /\.(counter|histogram)\(\s*'([a-zA-Z_:][a-zA-Z0-9_:]*)'/g;
+  const call = /\.(counter|histogram|gauge)\(\s*'([a-zA-Z_:][a-zA-Z0-9_:]*)'/g;
 
   for (const dir of SOURCE_DIRS) {
     for (const file of walk(join(REPO_ROOT, dir), (f) => extname(f) === '.ts' && !f.endsWith('.d.ts'))) {

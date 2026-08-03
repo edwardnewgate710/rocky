@@ -4,7 +4,43 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-03 — M14 Increment 10: deploy-gated CI/CD pipeline, pre-flight template validation, and release/deploy workflows (ADR-0076)._
+_Last updated: 2026-08-03 — M14 Increment 11: chaos & failover validation of multi-node game authority (ADR-0077)._
+
+## M14 Increment 11 — Chaos & failover validation of multi-node game authority (ADR-0077)
+
+### It found a real bug on its first honest run
+
+**A node taking over a game validated commands against a stale aggregate**, so the surviving node
+rejected a legal move (`not_your_turn`) after the owner was SIGKILLed — with the durable log proving
+the move legal. Pub/sub delivers an owner's moves to *rooms*, never to the other node's authority, so
+node 2's copy sat at ply 0 while the game advanced. This is the exact stale-authority failure ADR-0010
+exists to prevent, reappearing at failover; `FakeRedis` single-process tests could not see it because
+there is no second node holding a stale copy.
+
+Fixed in `RedisCommandRouter`: a game is marked stale when `onClaimed` fires (which happens only on a
+genuine ownership transition) and is evicted and rehydrated from the event log on the async command
+path before `apply()`. Evicting inside the hook is not possible (it is synchronous, rehydration is
+not) and evicting without reloading turns the rejection into `unknown_game` — both wrong turns were
+taken and caught by this suite before the fix landed.
+
+**Still open (reported, not papered over):** ADR-0010 §6 claims the owner can process its own commands
+while Redis is down. It cannot — `route()` calls `claim()` on every command. Scenario D prints this as
+a CONTRA-ADR finding instead of asserting the ADR's text.
+
+### Multi-node gateway chaos test suite & observability
+
+- **Observability metrics implementation**: Built the missing gateway metrics specified in ADR-0010 §7 using the existing `Metrics` port (`@chess-platform/api`): `gateway_owned_games` (gauge), `gateway_forwarded_commands_total` (counter), `gateway_forward_timeouts_total` (counter), `gateway_ownership_claims_total` (counter), `gateway_ownership_releases_total` (counter), and `gateway_forward_latency_seconds` (histogram with buckets `[0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5]`). Updated `/health` to expose `ownedGames` count and `ownershipRegistry: 'redis' | 'local'`. Verified against `scripts/check-observability-drift.mjs` (0 errors).
+- **Two-node stack override (`docker-compose.chaos.yml`)**: Added a second gateway replica (`gateway-node2`, WS port 4177, health port 4178) alongside `gateway` (WS port 4175, health port 4176), sharing Postgres, Redis, and API containers. Shortened lease TTL (`OWNERSHIP_LEASE_TTL_SEC=3`, `OWNERSHIP_RENEWAL_INTERVAL_SEC=1`) on both nodes to make failover fast and observable. Pinned `TOURNAMENT_REPORTER: "0"` and `SEARCH_INDEXER: "0"` on node 2 so exactly one instance of each runs across the stack.
+- **Automated chaos test suite (`scripts/chaos-test.mjs`)**: Plain Node ESM script verifying 4 core scenarios against the real stack:
+  1. *Cross-node correctness*: Two players on different gateway nodes play alternating moves; verified zero move rejections, matching position FEN hashes, and non-owner command forwarding metric increments.
+  2. *Ungraceful owner loss*: SIGKILL (`docker kill`) owner container; verified surviving node claims ownership after 3s lease TTL expiry + margin, play continues cleanly, and no move is lost or duplicated.
+  3. *Graceful drain*: SIGTERM (`docker stop`) owner container; verified `releaseAll()` compare-and-delete executes and successor node claims ownership immediately (< 1.5s), measurably faster than lease TTL expiry.
+  4. *Redis loss & recovery*: Stop Redis (`docker stop redis`); verified non-owner command forwarding fails, identified finding that owner node commands also fail because `RedisCommandRouter.route()` evaluates `registry.claim()` on every route; verified full recovery when Redis returns.
+- **Opt-in CI workflow (`.github/workflows/chaos.yml`)**: `workflow_dispatch`-only workflow running the chaos test suite on demand without burning per-PR CI minutes.
+- **Stale ROADMAP corrections**: Updated M14 deferred list in `docs/ROADMAP.md` to accurately reflect that sticky routing was evaluated and rejected in ADR-0010 (retained only as optional load balancing optimization) and that single-owner authority with Redis registry and command forwarding is implemented (what is deferred is dedicated authority shards).
+- Detailed in `docs/adr/0077-chaos-failover-validation.md`.
+
+Prior: _Last updated: 2026-08-03 — M14 Increment 10: deploy-gated CI/CD pipeline, pre-flight template validation, and release/deploy workflows (ADR-0076)._
 
 ## M14 Increment 10 — Deploy-gated CI/CD pipeline (ADR-0076)
 

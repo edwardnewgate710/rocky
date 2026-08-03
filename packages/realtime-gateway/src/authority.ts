@@ -180,6 +180,24 @@ export class GameAuthority {
   }
 
   /**
+   * Reload a game from the durable log, replacing any cached copy.
+   *
+   * Unlike {@link ensureLoaded}, a cache hit does NOT short-circuit: this exists for the moment a
+   * node takes over ownership, where the cached copy is precisely what cannot be trusted — the
+   * previous owner's moves reached this node as room broadcasts, which never touch the authority.
+   *
+   * The record is swapped in only after the log read resolves, so there is no window in which the
+   * game is missing from the cache. Evicting first and loading second would open one, and a
+   * concurrent command or join landing inside it would be answered `unknown_game`.
+   */
+  async reloadFromLog(gameId: string): Promise<boolean> {
+    const logged = await this.store.load(gameId);
+    if (logged.length === 0) return false;
+    this.games.set(gameId, this.rebuildRecord(gameId, logged));
+    return true;
+  }
+
+  /**
    * Drop a game from the hot cache. Durable state is untouched, so the next
    * access rehydrates it from the log. Intended for finished/idle games to
    * bound memory; a no-op for an unknown id.
