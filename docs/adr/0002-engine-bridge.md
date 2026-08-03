@@ -6,7 +6,7 @@
 - **Supersedes:** none
 - **Superseded within this ADR:** Decision 4 (v1) — "durable Postgres cache" — is
   replaced by Decision 4 (v2), a cache **port** with an ephemeral default.
-- **Related:** [`docs/ENGINE_BRIDGE.md`](../ENGINE_BRIDGE.md), [`docs/ADR-0001`](0001-persistence-data-modeling.md)
+- **Related:** [`docs/ENGINE_BRIDGE.md`](../ENGINE_BRIDGE.md), [ADR-0001](0001-persistence-data-modeling.md)
 
 ## Context
 

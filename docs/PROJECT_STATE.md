@@ -4,7 +4,34 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-03 — M14 Increment 12: local owner lease tracking & fail-closed fast path (ADR-0078)._
+_Last updated: 2026-08-03 — Verification hygiene: an ADR claim-drift guard, and a flaky test that hid its own failure (ADR-0079)._
+
+## Verification hygiene — ADR claim drift + the e2e-harness flake (ADR-0079)
+
+M14 increment 11 found ADR-0010 §7 specifying six ownership metrics that had **never been
+implemented** — ownership was unobservable in production for months because prose is not executable.
+This closes the mechanical half of that gap.
+
+- **`scripts/check-adr-claims.mjs`** (`npm run check:adr-claims`, wired into CI's `build-test` job)
+  fails when an ADR names a repo-relative path, a metric, an `npm run` script, or a sibling ADR that
+  does not exist. It is the check that would have caught ADR-0010 §7 on the day it was written.
+- **It cannot tell you an ADR is TRUE.** ADR-0010 §6 was a false sentence with no missing identifier;
+  only executing the system finds that, which is what ADR-0077's chaos suite is for. Env vars and
+  bare filenames were deliberately left unchecked — the regexes match Redis commands and prose, and a
+  noisy guard is one people switch off.
+- **The audit found the corpus healthy**: 3 stale references across 78 ADRs, two of them created by
+  our own ADR-0075 `nginx.conf` → `nginx.conf.template` rename. This is regression prevention, not
+  cleanup, and the ADR says so rather than overselling it.
+- **The e2e-harness flake is fixed by construction, not by luck.** The bot's `resignAfterPlies` lever
+  (which the harness already had, and its own header calls a "determinism lever") is now set, bounding
+  the game to 12–14 moves against a 300-move valve. Seeding the move choice removes one source of
+  variance but was **not sufficient on its own** — seeded, the game still ran 109/155/186 moves across
+  three runs, and that measurement is recorded beside the seed. 10 consecutive runs: 10 passed.
+- The same failure also **hung the test file for 178s**, presenting as a frozen suite with the same
+  signature as the known port-4175 conflict — which is how a real failure sends the next person down
+  the wrong path entirely.
+
+Prior: _Last updated: 2026-08-03 — M14 Increment 12: local owner lease tracking & fail-closed fast path (ADR-0078)._
 
 ## M14 Increment 12 — Local owner lease tracking & fail-closed fast path (ADR-0078)
 

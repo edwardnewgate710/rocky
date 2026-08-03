@@ -23,6 +23,7 @@
  * deterministic terminal state without unbounded random play.
  */
 import type { GameAuthority } from '@chess-platform/realtime-gateway';
+import { createRng, pick } from './rng.js';
 import type { PubSub, Broadcast, StateView } from '@chess-platform/realtime-gateway';
 
 /** A simple random-move bot that plays in any game where it is seated. */
@@ -35,11 +36,20 @@ export class BotPlayer {
     resignAfterPlies: number | null;
   }>();
 
+  /**
+   * Move choice is seeded, not random. An unseeded bot made the end-to-end protocol test fail
+   * intermittently rather than reproducibly, which is the one property that makes a test worthless:
+   * a red run could not be told apart from bad luck. See `./rng.ts`.
+   */
+  private readonly rng: () => number;
+
   constructor(
     private readonly authority: GameAuthority,
     private readonly pubsub: PubSub,
+    seed = 0x9e3779b9,
   ) {
     this.botUserId = 'bot-0000-0000-0000';
+    this.rng = createRng(seed);
   }
 
   /** The bot's user id (used when creating games with the bot as a player). */
@@ -114,16 +124,16 @@ export class BotPlayer {
       return;
     }
 
-    // Pick a random legal move
+    // Pick a legal move from the seeded sequence
     const legalMoves = state.legalMoves;
     const origins = Object.keys(legalMoves);
     if (origins.length === 0) return;
 
-    const origin = origins[Math.floor(Math.random() * origins.length)];
+    const origin = pick(origins, this.rng);
     const destinations = legalMoves[origin];
     if (!destinations || destinations.length === 0) return;
 
-    const dest = destinations[Math.floor(Math.random() * destinations.length)];
+    const dest = pick(destinations, this.rng);
     const uci = `${origin}${dest}`;
 
     void this.authority

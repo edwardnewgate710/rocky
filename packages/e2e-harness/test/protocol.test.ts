@@ -13,6 +13,7 @@
  */
 import { describe, it, before, after } from 'node:test';
 import { strictEqual, ok } from 'node:assert';
+import { createRng, pick } from '../src/rng.js';
 import { request as httpRequest } from 'node:http';
 import { createServer as createNetServer, type Server as NetServer } from 'node:net';
 import { createHarness, type Harness } from '../src/index.js';
@@ -136,7 +137,13 @@ describe('e2e harness protocol test', () => {
       apiPort,
       'POST',
       '/e2e/games',
-      { whiteId: userId, blackId: harness.bot.userId },
+      // Two players choosing legal moves at random frequently fail to reach a terminal position
+      // inside this test's 300-move valve, which is why it used to fail intermittently with
+      // "game did not end after 301 moves". The harness already provides the lever for exactly
+      // this — the bot resigns once the game reaches this ply — so termination is guaranteed by
+      // construction instead of left to chance. What the test is here to prove is that the
+      // protocol carries a game to `ended` and broadcasts it, not that random play finds a mate.
+      { whiteId: userId, blackId: harness.bot.userId, botResignsAfterPlies: 20 },
       accessToken,
     );
     strictEqual(bridgeResp.status, 201, `bridge route failed: ${JSON.stringify(bridgeResp)}`);
@@ -169,6 +176,11 @@ describe('e2e harness protocol test', () => {
     let ended = false;
     let moveCount = 0;
     const maxMoves = 300; // safety valve
+    // Seeded rather than Math.random(), which removes one source of run-to-run variance. It does
+    // NOT make the game identical every run: how many draws each side takes still depends on
+    // message timing, and while seeded this played 109, 155 and 186 moves across three runs.
+    // Guaranteed termination comes from botResignsAfterPlies above, not from this seed.
+    const rng = createRng(0x1a2b3c4d);
 
     while (!ended && moveCount < maxMoves) {
       // Get current state from the authority (co-located)
@@ -186,9 +198,9 @@ describe('e2e harness protocol test', () => {
           ended = true;
           break;
         }
-        const origin = origins[Math.floor(Math.random() * origins.length)];
+        const origin = pick(origins, rng);
         const dests = state.legalMoves[origin];
-        const dest = dests[Math.floor(Math.random() * dests.length)];
+        const dest = pick(dests, rng);
         const uci = `${origin}${dest}`;
 
         ws.send(JSON.stringify({ t: 'move', gameId, uci, clientSeq: moveCount + 1 }));

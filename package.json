@@ -2,7 +2,7 @@
   "name": "chess-platform",
   "version": "0.1.0",
   "private": true,
-  "description": "Open-source chess platform \u2014 monorepo root.",
+  "description": "Open-source chess platform — monorepo root.",
   "license": "AGPL-3.0-or-later",
   "workspaces": [
     "packages/*"
@@ -18,7 +18,8 @@
     "check:build-order": "node scripts/check-docker-build-order.mjs",
     "check:deploy-gates": "node scripts/check-deploy-gates.mjs",
     "load-test": "node scripts/load-test.mjs",
-    "test:gateway-redis": "node -e \"if(!process.env.REDIS_URL){console.error('REDIS_URL is required for test:gateway-redis (the Redis integration suite skips without it)');process.exit(1)}\" && npm run build --prefix services/gateway && npm test --prefix services/gateway"
+    "test:gateway-redis": "node -e \"if(!process.env.REDIS_URL){console.error('REDIS_URL is required for test:gateway-redis (the Redis integration suite skips without it)');process.exit(1)}\" && npm run build --prefix services/gateway && npm test --prefix services/gateway",
+    "check:adr-claims": "node scripts/check-adr-claims.mjs"
   },
   "engines": {
     "node": ">=22"

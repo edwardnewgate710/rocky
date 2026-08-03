@@ -825,6 +825,25 @@ Eliminates the Redis round-trip on owner command routing by introducing local ow
 - **Chaos test suite update (`scripts/chaos-test.mjs`)**: Updated `docker-compose.chaos.yml` (`OWNERSHIP_LEASE_TTL_SEC=6`, `OWNERSHIP_RENEWAL_INTERVAL_SEC=2`). Scenario D now verifies owner moves succeed during a Redis outage (inside lease window) and fail closed after lease expiry. Cleared `KNOWN_OPEN_DEFECTS` (suite passes with exit 0).
 - **Architectural record (`docs/adr/0078-owner-lease-fast-path.md`)**: Documents the availability gap, derived safety margin math, failure modes, split-brain guard, and resolution of ADR-0010 §6 claim.
 
+## ✅ Verification hygiene — ADR claim drift guard (ADR-0079)
+
+Cross-cutting, not tied to one milestone. Increment 11 found ADR-0010 §7 specifying six ownership
+metrics that had never been implemented — ownership was unobservable in production for months,
+because an ADR is prose and nothing checks it. `scripts/check-adr-claims.mjs`
+(`npm run check:adr-claims`, in CI's `build-test` job) now fails when an ADR names a repo-relative
+path, a metric, an `npm run` script or a sibling ADR that does not exist.
+
+Its limits are deliberate and stated: it proves the things ADRs name **exist**, never that an ADR is
+**true** — ADR-0010 §6 was a false sentence with no missing identifier, and only executing the system
+(ADR-0077's chaos suite) finds that class. The audit found the corpus healthy: three stale references
+across 78 ADRs, two of them from our own `nginx.conf` rename in ADR-0075.
+
+Also fixes the `e2e-harness` protocol test, which failed intermittently with `game did not end after
+301 moves` **and hung the file for 178s when it did** — presenting a failure as a frozen suite, with
+the same signature as the known port-4175 conflict. Termination is now guaranteed by the harness's own
+`resignAfterPlies` lever (12–14 moves against a 300 valve) rather than by luck; seeded move choice
+removes one source of variance but was measurably not sufficient alone. 10 consecutive runs, 10 passed.
+
 ### Deferred (later M14 increments)
 
 - Terraform IaC for cloud provisioning

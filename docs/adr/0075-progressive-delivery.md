@@ -28,7 +28,9 @@ the HTTP tier.
 While tracing where traffic actually enters the release, the web proxy turned out to be broken —
 not subtly, and not recently.
 
-`docker/web/nginx.conf` hardcoded its upstreams as the **compose** service names:
+The web proxy config — then named `nginx.conf`, today
+[`docker/web/nginx.conf.template`](../../docker/web/nginx.conf.template) — hardcoded its upstreams as
+the **compose** service names:
 
 ```nginx
 location /v1/ { proxy_pass http://api:8080; }
@@ -58,7 +60,7 @@ this ADR depends on.
 
 ### 1. The web proxy's upstreams become configuration
 
-`docker/web/nginx.conf` becomes `docker/web/nginx.conf.template`, copied to
+That `nginx.conf` becomes `docker/web/nginx.conf.template`, copied to
 `/etc/nginx/templates/default.conf.template`. The nginx image's entrypoint runs `envsubst` over that
 directory before starting, so `${API_UPSTREAM}` and `${GATEWAY_UPSTREAM}` are resolved per
 environment. `Dockerfile.web` sets the compose names as ENV defaults, so `docker compose up` behaves

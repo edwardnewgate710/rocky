@@ -108,6 +108,14 @@ jobs:
       - name: Docker build-order check
         run: npm run check:build-order
 
+      # Runs here rather than in the deploy-gated helm job because an ADR can be invalidated by ANY
+      # change: the drift that motivated this guard was a source file being renamed while an ADR kept
+      # pointing at the old path. Note the workflow's `paths-ignore: ['**/*.md']` — a markdown-only
+      # edit does not trigger CI at all, so this catches code moving away from the ADRs, which is the
+      # direction that actually rots (ADR-0079).
+      - name: ADR claim check
+        run: npm run check:adr-claims
+
   # Runs the Postgres-gated integration tests (persistence event store +
   # repositories against a real database). Everything else is hermetic.
   postgres-integration:
