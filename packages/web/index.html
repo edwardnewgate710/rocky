@@ -15,6 +15,7 @@
       <nav class="nav">
         <a href="/" data-route="lobby">Lobby</a>
         <a href="/profile" data-route="profile">Profile</a>
+        <a href="/tournaments" data-route="tournaments">Tournaments</a>
       </nav>
       <span id="auth-status" role="status" aria-live="polite">Not signed in</span>
       <button id="auth-logout" type="button" aria-label="Sign out" hidden>Sign out</button>
@@ -151,6 +152,20 @@
       <h3>Recent games</h3>
       <div id="profile-games" class="game-list" aria-label="Recent games"></div>
       <p id="profile-error" class="error" role="alert"></p>
+    </section>
+    <section id="tournaments" class="tournaments" aria-label="Tournaments" hidden>
+      <h2>Tournaments</h2>
+      <div id="tournament-list" class="panel-list" aria-label="Tournaments list"></div>
+      <p id="tournaments-error" class="error" role="alert"></p>
+    </section>
+    <section id="tournament" class="tournament" aria-label="Tournament" hidden>
+      <h2 id="tournament-name">Tournament</h2>
+      <div id="tournament-meta" class="tournament-meta" aria-label="Tournament details"></div>
+      <h3>Standings</h3>
+      <div id="tournament-standings" class="panel-list" aria-label="Standings"></div>
+      <h3>Live games</h3>
+      <div id="tournament-live" class="panel-list" aria-label="Live games"></div>
+      <p id="tournament-error" class="error" role="alert"></p>
     </section>
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -26,9 +26,23 @@ import { CreateGamePanel } from './create-game-panel.js';
 import { PlayBotDialog } from './play-bot-dialog.js';
 import { ProfileController } from './profile-controller.js';
 import type { ProfileController as ProfileControllerType } from './profile-controller.js';
+import { TournamentController } from './tournament-controller.js';
+import type { TournamentController as TournamentControllerType } from './tournament-controller.js';
+import {
+  renderTournamentList,
+  renderTournamentDetail,
+  renderStandings,
+  renderLiveBoards,
+} from './tournament-view.js';
+import {
+  renderEmpty,
+  formatClock,
+  formatTimeControl,
+} from './render-helpers.js';
+import type { EmptyStateOptions } from './render-helpers.js';
 import { SocialController } from './social-controller.js';
 import type { Relationship, SelfSocial } from './social-controller.js';
-import type { SocialPlayer } from '../api/models.js';
+import type { SocialPlayer, TournamentDetail } from '../api/models.js';
 import { ThemeToggle } from './theme-toggle.js';
 import type { ThemeToggle as ThemeToggleType } from './theme-toggle.js';
 import { AuthController } from './auth-controller.js';
@@ -38,6 +52,9 @@ import { parseRoute } from './router.js';
 import type { SeekView } from '../api/models.js';
 import type { TimeControl } from '../net/ws-protocol.js';
 
+export { renderEmpty, formatClock, formatTimeControl };
+export type { EmptyStateOptions };
+
 /** Everything the bootstrap wired, returned for later increments and tests. */
 export interface Bootstrapped {
   readonly app: App;
@@ -45,6 +62,7 @@ export interface Bootstrapped {
   readonly controller: GameControllerType | null;
   readonly lobby: LobbyControllerType | null;
   readonly profile: ProfileControllerType | null;
+  readonly tournament: TournamentControllerType | null;
   readonly auth: AuthControllerType;
   readonly theme: ThemeToggleType;
 }
@@ -58,93 +76,12 @@ export function extractGameId(pathname: string): string | null {
   return route.name === 'game' ? route.gameId : null;
 }
 
-/**
- * Format clock milliseconds as `M:SS`.
- */
-export function formatClock(ms: number): string {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-}
-
-/**
- * Format a time control into a human-readable string.
- */
-export function formatTimeControl(tc: Pick<TimeControl, 'kind' | 'initialMs' | 'incrementMs' | 'delayMs'>): string {
-  if (tc.kind === 'unlimited') return 'Unlimited';
-  if (tc.kind === 'sudden_death') {
-    const sec = tc.initialMs / 1000;
-    return sec >= 60 && sec % 60 === 0 ? `${sec / 60} min` : `${sec} sec`;
-  }
-  if (tc.kind === 'increment') {
-    return `${tc.initialMs / 60000}+${tc.incrementMs / 1000}`;
-  }
-  if (tc.kind === 'delay') {
-    const sec = tc.initialMs / 1000;
-    const base = sec >= 60 && sec % 60 === 0 ? `${sec / 60} min` : `${sec} sec`;
-    return `${base} delay ${tc.delayMs / 1000}`;
-  }
-  return 'Unknown';
-}
-
 /** Injectable seams for the bootstrap. Omit any to use browser defaults. */
 export interface BootstrapDependencies extends Partial<AppDependencies> {
   /** Override the game ID (takes precedence over URL extraction). */
   readonly gameId?: string;
   /** Override the access token (for authenticated join). */
   readonly token?: string;
-}
-
-/** Options for {@link renderEmpty}. */
-interface EmptyStateOptions {
-  /** Optional decorative glyph (a chess piece symbol); hidden from a11y. */
-  readonly mark?: string;
-  readonly title: string;
-  readonly body: string;
-  /** Optional call-to-action rendered as a SPA nav link. */
-  readonly cta?: { readonly label: string; readonly href: string; readonly route: string };
-  /** Lighter, left-aligned variant for small sub-sections (no panel). */
-  readonly inline?: boolean;
-}
-
-/**
- * Render a first-run / no-data empty state into a container, replacing its
- * contents. Empty states name the next action rather than leaving blank space.
- */
-function renderEmpty(container: HTMLElement, opts: EmptyStateOptions): void {
-  container.innerHTML = '';
-  const wrap = document.createElement('div');
-  wrap.className = opts.inline ? 'empty empty-inline' : 'empty';
-
-  if (opts.mark && !opts.inline) {
-    const mark = document.createElement('div');
-    mark.className = 'empty-mark';
-    mark.setAttribute('aria-hidden', 'true');
-    mark.textContent = opts.mark;
-    wrap.appendChild(mark);
-  }
-
-  const title = document.createElement('p');
-  title.className = 'empty-title';
-  title.textContent = opts.title;
-  wrap.appendChild(title);
-
-  const body = document.createElement('p');
-  body.className = 'empty-body';
-  body.textContent = opts.body;
-  wrap.appendChild(body);
-
-  if (opts.cta) {
-    const link = document.createElement('a');
-    link.className = 'empty-cta';
-    link.href = opts.cta.href;
-    link.dataset.route = opts.cta.route;
-    link.textContent = opts.cta.label;
-    wrap.appendChild(link);
-  }
-
-  container.appendChild(wrap);
 }
 
 /** A row action: a label plus what it does. */
@@ -491,12 +428,18 @@ export function bootstrap(
   const mainEl = doc.getElementById('game-main');
   const lobbySectionEl = doc.getElementById('lobby');
   const profileSectionEl = doc.getElementById('profile');
+  const tournamentsSectionEl = doc.getElementById('tournaments');
+  const tournamentSectionEl = doc.getElementById('tournament');
   const showGame = route.name === 'game';
   const showLobby = route.name === 'lobby';
   const showProfile = route.name === 'profile';
+  const showTournaments = route.name === 'tournaments';
+  const showTournament = route.name === 'tournament';
   if (mainEl) mainEl.hidden = !showGame;
   if (lobbySectionEl) lobbySectionEl.hidden = !showLobby;
   if (profileSectionEl) profileSectionEl.hidden = !showProfile;
+  if (tournamentsSectionEl) tournamentsSectionEl.hidden = !showTournaments;
+  if (tournamentSectionEl) tournamentSectionEl.hidden = !showTournament;
 
   // Board-only controls should not suggest functionality on lobby/profile
   // routes. They were previously visible everywhere despite doing nothing.
@@ -808,7 +751,7 @@ export function bootstrap(
         .finally(() => gameSync.start());
     }
 
-    return { app, board, controller, lobby: null, profile: null, auth, theme };
+    return { app, board, controller, lobby: null, profile: null, tournament: null, auth, theme };
   }
 
   // --- Lobby view ---
@@ -907,7 +850,7 @@ export function bootstrap(
 
     lobby.start();
 
-    return { app, board: null, controller: null, lobby, profile: null, auth, theme };
+    return { app, board: null, controller: null, lobby, profile: null, tournament: null, auth, theme };
   }
 
   // --- Profile view ---
@@ -1170,13 +1113,105 @@ export function bootstrap(
       }
     }
 
-    return { app, board: null, controller: null, lobby: null, profile, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile, tournament: null, auth, theme };
   }
 
-  // --- Standalone board (no game ID, no lobby, no profile) ---
+  // --- Tournaments list view ---
+  const tournamentsEl = doc.getElementById('tournaments');
+  if (tournamentsEl && route.name === 'tournaments') {
+    const listEl = doc.getElementById('tournament-list');
+    const errorEl = doc.getElementById('tournaments-error');
+    let listRendered = false;
+
+    const tournament = new TournamentController({
+      client: app.api,
+      callbacks: {
+        onList: (items) => {
+          listRendered = true;
+          if (listEl) renderTournamentList(listEl, items);
+        },
+        onDetail: () => {},
+        onStandings: () => {},
+        onLiveGames: () => {},
+        onLoading: (loading) => {
+          if (!listEl) return;
+          listEl.setAttribute('aria-busy', loading ? 'true' : 'false');
+          if (loading) {
+            listRendered = false;
+            listEl.innerHTML = '<div class="panel-row">Loading…</div>';
+            return;
+          }
+          // Loading ended without a render, so the request failed. The error line says what went
+          // wrong; leaving "Loading…" underneath it would contradict that and imply work still
+          // in progress.
+          if (!listRendered) listEl.innerHTML = '';
+        },
+        onError: (msg) => {
+          if (errorEl) errorEl.textContent = msg;
+        },
+      },
+    });
+
+    void tournament.loadList();
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament, auth, theme };
+  }
+
+  // --- Single tournament detail view ---
+  const tournamentEl = doc.getElementById('tournament');
+  if (tournamentEl && route.name === 'tournament') {
+    const metaEl = doc.getElementById('tournament-meta');
+    const standingsEl = doc.getElementById('tournament-standings');
+    const liveEl = doc.getElementById('tournament-live');
+    const errorEl = doc.getElementById('tournament-error');
+
+    let currentDetail: TournamentDetail | null = null;
+
+    const tournament = new TournamentController({
+      client: app.api,
+      callbacks: {
+        onList: () => {},
+        onDetail: (detail) => {
+          currentDetail = detail;
+          const nameEl = doc.getElementById('tournament-name');
+          if (nameEl) nameEl.textContent = detail.name;
+          if (metaEl) renderTournamentDetail(metaEl, detail);
+          if (detail.state === 'running') {
+            tournament.startLive(detail.id);
+          }
+        },
+        onStandings: (standings, names) => {
+          if (standingsEl) renderStandings(standingsEl, standings, names);
+        },
+        onLiveGames: (games, names) => {
+          if (liveEl) renderLiveBoards(liveEl, games, names);
+        },
+        onLoading: (loading) => {
+          if (metaEl) metaEl.setAttribute('aria-busy', loading ? 'true' : 'false');
+          if (standingsEl) standingsEl.setAttribute('aria-busy', loading ? 'true' : 'false');
+          if (liveEl) liveEl.setAttribute('aria-busy', loading ? 'true' : 'false');
+          if (!metaEl) return;
+          if (loading && currentDetail === null) {
+            metaEl.innerHTML = '<div class="panel-row">Loading…</div>';
+            return;
+          }
+          // Loading finished with no detail: the load failed. Clear the placeholder so the error
+          // line is not sitting under a claim that the page is still fetching.
+          if (!loading && currentDetail === null) metaEl.innerHTML = '';
+        },
+        onError: (msg) => {
+          if (errorEl) errorEl.textContent = msg;
+        },
+      },
+    });
+
+    void tournament.loadDetail(route.id);
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament, auth, theme };
+  }
+
+  // --- Standalone board (no game ID, no lobby, no profile, no tournament) ---
   const board = boardEl
     ? mountBoard({ boardEl, statusEl, flipEl })
     : null;
 
-  return { app, board, controller: null, lobby: null, profile: null, auth, theme };
+  return { app, board, controller: null, lobby: null, profile: null, tournament: null, auth, theme };
 }

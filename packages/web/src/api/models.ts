@@ -269,3 +269,94 @@ export interface SocialConnections {
   readonly followers: SocialPage<SocialPlayer>;
   readonly following: SocialPage<SocialPlayer>;
 }
+
+// --- Tournaments (M14 inc 15) -----------------------------------------------
+
+export type TournamentFormat = 'round_robin' | 'swiss' | 'arena';
+export type TournamentState = 'registration' | 'running' | 'finished';
+
+export interface TournamentSummary {
+  readonly id: string;
+  readonly name: string;
+  readonly format: TournamentFormat;
+  readonly state: TournamentState;
+  readonly participantCount: number;
+}
+
+export interface ArenaTournamentDetail {
+  readonly id: string;
+  readonly name: string;
+  readonly format: 'arena';
+  readonly variant: Variant;
+  readonly timeControl: TimeControl;
+  readonly durationMs: number;
+  readonly state: TournamentState;
+  readonly participants: readonly string[];
+  readonly startedAtMs?: number;
+}
+
+export interface SwissOrRoundRobinTournamentDetail {
+  readonly id: string;
+  readonly name: string;
+  readonly format: 'swiss' | 'round_robin';
+  readonly variant: Variant;
+  readonly timeControl: TimeControl;
+  readonly rounds?: number;
+  readonly state: TournamentState;
+  readonly participants: readonly string[];
+  readonly roundsGenerated: number;
+  readonly tiebreakOrder: readonly string[];
+}
+
+export type TournamentDetail = ArenaTournamentDetail | SwissOrRoundRobinTournamentDetail;
+
+export interface ArenaStanding {
+  readonly rank: number;
+  readonly playerId: string;
+  readonly points: number;
+  readonly wins: number;
+  readonly draws: number;
+  readonly losses: number;
+  readonly gamesPlayed: number;
+  readonly onFire: boolean;
+}
+
+export interface SwissOrRoundRobinStanding {
+  readonly rank: number;
+  readonly playerId: string;
+  readonly points: number;
+  readonly tiebreak: number;
+  readonly buchholz: number;
+  readonly medianBuchholz: number;
+  readonly withdrawn: boolean;
+}
+
+export type TournamentStanding = ArenaStanding | SwissOrRoundRobinStanding;
+
+export interface TournamentLiveBoard {
+  readonly gameId: string;
+  readonly white: string;
+  readonly black: string;
+  readonly ply: number;
+  readonly turn: 'w' | 'b';
+  readonly fen: string;
+  readonly fenHash: string;
+  readonly clock: {
+    readonly w: number;
+    readonly b: number;
+  };
+  readonly status:
+    | { readonly over: false }
+    | {
+        readonly over: true;
+        readonly result: string;
+        readonly termination: string;
+        readonly winner: 'w' | 'b' | null;
+      };
+}
+
+export interface TournamentLive {
+  readonly games: readonly TournamentLiveBoard[];
+  readonly standings: readonly TournamentStanding[];
+}
+

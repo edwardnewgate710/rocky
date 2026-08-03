@@ -146,3 +146,30 @@ test('the viewer-only social block starts hidden', () => {
   // relationships on another account's page.
   assert.match(HTML_TEMPLATE, /id="social-self"[^>]*hidden/);
 });
+
+// --- Tournaments region (M14 inc 15) ---
+
+test('nav link is present for tournaments', () => {
+  assert.ok(HTML_TEMPLATE.includes('href="/tournaments" data-route="tournaments">Tournaments</a>'));
+});
+
+test('every tournament section carries an aria-label', () => {
+  assert.ok(HTML_TEMPLATE.includes('aria-label="Tournaments"'));
+  assert.ok(HTML_TEMPLATE.includes('aria-label="Tournament"'));
+});
+
+test('every tournament list region carries an aria-label', () => {
+  for (const label of [
+    'aria-label="Tournaments list"',
+    'aria-label="Standings"',
+    'aria-label="Live games"',
+  ]) {
+    assert.ok(HTML_TEMPLATE.includes(label), `missing ${label}`);
+  }
+});
+
+test('tournament errors are announced', () => {
+  assert.match(HTML_TEMPLATE, /id="tournaments-error"[^>]*role="alert"/);
+  assert.match(HTML_TEMPLATE, /id="tournament-error"[^>]*role="alert"/);
+});
+

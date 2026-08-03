@@ -851,5 +851,36 @@ button:disabled {
   text-align: center;
 }
 
+/* --- Tournaments (M14 inc 15) --- */
+.tournaments,
+.tournament {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 16px;
+}
+.tournaments h3,
+.tournament h3 {
+  margin: 16px 0 8px;
+  font-size: 1rem;
+  font-weight: 600;
+}
+.tournament-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+.tournament-link {
+  color: var(--fg);
+  text-decoration: none;
+  font-weight: 600;
+}
+.tournament-link:hover,
+.tournament-link:focus-visible {
+  text-decoration: underline;
+  color: var(--sel);
+}
+
 /* --- Route visibility --- */
 [hidden] { display: none !important; }
+

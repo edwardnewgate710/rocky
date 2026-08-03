@@ -4,7 +4,21 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-03 — M14 Increment 14: "Play vs Computer" in the Gambit lobby (frontend only) (ADR-0081)._
+_Last updated: 2026-08-03 — M14 Increment 15: Tournaments UI (read-only) (ADR-0082)._
+
+## M14 Increment 15 — Tournaments UI (read-only) (ADR-0082)
+
+Exposes the tournament system (M9) in the web frontend with a read-only interface for listing tournaments, viewing tournament details, standings, and live games broadcast.
+
+- **Types (`packages/web/src/api/models.ts`)**: Added `TournamentFormat`, `TournamentState`, `TournamentSummary`, `TournamentDetail` (discriminated union on `format`: `ArenaTournamentDetail` | `SwissOrRoundRobinTournamentDetail`), `TournamentStanding` (union: `ArenaStanding` | `SwissOrRoundRobinStanding`), `TournamentLiveBoard`, and `TournamentLive`.
+- **Client (`packages/web/src/api/client.ts`)**: Added `TournamentsApi` class beside `SeeksApi` and exposed `readonly tournaments: TournamentsApi` on `GambitClient`. Four methods (`list`, `byId`, `standings`, `live`), all `auth: 'optional'`.
+- **Controller (`packages/web/src/app/tournament-controller.ts`)**: Pure DOM-free controller mirroring `ProfileController`'s `requestGeneration` stale-response guard and `LobbyController`'s injectable timer (`setInterval`/`clearInterval`). Manages `loadList`, `loadDetail` (branches on `detail.state === 'running'` to call `live` instead of redundant `/standings`), `startLive`, `stopLive`, `dispose`. Resolves player IDs using `client.graphql.resolvePlayers(ids)`.
+- **Rendering (`packages/web/src/app/tournament-view.ts`, `packages/web/src/app/render-helpers.ts`)**: Pure DOM render functions (`renderTournamentList`, `renderTournamentDetail`, `renderStandings`, `renderLiveBoards`). Uses `.panel-row` rows inside `.panel-list`, extracted shared render helpers into `render-helpers.ts` to avoid circular dependencies, player names resolved with fallback to `shortId(id)`, links to `/tournaments/:id` and `/game/:gameId`, and format-specific standing column rendering ("Tiebreak", "🔥 On fire").
+- **Routing & Markup (`packages/web/src/app/router.ts`, `index.html`)**: Added `/tournaments` and `/tournaments/:id` to `Route` union, `parseRoute`, and `routeToPath`. Added nav link and `#tournaments` / `#tournament` sections with proper `aria-label`s and `role="alert"` error elements (without `role="list"` on list containers).
+- **Wiring & Styles (`packages/web/src/app/bootstrap.ts`, `style.css`)**: Exported `renderEmpty`, `formatClock`, `formatTimeControl`, `EmptyStateOptions` from `render-helpers.ts`. Wired section visibility (`showTournaments`/`showTournament`), heading update on detail load, and route handlers in `bootstrap.ts`. Added section layout styles in `style.css` matching design scale.
+- **Tests & ADR**: Added `packages/web/test/tournament-routes.test.ts`, updated `packages/web/test/api-client.test.ts` and `packages/web/test/a11y.test.ts`, added Playwright E2E spec `packages/web/e2e/tournaments.spec.ts`. Documented design decisions in `docs/adr/0082-tournaments-ui.md` and updated `docs/ROADMAP.md`.
+
+Prior: _Last updated: 2026-08-03 — M14 Increment 14: "Play vs Computer" in the Gambit lobby (frontend only) (ADR-0081)._
 
 ## M14 Increment 14 — "Play vs Computer" in the Gambit lobby (frontend only) (ADR-0081)
 

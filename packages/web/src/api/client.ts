@@ -45,6 +45,10 @@ import type {
   SeekView,
   SelfUser,
   SessionView,
+  TournamentDetail,
+  TournamentLive,
+  TournamentStanding,
+  TournamentSummary,
   UserProfile,
   Variant,
 } from './models.js';
@@ -74,6 +78,7 @@ export class GambitClient {
   readonly users: UsersApi;
   readonly games: GamesApi;
   readonly seeks: SeeksApi;
+  readonly tournaments: TournamentsApi;
   readonly social: SocialApi;
   /** The read layer (ADR-0073). Degrades to null answers when the flag is off. */
   readonly graphql: GraphQLApi;
@@ -107,6 +112,7 @@ export class GambitClient {
     this.users = new UsersApi(this.execute);
     this.games = new GamesApi(this.execute);
     this.seeks = new SeeksApi(this.execute);
+    this.tournaments = new TournamentsApi(this.execute);
     this.social = new SocialApi(this.execute);
     this.graphql = new GraphQLApi(this.execute);
   }
@@ -307,3 +313,44 @@ export class SeeksApi {
     return this.execute<SeekView>({ method: 'POST', path: `/v1/seeks/${encodeURIComponent(id)}/accept`, auth: true });
   }
 }
+
+export class TournamentsApi {
+  private readonly execute: Execute;
+  constructor(execute: Execute) {
+    this.execute = execute;
+  }
+
+  list(limit?: number): Promise<TournamentSummary[]> {
+    return this.execute<TournamentSummary[]>({
+      method: 'GET',
+      path: '/v1/tournaments',
+      auth: 'optional',
+      ...(limit !== undefined ? { query: { limit } } : {}),
+    });
+  }
+
+  byId(id: string): Promise<TournamentDetail> {
+    return this.execute<TournamentDetail>({
+      method: 'GET',
+      path: `/v1/tournaments/${encodeURIComponent(id)}`,
+      auth: 'optional',
+    });
+  }
+
+  standings(id: string): Promise<TournamentStanding[]> {
+    return this.execute<TournamentStanding[]>({
+      method: 'GET',
+      path: `/v1/tournaments/${encodeURIComponent(id)}/standings`,
+      auth: 'optional',
+    });
+  }
+
+  live(id: string): Promise<TournamentLive> {
+    return this.execute<TournamentLive>({
+      method: 'GET',
+      path: `/v1/tournaments/${encodeURIComponent(id)}/live`,
+      auth: 'optional',
+    });
+  }
+}
+

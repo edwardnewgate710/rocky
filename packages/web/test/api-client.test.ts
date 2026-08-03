@@ -193,3 +193,57 @@ test('games.createVsBot posts to /v1/games/bot with auth and returns summary', a
   assert.deepEqual(JSON.parse(t.calls[1]!.body as string), req);
 });
 
+test('tournaments.list fetches /v1/tournaments with auth:optional', async () => {
+  const summary = { id: 't1', name: 'Weekly Arena', format: 'arena', state: 'running', participantCount: 10 };
+  const t = new FakeTransport(() => json(200, [summary]));
+  const c = make(t);
+  const list = await c.tournaments.list(5);
+  assert.equal(list.length, 1);
+  assert.equal(list[0]!.id, 't1');
+  assert.equal(t.calls[0]!.url, 'https://api.test/v1/tournaments?limit=5');
+  assert.equal(t.calls[0]!.method, 'GET');
+  assert.equal(t.calls[0]!.headers['authorization'], undefined);
+});
+
+test('tournaments.byId fetches /v1/tournaments/:id with auth:optional and encodes id', async () => {
+  const detail = {
+    id: 't 1',
+    name: 'Swiss Open',
+    format: 'swiss',
+    variant: 'standard',
+    timeControl: { initialMs: 300000, incrementMs: 0, delayMs: 0, kind: 'sudden_death' },
+    state: 'registration',
+    participants: ['p1', 'p2'],
+    roundsGenerated: 0,
+    tiebreakOrder: ['buchholz'],
+  };
+  const t = new FakeTransport(() => json(200, detail));
+  const c = make(t);
+  const res = await c.tournaments.byId('t 1');
+  assert.equal(res.id, 't 1');
+  assert.equal(t.calls[0]!.url, 'https://api.test/v1/tournaments/t%201');
+  assert.equal(t.calls[0]!.method, 'GET');
+  assert.equal(t.calls[0]!.headers['authorization'], undefined);
+});
+
+test('tournaments.standings fetches /v1/tournaments/:id/standings', async () => {
+  const standings = [{ rank: 1, playerId: 'p1', points: 3, wins: 3, draws: 0, losses: 0, gamesPlayed: 3, onFire: true }];
+  const t = new FakeTransport(() => json(200, standings));
+  const c = make(t);
+  const res = await c.tournaments.standings('t1');
+  assert.equal(res.length, 1);
+  assert.equal(t.calls[0]!.url, 'https://api.test/v1/tournaments/t1/standings');
+  assert.equal(t.calls[0]!.method, 'GET');
+});
+
+test('tournaments.live fetches /v1/tournaments/:id/live', async () => {
+  const live = { games: [], standings: [] };
+  const t = new FakeTransport(() => json(200, live));
+  const c = make(t);
+  const res = await c.tournaments.live('t1');
+  assert.deepEqual(res, live);
+  assert.equal(t.calls[0]!.url, 'https://api.test/v1/tournaments/t1/live');
+  assert.equal(t.calls[0]!.method, 'GET');
+});
+
+

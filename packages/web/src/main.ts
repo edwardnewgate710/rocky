@@ -8,14 +8,28 @@
  */
 import { bootstrap } from './app/index.js';
 
+/** The disposal surface `run()` needs; every controller it tears down exposes exactly this. */
+type Disposable = { dispose: () => void } | null;
+
 if (typeof document !== 'undefined') {
   // The theme controller is recreated on every bootstrap; keep the latest so
   // the (document-level, bound-once) theme click handler always targets it.
   let currentTheme: { toggle: () => void } | null = null;
 
+  // Controllers from the previous route. `run()` re-bootstraps in place, and the ones that own a
+  // timer or in-flight requests keep working against sections the new route has already hidden —
+  // the lobby's seek refresh, the profile's fetches, and the tournament live poll all outlive the
+  // page that started them and accumulate one more copy per navigation. Disposing the previous set
+  // first is what makes re-bootstrapping safe.
+  let previous: { lobby: Disposable; profile: Disposable; tournament: Disposable } | null = null;
+
   const run = (): void => {
+    previous?.lobby?.dispose();
+    previous?.profile?.dispose();
+    previous?.tournament?.dispose();
     const result = bootstrap(document);
     currentTheme = result.theme;
+    previous = { lobby: result.lobby, profile: result.profile, tournament: result.tournament };
   };
 
   // Bound once on document — survives bootstrap re-runs (which replace the

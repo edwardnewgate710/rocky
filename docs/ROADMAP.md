@@ -848,6 +848,19 @@ Adds a frontend UI dialog in the Gambit lobby for starting unrated games against
 - **Styles (`packages/web/src/style.css`)**: Styled `.pb-dialog` and backdrop reusing `.cg-chip`/`.cg-seg` selection vocabulary and custom properties.
 - **Tests & ADR**: Unit tests in `packages/web/test/bot-levels.test.ts` and `packages/web/test/api-client.test.ts`, static markup check in `packages/web/test/a11y.test.ts`, Playwright E2E spec in `packages/web/e2e/play-vs-computer.spec.ts`. Architectural record in `docs/adr/0081-play-vs-computer-ui.md`.
 
+### Increment 15: Tournaments UI (read-only) (ADR-0082) ✅
+
+Exposes the M9 tournament system in the web frontend with a read-only interface for listing tournaments, viewing details, standings, and live games broadcast.
+
+- **Types (`packages/web/src/api/models.ts`)**: Added `TournamentFormat`, `TournamentState`, `TournamentSummary`, `TournamentDetail` (discriminated union on `format`), `TournamentStanding` (union), `TournamentLiveBoard`, `TournamentLive`.
+- **Client (`packages/web/src/api/client.ts`)**: Added `TournamentsApi` class beside `SeeksApi` and exposed `readonly tournaments: TournamentsApi` on `GambitClient` with four `auth: 'optional'` methods (`list`, `byId`, `standings`, `live`).
+- **Controller (`packages/web/src/app/tournament-controller.ts`)**: Built DOM-free `TournamentController` with request generation guard, interval timer polling for live games, and batch player ID resolution via `client.graphql.resolvePlayers(ids)`.
+- **Rendering (`packages/web/src/app/tournament-view.ts`)**: Pure DOM render helpers (`renderTournamentList`, `renderTournamentDetail`, `renderStandings`, `renderLiveBoards`) using `.panel-row` inside `.panel-list`, exported `renderEmpty` from `bootstrap.ts`, fallback player handles, links to `/tournaments/:id` and `/game/:gameId`, and format-specific standing column rendering.
+- **Routing & Markup (`packages/web/src/app/router.ts`, `index.html`)**: Added `/tournaments` and `/tournaments/:id` routes, nav link, `#tournaments` and `#tournament` sections with proper `aria-label`s and `role="alert"` error elements.
+- **Wiring & Styles (`packages/web/src/app/bootstrap.ts`, `style.css`)**: Exported `renderEmpty` and `EmptyStateOptions`. Wired section visibility and controller lifecycle. Added CSS rules conforming to DESIGN.md constraints.
+- **Tests & ADR**: Added `packages/web/test/tournament-routes.test.ts`, updated `packages/web/test/api-client.test.ts` and `packages/web/test/a11y.test.ts`, added Playwright E2E spec `packages/web/e2e/tournaments.spec.ts`, and documented architectural decisions in `docs/adr/0082-tournaments-ui.md`.
+
+
 
 ## ✅ Verification hygiene — ADR claim drift guard (ADR-0079)
 

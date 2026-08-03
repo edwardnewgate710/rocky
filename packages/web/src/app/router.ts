@@ -11,12 +11,16 @@
  * - `/game/{id}` → game view
  * - `/profile` → profile (future)
  * - `/profile/{handle}` → profile for a specific user (future)
+ * - `/tournaments` → tournaments list
+ * - `/tournaments/{id}` → tournament detail
  */
 
 export type Route =
   | { readonly name: 'lobby' }
   | { readonly name: 'game'; readonly gameId: string }
   | { readonly name: 'profile'; readonly handle: string | null }
+  | { readonly name: 'tournaments' }
+  | { readonly name: 'tournament'; readonly id: string }
   | { readonly name: 'not-found' };
 
 /** Parse a URL pathname into a typed route. */
@@ -29,7 +33,29 @@ export function parseRoute(pathname: string): Route {
   if (segments[0] === 'profile') {
     return { name: 'profile', handle: segments[1] ?? null };
   }
+  if (segments[0] === 'tournaments') {
+    if (segments.length === 1) return { name: 'tournaments' };
+    return { name: 'tournament', id: decodeSegment(segments[1]!) };
+  }
   return { name: 'not-found' };
+}
+
+/**
+ * Decode a single path segment, tolerating malformed input.
+ *
+ * The link that produces this URL percent-encodes the id, and the API client encodes it again on
+ * the way out, so a segment left encoded here would be sent double-encoded and resolve to nothing.
+ * Today's ids are UUIDs, which survive `encodeURIComponent` untouched — this keeps the round trip
+ * honest for anything that does not. `decodeURIComponent` throws on a malformed escape (`%zz`),
+ * which a hand-typed URL can easily contain, and a thrown router is a blank page; the raw segment
+ * is the better answer because it simply fails to match a tournament.
+ */
+function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
 }
 
 /** Serialize a route back to a URL pathname. */
@@ -41,6 +67,10 @@ export function routeToPath(route: Route): string {
       return `/game/${route.gameId}`;
     case 'profile':
       return route.handle !== null ? `/profile/${route.handle}` : '/profile';
+    case 'tournaments':
+      return '/tournaments';
+    case 'tournament':
+      return `/tournaments/${route.id}`;
     case 'not-found':
       return '/not-found';
   }
