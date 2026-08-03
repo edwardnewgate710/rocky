@@ -836,6 +836,18 @@ Wires `@chess-platform/engine` into the backend for live "play vs computer" game
 - **Gateway integration**: Added `onGameLoaded` callback to `RealtimeGateway` (`packages/realtime-gateway/src/gateway.ts`), and wired engine sharing + mover lifecycle into `services/gateway/src/serve.ts`.
 - **Architectural record (`docs/adr/0080-engine-bot-opponent.md`)**: Records security design, multi-node routing rationale, unrated policy, metric definitions, and unproven golden test status.
 
+### Increment 14: "Play vs Computer" in the Gambit lobby (frontend only) (ADR-0081) ✅
+
+Adds a frontend UI dialog in the Gambit lobby for starting unrated games against Stockfish engine bots.
+
+- **Types (`packages/web/src/api/models.ts`)**: Defined `BotLevel` (`'novice' | 'club' | 'master'`) and `CreateBotGameRequest`.
+- **Typed Client (`packages/web/src/api/client.ts`)**: Added `GamesApi.createVsBot()` (`POST /v1/games/bot`).
+- **Pure Modules (`packages/web/src/app/bot-levels.ts`, `packages/web/src/app/dom.ts`)**: Created `bot-levels.ts` for difficulty level metadata and parsing, and extracted `el()` into `dom.ts`.
+- **Dialog Component (`packages/web/src/app/play-bot-dialog.ts`)**: Built `PlayBotDialog` using native `<dialog>` with difficulty options, side selection (`♔`, `½`, `♚`), time presets, unrated note, submit/cancel actions, and modal error region.
+- **Controller & Wiring (`packages/web/src/app/lobby-controller.ts`, `packages/web/src/app/bootstrap.ts`, `packages/web/index.html`)**: Added `LobbyController.createBotGame()`, mounted `#play-bot-mount` in `index.html`, and wired navigation to `/game/${gameId}` on success.
+- **Styles (`packages/web/src/style.css`)**: Styled `.pb-dialog` and backdrop reusing `.cg-chip`/`.cg-seg` selection vocabulary and custom properties.
+- **Tests & ADR**: Unit tests in `packages/web/test/bot-levels.test.ts` and `packages/web/test/api-client.test.ts`, static markup check in `packages/web/test/a11y.test.ts`, Playwright E2E spec in `packages/web/e2e/play-vs-computer.spec.ts`. Architectural record in `docs/adr/0081-play-vs-computer-ui.md`.
+
 
 ## ✅ Verification hygiene — ADR claim drift guard (ADR-0079)
 

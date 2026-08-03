@@ -156,3 +156,40 @@ test('register adopts the session', async () => {
   assert.equal(res.tokens.accessToken, 'tok-R');
   assert.equal(c.session.isAuthenticated, true);
 });
+
+test('games.createVsBot posts to /v1/games/bot with auth and returns summary', async () => {
+  const summary = {
+    id: 'game-bot-1',
+    variant: 'standard',
+    rated: false,
+    speed: 'blitz',
+    whiteId: 'u1',
+    blackId: 'bot-1',
+    result: null,
+    termination: null,
+    plyCount: 0,
+    startedAt: '2026-08-03T00:00:00Z',
+    endedAt: null,
+  };
+  const t = new FakeTransport(
+    () => json(200, auth('tok-A')),
+    () => json(200, summary),
+  );
+  const c = make(t);
+  await c.auth.login({ handle: 'alice', password: 'pw' });
+
+  const req = {
+    level: 'club' as const,
+    variant: 'standard' as const,
+    timeControl: { initialMs: 300000, incrementMs: 0, delayMs: 0, kind: 'sudden_death' as const },
+    color: 'random' as const,
+  };
+  const res = await c.games.createVsBot(req);
+  assert.equal(res.id, 'game-bot-1');
+  assert.equal(res.rated, false);
+  assert.equal(t.calls[1]!.url, 'https://api.test/v1/games/bot');
+  assert.equal(t.calls[1]!.method, 'POST');
+  assert.equal(t.calls[1]!.headers['authorization'], 'Bearer tok-A');
+  assert.deepEqual(JSON.parse(t.calls[1]!.body as string), req);
+});
+

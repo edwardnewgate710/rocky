@@ -23,6 +23,7 @@ import type { GameController as GameControllerType } from './game-controller.js'
 import { LobbyController } from './lobby-controller.js';
 import type { LobbyController as LobbyControllerType } from './lobby-controller.js';
 import { CreateGamePanel } from './create-game-panel.js';
+import { PlayBotDialog } from './play-bot-dialog.js';
 import { ProfileController } from './profile-controller.js';
 import type { ProfileController as ProfileControllerType } from './profile-controller.js';
 import { SocialController } from './social-controller.js';
@@ -399,6 +400,7 @@ export function bootstrap(
   const authStatusEl = doc.getElementById('auth-status');
 
   let selfProfileSessionHandler: ((session: AuthSession | null) => void) | null = null;
+  let playBotDialog: PlayBotDialog | null = null;
   const auth = new AuthController({
     client: app.api,
     callbacks: {
@@ -415,6 +417,12 @@ export function bootstrap(
           createBtn.disabled = session === null;
           createBtn.title = session === null ? 'Sign in to create a seek' : '';
         }
+        const playBotBtn = doc.getElementById('play-bot');
+        if (playBotBtn instanceof HTMLButtonElement) {
+          playBotBtn.disabled = session === null;
+          playBotBtn.title = session === null ? 'Sign in to play the computer' : '';
+        }
+        playBotDialog?.setAuthenticated(session !== null);
         selfProfileSessionHandler?.(session);
       },
       onPending: (pending) => {
@@ -808,6 +816,7 @@ export function bootstrap(
   if (lobbyEl && route.name === 'lobby') {
     const seekListEl = doc.getElementById('seek-list');
     const createGameEl = doc.getElementById('create-game');
+    const playBotMountEl = doc.getElementById('play-bot-mount');
     const errorEl = doc.getElementById('lobby-error');
 
     let panel: CreateGamePanel | null = null;
@@ -849,6 +858,33 @@ export function bootstrap(
           },
           onError: (msg) => {
             if (errorEl) errorEl.textContent = msg ?? '';
+          },
+        },
+      });
+    }
+
+    // Mount the play-vs-computer dialog.
+    // Variant is hardcoded to 'standard': the backend POST /v1/games/bot contract
+    // accepts any variant code, but the Stockfish engine worker build only supports
+    // standard chess rules (not Atomic, Crazyhouse, etc.). Offering other variants
+    // would be a promise the backend engine worker cannot keep.
+    if (playBotMountEl) {
+      playBotDialog = new PlayBotDialog({
+        doc,
+        mount: playBotMountEl,
+        initialAuthenticated: auth.isAuthenticated(),
+        callbacks: {
+          onSubmit: async (params) => {
+            const result = await lobby.createBotGame({
+              ...params,
+              variant: 'standard',
+            });
+            if (!result.ok) {
+              playBotDialog?.setError(result.message);
+              return null;
+            }
+            window.location.href = `/game/${result.gameId}`;
+            return result.gameId;
           },
         },
       });

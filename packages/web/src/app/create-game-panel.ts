@@ -12,6 +12,7 @@
  * radio groups (free keyboard + screen-reader grouping), and a single teal accent
  * for "selected" keep it on the Grandmaster's Study system.
  */
+import { el } from './dom.js';
 import type { TimeControl, Variant, SeekColor } from '../api/models.js';
 import { VARIANTS } from '../api/models.js';
 import type { KeyValueStorage } from '../net/session.js';
@@ -78,23 +79,6 @@ const COLOR_OPTIONS: readonly ColorOption[] = [
   { value: 'random', label: 'Random', glyph: '½' },
   { value: 'black', label: 'Black', glyph: '♚' },
 ];
-
-type Attrs = Record<string, string>;
-
-function el<K extends keyof HTMLElementTagNameMap>(
-  doc: Document,
-  tag: K,
-  attrs: Attrs = {},
-  ...children: (Node | string)[]
-): HTMLElementTagNameMap[K] {
-  const node = doc.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === 'class') node.className = v;
-    else node.setAttribute(k, v);
-  }
-  for (const c of children) node.append(c);
-  return node;
-}
 
 export class CreateGamePanel {
   private readonly doc: Document;

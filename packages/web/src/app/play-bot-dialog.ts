@@ -1,0 +1,301 @@
+/**
+ * Play vs Computer dialog — the lobby's bot game launcher.
+ *
+ * A trigger button "Play vs Computer" opens a native `<dialog>` modal with options
+ * for difficulty (Novice, Club, Master), side preference (White, Random, Black), and
+ * time control presets.
+ *
+ * It uses native `<dialog>` for built-in focus trapping and Escape handling. The
+ * component owns its DOM and form state, delegating submission to `onSubmit`.
+ */
+import type { BotLevel, SeekColor, TimeControl } from '../api/models.js';
+import { el } from './dom.js';
+import { BOT_LEVELS, DEFAULT_BOT_LEVEL, parseBotLevel } from './bot-levels.js';
+import { TIME_PRESETS, DEFAULT_PRESET_ID, presetToTimeControl, estimateSpeed } from './time-presets.js';
+
+export interface CreateBotGameParams {
+  readonly level: BotLevel;
+  readonly color: SeekColor;
+  readonly timeControl: TimeControl;
+}
+
+export interface PlayBotDialogCallbacks {
+  /**
+   * Create the game. Resolve the new game id on success, or null on failure after calling
+   * {@link PlayBotDialog.setError} — the dialog is modal, so its own error region is the only one
+   * the player can see while it is open.
+   */
+  onSubmit: (params: CreateBotGameParams) => Promise<string | null>;
+}
+
+export interface PlayBotDialogOptions {
+  readonly doc: Document;
+  readonly mount: HTMLElement;
+  readonly callbacks: PlayBotDialogCallbacks;
+  readonly initialAuthenticated?: boolean;
+}
+
+interface ColorOption {
+  readonly value: SeekColor;
+  readonly label: string;
+  readonly glyph: string;
+}
+
+const COLOR_OPTIONS: readonly ColorOption[] = [
+  { value: 'white', label: 'White', glyph: '♔' },
+  { value: 'random', label: 'Random', glyph: '½' },
+  { value: 'black', label: 'Black', glyph: '♚' },
+];
+
+export class PlayBotDialog {
+  private readonly doc: Document;
+  private readonly callbacks: PlayBotDialogCallbacks;
+
+  private readonly trigger: HTMLButtonElement;
+  private readonly dialog: HTMLDialogElement;
+  private readonly form: HTMLFormElement;
+  private readonly levelHint: HTMLParagraphElement;
+  private readonly errorEl: HTMLParagraphElement;
+  private readonly submitBtn: HTMLButtonElement;
+  private readonly cancelBtn: HTMLButtonElement;
+
+  private pending = false;
+
+  constructor(opts: PlayBotDialogOptions) {
+    this.doc = opts.doc;
+    this.callbacks = opts.callbacks;
+    const d = this.doc;
+
+    // --- Trigger ---
+    // The default button treatment, deliberately not `.cg-trigger`. That class adds weight 600 and
+    // roomier padding, which makes "Create a game" the one emphasised action on the lobby; giving
+    // this trigger the same treatment would put two equally loud calls to action side by side.
+    // DESIGN.md's rule is that hierarchy comes from placement and copy rather than a second button
+    // style, so this one stays default and sits below the seek builder.
+    this.trigger = el(d, 'button', {
+      id: 'play-bot',
+      type: 'button',
+    });
+    this.trigger.textContent = 'Play vs Computer';
+
+    // --- Title ---
+    const title = el(d, 'h2', { id: 'pb-dialog-title' }, 'Play vs Computer');
+
+    // --- Difficulty fieldset ---
+    this.levelHint = el(d, 'p', { class: 'cg-hint', id: 'pb-level-hint' });
+    const levelSeg = el(d, 'div', { class: 'cg-segmented' });
+    for (const lvl of BOT_LEVELS) {
+      levelSeg.append(
+        this.segment('pb-level', lvl.id, lvl.label, lvl.id === DEFAULT_BOT_LEVEL),
+      );
+    }
+    const levelField = el(
+      d,
+      'fieldset',
+      { class: 'cg-field' },
+      el(d, 'legend', {}, 'Difficulty'),
+      levelSeg,
+      this.levelHint,
+    );
+    for (const radio of levelSeg.querySelectorAll<HTMLInputElement>('input[name="pb-level"]')) {
+      radio.setAttribute('aria-describedby', 'pb-level-hint');
+    }
+
+    // --- Color fieldset ---
+    const colorSeg = el(d, 'div', { class: 'cg-segmented' });
+    for (const c of COLOR_OPTIONS) {
+      colorSeg.append(
+        this.segment('pb-color', c.value, c.label, c.value === 'random', c.glyph),
+      );
+    }
+    const colorField = el(
+      d,
+      'fieldset',
+      { class: 'cg-field' },
+      el(d, 'legend', {}, 'Color'),
+      colorSeg,
+    );
+
+    // --- Time control fieldset ---
+    const presets = el(d, 'div', { class: 'cg-presets' });
+    for (const p of TIME_PRESETS) {
+      const speed = estimateSpeed(presetToTimeControl(p.minutes, p.increment));
+      presets.append(
+        this.chip('pb-time', p.id, p.id, p.id === DEFAULT_PRESET_ID, speed),
+      );
+    }
+    const timeField = el(
+      d,
+      'fieldset',
+      { class: 'cg-field' },
+      el(d, 'legend', {}, 'Time control'),
+      presets,
+    );
+
+    // --- Unrated notice ---
+    const unratedNote = el(
+      d,
+      'p',
+      { class: 'cg-hint pb-unrated-note' },
+      'Games against the computer are unrated.',
+    );
+
+    // --- Error region ---
+    this.errorEl = el(d, 'p', {
+      class: 'cg-field-error',
+      id: 'pb-error',
+      role: 'alert',
+      hidden: '',
+    });
+
+    // --- Actions ---
+    this.submitBtn = el(d, 'button', { type: 'submit', class: 'cg-submit' });
+    this.submitBtn.textContent = 'Start game';
+    this.cancelBtn = el(d, 'button', { type: 'button', class: 'cg-cancel' });
+    this.cancelBtn.textContent = 'Cancel';
+    const actions = el(d, 'div', { class: 'cg-actions' }, this.submitBtn, this.cancelBtn);
+
+    // --- Form ---
+    this.form = el(d, 'form', { class: 'cg-form' });
+    this.form.append(levelField, colorField, timeField, unratedNote, this.errorEl, actions);
+
+    // --- Dialog ---
+    this.dialog = el(d, 'dialog', {
+      class: 'pb-dialog',
+      'aria-labelledby': 'pb-dialog-title',
+    });
+    this.dialog.append(title, this.form);
+
+    // --- Event Handlers ---
+    this.trigger.addEventListener('click', () => this.open());
+    this.cancelBtn.addEventListener('click', () => this.close());
+    // A create request cannot be recalled once sent — the game is either created or it is not — so
+    // the dialog stays put until it settles. Letting Esc or Cancel dismiss it mid-flight would clear
+    // `pending` while the request continued, and the caller would then navigate a player who had
+    // just cancelled into a game they no longer wanted, or let them submit a second one.
+    this.dialog.addEventListener('cancel', (e) => {
+      if (this.pending) e.preventDefault();
+    });
+    this.dialog.addEventListener('close', () => {
+      this.setError(null);
+    });
+    this.form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      void this.submit();
+    });
+    this.form.addEventListener('change', (e) => {
+      const t = e.target;
+      if (t instanceof HTMLInputElement && t.name === 'pb-level') {
+        this.updateLevelHint();
+      }
+    });
+
+    opts.mount.replaceChildren(this.trigger, this.dialog);
+    this.setAuthenticated(opts.initialAuthenticated ?? false);
+    this.updateLevelHint();
+  }
+
+  get isOpen(): boolean {
+    return this.dialog.open;
+  }
+
+  private chip(name: string, value: string, label: string, checked: boolean, speed?: string): HTMLLabelElement {
+    const d = this.doc;
+    const input = el(d, 'input', { type: 'radio', name, value });
+    if (checked) input.checked = true;
+    const parts: (Node | string)[] = [input, el(d, 'span', { class: 'cg-chip-label' }, label)];
+    if (speed) parts.push(el(d, 'span', { class: 'cg-chip-speed' }, speed));
+    return el(d, 'label', { class: 'cg-chip' }, ...parts);
+  }
+
+  private segment(name: string, value: string, label: string, checked: boolean, glyph?: string): HTMLLabelElement {
+    const d = this.doc;
+    const input = el(d, 'input', { type: 'radio', name, value });
+    if (checked) input.checked = true;
+    const inner = el(d, 'span', { class: 'cg-seg-label' });
+    if (glyph) inner.append(el(d, 'span', { class: 'cg-seg-glyph', 'aria-hidden': 'true' }, glyph));
+    inner.append(label);
+    return el(d, 'label', { class: 'cg-seg' }, input, inner);
+  }
+
+  private readChecked(name: string): string | null {
+    const input = this.form.querySelector<HTMLInputElement>(`input[name="${name}"]:checked`);
+    return input ? input.value : null;
+  }
+
+  private updateLevelHint(): void {
+    const selectedId = parseBotLevel(this.readChecked('pb-level'));
+    const option = BOT_LEVELS.find((opt) => opt.id === selectedId);
+    this.levelHint.textContent = option ? option.blurb : '';
+  }
+
+  private gather(): CreateBotGameParams {
+    const level = parseBotLevel(this.readChecked('pb-level'));
+    const color = (this.readChecked('pb-color') ?? 'random') as SeekColor;
+    const timeVal = this.readChecked('pb-time') ?? DEFAULT_PRESET_ID;
+    const preset =
+      TIME_PRESETS.find((p) => p.id === timeVal) ??
+      TIME_PRESETS.find((p) => p.id === DEFAULT_PRESET_ID)!;
+    const timeControl = presetToTimeControl(preset.minutes, preset.increment);
+
+    return { level, color, timeControl };
+  }
+
+  private async submit(): Promise<void> {
+    if (this.pending) return;
+    const params = this.gather();
+    this.setError(null);
+    this.setPending(true);
+
+    try {
+      const gameId = await this.callbacks.onSubmit(params);
+      if (!gameId) {
+        this.setPending(false);
+      }
+      // On success, the caller navigates. Leave pending and open so there is no UI flash.
+    } catch (err) {
+      this.setError(err instanceof Error ? err.message : String(err));
+      this.setPending(false);
+    }
+  }
+
+  open(): void {
+    this.dialog.showModal();
+    const checked = this.form.querySelector<HTMLInputElement>('input[name="pb-level"]:checked');
+    checked?.focus();
+  }
+
+  close(): void {
+    // Mirrors the `cancel` guard: nothing dismisses the dialog while a create request is settling.
+    if (this.pending) return;
+    this.dialog.close();
+    if (!this.trigger.disabled) {
+      this.trigger.focus();
+    }
+  }
+
+  setError(message: string | null): void {
+    if (message) {
+      this.errorEl.textContent = message;
+      this.errorEl.hidden = false;
+    } else {
+      this.errorEl.textContent = '';
+      this.errorEl.hidden = true;
+    }
+  }
+
+  setPending(pending: boolean): void {
+    this.pending = pending;
+    this.submitBtn.disabled = pending;
+    this.submitBtn.textContent = pending ? 'Starting…' : 'Start game';
+    this.cancelBtn.disabled = pending;
+  }
+
+  setAuthenticated(authed: boolean): void {
+    this.trigger.disabled = !authed;
+    this.trigger.title = authed ? '' : 'Sign in to play the computer';
+    if (!authed && this.dialog.open) {
+      this.close();
+    }
+  }
+}

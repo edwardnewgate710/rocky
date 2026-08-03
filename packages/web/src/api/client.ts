@@ -33,6 +33,8 @@ import { GraphQLApi } from './graphql.js';
 import type { RetryPolicy } from '../net/retry.js';
 import type {
   AuthResponse,
+  BotLevel,
+  CreateBotGameRequest,
   CreateSeekRequest,
   GameSummary,
   Health,
@@ -276,6 +278,10 @@ export class GamesApi {
 
   byId(id: string): Promise<GameSummary> {
     return this.execute<GameSummary>({ method: 'GET', path: `/v1/games/${encodeURIComponent(id)}` });
+  }
+
+  createVsBot(body: CreateBotGameRequest): Promise<GameSummary> {
+    return this.execute<GameSummary>({ method: 'POST', path: '/v1/games/bot', body, auth: true });
   }
 }
 

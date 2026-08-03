@@ -787,6 +787,38 @@ button:disabled {
   .cg-seg { transition: none; }
 }
 
+/* --- Play vs Computer dialog --- */
+.play-bot {
+  display: block;
+  margin-top: 8px;
+}
+.pb-dialog {
+  box-sizing: border-box;
+  width: min(90vw, 30rem);
+  padding: 16px;
+  border: 1px solid var(--panel-strong);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+}
+.pb-dialog::backdrop {
+  background: var(--scrim);
+}
+/* Title typography (700 / 1.25rem), the same step "Open seeks" and "Profile" use. */
+.pb-dialog h2 {
+  margin: 0 0 16px 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+.pb-dialog .cg-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.pb-dialog .pb-unrated-note {
+  font-style: italic;
+}
+
 /* --- Game Actions --- */
 .game-actions {
   display: flex;

@@ -115,6 +115,10 @@ test('lobby mounts the create-a-game panel', () => {
   assert.ok(HTML_TEMPLATE.includes('id="create-game"'));
 });
 
+test('lobby mounts the play vs computer dialog', () => {
+  assert.ok(HTML_TEMPLATE.includes('id="play-bot-mount"'));
+});
+
 // --- Social region (M10 inc 9) ---
 
 test('every social list region carries an aria-label', () => {

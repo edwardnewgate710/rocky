@@ -184,6 +184,16 @@ export interface CreateSeekRequest {
   readonly maxRating?: number | null;
 }
 
+/** Engine bot difficulty, matching the server's bot catalogue. */
+export type BotLevel = 'novice' | 'club' | 'master';
+
+export interface CreateBotGameRequest {
+  readonly level: BotLevel;
+  readonly variant: Variant;
+  readonly timeControl: TimeControl;
+  readonly color?: SeekColor;
+}
+
 /** Time control shape (mirrors the server's TimeControl schema). */
 export interface TimeControl {
   readonly initialMs: number;

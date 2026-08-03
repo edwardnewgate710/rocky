@@ -4,7 +4,23 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-03 — M14 Increment 13: wire engine bridge into live play ("play vs computer") (ADR-0080)._
+_Last updated: 2026-08-03 — M14 Increment 14: "Play vs Computer" in the Gambit lobby (frontend only) (ADR-0081)._
+
+## M14 Increment 14 — "Play vs Computer" in the Gambit lobby (frontend only) (ADR-0081)
+
+Adds a frontend UI dialog in the Gambit lobby for starting unrated games against engine computer opponents.
+
+- **Types (`packages/web/src/api/models.ts`)**: Added `BotLevel` (`'novice' | 'club' | 'master'`) and `CreateBotGameRequest` (`level`, `variant`, `timeControl`, `color?`).
+- **Client (`packages/web/src/api/client.ts`)**: Added `createVsBot(body: CreateBotGameRequest): Promise<GameSummary>` method to `GamesApi` (`POST /v1/games/bot`, `auth: true`).
+- **Shared DOM Helper (`packages/web/src/app/dom.ts`)**: Extracted `el()` element creation helper from `create-game-panel.ts` into a pure shared module.
+- **Pure Module (`packages/web/src/app/bot-levels.ts`)**: Defined `BotLevelOption`, `BOT_LEVELS` array (`novice`, `club`, `master`), `DEFAULT_BOT_LEVEL` (`'club'`), and `parseBotLevel(raw)` function.
+- **Dialog Component (`packages/web/src/app/play-bot-dialog.ts`)**: Built native `<dialog>` component (`PlayBotDialog`) with difficulty selection (radios with hints), color choices (`♔`, `½`, `♚`), time control presets from `time-presets.ts`, unrated game notice, submit/cancel actions, error display, and auth gating (`setAuthenticated`, `setPending`).
+- **Lobby Controller (`packages/web/src/app/lobby-controller.ts`)**: Added `createBotGame(params)` method calling `this.client.games.createVsBot(...)`, gated by `isAuthenticated`.
+- **Wiring & Markup (`packages/web/src/app/bootstrap.ts`, `packages/web/index.html`)**: Added `#play-bot-mount` element in `index.html`. Wired `PlayBotDialog` in `bootstrap.ts` to call `createBotGame` with standard variant and navigate to `/game/${gameId}` on success. Updated auth state handlers for the play-bot button.
+- **Styles (`packages/web/src/style.css`)**: Added `.pb-dialog` dialog styling reusing existing selection vocabulary (`.cg-chip`, `.cg-seg`, `.cg-field`, etc.), CSS custom properties, backdrop styling, and responsive layout.
+- **Tests & ADR**: Added `packages/web/test/bot-levels.test.ts`, updated `packages/web/test/api-client.test.ts` and `packages/web/test/a11y.test.ts`, added Playwright E2E spec `packages/web/e2e/play-vs-computer.spec.ts`. Created `docs/adr/0081-play-vs-computer-ui.md`.
+
+Prior: _Last updated: 2026-08-03 — M14 Increment 13: wire engine bridge into live play ("play vs computer") (ADR-0080)._
 
 ## M14 Increment 13 — Wire engine bridge into live play ("play vs computer") (ADR-0080)
 

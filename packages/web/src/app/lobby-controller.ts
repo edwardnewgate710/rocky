@@ -11,7 +11,20 @@
  * API layer (`GambitClient`) only — no chess rules, no networking internals.
  */
 import type { GambitClient } from '../api/client.js';
-import type { SeekView, CreateSeekRequest, Variant, TimeControl, SeekColor } from '../api/models.js';
+import type {
+  SeekView,
+  CreateSeekRequest,
+  Variant,
+  TimeControl,
+  SeekColor,
+  BotLevel,
+  CreateBotGameRequest,
+} from '../api/models.js';
+
+/** The outcome of a bot-game create: the new game's id, or why it failed. */
+export type BotGameResult =
+  | { readonly ok: true; readonly gameId: string }
+  | { readonly ok: false; readonly message: string };
 
 /** Callbacks the bootstrap wires to DOM elements. */
 export interface LobbyCallbacks {
@@ -139,6 +152,39 @@ export class LobbyController {
       return null;
     } finally {
       this.callbacks.onCreatePending(false);
+    }
+  }
+
+  /**
+   * Start a game against an engine bot.
+   *
+   * Unlike {@link createSeek}, the failure is *returned* rather than pushed through
+   * `callbacks.onError`. The caller is a modal dialog that owns its own error region, and
+   * `onError` feeds the lobby's `#lobby-error` — which sits behind that modal, where the player
+   * cannot see it. Returning the message lets the caller put it where the eye already is, and keeps
+   * the background seek-refresh failures that also use `onError` from overwriting it.
+   */
+  async createBotGame(params: {
+    level: BotLevel;
+    variant: Variant;
+    timeControl: TimeControl;
+    color?: SeekColor;
+  }): Promise<BotGameResult> {
+    if (this.disposed) return { ok: false, message: 'Lobby is no longer active.' };
+    if (this.isAuthenticated !== undefined && !this.isAuthenticated()) {
+      return { ok: false, message: 'Sign in to play the computer.' };
+    }
+    try {
+      const body: CreateBotGameRequest = {
+        level: params.level,
+        variant: params.variant,
+        timeControl: params.timeControl,
+        ...(params.color !== undefined ? { color: params.color } : {}),
+      };
+      const game = await this.client.games.createVsBot(body);
+      return { ok: true, gameId: game.id };
+    } catch (err) {
+      return { ok: false, message: err instanceof Error ? err.message : String(err) };
     }
   }
 
