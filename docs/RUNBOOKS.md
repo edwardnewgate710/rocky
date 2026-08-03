@@ -250,7 +250,8 @@ docker compose -f docker-compose.yml -f docker-compose.chaos.yml down -v
    - **Recovery Verification**: Forwarding latency and claim latency remain low during rolling gateway upgrades.
 
 3. **Redis Outage / Connectivity Loss**:
-   - **Production Symptom**: Non-owner command forwarding fails with queue/connection timeouts. Inter-node pub/sub broadcasts stall.
-   - **Observability Signal**: `gateway_forward_timeouts_total` counter spikes on non-owner gateway nodes. Log messages report `[OwnershipRegistry] renewal failed` or Redis connection failures.
-   - **Recovery Verification**: Once Redis connectivity is restored, `pingRedis` health checks succeed, `OwnershipRegistry.startRenewal()` resumes lease renewals, and non-owner command forwarding recovers automatically.
+   - **Production Symptom**: When Redis is unreachable, non-owner nodes cannot forward commands and fail immediately. Owner nodes continue serving local commands through the fast path for the remainder of their valid lease window (derived from `OWNERSHIP_LEASE_TTL_SEC` and `OWNERSHIP_RENEWAL_INTERVAL_SEC`, up to ~22 seconds under production defaults). Once the safety margin window ages out without successful renewal, the owner closes the fast path and fails closed (rejecting commands) to prevent split-brain execution.
+   - **Observability Signal**: `gateway_ownership_renewal_failures_total` counter spikes on owner nodes. `gateway_fast_path_commands_total` increments while in the valid lease window, then stops when the lease ages out. Non-owner nodes increment `gateway_forward_timeouts_total`. Logs report `[OwnershipRegistry] renewal failed`.
+   - **Operator Action**: Restore Redis or repair network connectivity as quickly as possible. If Redis is restored before the lease window ages out (~22s), ongoing games on owner nodes suffer zero interruption. If Redis remains down past the lease window, ongoing games fail closed safely until Redis connectivity is restored and renewals/claims resume. Once Redis connectivity is restored, `pingRedis` health checks succeed, lease renewals resume, and command routing recovers automatically.
+
 

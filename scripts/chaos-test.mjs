@@ -38,6 +38,21 @@ const node2HealthUrl = process.env['NODE2_HEALTH_URL'] ?? 'http://localhost:4178
 const node2MetricsUrl = process.env['NODE2_METRICS_URL'] ?? 'http://localhost:4178/metrics';
 
 const COMPOSE_CMD = 'docker compose -f docker-compose.yml -f docker-compose.chaos.yml';
+
+/**
+ * The lease numbers the chaos stack runs with, and the fast-path window derived from them exactly
+ * as `OwnershipRegistry.safetyMarginMs` does (ADR-0078). Keep this in step with
+ * `docker-compose.chaos.yml`; a hardcoded sleep here would silently stop testing what it claims
+ * the moment either value changes.
+ */
+const LEASE_TTL_SEC = Number(process.env['OWNERSHIP_LEASE_TTL_SEC'] ?? 6);
+const RENEWAL_INTERVAL_SEC = Number(process.env['OWNERSHIP_RENEWAL_INTERVAL_SEC'] ?? 2);
+const SAFETY_MARGIN_MS =
+  Math.floor(((LEASE_TTL_SEC - RENEWAL_INTERVAL_SEC) * 1000) / 2) +
+  Math.min(1000, Math.max(200, Math.floor(RENEWAL_INTERVAL_SEC * 200)));
+/** How long after its last successful renewal a node will still serve from its lease. */
+const FAST_PATH_WINDOW_MS = LEASE_TTL_SEC * 1000 - SAFETY_MARGIN_MS;
+const LEASE_WAIT_BUFFER_MS = 1500;
 const TIMEOUT_MS = 60_000;
 const POLL_INTERVAL = 1_000;
 
@@ -429,9 +444,9 @@ async function scenarioB_UngracefulOwnerLoss() {
   execDocker('kill gateway');
   log('✓ Node 1 killed');
 
-  // Lease TTL is 3s. Wait 4s to ensure key TTL elapses.
-  log('Waiting 4s for lease TTL expiry...');
-  await new Promise((r) => setTimeout(r, 4000));
+  // Lease TTL is 6s. Wait 7s to ensure key TTL elapses.
+  log('Waiting 7s for lease TTL expiry...');
+  await new Promise((r) => setTimeout(r, 7000));
 
   // Black on Node 2 plays move 2
   log('Black playing move 2 via Node 2...');
@@ -482,7 +497,7 @@ async function scenarioC_GracefulDrain() {
   const drainDuration = Date.now() - drainStart;
   log(`✓ Node 1 stopped gracefully in ${drainDuration}ms`);
 
-  // Black plays move 2 immediately without waiting for 3s lease TTL
+  // Black plays move 2 immediately without waiting for 6s lease TTL
   log('Black playing move 2 via Node 2 immediately...');
   const moveStart = Date.now();
   clientB.sendMove('e7e5', 1);
@@ -490,8 +505,8 @@ async function scenarioC_GracefulDrain() {
   const moveDuration = Date.now() - moveStart;
   log(`✓ Move 2 accepted on Node 2 in ${moveDuration}ms`);
 
-  if (moveDuration >= 3000) {
-    throw new Error(`Graceful drain failover took ${moveDuration}ms; expected < 3000ms (not waiting for lease TTL expiry)`);
+  if (moveDuration >= 5000) {
+    throw new Error(`Graceful drain failover took ${moveDuration}ms; expected < 5000ms (not waiting for lease TTL expiry)`);
   }
 
   const h2 = await fetchJson(node2HealthUrl);
@@ -509,22 +524,25 @@ async function scenarioC_GracefulDrain() {
 }
 
 async function scenarioD_RedisLoss() {
-  log('=== Scenario D: Redis Loss ===');
-  log('Stopping Redis to assert behavior under Redis outage and recovery.');
+  log('=== Scenario D: Redis Loss & Fail-Closed Lease Expiry ===');
+  log('Asserting owner processes local commands during Redis outage inside lease window via fast path, and fails closed when lease expires.');
 
   const { gameId, white, black } = await createAndAcceptGame();
 
+  // White and Black (owner client) connect to Node 1; Black (non-owner client) connects to Node 2
   const clientW = new WsClient(node1WsUrl, white.token, gameId, 'White-Node1');
-  const clientB = new WsClient(node2WsUrl, black.token, gameId, 'Black-Node2');
+  const clientB_Owner = new WsClient(node1WsUrl, black.token, gameId, 'Black-Node1');
+  const clientB_NonOwner = new WsClient(node2WsUrl, black.token, gameId, 'Black-Node2');
 
   await clientW.connect();
-  await clientB.connect();
+  await clientB_Owner.connect();
+  await clientB_NonOwner.connect();
   const baseline = await captureOwnedCounts();
 
-  // White plays move 1 to establish Node 1 as owner
+  // White plays move 1 on Node 1 to claim ownership
   clientW.sendMove('e2e4', 1);
   await clientW.waitForMove(1);
-  await clientB.waitForMove(1);
+  await clientB_Owner.waitForMove(1);
 
   const { owner } = await determineOwnerNode(baseline);
   if (owner !== 1) throw new Error(`Expected Node 1 to own game, found Node ${owner}`);
@@ -534,12 +552,22 @@ async function scenarioD_RedisLoss() {
   execDocker('stop redis');
   log('✓ Redis stopped');
 
-  // 1. Non-owner command (Black on Node 2) should fail because forwarding requires Redis
+  // 1. Owner commands on Node 1 inside valid lease window (fast path)
+  log('Attempting owner move on Node 1 while Redis is down (inside lease window)...');
+  clientB_Owner.sendMove('e7e5', 1);
+  const m2 = await clientB_Owner.waitForMove(2, 3000);
+  log(`✓ Owner move inside lease window succeeded via fast path (ply ${m2.ply}, uci: e7e5)`);
+
+  clientW.sendMove('g1f3', 2);
+  const m3 = await clientW.waitForMove(3, 3000);
+  log(`✓ Second owner move inside lease window succeeded via fast path (ply ${m3.ply}, uci: g1f3)`);
+
+  // 2. Non-owner command (Black on Node 2) should fail because forwarding requires Redis
   log('Attempting non-owner move on Node 2 while Redis is down...');
-  clientB.sendMove('e7e5', 1);
+  clientB_NonOwner.sendMove('b8c6', 2);
   let nonOwnerFailed = false;
   try {
-    await clientB.waitForMove(2, 3000);
+    await clientB_NonOwner.waitForMove(4, 3000);
   } catch (err) {
     nonOwnerFailed = true;
     log(`✓ Non-owner command failed as expected when Redis is down: ${err.message}`);
@@ -548,35 +576,40 @@ async function scenarioD_RedisLoss() {
     throw new Error('Non-owner command succeeded while Redis was stopped!');
   }
 
-  // 2. Owner command (White on Node 1) testing against ADR-0010 claims
-  log('Attempting owner move on Node 1 while Redis is down (checking ADR-0010 §6 claim)...');
-  clientW.sendMove('g1f3', 2);
-  let ownerFailed = false;
+  // 3. Lease expiry fails closed. The wait is DERIVED from the same numbers the gateway uses,
+  // not guessed: an earlier version slept a flat 3s against a ~3.6s window and could only pass
+  // by luck — the owner's "post-expiry" move might still have been inside the window.
+  log(
+    `Waiting ${FAST_PATH_WINDOW_MS + LEASE_WAIT_BUFFER_MS}ms for the fast-path lease window ` +
+      `(${FAST_PATH_WINDOW_MS}ms, derived from TTL ${LEASE_TTL_SEC}s / renewal ${RENEWAL_INTERVAL_SEC}s) to age out...`,
+  );
+  await new Promise((r) => setTimeout(r, FAST_PATH_WINDOW_MS + LEASE_WAIT_BUFFER_MS));
+
+  log('Attempting owner move on Node 1 after lease window expired (expecting fail-closed rejection)...');
+  clientB_Owner.sendMove('b8c6', 2);
+  let ownerExpiredFailed = false;
   try {
-    await clientW.waitForMove(3, 3000);
-    log('✓ Owner move succeeded while Redis was down');
+    await clientB_Owner.waitForMove(4, 3000);
   } catch (err) {
-    ownerFailed = true;
-    log(`⚠️ CONTRA-ADR FINDING: Owner move failed when Redis was down (${err.message}).`);
-    log('  Rationale: RedisCommandRouter invokes OwnershipRegistry.claim() on every route, which queries Redis even for the owner.');
+    ownerExpiredFailed = true;
+    log(`✓ Owner move after lease expiry failed closed as expected: ${err.message}`);
+  }
+  if (!ownerExpiredFailed) {
+    throw new Error('Owner move succeeded after lease expired! Split-brain guard failed!');
   }
 
-  // 3. Restart Redis and assert recovery
+  // 4. Restart Redis and assert recovery
   log('Restarting Redis container...');
   execDocker('start redis');
   await waitForHealth(node1HealthUrl, 'Node 1 Gateway after Redis restore');
   await waitForHealth(node2HealthUrl, 'Node 2 Gateway after Redis restore');
   log('✓ Redis restarted and stack healthy');
 
-  // Re-connect and test play after Redis recovery. `gameId` is returned alongside the
-  // players, not on them — reading it off a player yields undefined, and both clients then
-  // wait forever for a `joined` that names a game nobody created.
+  // Re-connect and test play after Redis recovery
   const recovered = await createAndAcceptGame();
   const recW = new WsClient(node1WsUrl, recovered.white.token, recovered.gameId, 'Rec-White-Node1');
   const recB = new WsClient(node2WsUrl, recovered.black.token, recovered.gameId, 'Rec-Black-Node2');
 
-  // The gateways report healthy while ioredis is still backing off from the outage, so
-  // health is not readiness here. Retry the connect until the node genuinely serves again.
   await withRetry(() => recW.connect(), 'Node 1 join after Redis recovery');
   await withRetry(() => recB.connect(), 'Node 2 join after Redis recovery');
 
@@ -591,7 +624,8 @@ async function scenarioD_RedisLoss() {
   log('✓ Full command routing and cross-node play recovered successfully after Redis returned');
 
   clientW.close();
-  clientB.close();
+  clientB_Owner.close();
+  clientB_NonOwner.close();
   recW.close();
   recB.close();
 
@@ -603,22 +637,12 @@ async function scenarioD_RedisLoss() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Exit contract, so a known gap and a regression are never confused:
+ * Exit contract:
  *   0 — every scenario held.
  *   1 — a REGRESSION: behaviour that was validated has broken. Investigate immediately.
- *   2 — only KNOWN OPEN DEFECTS were observed (listed below). Nothing regressed, but the
- *       Redis-outage path is still broken and this must not be read as a clean run.
- *
- * Scenario D currently ends at exit 2. Its two defects are real and documented in
- * docs/adr/0077-chaos-failover-validation.md; they are not assertion bugs, and the
- * assertions were deliberately NOT relaxed to make the suite green.
+ *   2 — only KNOWN OPEN DEFECTS were observed.
  */
-const KNOWN_OPEN_DEFECTS = [
-  'ADR-0010 §6 says the owner can still process its own commands while Redis is down. It cannot: ' +
-    'route() calls OwnershipRegistry.claim() on every command, so the owner needs Redis too. ' +
-    'Scenario D reports this as a CONTRA-ADR finding rather than asserting the ADR text, because ' +
-    'the discrepancy is real and the fix is a design decision, not a test adjustment.',
-];
+const KNOWN_OPEN_DEFECTS = [];
 
 async function main() {
   log('Checking health of two-node stack before starting...');

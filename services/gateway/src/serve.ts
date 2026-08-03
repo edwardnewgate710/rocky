@@ -194,6 +194,8 @@ async function main(): Promise<void> {
   const forwardTimeoutsCounter = metrics.counter('gateway_forward_timeouts_total');
   const claimsCounter = metrics.counter('gateway_ownership_claims_total');
   const releasesCounter = metrics.counter('gateway_ownership_releases_total');
+  const renewalFailuresCounter = metrics.counter('gateway_ownership_renewal_failures_total');
+  const fastPathCommandsCounter = metrics.counter('gateway_fast_path_commands_total');
   const forwardLatencyHistogram = metrics.histogram('gateway_forward_latency_seconds', [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5]);
   if (!secret || secret.length < 32) {
     logger.error('ACCESS_TOKEN_SECRET is required and must be at least 32 bytes');
@@ -412,6 +414,7 @@ async function main(): Promise<void> {
       renewalIntervalSec: ownershipRenewalIntervalSec,
       claimsCounter,
       releasesCounter,
+      renewalFailuresCounter,
       ownedGamesGauge,
     });
     // Consumer must exist before the router so ownership hooks can start it.
@@ -428,6 +431,7 @@ async function main(): Promise<void> {
       tracer,
       forwardedCommandsCounter,
       forwardTimeoutsCounter,
+      fastPathCommandsCounter,
       forwardLatencyHistogram,
     });
     commandConsumer = consumer;

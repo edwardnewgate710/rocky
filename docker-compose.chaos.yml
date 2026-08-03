@@ -2,8 +2,8 @@ services:
   gateway:
     environment:
       NODE_ID: "node1"
-      OWNERSHIP_LEASE_TTL_SEC: "3"
-      OWNERSHIP_RENEWAL_INTERVAL_SEC: "1"
+      OWNERSHIP_LEASE_TTL_SEC: "6"
+      OWNERSHIP_RENEWAL_INTERVAL_SEC: "2"
       TOURNAMENT_REPORTER: "1"
       SEARCH_INDEXER: "0"
     ports:
@@ -31,8 +31,8 @@ services:
       NODE_ENV: production
       REDIS_URL: redis://redis:6379
       NODE_ID: "node2"
-      OWNERSHIP_LEASE_TTL_SEC: "3"
-      OWNERSHIP_RENEWAL_INTERVAL_SEC: "1"
+      OWNERSHIP_LEASE_TTL_SEC: "6"
+      OWNERSHIP_RENEWAL_INTERVAL_SEC: "2"
       TOURNAMENT_REPORTER: "0"
       SEARCH_INDEXER: "0"
     ports:

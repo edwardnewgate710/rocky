@@ -815,6 +815,16 @@ Validates the multi-node game-authority design (ADR-0010) against a real two-nod
 - **Opt-in CI (`.github/workflows/chaos.yml`)**: `workflow_dispatch`-only workflow running the chaos test on demand.
 - **Architectural record (`docs/adr/0077-chaos-failover-validation.md`)**: Records findings, scenarios, metric additions, and Redis loss behavior differences.
 
+### Increment 12: Local owner lease tracking & fail-closed fast path (ADR-0078) ✅
+
+Eliminates the Redis round-trip on owner command routing by introducing local owner lease tracking in `OwnershipRegistry` and a fail-closed fast path in `RedisCommandRouter`.
+
+- **Local lease tracking (`OwnershipRegistry`)**: Records monotonic expiry (`performance.now() + leaseTtlSec * 1000`) on successful claims and renewals. Exposes `holdsValidLease(gameId)` to check whether this node currently holds a valid, non-expired lease outside the safety margin.
+- **Fail-closed fast path (`RedisCommandRouter`)**: Valid owner leases process commands locally immediately without calling Redis `claim()`. If Redis becomes unreachable, renewals fail, the recorded expiry stops advancing, the safety margin closes the fast path before lease expiration in Redis, and fallback `claim()` rejects commands (failing closed to prevent split-brain).
+- **Observability metrics**: Added `gateway_ownership_renewal_failures_total` (counter) and `gateway_fast_path_commands_total` (counter) to track renewal errors and fast-path execution.
+- **Chaos test suite update (`scripts/chaos-test.mjs`)**: Updated `docker-compose.chaos.yml` (`OWNERSHIP_LEASE_TTL_SEC=6`, `OWNERSHIP_RENEWAL_INTERVAL_SEC=2`). Scenario D now verifies owner moves succeed during a Redis outage (inside lease window) and fail closed after lease expiry. Cleared `KNOWN_OPEN_DEFECTS` (suite passes with exit 0).
+- **Architectural record (`docs/adr/0078-owner-lease-fast-path.md`)**: Documents the availability gap, derived safety margin math, failure modes, split-brain guard, and resolution of ADR-0010 §6 claim.
+
 ### Deferred (later M14 increments)
 
 - Terraform IaC for cloud provisioning

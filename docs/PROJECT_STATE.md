@@ -4,7 +4,20 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-03 — M14 Increment 11: chaos & failover validation of multi-node game authority (ADR-0077)._
+_Last updated: 2026-08-03 — M14 Increment 12: local owner lease tracking & fail-closed fast path (ADR-0078)._
+
+## M14 Increment 12 — Local owner lease tracking & fail-closed fast path (ADR-0078)
+
+### Eliminating the Redis round-trip on owner command routing
+
+- **Local lease tracking in `OwnershipRegistry`**: Records monotonic expiration (`performance.now() + leaseTtlSec * 1000`) on successful claims and renewals. Renewals update expiry only when successful; failed renewals do not advance expiry.
+- **Fast path in `RedisCommandRouter.route()`**: If `holdsValidLease(gameId)` is true, commands are processed locally immediately without calling `claim()` against Redis, skipping Redis network latency and avoiding total platform halt when Redis is unavailable.
+- **Fail-closed safety property**: Derives conservative `safetyMarginMs` from `leaseTtlSec` and `renewalIntervalSec`. Closes the fast path before the Redis key expires in Redis, ensuring zero split-brain overlap. When Redis is down, renewals fail, the lease ages out, fast path closes, and fallback `claim()` rejects commands (failing closed).
+- **Gateway observability metrics**: Added `gateway_ownership_renewal_failures_total` (counter) and `gateway_fast_path_commands_total` (counter). Registered in `serve.ts` and validated with `npm run check:observability`.
+- **Chaos test suite & ADR-0010 §6 resolution**: Adjusted chaos suite `OWNERSHIP_LEASE_TTL_SEC=6` and `OWNERSHIP_RENEWAL_INTERVAL_SEC=2` in `docker-compose.chaos.yml`. Scenario D now asserts owner moves succeed during a Redis outage (inside lease window) and fail closed after lease expiry. Resolved `CONTRA-ADR FINDING` and cleared `KNOWN_OPEN_DEFECTS` (suite passes with exit 0).
+- Detailed in `docs/adr/0078-owner-lease-fast-path.md`.
+
+Prior: _Last updated: 2026-08-03 — M14 Increment 11: chaos & failover validation of multi-node game authority (ADR-0077)._
 
 ## M14 Increment 11 — Chaos & failover validation of multi-node game authority (ADR-0077)
 

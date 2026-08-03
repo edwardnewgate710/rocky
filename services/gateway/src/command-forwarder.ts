@@ -64,6 +64,8 @@ export interface RedisCommandRouterOptions {
   forwardedCommandsCounter?: Counter;
   /** Optional metric counter for forward timeouts total. */
   forwardTimeoutsCounter?: Counter;
+  /** Optional metric counter for commands served via local lease fast path. */
+  fastPathCommandsCounter?: Counter;
   /** Optional metric histogram for command forwarding latency in seconds. */
   forwardLatencyHistogram?: Histogram;
 }
@@ -184,6 +186,7 @@ export class RedisCommandRouter implements CommandRouter {
   private readonly rehydrations = new Map<string, Promise<void>>();
   private readonly forwardedCommandsCounter: Counter | undefined;
   private readonly forwardTimeoutsCounter: Counter | undefined;
+  private readonly fastPathCommandsCounter: Counter | undefined;
   private readonly forwardLatencyHistogram: Histogram | undefined;
   private hooksInstalled = false;
 
@@ -197,6 +200,7 @@ export class RedisCommandRouter implements CommandRouter {
     this.tracer = opts.tracer ?? new NullTracer();
     this.forwardedCommandsCounter = opts.forwardedCommandsCounter;
     this.forwardTimeoutsCounter = opts.forwardTimeoutsCounter;
+    this.fastPathCommandsCounter = opts.fastPathCommandsCounter;
     this.forwardLatencyHistogram = opts.forwardLatencyHistogram;
     this.installHooks();
   }
@@ -259,6 +263,18 @@ export class RedisCommandRouter implements CommandRouter {
   }
 
   async route(gameId: string, userId: string, cmd: Command): Promise<ApplyResult> {
+    // Fast path: if this node holds a valid, non-expired local lease for gameId outside
+    // the safety margin, apply locally immediately without touching Redis.
+    // Preserves takeover rehydration (rehydrateIfStale) if the game was newly claimed.
+    if (this.registry.holdsValidLease(gameId)) {
+      this.fastPathCommandsCounter?.inc();
+      await this.rehydrateIfStale(gameId);
+      return withCommandSpan(this.tracer, cmd.kind, { traceId: generateTraceId() }, () =>
+        this.authority.apply(gameId, userId, cmd),
+      );
+    }
+
+    // Fallback path: claim/renew lease via Redis, then apply locally or forward.
     const claim = await this.registry.claim(gameId);
 
     if (claim.owned) {

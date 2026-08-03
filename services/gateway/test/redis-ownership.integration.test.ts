@@ -262,3 +262,42 @@ describeOrSkip('real Redis: graceful release allows immediate re-claim', async (
     }
   });
 });
+
+describeOrSkip('real Redis: fast path local lease tracking and safety margin', async () => {
+  await withRedis(async (redis) => {
+    const gameId = `g-${randomUUID()}`;
+    const store = new InMemoryEventLog();
+    const redisConn = redis.duplicate();
+    await redisConn.connect().catch(() => undefined);
+
+    const node = makeNode({ redis: redisConn, nodeId: `node-${randomUUID()}`, store, leaseTtlSec: 4 });
+
+    try {
+      await node.authority.createGame({
+        gameId,
+        timeControl: TC,
+        players: { white: 'alice', black: 'bob' },
+        rated: true,
+      });
+
+      assert.equal(node.registry.holdsValidLease(gameId), false, 'no lease before claim');
+
+      const claim = await node.registry.claim(gameId);
+      assert.equal(claim.owned, true);
+      assert.equal(node.registry.holdsValidLease(gameId), true, 'valid lease after claim');
+
+      // Move uses fast path when holdsValidLease is true
+      const r1 = await node.router.route(gameId, 'alice', { kind: 'move', uci: 'e2e4' });
+      assert.equal(r1.state.ply, 1);
+
+      // Graceful release clears local lease
+      await node.registry.release(gameId);
+      assert.equal(node.registry.holdsValidLease(gameId), false, 'lease cleared after release');
+    } finally {
+      await shutdown(node);
+      await redisConn.quit().catch(() => undefined);
+      await redis.del(ownerKey(gameId));
+    }
+  });
+});
+

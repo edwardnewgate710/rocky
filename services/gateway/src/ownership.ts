@@ -35,6 +35,8 @@ export interface OwnershipRegistryOptions {
   claimsCounter?: Counter;
   /** Optional metric counter for ownership releases. */
   releasesCounter?: Counter;
+  /** Optional metric counter for lease renewal failures. */
+  renewalFailuresCounter?: Counter;
   /** Optional metric gauge for owned games count. */
   ownedGamesGauge?: Gauge;
 }
@@ -74,8 +76,11 @@ export class OwnershipRegistry {
   private readonly renewalIntervalSec: number;
   private readonly claimsCounter: Counter | undefined;
   private readonly releasesCounter: Counter | undefined;
+  private readonly renewalFailuresCounter: Counter | undefined;
   private readonly ownedGamesGauge: Gauge | undefined;
   private readonly ownedGames = new Set<string>();
+  /** Per-game monotonic expiration instant (`performance.now() + leaseTtlSec * 1000`). */
+  private readonly leaseExpiryMs = new Map<string, number>();
   private renewalTimer: ReturnType<typeof setInterval> | undefined;
   private onClaimed: ((gameId: string) => void) | undefined;
   private onReleased: ((gameId: string) => void) | undefined;
@@ -85,9 +90,56 @@ export class OwnershipRegistry {
     this.nodeId = opts.nodeId;
     this.leaseTtlSec = opts.leaseTtlSec ?? DEFAULT_LEASE_TTL_SEC;
     this.renewalIntervalSec = opts.renewalIntervalSec ?? DEFAULT_RENEWAL_INTERVAL_SEC;
+
+    // Both values come from operator-set env vars, and renewing no more often than the lease
+    // lasts is not a tuning choice — it is a broken lease. Every renewal would race the key's
+    // own expiry, and the derived safety margin below goes NEGATIVE, which would make
+    // holdsValidLease() answer true *after* the lease expired: the split-brain this whole
+    // mechanism exists to prevent. Refuse to start instead of serving on arithmetic nobody
+    // checked.
+    if (this.renewalIntervalSec >= this.leaseTtlSec) {
+      throw new Error(
+        `OWNERSHIP_RENEWAL_INTERVAL_SEC (${this.renewalIntervalSec}) must be less than ` +
+          `OWNERSHIP_LEASE_TTL_SEC (${this.leaseTtlSec}): a lease that expires before it is ` +
+          `renewed cannot be held safely, and the fast path would serve past expiry.`,
+      );
+    }
     this.claimsCounter = opts.claimsCounter;
     this.releasesCounter = opts.releasesCounter;
+    this.renewalFailuresCounter = opts.renewalFailuresCounter;
     this.ownedGamesGauge = opts.ownedGamesGauge;
+  }
+
+  /**
+   * Safety margin in milliseconds deducted from the recorded lease expiration.
+   *
+   * WHY DERIVED:
+   * Serving commands on an expired lease leads to split-brain (two nodes both believing
+   * they are the authority, creating divergent game states and appending conflicting events).
+   *
+   * The safety margin must cover:
+   * 1) At least one missed renewal interval (`renewalIntervalSec * 1000`), so if a single
+   *    renewal tick is missed or delayed, the fast path stops before the Redis lease expires.
+   * 2) Clock drift between this Node process and the Redis server, plus execution/network latency.
+   *
+   * Derivation:
+   * `slackMs = (leaseTtlSec - renewalIntervalSec) * 1000`.
+   * `driftMarginMs` = 1000ms (or scaled down for very small intervals).
+   * `safetyMarginMs` = `Math.floor(slackMs / 2) + driftMarginMs`.
+   *
+   * This guarantees:
+   * - Under normal operation with successful renewals every `renewalIntervalSec`, the fast path
+   *   remains valid continuously without dropping off before renewal ticks.
+   * - When Redis becomes unreachable and renewals fail, the fast path closes closed on its own
+   *   well before the key's TTL elapses in Redis, preventing split-brain execution.
+   */
+  private get safetyMarginMs(): number {
+    const slackMs = (this.leaseTtlSec - this.renewalIntervalSec) * 1000;
+    const driftMarginMs = Math.min(1000, Math.max(200, Math.floor(this.renewalIntervalSec * 200)));
+    // The constructor rejects renewal >= TTL, so slackMs is positive here. The clamp is belt and
+    // braces for the one direction that must never happen: a margin at or below zero means the
+    // fast path outlives the lease, and a defence-in-depth line is cheap next to split-brain.
+    return Math.max(driftMarginMs, Math.floor(slackMs / 2) + driftMarginMs);
   }
 
   /**
@@ -107,6 +159,25 @@ export class OwnershipRegistry {
    * owner. If another node already owns it (and the lease hasn't expired),
    * returns the owner's node ID.
    */
+  /**
+   * Extend this node's lease on `gameId` in Redis, compare-and-expire so another node's key is
+   * never touched. Returns whether we still hold it afterwards.
+   *
+   * Shared by the renewal timer and by `claim()`'s "we already hold the key" branches, so that
+   * every path which refreshes the LOCAL expiry has first refreshed the REAL one. Those two must
+   * not drift apart: the local record is what the router's fast path trusts.
+   */
+  private async renewLease(gameId: string): Promise<boolean> {
+    const renewed = await this.redis.eval(
+      RENEW_LUA,
+      1,
+      ownerKey(gameId),
+      this.nodeId,
+      String(this.leaseTtlSec),
+    );
+    return !(renewed === 0 || renewed === '0');
+  }
+
   async claim(gameId: string): Promise<ClaimResult> {
     const key = ownerKey(gameId);
     // SET NX EX — atomic claim with a real key-level TTL.
@@ -119,9 +190,17 @@ export class OwnershipRegistry {
     // Another node owns it — or we already own it (SET NX fails if key exists).
     const ownerNodeId = await this.redis.get(key);
     if (ownerNodeId === this.nodeId) {
-      // We already own it (e.g. re-claim after local state loss). Ensure local set.
-      this.markClaimed(gameId);
-      return { owned: true, nodeId: this.nodeId };
+      // We hold the key, but `SET NX` failed precisely because it exists, so nothing refreshed
+      // its TTL — it may be milliseconds from expiring. `markClaimed()` records a FULL lease
+      // locally, and the router's fast path then trusts that recording without asking Redis
+      // again. Recording a full lease on a nearly-dead key is how this node ends up serving
+      // after another node has taken the game: split-brain. Extend the key first, and only
+      // treat ourselves as the owner if that succeeded.
+      if (await this.renewLease(gameId)) {
+        this.markClaimed(gameId);
+        return { owned: true, nodeId: this.nodeId };
+      }
+      return { owned: false, ownerNodeId: (await this.redis.get(key)) ?? 'unknown' };
     }
     if (!ownerNodeId) {
       // Race: key expired between SET NX and GET. Retry once.
@@ -132,8 +211,13 @@ export class OwnershipRegistry {
       }
       const retryOwner = await this.redis.get(key);
       if (retryOwner === this.nodeId) {
-        this.markClaimed(gameId);
-        return { owned: true, nodeId: this.nodeId };
+        // Same reasoning as the branch above: the key exists and is ours, but its TTL was not
+        // refreshed by the failed SET NX.
+        if (await this.renewLease(gameId)) {
+          this.markClaimed(gameId);
+          return { owned: true, nodeId: this.nodeId };
+        }
+        return { owned: false, ownerNodeId: (await this.redis.get(key)) ?? 'unknown' };
       }
       return { owned: false, ownerNodeId: retryOwner ?? 'unknown' };
     }
@@ -143,11 +227,32 @@ export class OwnershipRegistry {
   private markClaimed(gameId: string): void {
     const wasNew = !this.ownedGames.has(gameId);
     this.ownedGames.add(gameId);
+    // Record monotonic instant (performance.now()) when the lease expires in Redis.
+    // performance.now() is monotonic and immune to NTP system clock adjustments.
+    this.leaseExpiryMs.set(gameId, performance.now() + this.leaseTtlSec * 1000);
     if (wasNew) {
       this.claimsCounter?.inc();
       this.ownedGamesGauge?.set(this.ownedGames.size);
       this.onClaimed?.(gameId);
     }
+  }
+
+  /**
+   * Check whether this node currently holds a valid local lease for `gameId`.
+   *
+   * Returns true ONLY if:
+   * 1. This node locally tracks ownership of `gameId`.
+   * 2. Monotonic current time (`performance.now()`) is strictly less than the recorded
+   *    expiry instant minus the conservative safety margin.
+   *
+   * When Redis is unreachable, renewals fail, expiry stops advancing, and this predicate
+   * turns false automatically as the lease ages out — closing the fast path and failing closed.
+   */
+  holdsValidLease(gameId: string): boolean {
+    if (!this.ownedGames.has(gameId)) return false;
+    const expiresAt = this.leaseExpiryMs.get(gameId);
+    if (expiresAt === undefined) return false;
+    return performance.now() < expiresAt - this.safetyMarginMs;
   }
 
   /**
@@ -171,6 +276,7 @@ export class OwnershipRegistry {
   async release(gameId: string): Promise<void> {
     const key = ownerKey(gameId);
     await this.redis.eval(RELEASE_LUA, 1, key, this.nodeId);
+    this.leaseExpiryMs.delete(gameId);
     if (this.ownedGames.delete(gameId)) {
       this.releasesCounter?.inc();
       this.ownedGamesGauge?.set(this.ownedGames.size);
@@ -224,22 +330,25 @@ export class OwnershipRegistry {
   private async renewAll(): Promise<void> {
     for (const gameId of [...this.ownedGames]) {
       try {
-        const key = ownerKey(gameId);
-        const renewed = await this.redis.eval(
-          RENEW_LUA,
-          1,
-          key,
-          this.nodeId,
-          String(this.leaseTtlSec),
-        );
-        if (renewed === 0 || renewed === '0') {
+        const stillOurs = await this.renewLease(gameId);
+        if (!stillOurs) {
           // Lost ownership — another node claimed after our key expired.
+          this.leaseExpiryMs.delete(gameId);
           if (this.ownedGames.delete(gameId)) {
             this.ownedGamesGauge?.set(this.ownedGames.size);
             this.onReleased?.(gameId);
           }
+        } else {
+          // SUCCESSFUL renewal: refresh the recorded monotonic lease expiration timestamp.
+          this.markClaimed(gameId);
         }
       } catch (err) {
+        // Renewal error (e.g., Redis is down or unreachable).
+        // Increment the renewal failures metric.
+        // CRITICAL SAFETY PROPERTY: Keep the game in `ownedGames` (the Redis key might still be running),
+        // but DO NOT update `leaseExpiryMs`. A failed renewal MUST NOT extend local expiry.
+        // As time advances, `holdsValidLease()` will age out and return false, closing the fast path.
+        this.renewalFailuresCounter?.inc();
         console.error(`[OwnershipRegistry] renewal failed for ${gameId}:`, err);
       }
     }
