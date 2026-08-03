@@ -4,7 +4,22 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-03 — M14 Increment 9: blue/green + canary delivery, and the web proxy repair it uncovered (ADR-0075)._
+_Last updated: 2026-08-03 — M14 Increment 10: deploy-gated CI/CD pipeline, pre-flight template validation, and release/deploy workflows (ADR-0076)._
+
+## M14 Increment 10 — Deploy-gated CI/CD pipeline (ADR-0076)
+
+### Automated release & deploy workflows
+
+- **Tag-triggered release workflow (`.github/workflows/release.yml`)**: Triggered on `v*` tag pushes. Runs full verification (`npm ci`, `npm run build`, `npm test`, `npm run lint`), validates that tag version matches `deploy/helm/gambit/Chart.yaml` `appVersion`, and builds + pushes three images (`api`, `gateway`, `web`) to GHCR using `docker/build-push-action@v5`. Images are tagged with exact version and commit SHA (`latest` is never published or deployed).
+- **Gated deployment workflow (`.github/workflows/deploy.yml`)**: Triggered via `workflow_dispatch` or `release: [published]`. Enforces human-approval gates via GitHub `environment:` (staging/production), queues deploys sequentially per environment (`concurrency: group: deploy-${env}, cancel-in-progress: false`), verifies image existence in GHCR with error output capture, runs a pre-flight `helm template` dry-run validation using exact composed strategy arguments, applies `deploy/environments/<env>.values.yaml`, and executes `helm upgrade` with `--atomic`, `--wait`, and explicit `--timeout 5m0s`. Blue/green is expressed as two runs via `target_color` (the colour receiving this version) and `active_color` (the colour serving traffic afterwards): unequal stages the version on the standby for preview, equal cuts over. It sets only `rollout.blueGreen.colors.<target_color>.tag=$VERSION` — never `images.api.tag`/`images.web.tag`, which the other colour falls back to as its rollback target, and which if overridden make both colours resolve to the same image and the chart refuse to render. `images.gateway.tag` moves on the cutover only, since the gateway is not colour-versioned. A blue/green initial install is refused: there is no published baseline for the standby and nothing to roll back to. Rollback is split three ways: `--atomic` reverts a failed upgrade; an explicit step covers verification failing *after* a successful upgrade, rolling back to the revision recorded before the upgrade; and when that revision cannot be determined for a release that demonstrably existed, the step refuses to act and calls for an operator rather than guessing. Uses explicit `require('node:fs')` in Node history parsing scripts.
+- **Environment values files (`deploy/environments/{staging,production}.values.yaml`)**: Checked-in per-environment values files passing non-secret overrides and baseline image tags for blue/green rollback targets. Credentials are referenced via `secrets.existingSecret` or ESO integration (ADR-0044).
+- **Deployment gate guard (`scripts/check-deploy-gates.mjs`)**: Plain Node ESM script (`npm run check:deploy-gates`) asserting 8 workflow invariants (environment approval gate, non-cancelling queueing concurrency, atomic helm flags, `needs:` job gating, shared helper for no `:latest` tags, release image repository alignment with `values.yaml`, no hardcoded Deployment names — which vary by rollout strategy, ADR-0075, and pre-flight `helm template` validation before `helm upgrade`). Each invariant was mutation-tested by reintroducing the defect it covers and confirming the guard fails. Wired into `.github/workflows/ci.yml` under the `helm` job.
+- **Workflow flag composition snapshot tests (`scripts/helm-snapshot-test.sh`)**: Added strategy flag composition snapshot tests for `rolling`, `blueGreen`, and `canary` to ensure workflow argument composition renders cleanly.
+- **Image repository reconciliation**: Reconciled `deploy/helm/gambit/values.yaml` image references to `ghcr.io/senasehs19-oss/gambit-{api,gateway,web}` matching published repositories.
+- **Honest status**: No physical cluster is connected to this repository, so the deployment execution path itself is unexercised in CI. The pipeline's gate structure, concurrency controls, atomic flags, strategy flag compositions, and image repository alignment are statically verified by `check-deploy-gates.mjs` and `helm-snapshot-test.sh`.
+- Detailed in `docs/adr/0076-deploy-pipeline.md`.
+
+Prior: _Last updated: 2026-08-03 — M14 Increment 9: blue/green + canary delivery, and the web proxy repair it uncovered (ADR-0075)._
 
 ## M14 Increment 9 — Blue/green + canary delivery (ADR-0075)
 

@@ -785,10 +785,25 @@ that caught the standby being sized at one replica — which would have moved al
 onto a single pod at the cutover — and a name-disjointness check keeping strategy switches
 upgradable, since a Deployment's selector is immutable.
 
+### Increment 10: Deploy-gated CI/CD pipeline (ADR-0076) ✅
+
+Automated release and deploy workflows (`.github/workflows/release.yml` and `deploy.yml`) gated by
+explicit verification, human approval environments, non-cancelling deployment queueing concurrency,
+pre-flight image existence checks, and atomic rollouts with explicit timeouts.
+
+`release.yml` triggers on version tags (`v*`), runs full verification (`build`, `test`, `lint`),
+asserts that the tag matches `deploy/helm/gambit/Chart.yaml`'s `appVersion`, and publishes three images
+(`api`, `gateway`, `web`) to GHCR tagged with version and commit SHA (`latest` is never published or deployed).
+`deploy.yml` triggers via `workflow_dispatch` or `release: [published]`, enforces human-approval environment
+protection gates (`environment:`), queues per environment (`cancel-in-progress: false`), verifies image existence in
+GHCR before touching the cluster, passes progressive delivery strategy inputs (`rolling`, `blueGreen`, `canary`) to
+Helm with `-f deploy/environments/<env>.values.yaml`, runs a pre-flight `helm template` dry-run validation to verify composed strategy arguments, and executes `helm upgrade` with `--atomic`, `--wait`, and explicit `--timeout`. Blue/green deployments set `rollout.blueGreen.colors.<active_color>.tag=$VERSION` and `images.gateway.tag=$VERSION`, leaving `images.api.tag` and `images.web.tag` at the environment baseline version (rollback target). Rollback is split: `--atomic` reverts a failed upgrade, while post-verification failures use a strict three-way branch (uninstall initial install, rollback to explicit pre-upgrade revision, or fail loudly if pre-upgrade revision cannot be parsed using explicit `require('node:fs')`).
+
+Eight safety invariants are statically asserted by `scripts/check-deploy-gates.mjs` (`npm run check:deploy-gates`), wired into CI (`ci.yml`) under the `helm` job, and workflow flag compositions are asserted in `scripts/helm-snapshot-test.sh`. Reconciled chart `values.yaml` image references to `ghcr.io/senasehs19-oss/gambit-{api,gateway,web}` matching published repositories.
+
 ### Deferred (later M14 increments)
 
 - Terraform IaC for cloud provisioning
-- GitHub Actions CI/CD pipeline with deploy gates
 - 100k-user load testing + chaos validation
 - Sharded game authority with durable state
 - Sticky per-game routing for horizontal gateway scaling

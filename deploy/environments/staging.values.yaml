@@ -1,0 +1,32 @@
+# ===========================================================================
+# Gambit Helm Chart — Staging Environment Values
+# ===========================================================================
+# Applied during staging deployments via `helm upgrade -f deploy/environments/staging.values.yaml`.
+# No secrets are stored in this file: secret credentials are referenced via
+# `secrets.existingSecret` or External Secrets Operator integration (ADR-0044).
+# ===========================================================================
+
+config:
+  nodeEnv: staging
+
+images:
+  api:
+    tag: "0.1.0"
+  web:
+    tag: "0.1.0"
+
+web:
+  replicas: 2
+  ingress:
+    enabled: true
+    className: nginx
+    host: staging.gambit.local
+
+api:
+  replicas: 2
+
+gateway:
+  replicas: 2
+
+secrets:
+  existingSecret: "gambit-staging-secrets"

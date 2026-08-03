@@ -16,6 +16,7 @@
     "test:counts": "node scripts/test-counts.mjs",
     "check:observability": "node scripts/check-observability-drift.mjs",
     "check:build-order": "node scripts/check-docker-build-order.mjs",
+    "check:deploy-gates": "node scripts/check-deploy-gates.mjs",
     "load-test": "node scripts/load-test.mjs",
     "test:gateway-redis": "node -e \"if(!process.env.REDIS_URL){console.error('REDIS_URL is required for test:gateway-redis (the Redis integration suite skips without it)');process.exit(1)}\" && npm run build --prefix services/gateway && npm test --prefix services/gateway"
   },

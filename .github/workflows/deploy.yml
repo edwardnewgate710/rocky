@@ -1,0 +1,366 @@
+name: Deploy
+
+# Deploys Gambit to Kubernetes via Helm upgrade.
+# Triggered manually via `workflow_dispatch` (with environment and strategy inputs)
+# or automatically when a release is published (staging deployment).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to deploy (e.g. 1.2.3)'
+        required: true
+        type: string
+      environment:
+        description: 'Target deployment environment'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+        default: staging
+      strategy:
+        description: 'Rollout strategy (ADR-0075)'
+        required: true
+        type: choice
+        options:
+          - rolling
+          - blueGreen
+          - canary
+        default: rolling
+      canary_weight:
+        description: 'Canary traffic weight percentage (0-100; used when strategy=canary)'
+        required: false
+        type: string
+        default: '10'
+      # Blue/green is two operations, not one (ADR-0075, docs/DEPLOYING.md): stage the new
+      # version on the standby colour, exercise it on the preview host, then flip. Both are
+      # expressed by these two inputs, so no third "mode" input is needed:
+      #   stage  -> target_color = the standby colour, active_color = the colour live today
+      #   flip   -> target_color = active_color = the colour that should now serve traffic
+      # Setting them equal is what makes the new version live, and is also the only case in
+      # which the gateway is moved to the new image.
+      target_color:
+        description: 'Colour that receives this version (blueGreen). Equal to active_color = cut over now'
+        required: false
+        type: choice
+        options:
+          - blue
+          - green
+        default: green
+      active_color:
+        description: 'Colour serving traffic after this run (blueGreen)'
+        required: false
+        type: choice
+        options:
+          - blue
+          - green
+        default: blue
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  packages: read
+
+# Deploys queue per environment rather than cancelling in progress.
+# A cancelled deploy leaves a partially applied release in Kubernetes.
+concurrency:
+  group: deploy-${{ inputs.environment || 'staging' }}
+  cancel-in-progress: false
+
+jobs:
+  # Input validation job. Enforces the `needs:` gate so the deploy job never runs unqualified.
+  validate:
+    name: validate deploy parameters
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.parse.outputs.version }}
+      environment: ${{ steps.parse.outputs.environment }}
+      strategy: ${{ steps.parse.outputs.strategy }}
+      canary_weight: ${{ steps.parse.outputs.canary_weight }}
+      active_color: ${{ steps.parse.outputs.active_color }}
+      target_color: ${{ steps.parse.outputs.target_color }}
+    steps:
+      - name: Parse release or dispatch parameters
+        id: parse
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_ENV: ${{ inputs.environment }}
+          INPUT_STRATEGY: ${{ inputs.strategy }}
+          INPUT_CANARY_WEIGHT: ${{ inputs.canary_weight }}
+          INPUT_ACTIVE_COLOR: ${{ inputs.active_color }}
+          INPUT_TARGET_COLOR: ${{ inputs.target_color }}
+        run: |
+          # Resolve version: input parameter takes precedence over release tag.
+          RAW_VERSION="$INPUT_VERSION"
+          if [ -z "$RAW_VERSION" ] && [ "$EVENT_NAME" = "release" ]; then
+            RAW_VERSION="$RELEASE_TAG"
+          fi
+          
+          # Strip leading 'v' if present (v1.2.3 -> 1.2.3)
+          VERSION="${RAW_VERSION#v}"
+          if [ -z "$VERSION" ]; then
+            echo "::error::No version provided for deployment."
+            exit 1
+          fi
+          
+          # Validate version format strictly against semantic versioning pattern
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
+            echo "::error::Invalid version string format: '$VERSION'. Must match semver pattern (e.g. 1.2.3 or 1.2.3-beta.1)."
+            exit 1
+          fi
+          
+          ENV="$INPUT_ENV"
+          [ -z "$ENV" ] && ENV="staging"
+          
+          STRATEGY="$INPUT_STRATEGY"
+          [ -z "$STRATEGY" ] && STRATEGY="rolling"
+          
+          CANARY_WEIGHT="$INPUT_CANARY_WEIGHT"
+          [ -z "$CANARY_WEIGHT" ] && CANARY_WEIGHT="10"
+          
+          ACTIVE_COLOR="$INPUT_ACTIVE_COLOR"
+          [ -z "$ACTIVE_COLOR" ] && ACTIVE_COLOR="blue"
+
+          TARGET_COLOR="$INPUT_TARGET_COLOR"
+          [ -z "$TARGET_COLOR" ] && TARGET_COLOR="green"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "environment=$ENV" >> "$GITHUB_OUTPUT"
+          echo "strategy=$STRATEGY" >> "$GITHUB_OUTPUT"
+          echo "canary_weight=$CANARY_WEIGHT" >> "$GITHUB_OUTPUT"
+          echo "active_color=$ACTIVE_COLOR" >> "$GITHUB_OUTPUT"
+          echo "target_color=$TARGET_COLOR" >> "$GITHUB_OUTPUT"
+
+          if [ "$STRATEGY" = "blueGreen" ]; then
+            if [ "$TARGET_COLOR" = "$ACTIVE_COLOR" ]; then
+              echo "Blue/green CUTOVER: $VERSION goes to the $TARGET_COLOR track and serves traffic immediately."
+            else
+              echo "Blue/green STAGE: $VERSION goes to the standby $TARGET_COLOR track; $ACTIVE_COLOR keeps serving traffic."
+              echo "Flip later by re-running with active_color=$TARGET_COLOR."
+            fi
+          fi
+
+          echo "Validated deploy parameters: version=$VERSION env=$ENV strategy=$STRATEGY"
+
+  # Gated deployment job. Declares `environment:` to enforce human-approval gates
+  # configured in GitHub repository settings.
+  deploy:
+    name: deploy to ${{ needs.validate.outputs.environment }}
+    needs: validate
+    environment: ${{ needs.validate.outputs.environment }}
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      ENVIRONMENT: ${{ needs.validate.outputs.environment }}
+      STRATEGY: ${{ needs.validate.outputs.strategy }}
+      CANARY_WEIGHT: ${{ needs.validate.outputs.canary_weight }}
+      ACTIVE_COLOR: ${{ needs.validate.outputs.active_color }}
+      TARGET_COLOR: ${{ needs.validate.outputs.target_color }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        run: |
+          curl -fsSL https://get.helm.sh/helm-v3.16.3-linux-amd64.tar.gz -o /tmp/helm.tar.gz
+          tar xzf /tmp/helm.tar.gz -C /tmp
+          sudo mv /tmp/linux-amd64/helm /usr/local/bin/helm
+          helm version
+
+      - name: Verify cluster credentials secret
+        env:
+          KUBECONFIG_SECRET: ${{ secrets.KUBECONFIG }}
+        run: |
+          # Fail closed immediately if the KUBECONFIG secret is missing or empty.
+          # Never skip silently or report false success when cluster access is unavailable.
+          if [ -z "$KUBECONFIG_SECRET" ]; then
+            echo "::error::KUBECONFIG secret is absent or empty. Cannot deploy without cluster credentials."
+            exit 1
+          fi
+          mkdir -p ~/.kube
+          echo "$KUBECONFIG_SECRET" > ~/.kube/config
+          chmod 600 ~/.kube/config
+          echo "KUBECONFIG written successfully."
+
+      - name: Verify image existence in GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          # Verify all three container images exist in GHCR before attempting a cluster upgrade.
+          # Capture docker manifest inspect error output explicitly to distinguish missing tags from auth/network faults.
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          
+          REPOS=(
+            "ghcr.io/senasehs19-oss/gambit-api"
+            "ghcr.io/senasehs19-oss/gambit-gateway"
+            "ghcr.io/senasehs19-oss/gambit-web"
+          )
+          
+          for repo in "${REPOS[@]}"; do
+            echo "Checking image existence for ${repo}:${VERSION}..."
+            if ! INSPECT_OUT=$(docker manifest inspect "${repo}:${VERSION}" 2>&1); then
+              echo "::error::Required image ${repo}:${VERSION} could not be verified in GHCR: ${INSPECT_OUT}"
+              exit 1
+            fi
+          done
+          echo "All required images verified in GHCR for version ${VERSION}."
+
+      - name: Record pre-upgrade release state
+        id: pre_upgrade
+        run: |
+          # Explicitly determine whether the release existed before this deployment.
+          # Use `helm status` exit code — never guess release existence from history parsing failures.
+          RELEASE_EXISTS=false
+          if helm status gambit >/dev/null 2>&1; then
+            RELEASE_EXISTS=true
+          fi
+          
+          PREV_REV=""
+          if [ "$RELEASE_EXISTS" = "true" ]; then
+            # Parse pre-upgrade revision using machine-readable JSON format (-o json) via Node with explicit module import.
+            PREV_REV=$(helm history gambit -o json 2>/dev/null | node -e "
+              const fs = require('node:fs');
+              try {
+                const history = JSON.parse(fs.readFileSync(0, 'utf8'));
+                if (Array.isArray(history) && history.length > 0) {
+                  const last = history[history.length - 1];
+                  const rev = last.revision;
+                  if (typeof rev === 'number') console.log(rev);
+                  else if (typeof rev === 'string' && /^[0-9]+$/.test(rev)) console.log(rev);
+                }
+              } catch (_) {}
+            " 2>/dev/null || true)
+
+            if [ -z "$PREV_REV" ]; then
+              # The rollback step refuses to act without this number, so an operator who hits a
+              # failed verification needs to know NOW why it could not be read — not to discover
+              # the refusal in the middle of an incident.
+              echo "::warning::Could not parse a pre-upgrade revision from 'helm history gambit -o json' even though the release exists. Automated rollback will refuse to run for this deploy. Raw output follows."
+              helm history gambit -o json 2>&1 | head -c 2000 || true
+            fi
+          fi
+
+          # Blue/green needs a previous version to fall back to, and the environment values file's
+          # images.*.tag is what supplies it. On a first install that tag has almost certainly never
+          # been published, so the standby track would sit in ImagePullBackOff and there would be
+          # nothing to roll back to. Install first with `rolling`, then switch strategies.
+          if [ "$STRATEGY" = "blueGreen" ] && [ "$RELEASE_EXISTS" = "false" ]; then
+            echo "::error::Refusing a blue/green initial install: there is no live release, so the standby colour would be pinned to the baseline images.*.tag from deploy/environments/${ENVIRONMENT}.values.yaml — a version that has probably never been published, and that cannot serve as a rollback target. Perform the first install with strategy=rolling, then deploy subsequent versions with blueGreen."
+            exit 1
+          fi
+
+          echo "release_exists=$RELEASE_EXISTS" >> "$GITHUB_OUTPUT"
+          echo "prev_revision=$PREV_REV" >> "$GITHUB_OUTPUT"
+          echo "Pre-upgrade release state: release_exists=$RELEASE_EXISTS, prev_revision=${PREV_REV:-<unparsed>}"
+
+      - name: Pre-flight template validation and Helm upgrade
+        run: |
+          # Build extra set parameters based on selected rollout strategy (ADR-0075)
+          # Defined ONCE so pre-flight validation and helm upgrade cannot drift.
+          EXTRA_ARGS=()
+          case "$STRATEGY" in
+            blueGreen)
+              # Per ADR-0075 the incoming colour carries the new tag while the other one keeps
+              # falling back to images.<component>.tag from the environment values file — which is
+              # the version this deploy can roll back to. Overriding images.api.tag/web.tag here
+              # would make both colours resolve to the same image and the chart would refuse to
+              # render at all.
+              EXTRA_ARGS+=(
+                "--set" "rollout.strategy=blueGreen"
+                "--set" "rollout.blueGreen.activeColor=${ACTIVE_COLOR}"
+                "--set" "rollout.blueGreen.colors.${TARGET_COLOR}.tag=${VERSION}"
+              )
+              # The gateway is not colour-versioned, so moving it is what actually exposes the new
+              # version to live traffic. Do that only on a cutover; a stage run leaves the gateway
+              # where it is, so the standby is previewed against exactly what is serving today.
+              if [ "$TARGET_COLOR" = "$ACTIVE_COLOR" ]; then
+                EXTRA_ARGS+=("--set" "images.gateway.tag=${VERSION}")
+              fi
+              ;;
+            canary)
+              EXTRA_ARGS+=(
+                "--set" "rollout.strategy=canary"
+                "--set" "rollout.canary.tag=${VERSION}"
+                "--set" "rollout.canary.weight=${CANARY_WEIGHT}"
+                "--set" "images.api.tag=${VERSION}"
+                "--set" "images.gateway.tag=${VERSION}"
+                "--set" "images.web.tag=${VERSION}"
+              )
+              ;;
+            rolling|*)
+              EXTRA_ARGS+=(
+                "--set" "rollout.strategy=rolling"
+                "--set" "images.api.tag=${VERSION}"
+                "--set" "images.gateway.tag=${VERSION}"
+                "--set" "images.web.tag=${VERSION}"
+              )
+              ;;
+          esac
+
+          # 1. Dry-run render using the exact same composed arguments as helm upgrade.
+          # Catches chart validation errors (e.g. invalid strategy combinations) in seconds
+          # before cluster credentials or state are touched.
+          echo "Executing pre-flight helm template validation..."
+          helm template gambit deploy/helm/gambit \
+            -f "deploy/environments/${ENVIRONMENT}.values.yaml" \
+            "${EXTRA_ARGS[@]}" > /dev/null
+          echo "Pre-flight helm template validation passed."
+
+          # 2. Upgrades must pass --atomic, --wait, and an explicit --timeout.
+          # Without --atomic, failed rollouts remain in a broken state instead of reverting.
+          echo "Executing helm upgrade..."
+          helm upgrade --install gambit deploy/helm/gambit \
+            --atomic \
+            --wait \
+            --timeout 5m0s \
+            -f "deploy/environments/${ENVIRONMENT}.values.yaml" \
+            "${EXTRA_ARGS[@]}"
+
+      - name: Post-deploy smoke check
+        id: smoke_check
+        run: |
+          # Query Deployments rendered by the chart for this release instance.
+          # Uses label selectors rather than hardcoded Deployment names, since Deployment names
+          # vary by strategy (rolling -> gambit-api/web; blueGreen -> gambit-api-blue/green; canary -> gambit-api-stable/canary).
+          DEPLOYMENTS=$(kubectl get deployments -l app.kubernetes.io/instance=gambit -o jsonpath='{.items[*].metadata.name}')
+          
+          if [ -z "$DEPLOYMENTS" ]; then
+            echo "::error::No Deployments found matching label app.kubernetes.io/instance=gambit"
+            exit 1
+          fi
+          
+          echo "Found rendered Deployments to verify: $DEPLOYMENTS"
+          for dep in $DEPLOYMENTS; do
+            echo "Checking rollout status for deployment/$dep..."
+            kubectl rollout status "deployment/$dep" --timeout=60s
+          done
+
+      - name: Rollback on post-deploy verification failure
+        if: failure() && steps.smoke_check.outcome == 'failure'
+        env:
+          RELEASE_EXISTS: ${{ steps.pre_upgrade.outputs.release_exists }}
+          PREV_REV: ${{ steps.pre_upgrade.outputs.prev_revision }}
+        run: |
+          # Executed ONLY when post-deploy verification fails after a successful helm upgrade.
+          # Helm --atomic already handles upgrade failure.
+          #
+          # Three-way branch:
+          #   1. Release did not exist before this deploy -> initial install failed post-deploy check -> uninstall.
+          #   2. Release existed and pre-upgrade revision was determined -> roll back to that explicit revision.
+          #   3. Release existed but pre-upgrade revision could NOT be parsed -> fail loudly without guessing or uninstalling.
+          if [ "$RELEASE_EXISTS" = "false" ]; then
+            echo "Post-deploy smoke check failed after initial install! Uninstalling failed initial release..."
+            helm uninstall gambit --wait --timeout 5m0s
+          elif [ -n "$PREV_REV" ] && [[ "$PREV_REV" =~ ^[0-9]+$ ]] && [ "$PREV_REV" -gt 0 ]; then
+            echo "Post-deploy smoke check failed after upgrade! Rolling back to explicit pre-upgrade revision $PREV_REV..."
+            helm rollback gambit "$PREV_REV" --wait --timeout 5m0s
+          else
+            echo "::error::Post-deploy smoke check failed, but pre-upgrade revision could not be safely determined despite release existing prior to deployment."
+            echo "::error::Refusing to execute automated rollback or uninstall. Operator intervention required to prevent accidental release deletion. Inspect 'helm history gambit' and roll back manually."
+            exit 1
+          fi

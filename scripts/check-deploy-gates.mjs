@@ -1,0 +1,251 @@
+#!/usr/bin/env node
+/**
+ * Fails when deploy or release workflows violate deployment gating invariants or drift from Helm config.
+ *
+ * Deployments and releases require strict gates: human approval environments, non-cancelling deployment
+ * queues, atomic rollbacks with explicit timeouts, image existence verification, no floating latest tags,
+ * precise matching between published image repos and Helm chart image values, strategy-independent
+ * Deployment selectors, pre-flight template validation, and single-source strategy argument composition.
+ *
+ * Without automated enforcement, workflow modifications can quietly remove gates, leave broken deployments
+ * hanging in Kubernetes, publish images to repositories that the Helm chart does not reference, hardcode
+ * Deployment names that break under blue/green or canary rollouts, execute upgrades with invalid flag compositions,
+ * or introduce argument drift between dry-run validation and actual upgrade execution.
+ *
+ * Checks:
+ *   1. deploy.yml's deploy job declares an environment (human approval gate).
+ *   2. deploy.yml specifies concurrency with cancel-in-progress: false (deploys queue, never cancel).
+ *   3. Every helm upgrade command in deploy.yml passes --atomic, --wait, and an explicit --timeout.
+ *   4. deploy.yml's deploy job is `needs:`-gated (does not run unqualified).
+ *   5. Neither release.yml nor deploy.yml uses floating `:latest` image tags.
+ *   6. Published image repos in release.yml match values.yaml image repositories exactly.
+ *   7. deploy.yml does not refer to Deployments by hardcoded names (names vary by strategy, ADR-0075).
+ *   8. deploy.yml includes a "helm template" pre-flight check before "helm upgrade".
+ *   9. deploy.yml strategy composition ("case $STRATEGY in") appears exactly once (no argument drift).
+ *
+ * Run: node scripts/check-deploy-gates.mjs
+ */
+
+import { readFileSync, existsSync } from 'node:fs';
+
+const DEPLOY_WORKFLOW = '.github/workflows/deploy.yml';
+const RELEASE_WORKFLOW = '.github/workflows/release.yml';
+const CHART_VALUES = 'deploy/helm/gambit/values.yaml';
+
+const problems = [];
+
+function getJobBlock(workflowText, jobName) {
+  // Find `jobName:` and capture its body until the next sibling job or end of block
+  const regex = new RegExp(`(?:^|\\n)\\s*${jobName}:\\s*\\n([\\s\\S]*?)(?=\\n\\s{2}[a-zA-Z0-9_-]+:\\s*\\n|\\n\\s{0,2}[a-zA-Z0-9_-]+:|$)`);
+  const match = workflowText.match(regex);
+  return match ? match[1] : null;
+}
+
+/** 5. Helper rule: floating `:latest` image tags are prohibited in release and deploy workflows. */
+function checkNoFloatingTags(filePath, workflowText) {
+  if (/:latest\b|tag:\s*["']?latest["']?|--set\s+[^\n]*\.tag=latest\b/i.test(workflowText)) {
+    problems.push(
+      `${filePath}: uses floating ":latest" image tag — releases and deployments must target explicit version tags for reproducible rollbacks`,
+    );
+  }
+}
+
+function checkDeployGates() {
+  if (!existsSync(DEPLOY_WORKFLOW)) {
+    problems.push(`${DEPLOY_WORKFLOW}: file is missing`);
+    return;
+  }
+  const deployText = readFileSync(DEPLOY_WORKFLOW, 'utf8');
+
+  // 1. Environment declaration check & 4. needs:-gated check
+  const deployJobBlock = getJobBlock(deployText, 'deploy');
+
+  if (!deployJobBlock) {
+    problems.push(`${DEPLOY_WORKFLOW}: missing "deploy:" job definition`);
+  } else {
+    if (!/^\s*environment:\s*/m.test(deployJobBlock)) {
+      problems.push(
+        `${DEPLOY_WORKFLOW}: "deploy" job does not declare "environment:" — human approval gates and environment protections will not be enforced`,
+      );
+    }
+
+    if (!/^\s*needs:\s*/m.test(deployJobBlock)) {
+      problems.push(
+        `${DEPLOY_WORKFLOW}: "deploy" job is not "needs:"-gated — it runs unqualified without prior validation`,
+      );
+    }
+  }
+
+  // 2. Concurrency queueing check (cancel-in-progress: false)
+  if (!/concurrency:\s*\n[\s\S]*?cancel-in-progress:\s*false/m.test(deployText)) {
+    problems.push(
+      `${DEPLOY_WORKFLOW}: concurrency must set "cancel-in-progress: false" — cancelled deploys leave partially applied releases in Kubernetes`,
+    );
+  }
+
+  // Split workflow steps, strip comment lines and echo log lines, and collapse line continuations (`\`)
+  const stepBlocks = deployText
+    .split(/\n\s*-\s+(?:name|uses|run):/)
+    .map((block) =>
+      block
+        .split('\n')
+        .filter((line) => !/^\s*#/.test(line) && !/^\s*echo\b/.test(line))
+        .join('\n')
+        .replace(/\\\r?\n\s*/g, ' '),
+    );
+
+  // 3. Helm upgrade flag check (--atomic, --wait, --timeout)
+  const helmBlocks = stepBlocks.filter((b) => /\bhelm\s+upgrade\b/.test(b));
+
+  if (helmBlocks.length === 0) {
+    problems.push(`${DEPLOY_WORKFLOW}: no "helm upgrade" commands found`);
+  } else {
+    for (const cmd of helmBlocks) {
+      if (!/--atomic\b/.test(cmd)) {
+        problems.push(
+          `${DEPLOY_WORKFLOW}: "helm upgrade" missing "--atomic" — failed rollouts will remain in a broken state instead of reverting`,
+        );
+      }
+      if (!/--wait\b/.test(cmd)) {
+        problems.push(
+          `${DEPLOY_WORKFLOW}: "helm upgrade" missing "--wait" — upgrade will return before pods reach ready status`,
+        );
+      }
+      if (!/--timeout\s+[0-9]+[a-z0-9.]*/.test(cmd)) {
+        problems.push(
+          `${DEPLOY_WORKFLOW}: "helm upgrade" missing explicit "--timeout <duration>" — upgrade can hang indefinitely on stuck resources`,
+        );
+      }
+    }
+  }
+
+  // 5. Floating tag check (deploy.yml)
+  checkNoFloatingTags(DEPLOY_WORKFLOW, deployText);
+
+  // 7. Hardcoded Deployment reference check (must use label selector, not hardcoded name)
+  const hardcodedDepMatches = [...deployText.matchAll(/\bdeployment[s]?\/([a-zA-Z0-9_-]+)/g)];
+  if (hardcodedDepMatches.length > 0) {
+    for (const m of hardcodedDepMatches) {
+      problems.push(
+        `${DEPLOY_WORKFLOW}: contains hardcoded Deployment reference "${m[0]}" — Deployment names vary by rollout strategy (ADR-0075), so hardcoding names silently binds the pipeline to one strategy and breaks under blueGreen or canary`,
+      );
+    }
+  }
+
+  // 8. Pre-flight helm template step before helm upgrade (ignoring echo statements)
+  const templateIdx = stepBlocks.findIndex((b) => /\bhelm\s+template\b/.test(b));
+  const upgradeIdx = stepBlocks.findIndex((b) => /\bhelm\s+upgrade\b/.test(b));
+
+  if (templateIdx === -1) {
+    problems.push(
+      `${DEPLOY_WORKFLOW}: missing "helm template" pre-flight step — dry-run rendering must validate composed strategy arguments before touching cluster credentials or state`,
+    );
+  } else if (upgradeIdx !== -1 && templateIdx > upgradeIdx) {
+    problems.push(
+      `${DEPLOY_WORKFLOW}: "helm template" pre-flight step must execute before "helm upgrade" — validation must occur prior to cluster operations`,
+    );
+  }
+
+  // 9. Single strategy composition block check (no duplication between pre-flight and upgrade)
+  const strategyCaseMatches = [...deployText.matchAll(/case\s+["']?\$STRATEGY["']?\s+in/g)];
+  if (strategyCaseMatches.length === 0) {
+    problems.push(
+      `${DEPLOY_WORKFLOW}: missing strategy composition ("case \"$STRATEGY\" in")`,
+    );
+  } else if (strategyCaseMatches.length > 1) {
+    problems.push(
+      `${DEPLOY_WORKFLOW}: strategy composition ("case \"$STRATEGY\" in") appears ${strategyCaseMatches.length} times — argument composition must appear exactly once so pre-flight validation and helm upgrade cannot drift`,
+    );
+  }
+}
+
+function checkReleaseGates() {
+  if (!existsSync(RELEASE_WORKFLOW)) {
+    problems.push(`${RELEASE_WORKFLOW}: file is missing`);
+    return;
+  }
+  const releaseText = readFileSync(RELEASE_WORKFLOW, 'utf8');
+
+  // 5. Floating tag check (release.yml)
+  checkNoFloatingTags(RELEASE_WORKFLOW, releaseText);
+}
+
+function checkImageRepositoryMatch() {
+  if (!existsSync(RELEASE_WORKFLOW) || !existsSync(CHART_VALUES)) {
+    return;
+  }
+  const releaseText = readFileSync(RELEASE_WORKFLOW, 'utf8');
+  const valuesText = readFileSync(CHART_VALUES, 'utf8');
+
+  // Extract repositories published in release.yml
+  const releaseRepos = new Set(
+    [...releaseText.matchAll(/ghcr\.io\/[a-zA-Z0-9_-]+\/gambit-(api|gateway|web)/g)].map((m) => m[0]),
+  );
+
+  // Extract repositories referenced in values.yaml
+  const valuesRepos = new Set(
+    [...valuesText.matchAll(/repository:\s*(ghcr\.io\/[a-zA-Z0-9_-]+\/gambit-(api|gateway|web))/g)].map((m) => m[1]),
+  );
+
+  const releaseList = [...releaseRepos].sort();
+  const valuesList = [...valuesRepos].sort();
+
+  if (releaseList.length !== 3) {
+    problems.push(
+      `${RELEASE_WORKFLOW}: expected 3 published image repositories (api, gateway, web), found ${releaseList.length}: [${releaseList.join(', ')}]`,
+    );
+  }
+
+  if (valuesList.length !== 3) {
+    problems.push(
+      `${CHART_VALUES}: expected 3 image repositories (api, gateway, web), found ${valuesList.length}: [${valuesList.join(', ')}]`,
+    );
+  }
+
+  const releaseStr = releaseList.join(',');
+  const valuesStr = valuesList.join(',');
+
+  if (releaseStr !== valuesStr) {
+    problems.push(
+      `Image repository drift between release workflow and chart values:\n` +
+        `  - release.yml publishes: [${releaseList.join(', ')}]\n` +
+        `  - values.yaml references: [${valuesList.join(', ')}]\n` +
+        `  Helm will fail to pull images or silently deploy from the wrong repository.`,
+    );
+  }
+}
+
+function main() {
+  checkDeployGates();
+  checkReleaseGates();
+  checkImageRepositoryMatch();
+
+  console.log('');
+  console.log('=== Deployment gate check ===');
+  console.log('');
+
+  if (problems.length > 0) {
+    console.log('  ✗ Problems:');
+    for (const p of problems) {
+      console.log(`    - ${p}`);
+    }
+    console.log('');
+    console.log(`=== Results: ${problems.length} problem(s) found ===`);
+    console.log('Deployment gate invariants violated. Fix the workflow configuration.');
+    process.exit(1);
+  }
+
+  console.log('  ✓ deploy.yml declares human-approval environment gate');
+  console.log('  ✓ deploy.yml concurrency sets cancel-in-progress: false');
+  console.log('  ✓ helm upgrade commands use --atomic, --wait, and explicit --timeout');
+  console.log('  ✓ deploy job is needs:-gated');
+  console.log('  ✓ no floating :latest image tags in release or deploy workflows');
+  console.log('  ✓ release workflow image repositories match chart values.yaml exactly');
+  console.log('  ✓ deploy.yml avoids hardcoded Deployment names (strategy-independent)');
+  console.log('  ✓ deploy.yml includes a helm template pre-flight check before helm upgrade');
+  console.log('  ✓ deploy.yml strategy composition appears exactly once (single-source)');
+  console.log('');
+  console.log('=== Results: all deployment gates verified ===');
+}
+
+main();

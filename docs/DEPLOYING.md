@@ -18,14 +18,14 @@ topology: Postgres, Redis, API, WebSocket gateway, and web frontend.
 
 ```bash
 # 1. Build and push images to your registry (or load into kind)
-docker build -f Dockerfile.api     -t ghcr.io/hessiun710/gambit-api:latest .
-docker build -f Dockerfile.gateway -t ghcr.io/hessiun710/gambit-gateway:latest .
-docker build -f Dockerfile.web     -t ghcr.io/hessiun710/gambit-web:latest .
+docker build -f Dockerfile.api     -t ghcr.io/senasehs19-oss/gambit-api:latest .
+docker build -f Dockerfile.gateway -t ghcr.io/senasehs19-oss/gambit-gateway:latest .
+docker build -f Dockerfile.web     -t ghcr.io/senasehs19-oss/gambit-web:latest .
 
 # For kind, load images directly:
-kind load docker-image ghcr.io/hessiun710/gambit-api:latest
-kind load docker-image ghcr.io/hessiun710/gambit-gateway:latest
-kind load docker-image ghcr.io/hessiun710/gambit-web:latest
+kind load docker-image ghcr.io/senasehs19-oss/gambit-api:latest
+kind load docker-image ghcr.io/senasehs19-oss/gambit-gateway:latest
+kind load docker-image ghcr.io/senasehs19-oss/gambit-web:latest
 
 # 2. Install the chart
 helm install gambit deploy/helm/gambit \
@@ -293,6 +293,86 @@ old API.
   changes do not have this effect.
 - With TLS enabled, the preview host reuses the primary certificate secret, so
   that certificate must cover the preview hostname (wildcard or explicit SAN).
+
+## Automated CI/CD release & deployment runbook
+
+M14 Increment 10 (ADR-0076) provides automated GitHub Actions workflows for publishing release images and executing gated Kubernetes deployments.
+
+### 1. Cut a release tag
+
+Ensure `deploy/helm/gambit/Chart.yaml` has its `appVersion` bumped to match your target version (e.g. `"1.2.3"`).
+
+```bash
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+Pushing `v1.2.3` triggers `.github/workflows/release.yml`, which:
+1. Runs full verification (`npm ci`, `npm run build`, `npm test`, `npm run lint`).
+2. Asserts that tag version (`1.2.3`) matches `Chart.yaml` `appVersion`.
+3. Builds and pushes three container images to GHCR:
+   - `ghcr.io/senasehs19-oss/gambit-api:1.2.3` (and `:1.2.3-<sha>`)
+   - `ghcr.io/senasehs19-oss/gambit-gateway:1.2.3` (and `:1.2.3-<sha>`)
+   - `ghcr.io/senasehs19-oss/gambit-web:1.2.3` (and `:1.2.3-<sha>`)
+
+### 2. Deploy to staging
+
+Once images publish, trigger `.github/workflows/deploy.yml` manually via **workflow_dispatch** (or automatically via `release: [published]`):
+- **version**: `1.2.3`
+- **environment**: `staging`
+- **strategy**: `rolling` (or `blueGreen` / `canary`)
+
+The pipeline validates image existence in GHCR, verifies the `KUBECONFIG` secret, applies `deploy/environments/staging.values.yaml`, and executes an atomic rollout:
+```bash
+helm upgrade --install gambit deploy/helm/gambit \
+  --atomic --wait --timeout 5m0s \
+  -f deploy/environments/staging.values.yaml \
+  --set images.api.tag=1.2.3 \
+  --set images.gateway.tag=1.2.3 \
+  --set images.web.tag=1.2.3
+```
+
+### 3. Promote to production
+
+After staging validation passes, trigger `.github/workflows/deploy.yml` via **workflow_dispatch**.
+GitHub environment protection holds the job pending approval; once approved it verifies the images
+exist in GHCR, applies `deploy/environments/production.values.yaml`, pre-flight renders the release,
+and executes `helm upgrade --atomic`.
+
+With `rolling` or `canary` that is one run. **Blue/green is two**, matching the flow described under
+"Release strategies" above — stage, verify on the preview host, then flip. The two colour inputs
+express both:
+
+| Run | `target_color` | `active_color` | Effect |
+|---|---|---|---|
+| Stage | `green` | `blue` | `green` gets 1.2.3 and is reachable at `preview.<host>`; `blue` keeps serving the live version; the gateway is not moved |
+| Flip | `green` | `green` | `green` starts serving traffic and the gateway moves to 1.2.3; `blue` stays on the old version as the rollback target |
+
+Setting `target_color` equal to `active_color` in a single run is a straight cutover — legitimate,
+but it skips the preview, which is the reason to choose blue/green in the first place.
+
+The colour that does *not* receive the version keeps falling back to `images.api.tag` /
+`images.web.tag` from the environment values file. **That is the rollback target, so keep it at the
+version currently live in that environment.** Overriding those tags with the incoming version would
+make both colours resolve to the same image, and the chart refuses to render that (ADR-0075).
+
+A blue/green **initial install is rejected**: with no live release there is no published baseline for
+the standby colour to hold, and nothing to roll back to. Install first with `strategy=rolling`.
+
+### 4. Rollback procedure
+
+If an issue is detected during or after deployment:
+- **Automatic Rollback**: The deployment workflow passes `--atomic --wait --timeout 5m0s`. If pods fail health probes or rollouts time out, Helm automatically reverts to the previous working release revision before the workflow finishes.
+- **Manual Rollback (Blue/Green)**: Flip `activeColor` back to the standby color in one command:
+  ```bash
+  helm upgrade gambit deploy/helm/gambit -f deploy/environments/production.values.yaml \
+    --set rollout.strategy=blueGreen \
+    --set rollout.blueGreen.activeColor=blue
+  ```
+- **Manual Rollback (Helm CLI)**:
+  ```bash
+  helm rollback gambit --wait --timeout 5m0s
+  ```
 
 ## Search indexer and reindex CLI
 

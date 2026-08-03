@@ -1,0 +1,32 @@
+# ===========================================================================
+# Gambit Helm Chart — Production Environment Values
+# ===========================================================================
+# Applied during production deployments via `helm upgrade -f deploy/environments/production.values.yaml`.
+# No secrets are stored in this file: secret credentials are referenced via
+# `secrets.existingSecret` or External Secrets Operator integration (ADR-0044).
+# ===========================================================================
+
+config:
+  nodeEnv: production
+
+images:
+  api:
+    tag: "0.1.0"
+  web:
+    tag: "0.1.0"
+
+web:
+  replicas: 3
+  ingress:
+    enabled: true
+    className: nginx
+    host: gambit.local
+
+api:
+  replicas: 3
+
+gateway:
+  replicas: 3
+
+secrets:
+  existingSecret: "gambit-production-secrets"

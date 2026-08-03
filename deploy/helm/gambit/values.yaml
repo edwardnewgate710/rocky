@@ -27,15 +27,15 @@
 # --- Image references (parameterized; reuse existing Dockerfiles) ---
 images:
   api:
-    repository: ghcr.io/hessiun710/gambit-api
+    repository: ghcr.io/senasehs19-oss/gambit-api
     tag: "0.1.0"
     pullPolicy: IfNotPresent
   gateway:
-    repository: ghcr.io/hessiun710/gambit-gateway
+    repository: ghcr.io/senasehs19-oss/gambit-gateway
     tag: "0.1.0"
     pullPolicy: IfNotPresent
   web:
-    repository: ghcr.io/hessiun710/gambit-web
+    repository: ghcr.io/senasehs19-oss/gambit-web
     tag: "0.1.0"
     pullPolicy: IfNotPresent
 

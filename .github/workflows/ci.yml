@@ -437,6 +437,11 @@ jobs:
       - name: Observability drift check
         run: node scripts/check-observability-drift.mjs
 
+      # M14 inc 10: Enforces deploy-gated pipeline invariants (environment approval gate, non-cancelling
+      # queueing concurrency, atomic helm upgrade flags, and release image repository alignment).
+      - name: Deployment gate check
+        run: npm run check:deploy-gates
+
       # Pinned, not :latest. This step IS a guardrail, so a floating tool version would let it
       # change behaviour — or start failing — with no commit in this repo to explain why.
       - name: Validate Prometheus rules

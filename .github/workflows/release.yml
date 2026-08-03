@@ -1,0 +1,125 @@
+name: Release
+
+# Triggered when a version tag matching `v*` is pushed to the repository.
+# A tag push does NOT trigger `ci.yml` (which runs on `main` pushes and PRs),
+# so this workflow runs full verification before publishing container images.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # Verify code quality, build integrity, tests, and linter before publishing.
+  verify:
+    name: verify release build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: npm
+
+      - name: Install dependencies (reproducible)
+        run: npm ci
+
+      - name: Build domain packages (dependency order)
+        run: npm run build
+
+      - name: Test (node --test)
+        run: npm test
+
+      - name: Typecheck & lint (tsc --noEmit)
+        run: npm run lint
+
+  # Build and publish container images to GitHub Container Registry (GHCR).
+  publish:
+    name: publish images to GHCR
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: npm
+
+      - name: Extract and validate version
+        id: version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          # Strip leading 'v' from tag (v1.2.3 -> 1.2.3)
+          VERSION="${TAG_NAME#v}"
+          
+          # Validate version format strictly against semantic versioning pattern
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
+            echo "::error::Invalid version tag format: '$VERSION'. Must match semver pattern (e.g. 1.2.3 or 1.2.3-beta.1)."
+            exit 1
+          fi
+          
+          # Read appVersion from deploy/helm/gambit/Chart.yaml
+          CHART_APP_VERSION=$(node -e "const fs = require('fs'); const match = fs.readFileSync('deploy/helm/gambit/Chart.yaml', 'utf8').match(/^appVersion:\s*\"?([^\s\"]+)\"?/m); if (match) console.log(match[1]); else process.exit(1);")
+          
+          if [ "$VERSION" != "$CHART_APP_VERSION" ]; then
+            echo "::error::Tag version ($VERSION) does not match Chart.yaml appVersion ($CHART_APP_VERSION). Update Chart.yaml appVersion before releasing."
+            exit 1
+          fi
+          
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Validated release version: $VERSION matches Chart.yaml appVersion: $CHART_APP_VERSION"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build and push the three application container images.
+      # Literal image repository names are used so `scripts/check-deploy-gates.mjs`
+      # can statically verify that published images match chart `values.yaml`.
+      - name: Build and push API image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.api
+          push: true
+          tags: |
+            ghcr.io/senasehs19-oss/gambit-api:${{ steps.version.outputs.version }}
+            ghcr.io/senasehs19-oss/gambit-api:${{ steps.version.outputs.version }}-${{ steps.version.outputs.sha }}
+
+      - name: Build and push Gateway image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.gateway
+          push: true
+          tags: |
+            ghcr.io/senasehs19-oss/gambit-gateway:${{ steps.version.outputs.version }}
+            ghcr.io/senasehs19-oss/gambit-gateway:${{ steps.version.outputs.version }}-${{ steps.version.outputs.sha }}
+
+      - name: Build and push Web image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.web
+          push: true
+          tags: |
+            ghcr.io/senasehs19-oss/gambit-web:${{ steps.version.outputs.version }}
+            ghcr.io/senasehs19-oss/gambit-web:${{ steps.version.outputs.version }}-${{ steps.version.outputs.sha }}

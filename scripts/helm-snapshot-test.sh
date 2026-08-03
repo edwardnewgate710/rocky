@@ -520,6 +520,45 @@ else
   check "Blue/green with preview disabled needs no standby tag" 1
 fi
 
+# --- Workflow flag compositions (.github/workflows/deploy.yml) --------------
+# NOTE: These test assertions mirror the exact flag compositions produced by
+# deploy.yml for each strategy. If deploy.yml changes its flag composition,
+# update these snapshot assertions to match.
+echo ""
+echo "Workflow strategy flag compositions (deploy.yml):"
+
+if helm template "$CHART_DIR" "${HELM_SECRETS[@]}" -f deploy/environments/production.values.yaml \
+     --set rollout.strategy=rolling \
+     --set images.api.tag=1.2.3 \
+     --set images.gateway.tag=1.2.3 \
+     --set images.web.tag=1.2.3 >/dev/null 2>&1; then
+  check "Workflow composition: rolling renders cleanly with production values" 0
+else
+  check "Workflow composition: rolling renders cleanly with production values" 1
+fi
+
+if helm template "$CHART_DIR" "${HELM_SECRETS[@]}" -f deploy/environments/production.values.yaml \
+     --set rollout.strategy=blueGreen \
+     --set rollout.blueGreen.activeColor=blue \
+     --set rollout.blueGreen.colors.blue.tag=1.2.3 \
+     --set images.gateway.tag=1.2.3 >/dev/null 2>&1; then
+  check "Workflow composition: blueGreen renders cleanly with production values" 0
+else
+  check "Workflow composition: blueGreen renders cleanly with production values" 1
+fi
+
+if helm template "$CHART_DIR" "${HELM_SECRETS[@]}" -f deploy/environments/production.values.yaml \
+     --set rollout.strategy=canary \
+     --set rollout.canary.tag=1.2.3 \
+     --set rollout.canary.weight=10 \
+     --set images.api.tag=1.2.3 \
+     --set images.gateway.tag=1.2.3 \
+     --set images.web.tag=1.2.3 >/dev/null 2>&1; then
+  check "Workflow composition: canary renders cleanly with production values" 0
+else
+  check "Workflow composition: canary renders cleanly with production values" 1
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 
