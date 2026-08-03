@@ -120,6 +120,9 @@ The script:
 | `PORT` | `8080` | No | API host port |
 | `GATEWAY_PORT` | `4175` | No | Gateway WebSocket host port |
 | `WEB_PORT` | `3000` | No | Web frontend host port |
+| `ENGINE_BOT` | unset (`0`) | No | Set to `"1"` to host the autonomous engine bot mover in the gateway (ADR-0080) |
+| `STOCKFISH_PATH` | unset | Required if `ENGINE_BOT=1` | Path to Stockfish UCI executable binary |
+
 
 **Never commit real secrets.** The `.env.example` has development defaults only.
 

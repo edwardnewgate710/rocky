@@ -254,3 +254,77 @@ test('C4: identity comes from the token, not from any client claim', async () =>
   const joined = c.last('joined')!;
   assert.equal(joined.role, 'black', 'token maps to bob → black, regardless of any claim');
 });
+
+test('onGameLoaded callback is optional and invoked once when a join materialises a game', async () => {
+  let clock = 1_000;
+  const now = () => (clock += 10);
+  const pubsub = new InMemoryPubSub();
+  const authority = new GameAuthority(pubsub, now);
+  const verifier = new FakeTokenVerifier().allow('token-alice', 'alice');
+
+  const loaded: { gameId: string; state: any }[] = [];
+  const gateway = new RealtimeGateway(authority, pubsub, verifier, now, undefined, (gameId, state) => {
+    loaded.push({ gameId, state });
+  });
+
+  await authority.createGame({
+    gameId: 'g-loaded',
+    timeControl: TC,
+    players: { white: 'alice', black: 'bob' },
+    rated: false,
+  });
+
+  const c1 = new InMemoryConnection('c1');
+  gateway.handleConnection(c1);
+  c1.deliver({ t: 'join', gameId: 'g-loaded', token: 'token-alice' });
+
+  assert.equal(loaded.length, 1);
+  assert.equal(loaded[0]!.gameId, 'g-loaded');
+
+  // Repeat join for the same game should not re-invoke onGameLoaded
+  const c2 = new InMemoryConnection('c2');
+  gateway.handleConnection(c2);
+  c2.deliver({ t: 'join', gameId: 'g-loaded' });
+
+  assert.equal(loaded.length, 1, 'onGameLoaded is guarded against double-invocation');
+});
+
+test('onGameLoaded fires again when a game room empties and is rejoined', async () => {
+  let clock = 1_000;
+  const now = () => (clock += 10);
+  const pubsub = new InMemoryPubSub();
+  const authority = new GameAuthority(pubsub, now);
+  const verifier = new FakeTokenVerifier().allow('token-alice', 'alice');
+
+  const loaded: string[] = [];
+  const gateway = new RealtimeGateway(authority, pubsub, verifier, now, undefined, (gameId) => {
+    loaded.push(gameId);
+  });
+
+  await authority.createGame({
+    gameId: 'g-rejoin',
+    timeControl: TC,
+    players: { white: 'alice', black: 'bob' },
+    rated: false,
+  });
+
+  const c1 = new InMemoryConnection('c1');
+  gateway.handleConnection(c1);
+  c1.deliver({ t: 'join', gameId: 'g-rejoin', token: 'token-alice' });
+
+  assert.equal(loaded.length, 1);
+
+  // Close connection c1 -> room empties and is torn down
+  c1.close();
+
+  assert.equal(gateway.roomCount, 0, 'room should be torn down');
+
+  // New connection joins the game again
+  const c2 = new InMemoryConnection('c2');
+  gateway.handleConnection(c2);
+  c2.deliver({ t: 'join', gameId: 'g-rejoin', token: 'token-alice' });
+
+  assert.equal(loaded.length, 2, 'onGameLoaded must fire again after room empties and is rejoined');
+});
+
+

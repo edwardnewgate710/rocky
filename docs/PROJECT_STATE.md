@@ -4,7 +4,22 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-03 — Verification hygiene: an ADR claim-drift guard, and a flaky test that hid its own failure (ADR-0079)._
+_Last updated: 2026-08-03 — M14 Increment 13: wire engine bridge into live play ("play vs computer") (ADR-0080)._
+
+## M14 Increment 13 — Wire engine bridge into live play ("play vs computer") (ADR-0080)
+
+Wires `@chess-platform/engine` into live backend play, exposing "play vs computer" against 3 engine bot levels without UI changes.
+
+- **Bot Users DB Seed**: `packages/persistence/migrations/0021_engine_bots.sql` inserts 3 credential-less bot users (`gambit-novice`, `gambit-club`, `gambit-master`) with fixed v7 UUIDs and `flags = '{"bot": true}'::jsonb`. Security property: credentials live in a separate table, so credential-less rows can never authenticate.
+- **Bot Catalogue**: `packages/api/src/bot/catalogue.ts` exports `BotLevel`, `BotAccount`, `BOT_ACCOUNTS`, `botAccountByLevel`, `botAccountByUserId`, mapping levels to ELO ratings (`novice` -> 1350, `club` -> 1750, `master` -> 2200). Re-exported via `@chess-platform/api`. Checked in `packages/api/test/bot-catalogue.test.ts`.
+- **GameStarter Port**: Defined `GameStarter` in `packages/persistence/src/repositories.ts`, `PgGameStarter` in `packages/persistence/src/pg/repositories.ts` (`BEGIN...COMMIT`, returns `false` on unique violation), `InMemoryGameStarter` in `packages/api/src/fakes.ts`. Added `gameStarter` to `Repositories` interface in `deps.ts`, wired in `bootstrap.ts` and `fakes.ts`. Tested in `bot-game-route.test.ts` and `pg.integration.test.ts`.
+- **REST Endpoint**: Added `POST /v1/games/bot` in `packages/api/src/routes.ts` (`AUTHED`). Validates `level`, `variant`, `timeControl`, `color`. Resolves unknown level with 400 listing valid levels. Resolves `color: 'random'` deterministically from hex parity of generated `gameId`. Sets `rated: false` unconditionally. Persists via `gameStarter.start()`, returns 409 conflict on duplicate gameId. Updated `CreateBotGameRequest` in `packages/api/src/openapi/schemas.ts` and `packages/api/openapi.json`.
+- **Realtime Gateway Hook**: Added optional `onGameLoaded?: (gameId: string, state: StateView) => void` parameter to `RealtimeGateway` (`packages/realtime-gateway/src/gateway.ts`), guarded against repeat calls per game. Tested in `packages/realtime-gateway/test/gateway.test.ts`.
+- **EngineBotMover**: Created `EngineBotMover` in `services/gateway/src/engine-bot.ts`. Executes bot moves via `CommandRouter.route(gameId, botUserId, cmd)` (respecting Redis multi-node sharding per ADR-0010, never `authority.apply`). 300ms think time, `JobPriority.BotMove` (priority 0). Caps in-flight `play()` to 1 per game via `Map<gameId, Promise>`. Safe error handling logs warnings and increments failure counter without crashing process. Emits `gateway_bot_moves_total`, `gateway_bot_move_failures_total`, `gateway_bot_move_seconds`. Tested in `services/gateway/test/engine-bot.test.ts`.
+- **Gateway Hosting**: Wired `ENGINE_BOT === '1'` in `services/gateway/src/serve.ts`. Shares single `AnalysisProvider` instance between anti-cheat auto-analyzer and engine bot mover. Passes `onGameLoaded` callback to `RealtimeGateway`. Graceful shutdown calls `engineBotMover.stop()` and `sharedEngineProvider.shutdown()`.
+- **Architectural Record**: Created `docs/adr/0080-engine-bot-opponent.md` (Date: 2026-08-03), updated `docs/ROADMAP.md` and `.env.example`/`docs/RUNNING.md`.
+
+Prior: _Last updated: 2026-08-03 — Verification hygiene: an ADR claim-drift guard, and a flaky test that hid its own failure (ADR-0079)._
 
 ## Verification hygiene — ADR claim drift + the e2e-harness flake (ADR-0079)
 

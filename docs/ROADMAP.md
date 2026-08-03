@@ -171,8 +171,7 @@ analysis, hints, eval bars, and rating-calibrated bots — never in the gameplay
   job loss, circuit-breaker trip, graceful drain, cancellation, watchdog kill, version-floor
   enforcement, cache correctness, and a full scripted bot game. Strict TypeScript, lint clean.
 - ⬜ **Deferred to M14 (deployable service):** real-engine golden test (env-gated; needs a pinned
-  binary in CI), live-infra autoscaling, distributed remote workers, and wiring the bot/analysis
-  path into the M3 `GameAuthority` + M4 `EventStore`.
+  binary in CI), live-infra autoscaling, and distributed remote workers.
 
 ## ✅ Milestone 6 — Web frontend (playable)
 
@@ -824,6 +823,19 @@ Eliminates the Redis round-trip on owner command routing by introducing local ow
 - **Observability metrics**: Added `gateway_ownership_renewal_failures_total` (counter) and `gateway_fast_path_commands_total` (counter) to track renewal errors and fast-path execution.
 - **Chaos test suite update (`scripts/chaos-test.mjs`)**: Updated `docker-compose.chaos.yml` (`OWNERSHIP_LEASE_TTL_SEC=6`, `OWNERSHIP_RENEWAL_INTERVAL_SEC=2`). Scenario D now verifies owner moves succeed during a Redis outage (inside lease window) and fail closed after lease expiry. Cleared `KNOWN_OPEN_DEFECTS` (suite passes with exit 0).
 - **Architectural record (`docs/adr/0078-owner-lease-fast-path.md`)**: Documents the availability gap, derived safety margin math, failure modes, split-brain guard, and resolution of ADR-0010 §6 claim.
+
+### Increment 13: Wire engine bridge into live play ("play vs computer") (ADR-0080) ✅
+
+Wires `@chess-platform/engine` into the backend for live "play vs computer" games.
+
+- **Credential-less bot accounts**: Seeded 3 bot users (`gambit-novice`, `gambit-club`, `gambit-master`) in `packages/persistence/migrations/0021_engine_bots.sql`. Credential-less by design so bot accounts cannot authenticate.
+- **Single-source catalogue**: `packages/api/src/bot/catalogue.ts` defines bot levels, user UUIDs, handles, and strength specifications (`{ elo: 1350 }`, `{ elo: 1750 }`, `{ elo: 2200 }`).
+- **`GameStarter` port**: Added atomic game starter to `packages/persistence/src/repositories.ts` (`PgGameStarter` in `packages/persistence/src/pg/repositories.ts` and `InMemoryGameStarter` in `packages/api/src/fakes.ts`).
+- **Route `POST /v1/games/bot`**: Implemented in `packages/api/src/routes.ts` (`AUTHED`, `rated: false`, deterministic color assignment for `random`, OpenAPI doc).
+- **`EngineBotMover` & multi-node routing**: `services/gateway/src/engine-bot.ts` routes moves through `CommandRouter.route()` (respecting Redis sharding per ADR-0010), listens to game channels, executes bot moves at 300ms think time with `JobPriority.BotMove`, and exports observability metrics (`gateway_bot_moves_total`, `gateway_bot_move_failures_total`, `gateway_bot_move_seconds`).
+- **Gateway integration**: Added `onGameLoaded` callback to `RealtimeGateway` (`packages/realtime-gateway/src/gateway.ts`), and wired engine sharing + mover lifecycle into `services/gateway/src/serve.ts`.
+- **Architectural record (`docs/adr/0080-engine-bot-opponent.md`)**: Records security design, multi-node routing rationale, unrated policy, metric definitions, and unproven golden test status.
+
 
 ## ✅ Verification hygiene — ADR claim drift guard (ADR-0079)
 

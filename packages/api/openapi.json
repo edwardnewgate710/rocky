@@ -2046,6 +2046,82 @@
         ]
       }
     },
+    "/v1/games/bot": {
+      "post": {
+        "summary": "Start a game against an engine bot",
+        "tags": [
+          "games"
+        ],
+        "operationId": "post_v1_games_bot",
+        "responses": {
+          "200": {
+            "description": "Game created against engine bot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown bot level",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Game id conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBotGameRequest"
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/games/{id}": {
       "get": {
         "summary": "Get a game summary",
@@ -12255,6 +12331,51 @@
           "maxRating": {
             "type": "integer",
             "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateBotGameRequest": {
+        "type": "object",
+        "required": [
+          "level",
+          "variant",
+          "timeControl"
+        ],
+        "properties": {
+          "level": {
+            "type": "string",
+            "enum": [
+              "novice",
+              "club",
+              "master"
+            ],
+            "description": "Engine bot strength level."
+          },
+          "variant": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "chess960",
+              "kingofthehill",
+              "atomic",
+              "crazyhouse",
+              "threecheck",
+              "horde",
+              "racingkings"
+            ]
+          },
+          "timeControl": {
+            "$ref": "#/components/schemas/TimeControl"
+          },
+          "color": {
+            "type": "string",
+            "enum": [
+              "white",
+              "black",
+              "random"
+            ],
+            "description": "Human player's color preference. Defaults to 'random'."
           }
         },
         "additionalProperties": false

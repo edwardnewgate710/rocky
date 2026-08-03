@@ -21,6 +21,7 @@ import type {
   RatingsRepository,
   Role,
   SeekAcceptor,
+  GameStarter,
   SeekRow,
   SeeksRepository,
   SessionRow,
@@ -470,6 +471,29 @@ export class InMemorySeekAcceptor implements SeekAcceptor {
   }
 }
 
+export class InMemoryGameStarter implements GameStarter {
+  constructor(
+    private readonly events: InMemoryEventStore,
+    private readonly games: InMemoryGamesRepository,
+  ) {}
+
+  async start(gameId: string, events: readonly GameEvent[], gameStart: GameStart): Promise<boolean> {
+    if (await this.games.findById(gameId)) return false;
+
+    let eventsAppended = false;
+    try {
+      await this.events.append(gameId, -1, events);
+      eventsAppended = true;
+      await this.games.start(gameStart);
+      return true;
+    } catch (err) {
+      if (eventsAppended) this.events._removeGame(gameId);
+      throw err;
+    }
+  }
+}
+
+
 export class InMemoryAuditRepository implements AuditRepository {
   private readonly log: AuditEntry[] = [];
 
@@ -672,6 +696,7 @@ export interface InMemoryRepositories extends Repositories {
   readonly webauthnLoginChallenges: InMemoryWebAuthnLoginChallengesRepository;
   readonly webauthnCredentials: InMemoryWebAuthnCredentialsRepository;
   readonly seekAcceptor: InMemorySeekAcceptor;
+  readonly gameStarter: InMemoryGameStarter;
   readonly antiCheat: InMemoryAntiCheatReportRepository;
   readonly botReports: InMemoryBotBehaviorReportRepository;
   readonly studies: InMemoryStudiesRepository;
@@ -697,6 +722,7 @@ export function createInMemoryRepositories(clock: Clock = systemClock): InMemory
     webauthnLoginChallenges: new InMemoryWebAuthnLoginChallengesRepository(),
     webauthnCredentials: new InMemoryWebAuthnCredentialsRepository(),
     seekAcceptor: new InMemorySeekAcceptor(seeks, events, games, clock),
+    gameStarter: new InMemoryGameStarter(events, games),
     antiCheat: new InMemoryAntiCheatReportRepository(),
     botReports: new InMemoryBotBehaviorReportRepository(),
     studies: new InMemoryStudiesRepository(),

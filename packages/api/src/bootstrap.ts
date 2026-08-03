@@ -23,6 +23,7 @@ import {
   PgWebAuthnCredentialsRepository,
   PgWebAuthnLoginChallengesRepository,
   PgSeekAcceptor,
+  PgGameStarter,
   PgAntiCheatReportRepository,
   PgBotBehaviorReportRepository,
   PgSearchRepository,
@@ -121,6 +122,7 @@ export function createPgRepositories(pool: Pool, ids: IdGenerator = uuidv7Genera
     webauthnCredentials: new PgWebAuthnCredentialsRepository(pool),
     webauthnLoginChallenges: new PgWebAuthnLoginChallengesRepository(pool),
     seekAcceptor: new PgSeekAcceptor(pool),
+    gameStarter: new PgGameStarter(pool),
     antiCheat: new PgAntiCheatReportRepository(pool),
     botReports: new PgBotBehaviorReportRepository(pool),
   };

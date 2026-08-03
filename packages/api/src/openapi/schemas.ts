@@ -414,6 +414,22 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     additionalProperties: false,
   },
 
+  CreateBotGameRequest: {
+    type: 'object',
+    required: ['level', 'variant', 'timeControl'],
+    properties: {
+      level: { type: 'string', enum: ['novice', 'club', 'master'], description: 'Engine bot strength level.' },
+      variant: { type: 'string', enum: [...VARIANTS] },
+      timeControl: { $ref: '#/components/schemas/TimeControl' },
+      color: {
+        type: 'string',
+        enum: [...SEEK_COLORS],
+        description: "Human player's color preference. Defaults to 'random'.",
+      },
+    },
+    additionalProperties: false,
+  },
+
   GrantRoleRequest: {
     type: 'object',
     required: ['role'],

@@ -11,6 +11,7 @@ import type {
   GamesRepository,
   RatingsRepository,
   SeekAcceptor,
+  GameStarter,
   SeeksRepository,
   SessionsRepository,
   UsersRepository,
@@ -52,6 +53,7 @@ export interface Repositories {
   readonly webauthnCredentials: WebAuthnCredentialsRepository;
   readonly webauthnLoginChallenges: WebAuthnLoginChallengesRepository;
   readonly seekAcceptor: SeekAcceptor;
+  readonly gameStarter: GameStarter;
   readonly antiCheat: AntiCheatReportRepository;
   readonly botReports: BotBehaviorReportRepository;
 }

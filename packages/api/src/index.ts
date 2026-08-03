@@ -67,4 +67,7 @@ export * from './openapi/schemas';
 
 export * from './graphql';
 
+export * from './bot/catalogue';
+
 export * from './fakes';
+

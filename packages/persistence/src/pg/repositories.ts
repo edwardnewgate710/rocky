@@ -21,6 +21,7 @@ import type {
   Role,
   SeekColor,
   SeekAcceptor,
+  GameStarter,
   SeekRow,
   SeeksRepository,
   SessionRow,
@@ -645,6 +646,44 @@ export class PgSeekAcceptor implements SeekAcceptor {
     }
   }
 }
+
+export class PgGameStarter implements GameStarter {
+  constructor(private readonly pool: Pool) {}
+
+  async start(gameId: string, events: readonly GameEvent[], gameStart: GameStart): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      let seq = -1;
+      for (const event of events) {
+        seq += 1;
+        await client.query(
+          `INSERT INTO game_events (game_id, seq, type, event_version, payload) VALUES ($1, $2, $3, $4, $5::jsonb)`,
+          [gameId, seq, event.type, CURRENT_EVENT_VERSION, JSON.stringify(event)]
+        );
+      }
+
+      await client.query(
+        `INSERT INTO games (id, variant, rated, speed, white_id, black_id, started_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [gameId, gameStart.variant, gameStart.rated, gameStart.speed, gameStart.whiteId, gameStart.blackId, gameStart.startedAt]
+      );
+
+      await client.query('COMMIT');
+      return true;
+    } catch (err) {
+      await rollback(client);
+      if (isUniqueViolation(err)) {
+        return false;
+      }
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+}
+
 
 export class PgTournamentsRepository implements TournamentsRepository {
   constructor(private readonly pool: Pool) {}

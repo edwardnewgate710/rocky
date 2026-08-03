@@ -298,6 +298,17 @@ export interface SeekAcceptor {
   accept(seekId: string, gameId: string, events: readonly GameEvent[], gameStart: GameStart): Promise<SeekRow | null>;
 }
 
+/**
+ * Starts a game that no seek produced (today: games against an engine bot).
+ * Events and the summary row commit together, for the same reason SeekAcceptor
+ * does it: a crash between them would leave an event log no game row points at.
+ */
+export interface GameStarter {
+  /** Returns false when `gameId` already exists, so the caller can treat a retry as a no-op. */
+  start(gameId: string, events: readonly GameEvent[], gameStart: GameStart): Promise<boolean>;
+}
+
+
 // --- Tournaments -----------------------------------------------------------
 
 import type { TournamentSnapshot, ArenaSnapshot } from '@chess-platform/tournament';

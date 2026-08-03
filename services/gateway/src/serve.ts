@@ -297,9 +297,20 @@ async function main(): Promise<void> {
     }
   }
 
+  // Shared engine instance provider helper
+  let sharedEngineProvider: ReturnType<typeof import('@chess-platform/api')['createEngineProviderFromEnv']> | undefined;
+  let engineCreated = false;
+  const getSharedEngine = async () => {
+    if (!engineCreated) {
+      engineCreated = true;
+      const api = await import('@chess-platform/api');
+      sharedEngineProvider = api.createEngineProviderFromEnv();
+    }
+    return sharedEngineProvider;
+  };
+
   // --- Anti-Cheat Auto-Analyzer (M12 inc 8, ADR-0043) ---
   let antiCheatAutoAnalyzer: { stop(): void } | undefined;
-  let antiCheatEngine: { shutdown(options?: { deadlineMs?: number }): Promise<void> } | undefined;
   if (process.env['ANTICHEAT_AUTO_ANALYZE'] === '1') {
     if (!pgPool || !eventStore) {
       logger.warn('ANTICHEAT_AUTO_ANALYZE requires DATABASE_URL to be set');
@@ -307,7 +318,7 @@ async function main(): Promise<void> {
       const { PgAntiCheatReportRepository } = await import('@chess-platform/persistence/pg');
       const api = await import('@chess-platform/api');
 
-      const engine = api.createEngineProviderFromEnv();
+      const engine = await getSharedEngine();
       if (!engine) {
         logger.warn('ANTICHEAT_AUTO_ANALYZE requires an engine binary (set STOCKFISH_PATH)');
       } else {
@@ -317,7 +328,6 @@ async function main(): Promise<void> {
         const worker = new api.AntiCheatAutoAnalyzer(pubsub, service);
         worker.start();
         antiCheatAutoAnalyzer = worker;
-        antiCheatEngine = engine;
         logger.info('AntiCheatAutoAnalyzer is enabled');
       }
     }
@@ -444,8 +454,52 @@ async function main(): Promise<void> {
     logger.info('command routing: local (single-node)');
   }
 
+  // --- Engine Bot Mover (M14 inc 13, ADR-0080) ---
+  let engineBotMover: import('./engine-bot.js').EngineBotMover | undefined;
+  let botAccountByUserId: typeof import('@chess-platform/api').botAccountByUserId | undefined;
+  if (process.env['ENGINE_BOT'] === '1') {
+    const engine = await getSharedEngine();
+    if (!engine) {
+      logger.warn('ENGINE_BOT requires an engine binary (set STOCKFISH_PATH)');
+    } else {
+      const api = await import('@chess-platform/api');
+      botAccountByUserId = api.botAccountByUserId;
+      const { EngineBotMover } = await import('./engine-bot.js');
+      const movesCounter = metrics.counter('gateway_bot_moves_total');
+      const failuresCounter = metrics.counter('gateway_bot_move_failures_total');
+      const moveSecondsHistogram = metrics.histogram('gateway_bot_move_seconds', [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5]);
+
+      engineBotMover = new EngineBotMover({
+        authority,
+        router: commandRouter,
+        pubsub,
+        provider: engine,
+        logger,
+        movesCounter,
+        failuresCounter,
+        moveSecondsHistogram,
+      });
+      logger.info('EngineBotMover is enabled');
+    }
+  }
+
   const tokenVerifier = new SharedSecretTokenVerifier(secret, ttlSec, () => authFailuresCounter.inc());
-  const gateway = new RealtimeGateway(authority, pubsub, tokenVerifier, () => Date.now(), commandRouter);
+  const gateway = new RealtimeGateway(
+    authority,
+    pubsub,
+    tokenVerifier,
+    () => Date.now(),
+    commandRouter,
+    (gameId, state) => {
+      if (engineBotMover && botAccountByUserId) {
+        const whiteBot = botAccountByUserId(state.players.white);
+        const blackBot = botAccountByUserId(state.players.black);
+        if (whiteBot || blackBot) {
+          engineBotMover.registerGame(gameId);
+        }
+      }
+    },
+  );
 
   // --- HTTP health server ---
   const healthServer = createServer((req, res) => {
@@ -614,10 +668,11 @@ async function main(): Promise<void> {
     antiCheatAutoAnalyzer?.stop();
     searchIndexWorker?.stop();
     achievementsAwardWorker?.stop();
+    engineBotMover?.stop();
     // Start engine (subprocess) shutdown now so it runs concurrently with the
     // socket drain, but await it below before process.exit so cleanup can't be cut short.
-    const engineShutdown = antiCheatEngine?.shutdown().catch((err: unknown) =>
-      logger.error('AntiCheat engine shutdown failed', { err: err instanceof Error ? (err.stack ?? err.message) : String(err) }),
+    const engineShutdown = sharedEngineProvider?.shutdown().catch((err: unknown) =>
+      logger.error('Engine shutdown failed', { err: err instanceof Error ? (err.stack ?? err.message) : String(err) }),
     );
     logger.info('Shutdown signal received — closing');
     for (const client of wss.clients) {

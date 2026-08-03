@@ -5,7 +5,7 @@ import { Game } from '@chess-platform/game';
 import { createPool } from '../src/pg/pool';
 import { migrate } from '../src/pg/migrate';
 import { PostgresEventStore } from '../src/pg/event-store';
-import { PgGamesRepository, PgSeeksRepository, PgSeekAcceptor, PgUsersRepository } from '../src/pg/repositories';
+import { PgGamesRepository, PgSeeksRepository, PgSeekAcceptor, PgGameStarter, PgUsersRepository } from '../src/pg/repositories';
 import { uuidv7 } from '../src/ids';
 import { ConcurrencyError } from '../src/errors';
 
@@ -212,3 +212,49 @@ test('postgres seek acceptance: optimistic concurrency', { skip }, async () => {
     await pool.end();
   }
 });
+
+test('PgGameStarter: creates game and handles duplicate id cleanly', { skip }, async () => {
+  const pool = createPool();
+  try {
+    await migrate(pool, join(process.cwd(), 'migrations'));
+    const starter = new PgGameStarter(pool);
+    const users = new PgUsersRepository(pool);
+
+    const u1 = uuidv7();
+    const u2 = uuidv7();
+    // Distinct prefixes, like every other test here: uuidv7 leads with a millisecond timestamp,
+    // so two ids minted in the same millisecond share their first 8 hex characters and a shared
+    // prefix would collide on the UNIQUE handle.
+    await users.create({ id: u1, handle: `white-${u1.slice(0, 8)}` });
+    await users.create({ id: u2, handle: `black-${u2.slice(0, 8)}` });
+
+    const gameId = uuidv7();
+    const timeControl = { initialMs: 60_000, incrementMs: 1_000, delayMs: 0, kind: 'increment' as const };
+    const { events } = Game.create({
+      gameId,
+      timeControl,
+      players: { white: u1, black: u2 },
+      rated: false,
+      at: 1000,
+    });
+
+    const gameStart = {
+      id: gameId,
+      variant: 'standard' as const,
+      rated: false,
+      speed: 'blitz' as const,
+      whiteId: u1,
+      blackId: u2,
+      startedAt: new Date(1000),
+    };
+
+    const first = await starter.start(gameId, events, gameStart);
+    assert.equal(first, true);
+
+    const second = await starter.start(gameId, events, gameStart);
+    assert.equal(second, false, 'duplicate gameId must return false without throwing');
+  } finally {
+    await pool.end();
+  }
+});
+

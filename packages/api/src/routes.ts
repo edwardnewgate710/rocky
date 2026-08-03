@@ -14,6 +14,7 @@ import type { RequestMeta } from './auth/service';
 import type { Repositories } from './deps';
 import { Game, classifySpeed } from '@chess-platform/game';
 import { parseRole, parseSeekColor, parseTimeControl, parseUuid, parseVariant, VARIANTS, HANDLE_PATTERN, UUID_PATTERN } from './domain';
+import { BOT_ACCOUNTS, botAccountByLevel } from './bot/catalogue';
 import { HttpError } from './http/errors';
 import { json, noContent } from './http/context';
 import type { RequestContext } from './http/context';
@@ -236,6 +237,12 @@ export function buildRouter(deps: RouteDeps): Router {
 
       const body = strictObject(ctx.body, ['handle', 'password', 'email']);
       const handle = reqString(body, 'handle', { trim: true, pattern: HANDLE_PATTERN });
+      // Engine bot handles are seeded by migration 0021 and must stay unclaimable: a human holding
+      // one turns that migration into a unique violation that blocks the deploy. `handle` is CITEXT
+      // in the schema, so the reservation is case-insensitive here too.
+      if (BOT_ACCOUNTS.some((bot) => bot.handle.toLowerCase() === handle.toLowerCase())) {
+        throw HttpError.conflict('handle is reserved');
+      }
       const password = reqString(body, 'password', { min: 8, max: 1024 });
       const email = optString(body, 'email', { max: 320, trim: true });
       const result = await auth.register({ handle, password, email: email ?? null }, meta(ctx));
@@ -1167,6 +1174,93 @@ export function buildRouter(deps: RouteDeps): Router {
   );
 
   // --- Games ---------------------------------------------------------------
+  router.post(
+    '/v1/games/bot',
+    doc({
+      summary: 'Start a game against an engine bot',
+      tags: ['games'],
+      security: 'bearer',
+      requestSchema: 'CreateBotGameRequest',
+      responses: {
+        200: ['GameSummary', 'Game created against engine bot'],
+        400: ['Error', 'Unknown bot level'],
+        409: ['Error', 'Game id conflict'],
+        422: ['Error', 'Validation error'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const identity = requireAuth(ctx);
+      const body = strictObject(ctx.body, ['level', 'variant', 'timeControl', 'color']);
+      const levelStr = reqString(body, 'level');
+      const botAcc = botAccountByLevel(levelStr);
+      if (!botAcc) {
+        const validLevels = BOT_ACCOUNTS.map((b) => b.level).join(', ');
+        throw HttpError.badRequest(`invalid bot level: "${levelStr}". Valid levels: ${validLevels}`);
+      }
+
+      const variant = parseVariant(reqString(body, 'variant'));
+      const timeControl = parseTimeControl(body['timeControl']);
+      const colorPref = body['color'] !== undefined ? parseSeekColor(reqString(body, 'color')) : 'random';
+
+      const gameId = ids.next();
+      const startedAt = clock.now();
+
+      let humanIsWhite: boolean;
+      if (colorPref === 'white') {
+        humanIsWhite = true;
+      } else if (colorPref === 'black') {
+        humanIsWhite = false;
+      } else {
+        // Derive the side from the generated game id rather than Math.random(), so a test with an
+        // injected IdGenerator can assert which side the human gets. Summed over the whole id
+        // because `IdGenerator.next()` promises only a string: parsing one character as hex yields
+        // NaN for any other id shape, and NaN % 2 === 0 is false, which would silently hand every
+        // human the same colour instead of failing.
+        let checksum = 0;
+        for (let i = 0; i < gameId.length; i += 1) checksum += gameId.charCodeAt(i);
+        humanIsWhite = checksum % 2 === 0;
+      }
+
+      const whiteId = humanIsWhite ? identity.userId : botAcc.userId;
+      const blackId = humanIsWhite ? botAcc.userId : identity.userId;
+
+      // Bot games are unrated: a game against a calibrated engine must not move a human's rating
+      // (no anti-abuse story for engine rating updates, and adding a flag would be speculative).
+      const rated = false;
+
+      const { events } = Game.create({
+        gameId,
+        variant,
+        timeControl,
+        players: { white: whiteId, black: blackId },
+        rated,
+        at: startedAt,
+      });
+
+      const started = await repos.gameStarter.start(gameId, events, {
+        id: gameId,
+        variant,
+        rated,
+        speed: classifySpeed(timeControl),
+        whiteId,
+        blackId,
+        startedAt: new Date(startedAt),
+      });
+
+      if (!started) {
+        throw HttpError.conflict('game already exists');
+      }
+
+      const gameSummary = await repos.games.findById(gameId);
+      if (!gameSummary) {
+        throw new HttpError(500, 'internal', 'failed to load created game');
+      }
+
+      return json(200, gameSummaryView(gameSummary));
+    },
+  );
+
   router.get(
     '/v1/games/:id',
     doc({

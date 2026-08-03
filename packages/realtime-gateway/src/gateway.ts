@@ -33,6 +33,7 @@ import type {
   RejectCode,
   Role,
   SimpleCommandMessage,
+  StateView,
   TokenVerifier,
 } from './protocol';
 
@@ -65,6 +66,7 @@ const SIMPLE_TO_COMMAND: Record<SimpleCommandMessage['t'], Command['kind']> = {
 export class RealtimeGateway {
   private readonly sessions = new Map<string, Session>();
   private readonly rooms = new Map<string, RoomEntry>();
+  private readonly loadedGames = new Set<string>();
   /**
    * Command router: directs game commands to the owning node. Defaults to
    * {@link LocalCommandRouter} (direct authority.apply) for single-node and
@@ -79,6 +81,8 @@ export class RealtimeGateway {
     private readonly tokenVerifier: TokenVerifier,
     private readonly now: () => number = () => Date.now(),
     commandRouter?: CommandRouter,
+    /** Called once a join has materialised a game, so a host can react to who is seated. */
+    private readonly onGameLoaded?: (gameId: string, state: StateView) => void,
   ) {
     // Fall back to local routing when no router is injected. This preserves
     // backward compatibility: existing callers that don't pass a router get
@@ -200,8 +204,14 @@ export class RealtimeGateway {
     entry.room.add(session.conn, userId, role);
     session.games.set(gameId, { userId, role, lastSeq: 0 });
 
-    session.conn.send({ t: 'joined', gameId, role, state: this.authority.getState(gameId) });
+    const state = this.authority.getState(gameId);
+    session.conn.send({ t: 'joined', gameId, role, state });
     entry.room.broadcastPresence();
+
+    if (!this.loadedGames.has(gameId)) {
+      this.loadedGames.add(gameId);
+      this.onGameLoaded?.(gameId, state);
+    }
   }
 
   private onMove(session: Session, msg: MoveMessage): void {
@@ -278,6 +288,7 @@ export class RealtimeGateway {
       if (entry.room.size === 0) {
         entry.unsubscribe();
         this.rooms.delete(gameId);
+        this.loadedGames.delete(gameId);
       } else {
         entry.room.broadcastPresence();
       }
