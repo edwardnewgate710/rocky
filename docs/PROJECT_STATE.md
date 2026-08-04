@@ -4,7 +4,18 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-04 — M14 Increment 18: Direct Messaging UI (ADR-0085)._
+_Last updated: 2026-08-04 — M14 Increment 19: In-memory search index in E2E harness & search hit assertion (ADR-0086)._
+
+## M14 Increment 19 — In-memory search index in E2E harness & search hit assertion (ADR-0086)
+
+Wires `InMemorySearchRepository` into the backend harness (`packages/e2e-harness`) under `GAMBIT_E2E_BACKEND=1` and exposes a test-only bridge route (`POST /e2e/search-index`) to seed search fixture documents in E2E specs, closing tracked test debt from ADR-0083 §7.
+
+- **Harness Search Index Wiring (`packages/e2e-harness/src/harness.ts`, `package.json`)**: Instantiated `InMemorySearchRepository` (from `@chess-platform/search`) and passed it to `deps.searchRepository` in `createHarness()`. Added `"@chess-platform/search": "file:../search"` to `packages/e2e-harness/package.json` dependencies.
+- **Bridge Route `POST /e2e/search-index` (`packages/e2e-harness/src/harness.ts`)**: Implemented test-only bridge route to project and index player (`playerToDocument`), game (`gameToDocument`), and tournament (`tournamentToDocument`) inputs. Responds `201` with `{ indexed: <count> }` or `400` on malformed input / empty payload.
+- **E2E Spec Hit Assertion (`packages/web/e2e/search.spec.ts`)**: Added E2E test that registers a user via `POST /v1/auth/register`, seeds the search index with the user's handle via `POST /e2e/search-index`, navigates to `/search?q=<handle>`, and asserts that `#search-results` renders a result row displaying the resolved handle via GraphQL hydration.
+- **Documentation (`docs/adr/0083-search-ui.md`, `docs/ROADMAP.md`, `docs/adr/0086-e2e-search-index.md`, `docs/PROJECT_STATE.md`)**: Updated ADR-0083 §7, marked tracked roadmap debt resolved, created ADR-0086, and updated handover state.
+
+Prior: _Last updated: 2026-08-04 — M14 Increment 18: Direct Messaging UI (ADR-0085)._
 
 ## M14 Increment 18 — Direct Messaging UI (ADR-0085)
 

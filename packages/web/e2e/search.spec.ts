@@ -4,6 +4,7 @@
  * Gated: requires GAMBIT_E2E_BACKEND=1 and the e2e harness running.
  */
 import { test, expect } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
 
 test.skip(!process.env['GAMBIT_E2E_BACKEND'], 'requires running backend — M14 acceptance gate');
 
@@ -97,3 +98,32 @@ test('the header form pushes exactly one history entry after repeated SPA naviga
   await expect(page).toHaveURL(/\/$/, { timeout: 15_000 });
   await expect(page.locator('#lobby')).toBeVisible({ timeout: 15_000 });
 });
+
+test('indexed player query returns a hit and renders the resolved handle', async ({ page, request }) => {
+  const suffix = randomUUID().replaceAll('-', '').slice(0, 8);
+  const handle = `srch-${suffix}`;
+  const password = 'test-password-search-123';
+
+  const regResp = await request.post('/v1/auth/register', {
+    data: { handle, password },
+  });
+  expect(regResp.ok()).toBeTruthy();
+  const authData = await regResp.json();
+  const userId = authData.user.id as string;
+
+  const indexResp = await request.post('/e2e/search-index', {
+    data: {
+      players: [{ id: userId, handle }],
+    },
+  });
+  expect(indexResp.ok()).toBeTruthy();
+  const indexData = await indexResp.json();
+  expect(indexData.indexed).toBe(1);
+
+  await page.goto(`/search?q=${handle}`);
+
+  const results = page.locator('#search-results');
+  await expect(results.locator('.panel-row')).toBeVisible({ timeout: 15_000 });
+  await expect(results).toContainText(handle, { timeout: 15_000 });
+});
+

@@ -54,7 +54,7 @@ A search form with `role="search"` and a `<label class="sr-only">` is added to `
 ### 7. What Is NOT Covered
 
 - **DOM Unit Tests**: DOM rendering is verified through static markup assertions (`packages/web/test/a11y.test.ts`) and Playwright E2E tests (`packages/web/e2e/search.spec.ts`). Pure hit parsing and API client behavior are unit-tested in `packages/web/test/search-results.test.ts`, `packages/web/test/api-client.test.ts`, and `packages/web/test/tournament-routes.test.ts`.
-- **Populated Index Verification**: The E2E test harness does not index documents; E2E tests verify form navigation, deep links, prompt state, and back-button behavior using fulfilled mock routes when necessary. **No test asserts that a query returns hits**, because nothing in the test environment can produce one. Closing that gap requires dedicated test infrastructure — indexing fixture documents through the `e2e-harness`, or seeding the search tables directly — not another spec. Tracked under "Known follow-ups (tracked)" in `docs/ROADMAP.md`.
+- **Populated Index Verification (PARTLY OBSOLETE / SUPERSEDED by ADR-0086)**: Increment 19 closed the primary gap by wiring an `InMemorySearchRepository` into `packages/e2e-harness/src/harness.ts` and exposing `POST /e2e/search-index` to seed fixture documents. An E2E test in `packages/web/e2e/search.spec.ts` now asserts that a keyword search query returns a hit and renders the resolved handle via GraphQL hydration. Semantic (`mode=semantic`) and hybrid (`mode=hybrid`) search modes still respond 503 in E2E tests because no vector index is wired in the harness, and live production event indexing is not exercised by this test bridge.
 
 ## Consequences
 

@@ -22,6 +22,14 @@
  *
  * `botResignsAfterPlies` is a determinism lever for e2e specs: if set, the bot
  * resigns on its turn once the game's ply count reaches the given value.
+ *
+ * ## Bridge route: `POST /e2e/search-index`
+ *
+ * The harness exposes a second **test-only** bridge route, `POST /e2e/search-index`,
+ * to seed the in-memory search repository with documents projected from domain entities.
+ * Namespaced under `/e2e/` so it never leaks into the product API surface.
+ * Body: `{ players?: PlayerDocumentInput[], games?: GameDocumentInput[], tournaments?: TournamentDocumentInput[] }`.
+ * Returns `{ indexed: number }`.
  */
 import { createServer, type Server } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -57,6 +65,15 @@ import {
 } from '@chess-platform/realtime-gateway';
 import { InMemoryMessagingRepository } from '@chess-platform/messaging';
 import { InMemorySocialGraphRepository } from '@chess-platform/social';
+import {
+  InMemorySearchRepository,
+  playerToDocument,
+  gameToDocument,
+  tournamentToDocument,
+  type PlayerDocumentInput,
+  type GameDocumentInput,
+  type TournamentDocumentInput,
+} from '@chess-platform/search';
 import { BotPlayer } from './bot.js';
 import { AuthorityGameLauncher } from './launcher.js';
 import { TournamentBroadcaster } from './broadcaster.js';
@@ -101,6 +118,13 @@ interface BridgeGameBody {
   readonly blackId?: string;
   /** If set and the bot is a player, the bot resigns after this many plies. */
   readonly botResignsAfterPlies?: number;
+}
+
+/** Body for the bridge route `POST /e2e/search-index`. */
+interface BridgeSearchIndexBody {
+  readonly players?: PlayerDocumentInput[];
+  readonly games?: GameDocumentInput[];
+  readonly tournaments?: TournamentDocumentInput[];
 }
 
 /**
@@ -164,7 +188,8 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
   // spec asserting on a handle can never pass.
   const socialGraphRepository = new InMemorySocialGraphRepository();
   const messagingRepository = new InMemoryMessagingRepository(socialGraphRepository);
-  const deps: ApiDependencies = { repos, hasher, tokens, clock, ids, config, rateLimiter, tournamentRepo, gameLauncher, liveView: broadcaster, emailSender, messagingRepository, socialGraphRepository, graphql: { introspection: false } };
+  const searchRepository = new InMemorySearchRepository();
+  const deps: ApiDependencies = { repos, hasher, tokens, clock, ids, config, rateLimiter, tournamentRepo, gameLauncher, liveView: broadcaster, emailSender, messagingRepository, socialGraphRepository, searchRepository, graphql: { introspection: false } };
   const apiServer = createApiServer(deps);
 
   const tokenVerifier = new ApiTokenVerifier((token: string) => {
@@ -227,6 +252,127 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ code: 'internal_error', message: (err as Error).message }));
         }
+        })();
+      });
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/e2e/search-index') {
+      let body = '';
+      req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+      req.on('end', () => {
+        void (async () => {
+          try {
+            let parsed: BridgeSearchIndexBody;
+            try {
+              parsed = JSON.parse(body) as BridgeSearchIndexBody;
+            } catch {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ code: 'bad_request', message: 'Invalid JSON body' }));
+              return;
+            }
+
+            if (!parsed || typeof parsed !== 'object') {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ code: 'bad_request', message: 'Body must be an object' }));
+              return;
+            }
+
+            const docs = [];
+
+            if (parsed.players !== undefined) {
+              if (!Array.isArray(parsed.players)) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ code: 'bad_request', message: 'players must be an array' }));
+                return;
+              }
+              for (const p of parsed.players) {
+                // `country` is optional, but a non-string one reaches `.trim()` inside
+                // `playerToDocument` and throws — which would surface as a 500 and send whoever is
+                // debugging a fixture looking for a harness fault instead of their own payload.
+                if (
+                  !p ||
+                  typeof p.id !== 'string' ||
+                  typeof p.handle !== 'string' ||
+                  (p.country !== undefined && typeof p.country !== 'string')
+                ) {
+                  res.writeHead(400, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ code: 'bad_request', message: 'Invalid player document input' }));
+                  return;
+                }
+                docs.push(playerToDocument(p));
+              }
+            }
+
+            if (parsed.games !== undefined) {
+              if (!Array.isArray(parsed.games)) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ code: 'bad_request', message: 'games must be an array' }));
+                return;
+              }
+              for (const g of parsed.games) {
+                if (
+                  !g ||
+                  typeof g.id !== 'string' ||
+                  typeof g.whiteHandle !== 'string' ||
+                  typeof g.blackHandle !== 'string' ||
+                  typeof g.variant !== 'string' ||
+                  typeof g.speed !== 'string' ||
+                  typeof g.result !== 'string' ||
+                  typeof g.rated !== 'boolean' ||
+                  // Optional, and `.trim()`-ed by `gameToDocument` — same reason as `country`.
+                  (g.eco !== undefined && typeof g.eco !== 'string')
+                ) {
+                  res.writeHead(400, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ code: 'bad_request', message: 'Invalid game document input' }));
+                  return;
+                }
+                docs.push(gameToDocument(g));
+              }
+            }
+
+            if (parsed.tournaments !== undefined) {
+              if (!Array.isArray(parsed.tournaments)) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ code: 'bad_request', message: 'tournaments must be an array' }));
+                return;
+              }
+              for (const t of parsed.tournaments) {
+                if (
+                  !t ||
+                  typeof t.id !== 'string' ||
+                  typeof t.name !== 'string' ||
+                  typeof t.format !== 'string' ||
+                  typeof t.state !== 'string'
+                ) {
+                  res.writeHead(400, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ code: 'bad_request', message: 'Invalid tournament document input' }));
+                  return;
+                }
+                docs.push(tournamentToDocument(t));
+              }
+            }
+
+            // One rule covering both an absent body and present-but-empty arrays: a call that
+            // indexes nothing is a broken fixture, and answering 201 to it hides the setup error
+            // behind whatever assertion fails later. ADR-0086 states this contract.
+            if (docs.length === 0) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                code: 'bad_request',
+                message: 'body must index at least one document (players, games or tournaments)',
+              }));
+              return;
+            }
+
+            await searchRepository.indexAll(docs);
+
+            res.writeHead(201, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ indexed: docs.length }));
+          } catch (err) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ code: 'internal_error', message: (err as Error).message }));
+          }
         })();
       });
       return;

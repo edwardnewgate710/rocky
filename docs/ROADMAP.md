@@ -894,9 +894,14 @@ Exposes the M10 direct messaging backend (`/v1/messages/*`) in the web frontend 
 - **Styles (`packages/web/src/style.css`)**: Added CSS rules for messaging layout, message thread items, own-message styling, composer input, and coarse-pointer touch targets according to DESIGN.md.
 - **Tests & ADR**: Unit tests in `packages/web/test/messages.test.ts`, client tests in `packages/web/test/api-client.test.ts`, a11y tests in `packages/web/test/a11y.test.ts`, Playwright E2E spec in `packages/web/e2e/messages.spec.ts`, and architectural record in `docs/adr/0085-direct-messaging-ui.md`.
 
+### Increment 19: In-memory search index in E2E harness & search hit assertion (ADR-0086) ✅
 
+Wires `InMemorySearchRepository` into the backend harness under `GAMBIT_E2E_BACKEND=1` and exposes a test-only bridge route to seed search documents.
 
-
+- **Harness Wiring (`packages/e2e-harness/src/harness.ts`, `package.json`)**: Wired `InMemorySearchRepository` from `@chess-platform/search` into `deps.searchRepository` so `GET /v1/search` does not 503 under `GAMBIT_E2E_BACKEND=1`. Added `@chess-platform/search` to `packages/e2e-harness/package.json` dependencies.
+- **Bridge Route `POST /e2e/search-index` (`packages/e2e-harness/src/harness.ts`)**: Exposed test-only bridge route to project and index player, game, and tournament documents via `@chess-platform/search` projection helpers (`playerToDocument`, `gameToDocument`, `tournamentToDocument`).
+- **E2E Test Assertion (`packages/web/e2e/search.spec.ts`)**: Added test registering a user, seeding the search index with that player document via `POST /e2e/search-index`, navigating to `/search?q=<handle>`, and asserting the hit renders the resolved handle via GraphQL hydration.
+- **Documentation (`docs/adr/0083-search-ui.md`, `docs/ROADMAP.md`, `docs/adr/0086-e2e-search-index.md`, `docs/PROJECT_STATE.md`)**: Updated ADR-0083 §7, marked tracked debt resolved in ROADMAP.md, created ADR-0086, and updated PROJECT_STATE.md.
 
 ## ✅ Verification hygiene — ADR claim drift guard (ADR-0079)
 
@@ -935,11 +940,7 @@ Debt observed during M14. Each states what is known, not what is planned; items 
   10, parallel entity fetches, single-batch `resolvePlayers`). A richer search response — entity type,
   title, and snippet carried in the hit itself — would remove the secondary lookups entirely. **The
   contract is deliberately unchanged for now**; changing it is its own increment with its own ADR.
-- **The E2E environment indexes no documents, so no test asserts a query returns hits.** ADR-0083 §7
-  records this. `packages/web/e2e/search.spec.ts` covers navigation, deep links, prompt state and
-  history behaviour — all reachable without an index. Asserting on real results requires either
-  indexing fixture documents in the `e2e-harness` or seeding the search tables directly; neither
-  exists today.
+- **The E2E environment indexes no documents, so no test asserts a query returns hits (RESOLVED in Increment 19 / ADR-0086).** ADR-0083 §7 records this. `packages/web/e2e/search.spec.ts` covers navigation, deep links, prompt state and history behaviour — all reachable without an index. Resolved in Increment 19 by wiring an `InMemorySearchRepository` into `e2e-harness` and exposing `POST /e2e/search-index` to seed fixture documents in E2E tests.
 
 ---
 

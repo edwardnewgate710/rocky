@@ -264,4 +264,40 @@ describe('e2e harness protocol test', () => {
     const resp = await httpReq(apiPort, 'GET', '/e2e/games');
     ok(resp.status === 404 || resp.status === 405, `expected 404 or 405, got ${resp.status}`);
   });
+
+  it('search-index rejects a payload that would index nothing', async () => {
+    // A fixture that indexes zero documents is a broken fixture. Answering 201 to it hides the
+    // setup error behind whichever assertion fails later in the spec.
+    const absent = await httpReq(apiPort, 'POST', '/e2e/search-index', {});
+    strictEqual(absent.status, 400, 'a body with no entity arrays must be rejected');
+
+    const empty = await httpReq(apiPort, 'POST', '/e2e/search-index', { players: [] });
+    strictEqual(empty.status, 400, 'present-but-empty arrays index nothing and must be rejected');
+  });
+
+  it('search-index rejects a non-string optional field instead of throwing', async () => {
+    // `country` and `eco` are optional but are `.trim()`-ed by the projections, so a non-string
+    // reaches a TypeError and answers 500 — pointing whoever is debugging at the harness rather
+    // than at their own payload.
+    const badCountry = await httpReq(apiPort, 'POST', '/e2e/search-index', {
+      players: [{ id: 'p-1', handle: 'someone', country: 42 }],
+    });
+    strictEqual(badCountry.status, 400, `expected 400 for a non-string country, got ${badCountry.status}`);
+
+    const badEco = await httpReq(apiPort, 'POST', '/e2e/search-index', {
+      games: [{
+        id: 'g-1', whiteHandle: 'a', blackHandle: 'b', variant: 'standard',
+        speed: 'blitz', result: '1-0', rated: true, eco: 7,
+      }],
+    });
+    strictEqual(badEco.status, 400, `expected 400 for a non-string eco, got ${badEco.status}`);
+  });
+
+  it('search-index indexes a valid batch', async () => {
+    const resp = await httpReq(apiPort, 'POST', '/e2e/search-index', {
+      players: [{ id: 'p-ok', handle: 'indexable' }],
+    });
+    strictEqual(resp.status, 201);
+    strictEqual(resp.body.indexed, 1);
+  });
 });
