@@ -55,6 +55,8 @@ import {
   encode,
   decode,
 } from '@chess-platform/realtime-gateway';
+import { InMemoryMessagingRepository } from '@chess-platform/messaging';
+import { InMemorySocialGraphRepository } from '@chess-platform/social';
 import { BotPlayer } from './bot.js';
 import { AuthorityGameLauncher } from './launcher.js';
 import { TournamentBroadcaster } from './broadcaster.js';
@@ -150,7 +152,19 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
   });
   const rateLimiter = new InMemoryRateLimiter(clock);
   const emailSender = new ConsoleEmailSender();
-  const deps: ApiDependencies = { repos, hasher, tokens, clock, ids, config, rateLimiter, tournamentRepo, gameLauncher, liveView: broadcaster, emailSender };
+  // Messaging and the social graph are both OPTIONAL in `ApiDependencies`, and an absent one makes
+  // its routes answer 503. The DM UI needs both: `/v1/messages/*` obviously, and `/v1/social/*`
+  // because the profile page only renders its action row once a relationship loads — which is where
+  // the "Message" entry point lives. Passing the social graph to messaging as the block checker
+  // mirrors `packages/api/test/helpers.ts`, so blocking is really enforced here rather than stubbed
+  // to "never blocked".
+  // The GraphQL read layer is optional too, and absent it 503s. The web app resolves every player
+  // id to a handle through one batched `resolvePlayers` GraphQL call, so without this the messages,
+  // tournaments and search views all silently fall back to rendering `shortId(...)` — and an e2e
+  // spec asserting on a handle can never pass.
+  const socialGraphRepository = new InMemorySocialGraphRepository();
+  const messagingRepository = new InMemoryMessagingRepository(socialGraphRepository);
+  const deps: ApiDependencies = { repos, hasher, tokens, clock, ids, config, rateLimiter, tournamentRepo, gameLauncher, liveView: broadcaster, emailSender, messagingRepository, socialGraphRepository, graphql: { introspection: false } };
   const apiServer = createApiServer(deps);
 
   const tokenVerifier = new ApiTokenVerifier((token: string) => {

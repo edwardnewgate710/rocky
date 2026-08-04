@@ -192,4 +192,31 @@ test('search error region has role=alert', () => {
   assert.match(HTML_TEMPLATE, /id="search-error"[^>]*role="alert"/);
 });
 
+// --- Direct Messaging region (M14 inc 18) ---
+
+test('nav link is present for messages', () => {
+  assert.ok(HTML_TEMPLATE.includes('href="/messages" data-route="messages">Messages</a>'));
+});
+
+test('every messaging section carries an aria-label', () => {
+  assert.ok(HTML_TEMPLATE.includes('aria-label="Messages"'));
+  assert.ok(HTML_TEMPLATE.includes('aria-label="Conversation"'));
+});
+
+test('messaging list regions carry aria-labels', () => {
+  assert.ok(HTML_TEMPLATE.includes('aria-label="Inbox"'));
+  assert.ok(HTML_TEMPLATE.includes('aria-label="Message thread"'));
+});
+
+test('messaging error regions have role=alert', () => {
+  assert.match(HTML_TEMPLATE, /id="messages-error"[^>]*role="alert"/);
+  assert.match(HTML_TEMPLATE, /id="conversation-error"[^>]*role="alert"/);
+});
+
+test('conversation composer form has labelled input', () => {
+  assert.ok(HTML_TEMPLATE.includes('id="conversation-composer"'));
+  assert.ok(HTML_TEMPLATE.includes('for="composer-input"'));
+});
+
+
 

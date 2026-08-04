@@ -163,6 +163,7 @@ Flat at rest, everywhere. There is no `box-shadow` in the current implementation
 - **Row action** (`padding: 2px 10px`, `Label` typography): the compact form used *only* for a control that sits inside a list row — the seek-list cancel, and the accept/decline/cancel/unblock controls in the social lists. Identical shape, border, hover and focus treatment; padding and type step down so a control never out-weighs the row it belongs to. This is a size, not a second button style, and it is the only size variant that exists. A control outside a row uses the default.
 - **Hover / Focus:** `Panel Tint` background fill plus **Interactive Lift** shadow on hover; a 3px Grandmaster Teal outline on `:focus-visible`. Both are additive to the flat default, never a permanent state.
 - **Ghost / disabled:** disabled buttons (e.g. "Create seek" before sign-in) keep the same shape but drop to reduced opacity with a `title` tooltip explaining why — never hidden entirely.
+- **Grouping in an action bar:** when several buttons share a bar (the profile's `.social-actions`), the way to stop them reading as rival calls to action is **spacing**, never a second treatment. Actions of the same kind sit flush at the standard 8px gap; a different kind is set apart by one more step of the spacing scale (`Message`, which opens a conversation), and a destructive one is pushed to the far end (`Block`). Nothing in the bar changes size, weight or colour to signal importance — if a surface ever seems to need that, the fix is fewer actions or better copy, not a primary variant.
 
 ### List Rows (seeks, ratings, recent games)
 - **Shape:** `Panel Tint` background, 6px radius, `padding: 8px 12px` (seek rows) or `6px 12px` (rating/game rows), `Small` typography.
@@ -182,6 +183,13 @@ Flat at rest, everywhere. There is no `box-shadow` in the current implementation
 ### Navigation
 - Plain text links (`Ash` color, 80% opacity, 100% on hover), no underline, no pill/tab background. Wordmark is `Title` typography and doubles as the home link.
 - **Search field** (`.nav-search`): the one control that sits in the nav. It is not a nav-specific input style — it shares the single form-control treatment used by the create-a-game panel's select and number fields (`Panel Tint Strong` fill, transparent 1px border, the system's one 6px radius, `Small` type, teal focus ring, 44px minimum target on coarse pointers), and declares only its own width. A second input treatment here would be the same drift a second button style would be: the field is in a different place, not a different kind of control.
+
+### Messages (inbox and conversation thread)
+- **Inbox rows** reuse the one List Row treatment above — `.panel-row` inside `.panel-list`, exactly as the seek, ratings, tournament and search lists do. There is no messages-specific row.
+- **Message bubble** (`.message-item`): `Panel Tint` fill, the system's one 6px radius, `padding: 8px 12px`, capped at `max-width: 80%` so a long thread keeps a readable measure. The header line is `Label` typography in `Ash`, with the sender stepping up to `Small` at full-strength `Ash` so it reads ahead of the timestamp beside it — through size and colour, never weight, since 600 belongs to clock `Numeric` alone. The body is `Small`.
+- **Authorship** is carried by **side and fill only** — the caller's own messages sit `flex-end` on `Panel Tint Strong`, everyone else's sit `flex-start` on `Panel Tint`. It is deliberately *not* carried by Grandmaster Teal: the accent means active/selected/focused and nothing else, so borrowing it for "mine" would give it a second meaning (the same reason errors use Ember). Placement and fill, not a second accent — the same principle as having no primary-button treatment.
+- **Deleted messages** render placeholder text in `Ash` italic rather than the original body. A tombstone is a state, not an emphasis, so it gets no border, badge or colour of its own.
+- **Composer** (`.composer-form`): shares the single form-control treatment used by the nav search field and the create-a-game panel — it declares only `flex: 1` for width. The send button is the **default** button style; there is no primary-button variant here any more than anywhere else, and its prominence comes from being the only control in the row.
 
 ## 6. Do's and Don'ts
 

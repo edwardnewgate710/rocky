@@ -562,6 +562,14 @@ button:disabled {
 .social-action-destructive {
   margin-left: auto;
 }
+/* "Message" opens a conversation; everything beside it changes a relationship. Four interchangeable
+   verbs in one flush row read as rival calls to action, and this system's answer to that is
+   placement, never a second button treatment (DESIGN.md §5 Buttons). The extra 8px — one step on
+   the 4/8/12/16 scale — groups the relationship controls together and sets this one apart, with no
+   change to its size, weight or colour. */
+.social-action-communicate {
+  margin-inline: 8px;
+}
 
 /* Counts sit beside their heading rather than in a tile. A standalone number
    with a label under it is the dashboard template this product rejects. */
@@ -766,7 +774,8 @@ button:disabled {
 }
 .cg-select,
 .nav-search input[type='search'],
-.cg-form input[type='number'] {
+.cg-form input[type='number'],
+.composer-form input {
   padding: 6px 8px;
   border: 1px solid transparent;
   border-radius: 6px;
@@ -777,7 +786,8 @@ button:disabled {
 }
 .cg-select:focus-visible,
 .nav-search input[type='search']:focus-visible,
-.cg-form input:focus-visible { outline: 3px solid var(--sel); outline-offset: 1px; }
+.cg-form input:focus-visible,
+.composer-form input:focus-visible { outline: 3px solid var(--sel); outline-offset: 1px; }
 
 /* More options disclosure. */
 .cg-more { display: flex; flex-direction: column; gap: 8px; }
@@ -807,7 +817,9 @@ button:disabled {
   .cg-seg,
   .cg-select,
   .nav-search input[type='search'],
-  .cg-form input[type='number'] { min-height: 44px; }
+  .cg-form input[type='number'],
+  .composer-form input,
+  .composer-form button { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .cg-chip,
@@ -922,6 +934,73 @@ button:disabled {
 }
 .search .cg-segmented {
   margin-bottom: 16px;
+}
+
+/* --- Direct Messaging (M14 inc 18) --- */
+.messages,
+.conversation {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 16px;
+}
+.messages h2,
+.conversation h2 {
+  margin: 0 0 16px;
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.message-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.message-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--panel);
+  max-width: 80%;
+  align-self: flex-start;
+}
+/* Authorship is carried by side + fill, never by --sel: teal has exactly one meaning in this
+   system (active/selected/focused), and "written by me" is not it. Same rule as the error colour
+   at the top of this file. */
+.message-item.own {
+  align-self: flex-end;
+  background: var(--panel-strong);
+}
+.message-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+/* Small, not a weight step-up: 600 is reserved for clock Numerics. The sender reads ahead of the
+   timestamp beside it through size and full-strength colour, not through weight. */
+.message-sender {
+  font-size: 0.875rem;
+  color: var(--fg);
+}
+.message-body {
+  font-size: 0.875rem;
+  word-break: break-word;
+}
+.message-tombstone {
+  font-style: italic;
+  color: var(--muted);
+}
+.composer-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.composer-form input {
+  flex: 1;
 }
 
 /* --- Route visibility --- */

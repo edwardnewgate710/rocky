@@ -374,4 +374,47 @@ export interface SearchResults {
   readonly results: readonly SearchResult[];
 }
 
+// --- Direct Messaging (M14 inc 18) -------------------------------------------
+
+export interface ConversationView {
+  readonly id: string;
+  readonly participantA: string;
+  readonly participantB: string;
+  readonly createdAt: string;
+  readonly lastMessageAt: string;
+}
+
+export interface MessageView {
+  readonly id: string;
+  readonly conversationId: string;
+  readonly senderId: string;
+  readonly body: string;
+  readonly sentAt: string;
+  readonly editedAt: string | null;
+  readonly deletedAt: string | null;
+}
+
+export interface ConversationSummary {
+  readonly conversation: ConversationView;
+  readonly unreadCount: number;
+  readonly lastMessage: MessageView | null;
+}
+
+export interface ConversationList {
+  readonly total: number;
+  readonly items: readonly ConversationSummary[];
+}
+
+export interface MessageList {
+  readonly total: number;
+  readonly items: readonly MessageView[];
+}
+
+export interface ConversationReadState {
+  readonly conversationId: string;
+  readonly participantId: string;
+  readonly lastReadAt: string;
+}
+
+
 

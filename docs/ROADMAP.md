@@ -882,6 +882,19 @@ Stabilizes local E2E testing by capping worker concurrency and ensures bot move 
 - **Unit tests (`packages/e2e-harness/test/bot.test.ts`)**: Added unit tests asserting that interleaved games do not perturb each other's move sequences and that different game IDs draw distinct streams.
 - **Architectural record (`docs/adr/0084-e2e-worker-cap.md`)**: Recorded measured contention benchmarks, worker ceiling decision, timing rationale, and scope boundaries.
 
+### Increment 18: Direct Messaging UI (ADR-0085) ✅
+
+Exposes the M10 direct messaging backend (`/v1/messages/*`) in the web frontend with an inbox, thread view, message composer, and profile entry point.
+
+- **Harness Wiring (`packages/e2e-harness/src/harness.ts`, `package.json`)**: Wired `InMemoryMessagingRepository` into `deps.messagingRepository` so `/v1/messages/*` routes do not 503 under `GAMBIT_E2E_BACKEND=1`.
+- **Types & Client (`packages/web/src/api/models.ts`, `client.ts`)**: Added `ConversationView`, `MessageView`, `ConversationSummary`, `ConversationList`, `MessageList`, and `ConversationReadState`. Added `MessagesApi` class with `listConversations`, `messages`, `send`, `markRead`, and `openWith` methods (`auth: true`).
+- **Controller & Pure Helpers (`packages/web/src/app/messages-controller.ts`, `messages-helpers.ts`)**: Built DOM-free `MessagesController` with `requestGeneration` stale-response guard, open thread polling interval (5000ms), `markRead` call on thread load (quiet failure), single-batch player handle hydration (`client.graphql.resolvePlayers(ids)`), and pure helpers for participant derivation and tombstone rendering.
+- **Views (`packages/web/src/app/messages-view.ts`)**: Pure DOM render helpers (`renderInbox`, `renderThread`) using `.panel-row` inside `.panel-list` (without `role="list"`), tombstone placeholder rendering (`"[Message deleted]"`), escaped text nodes, and `renderEmpty` states.
+- **Routing, Profile & Wiring (`packages/web/src/app/router.ts`, `bootstrap.ts`, `main.ts`, `index.html`)**: Added `/messages` and `/messages/:id` routes, nav link, `#messages` and `#conversation` sections with `aria-label`s and `role="alert"` errors, composer `<form>` with `.sr-only` label, profile "Message" action calling `openWith` + SPA navigation, and controller disposal in `main.ts`.
+- **Styles (`packages/web/src/style.css`)**: Added CSS rules for messaging layout, message thread items, own-message styling, composer input, and coarse-pointer touch targets according to DESIGN.md.
+- **Tests & ADR**: Unit tests in `packages/web/test/messages.test.ts`, client tests in `packages/web/test/api-client.test.ts`, a11y tests in `packages/web/test/a11y.test.ts`, Playwright E2E spec in `packages/web/e2e/messages.spec.ts`, and architectural record in `docs/adr/0085-direct-messaging-ui.md`.
+
+
 
 
 

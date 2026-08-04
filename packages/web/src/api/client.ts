@@ -40,6 +40,11 @@ import type {
   Health,
   LeaderboardEntry,
   LoginRequest,
+  ConversationList,
+  ConversationReadState,
+  ConversationView,
+  MessageList,
+  MessageView,
   RatingView,
   RegisterRequest,
   SeekView,
@@ -82,6 +87,7 @@ export class GambitClient {
   readonly seeks: SeeksApi;
   readonly tournaments: TournamentsApi;
   readonly search: SearchApi;
+  readonly messages: MessagesApi;
   readonly social: SocialApi;
   /** The read layer (ADR-0073). Degrades to null answers when the flag is off. */
   readonly graphql: GraphQLApi;
@@ -117,6 +123,7 @@ export class GambitClient {
     this.seeks = new SeeksApi(this.execute);
     this.tournaments = new TournamentsApi(this.execute);
     this.search = new SearchApi(this.execute);
+    this.messages = new MessagesApi(this.execute);
     this.social = new SocialApi(this.execute);
     this.graphql = new GraphQLApi(this.execute);
   }
@@ -383,5 +390,83 @@ export class SearchApi {
     });
   }
 }
+
+export class MessagesApi {
+  private readonly execute: Execute;
+  constructor(execute: Execute) {
+    this.execute = execute;
+  }
+
+  listConversations(opts?: { limit?: number; offset?: number }): Promise<ConversationList> {
+    return this.execute<ConversationList>({
+      method: 'GET',
+      path: '/v1/messages/conversations',
+      auth: true,
+      ...(opts?.limit !== undefined || opts?.offset !== undefined
+        ? {
+            query: {
+              ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+              ...(opts.offset !== undefined ? { offset: opts.offset } : {}),
+            },
+          }
+        : {}),
+    });
+  }
+
+  /**
+   * Fetch one conversation. The thread header needs this: a `MessageView` carries only a
+   * `senderId`, so a thread the caller alone has posted in has no way to name the other party.
+   */
+  conversation(conversationId: string): Promise<ConversationView> {
+    return this.execute<ConversationView>({
+      method: 'GET',
+      path: `/v1/messages/conversations/${encodeURIComponent(conversationId)}`,
+      auth: true,
+    });
+  }
+
+  messages(conversationId: string, opts?: { limit?: number; offset?: number }): Promise<MessageList> {
+    return this.execute<MessageList>({
+      method: 'GET',
+      path: `/v1/messages/conversations/${encodeURIComponent(conversationId)}/messages`,
+      auth: true,
+      ...(opts?.limit !== undefined || opts?.offset !== undefined
+        ? {
+            query: {
+              ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+              ...(opts.offset !== undefined ? { offset: opts.offset } : {}),
+            },
+          }
+        : {}),
+    });
+  }
+
+  send(conversationId: string, body: string): Promise<MessageView> {
+    return this.execute<MessageView>({
+      method: 'POST',
+      path: `/v1/messages/conversations/${encodeURIComponent(conversationId)}/messages`,
+      auth: true,
+      body: { body },
+    });
+  }
+
+  markRead(conversationId: string): Promise<ConversationReadState> {
+    return this.execute<ConversationReadState>({
+      method: 'POST',
+      path: `/v1/messages/conversations/${encodeURIComponent(conversationId)}/read`,
+      auth: true,
+    });
+  }
+
+  openWith(playerId: string): Promise<ConversationView> {
+    return this.execute<ConversationView>({
+      method: 'POST',
+      path: '/v1/messages/conversations',
+      auth: true,
+      body: { playerId },
+    });
+  }
+}
+
 
 

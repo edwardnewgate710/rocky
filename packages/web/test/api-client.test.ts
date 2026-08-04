@@ -267,5 +267,97 @@ test('search.query encodes mode, limit, and offset when specified', async () => 
   assert.equal(t.calls[0]!.method, 'GET');
 });
 
+test('messages.listConversations requires auth and handles query params', async () => {
+  const list = { total: 0, items: [] };
+  const t = new FakeTransport(
+    () => json(200, auth('tok-A')),
+    () => json(200, list),
+  );
+  const c = make(t);
+  await c.auth.login({ handle: 'alice', password: 'pw' });
+  const res = await c.messages.listConversations({ limit: 10, offset: 0 });
+  assert.deepEqual(res, list);
+  assert.equal(t.calls[1]!.url, 'https://api.test/v1/messages/conversations?limit=10&offset=0');
+  assert.equal(t.calls[1]!.method, 'GET');
+  assert.equal(t.calls[1]!.headers['authorization'], 'Bearer tok-A');
+});
+
+test('messages.messages requires auth and encodes conversationId', async () => {
+  const list = { total: 0, items: [] };
+  const t = new FakeTransport(
+    () => json(200, auth('tok-A')),
+    () => json(200, list),
+  );
+  const c = make(t);
+  await c.auth.login({ handle: 'alice', password: 'pw' });
+  const res = await c.messages.messages('c 123');
+  assert.deepEqual(res, list);
+  assert.equal(t.calls[1]!.url, 'https://api.test/v1/messages/conversations/c%20123/messages');
+  assert.equal(t.calls[1]!.method, 'GET');
+  assert.equal(t.calls[1]!.headers['authorization'], 'Bearer tok-A');
+});
+
+test('messages.send posts message body with auth', async () => {
+  const msgView = {
+    id: 'm1',
+    conversationId: 'c1',
+    senderId: 'u1',
+    body: 'hello',
+    sentAt: '2026-08-04T00:00:00Z',
+    editedAt: null,
+    deletedAt: null,
+  };
+  const t = new FakeTransport(
+    () => json(200, auth('tok-A')),
+    () => json(201, msgView),
+  );
+  const c = make(t);
+  await c.auth.login({ handle: 'alice', password: 'pw' });
+  const res = await c.messages.send('c1', 'hello');
+  assert.equal(res.id, 'm1');
+  assert.equal(t.calls[1]!.url, 'https://api.test/v1/messages/conversations/c1/messages');
+  assert.equal(t.calls[1]!.method, 'POST');
+  assert.equal(t.calls[1]!.headers['authorization'], 'Bearer tok-A');
+  assert.deepEqual(JSON.parse(t.calls[1]!.body as string), { body: 'hello' });
+});
+
+test('messages.markRead posts to read endpoint with auth', async () => {
+  const readState = { conversationId: 'c1', participantId: 'u1', lastReadAt: '2026-08-04T00:00:00Z' };
+  const t = new FakeTransport(
+    () => json(200, auth('tok-A')),
+    () => json(200, readState),
+  );
+  const c = make(t);
+  await c.auth.login({ handle: 'alice', password: 'pw' });
+  const res = await c.messages.markRead('c1');
+  assert.deepEqual(res, readState);
+  assert.equal(t.calls[1]!.url, 'https://api.test/v1/messages/conversations/c1/read');
+  assert.equal(t.calls[1]!.method, 'POST');
+  assert.equal(t.calls[1]!.headers['authorization'], 'Bearer tok-A');
+});
+
+test('messages.openWith posts playerId with auth', async () => {
+  const conv = {
+    id: 'c1',
+    participantA: 'u1',
+    participantB: 'u2',
+    createdAt: '2026-08-04T00:00:00Z',
+    lastMessageAt: '2026-08-04T00:00:00Z',
+  };
+  const t = new FakeTransport(
+    () => json(200, auth('tok-A')),
+    () => json(200, conv),
+  );
+  const c = make(t);
+  await c.auth.login({ handle: 'alice', password: 'pw' });
+  const res = await c.messages.openWith('u2');
+  assert.equal(res.id, 'c1');
+  assert.equal(t.calls[1]!.url, 'https://api.test/v1/messages/conversations');
+  assert.equal(t.calls[1]!.method, 'POST');
+  assert.equal(t.calls[1]!.headers['authorization'], 'Bearer tok-A');
+  assert.deepEqual(JSON.parse(t.calls[1]!.body as string), { playerId: 'u2' });
+});
+
+
 
 

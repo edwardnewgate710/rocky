@@ -44,7 +44,10 @@ import { SocialController } from './social-controller.js';
 import type { Relationship, SelfSocial } from './social-controller.js';
 import { SearchController } from './search-controller.js';
 import type { SearchController as SearchControllerType } from './search-controller.js';
+import { MessagesController } from './messages-controller.js';
+import type { MessagesController as MessagesControllerType } from './messages-controller.js';
 import { renderSearchResults, renderSearchPrompt } from './search-view.js';
+import { renderInbox, renderThread } from './messages-view.js';
 import { parseSearchMode } from './search-results.js';
 import type { SearchMode, SocialPlayer, TournamentDetail } from '../api/models.js';
 import { ThemeToggle } from './theme-toggle.js';
@@ -53,6 +56,7 @@ import { AuthController } from './auth-controller.js';
 import type { AuthController as AuthControllerType } from './auth-controller.js';
 import type { AuthSession } from './auth-controller.js';
 import { parseRoute } from './router.js';
+import { shortId } from '../api/graphql.js';
 import type { SeekView } from '../api/models.js';
 import type { TimeControl } from '../net/ws-protocol.js';
 
@@ -68,6 +72,7 @@ export interface Bootstrapped {
   readonly profile: ProfileControllerType | null;
   readonly tournament: TournamentControllerType | null;
   readonly search: SearchControllerType | null;
+  readonly messages: MessagesControllerType | null;
   readonly auth: AuthControllerType;
   readonly theme: ThemeToggleType;
 }
@@ -95,6 +100,12 @@ interface RowAction {
   readonly run: () => void;
   /** Severs a relationship; separated from the connective actions by position. */
   readonly destructive?: boolean;
+  /**
+   * Opens a conversation rather than changing a relationship. Set apart from the relationship
+   * controls by position for the same reason `destructive` is: a row of interchangeable-looking
+   * verbs reads as rival calls to action, and this system's only lever for that is placement.
+   */
+  readonly communicative?: boolean;
 }
 
 /**
@@ -150,6 +161,7 @@ function renderSocialActions(
   relationship: Relationship | null,
   social: SocialController,
   busy: boolean,
+  onOpenMessage?: () => void,
 ): void {
   container.innerHTML = '';
   if (relationship === null) return;
@@ -166,6 +178,10 @@ function renderSocialActions(
         ? { label: 'Unfollow', run: () => void social.unfollow() }
         : { label: 'Follow', run: () => void social.follow() },
     );
+
+    if (onOpenMessage) {
+      actions.push({ label: 'Message', run: onOpenMessage, communicative: true });
+    }
 
     if (relationship.incomingRequestId !== null) {
       const id = relationship.incomingRequestId;
@@ -194,6 +210,7 @@ function renderSocialActions(
     // placement and copy rather than a second button treatment, so it is
     // separated by position — not by colour or weight.
     if (action.destructive) button.classList.add('social-action-destructive');
+    if (action.communicative) button.classList.add('social-action-communicate');
     button.addEventListener('click', action.run);
     container.appendChild(button);
   }
@@ -442,18 +459,24 @@ export function bootstrap(
   const tournamentsSectionEl = doc.getElementById('tournaments');
   const tournamentSectionEl = doc.getElementById('tournament');
   const searchSectionEl = doc.getElementById('search');
+  const messagesSectionEl = doc.getElementById('messages');
+  const conversationSectionEl = doc.getElementById('conversation');
   const showGame = route.name === 'game';
   const showLobby = route.name === 'lobby';
   const showProfile = route.name === 'profile';
   const showTournaments = route.name === 'tournaments';
   const showTournament = route.name === 'tournament';
   const showSearch = route.name === 'search';
+  const showMessages = route.name === 'messages';
+  const showConversation = route.name === 'conversation';
   if (mainEl) mainEl.hidden = !showGame;
   if (lobbySectionEl) lobbySectionEl.hidden = !showLobby;
   if (profileSectionEl) profileSectionEl.hidden = !showProfile;
   if (tournamentsSectionEl) tournamentsSectionEl.hidden = !showTournaments;
   if (tournamentSectionEl) tournamentSectionEl.hidden = !showTournament;
   if (searchSectionEl) searchSectionEl.hidden = !showSearch;
+  if (messagesSectionEl) messagesSectionEl.hidden = !showMessages;
+  if (conversationSectionEl) conversationSectionEl.hidden = !showConversation;
 
   // Board-only controls should not suggest functionality on lobby/profile
   // routes. They were previously visible everywhere despite doing nothing.
@@ -765,7 +788,7 @@ export function bootstrap(
         .finally(() => gameSync.start());
     }
 
-    return { app, board, controller, lobby: null, profile: null, tournament: null, search: null, auth, theme };
+    return { app, board, controller, lobby: null, profile: null, tournament: null, search: null, messages: null, auth, theme };
   }
 
   // --- Lobby view ---
@@ -864,7 +887,7 @@ export function bootstrap(
 
     lobby.start();
 
-    return { app, board: null, controller: null, lobby, profile: null, tournament: null, search: null, auth, theme };
+    return { app, board: null, controller: null, lobby, profile: null, tournament: null, search: null, messages: null, auth, theme };
   }
 
   // --- Profile view ---
@@ -926,7 +949,7 @@ export function bootstrap(
         },
         onRelationship: (r) => {
           lastRelationship = r;
-          if (socialActionsEl) renderSocialActions(socialActionsEl, r, social, socialBusy);
+          if (socialActionsEl) renderSocialActions(socialActionsEl, r, social, socialBusy, getOpenMessageFn());
         },
         onSelfSocial: (s) => {
           lastSelfSocial = s;
@@ -995,7 +1018,7 @@ export function bootstrap(
         onBusy: (busy) => {
           socialBusy = busy;
           // Re-render only what carries controls, so a click cannot land twice.
-          if (socialActionsEl) renderSocialActions(socialActionsEl, lastRelationship, social, busy);
+          if (socialActionsEl) renderSocialActions(socialActionsEl, lastRelationship, social, busy, getOpenMessageFn());
           if (lastSelfSocial !== null && socialSelfEl && !socialSelfEl.hidden) {
             for (const el of [incomingEl, outgoingEl, blockedEl]) {
               if (!el) continue;
@@ -1015,6 +1038,24 @@ export function bootstrap(
     // Follow/Block controls on screen, and signing in would show none at all,
     // until the visitor happened to navigate.
     let socialSubject: SocialPlayer | null = null;
+    const getOpenMessageFn = (): (() => void) | undefined => {
+      const viewerId = auth.currentSession?.userId;
+      const targetId = socialSubject?.id;
+      if (!viewerId || !targetId || viewerId === targetId) return undefined;
+      return () => {
+        void (async () => {
+          try {
+            const conv = await app.api.messages.openWith(targetId);
+            const url = `/messages/${encodeURIComponent(conv.id)}`;
+            history.pushState(null, '', url);
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          } catch (err) {
+            if (socialErrorEl) socialErrorEl.textContent = err instanceof Error ? err.message : String(err);
+          }
+        })();
+      };
+    };
+
     const loadSocialFor = (player: SocialPlayer): void => {
       socialSubject = player;
       if (socialErrorEl) socialErrorEl.textContent = '';
@@ -1127,7 +1168,7 @@ export function bootstrap(
       }
     }
 
-    return { app, board: null, controller: null, lobby: null, profile, tournament: null, search: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile, tournament: null, search: null, messages: null, auth, theme };
   }
 
   // --- Tournaments list view ---
@@ -1167,7 +1208,7 @@ export function bootstrap(
     });
 
     void tournament.loadList();
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament, search: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament, search: null, messages: null, auth, theme };
   }
 
   // --- Single tournament detail view ---
@@ -1219,7 +1260,7 @@ export function bootstrap(
     });
 
     void tournament.loadDetail(route.id);
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament, search: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament, search: null, messages: null, auth, theme };
   }
 
   // --- Search view ---
@@ -1316,13 +1357,119 @@ export function bootstrap(
       if (resultsEl) renderSearchPrompt(resultsEl);
     }
 
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: searchCtrl, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: searchCtrl, messages: null, auth, theme };
   }
 
-  // --- Standalone board (no game ID, no lobby, no profile, no tournament, no search) ---
+  // --- Messages Inbox view (/messages) ---
+  const messagesEl = doc.getElementById('messages');
+  if (messagesEl && route.name === 'messages') {
+    const inboxEl = doc.getElementById('messages-inbox');
+    const errorEl = doc.getElementById('messages-error');
+    const getUserId = () => app.api.session.current?.user.id ?? null;
+
+    const messagesCtrl = new MessagesController({
+      client: app.api,
+      callbacks: {
+        onInbox: (items, names) => {
+          if (errorEl) errorEl.textContent = '';
+          if (inboxEl) renderInbox(inboxEl, items, names, getUserId());
+        },
+        onThread: () => {},
+        onLoading: (loading) => {
+          if (inboxEl) inboxEl.setAttribute('aria-busy', loading ? 'true' : 'false');
+        },
+        onError: (msg) => {
+          if (errorEl) errorEl.textContent = msg;
+        },
+      },
+    });
+
+    if (auth.currentSession !== null) {
+      void messagesCtrl.loadInbox();
+    } else {
+      void restorePromise
+        .then(() => void messagesCtrl.loadInbox())
+        .catch(() => undefined);
+    }
+
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: messagesCtrl, auth, theme };
+  }
+
+  // --- Conversation Thread view (/messages/:id) ---
+  const conversationEl = doc.getElementById('conversation');
+  if (conversationEl && route.name === 'conversation') {
+    const threadEl = doc.getElementById('conversation-thread');
+    const participantEl = doc.getElementById('conversation-participant');
+    const errorEl = doc.getElementById('conversation-error');
+    const composerEl = doc.getElementById('conversation-composer') as HTMLFormElement | null;
+    const composerInputEl = doc.getElementById('composer-input') as HTMLInputElement | null;
+    const getUserId = () => app.api.session.current?.user.id ?? null;
+    const convId = route.id;
+
+    const messagesCtrl = new MessagesController({
+      client: app.api,
+      callbacks: {
+        onInbox: () => {},
+        onThread: (_id, messages, names, otherParticipantId) => {
+          if (errorEl) errorEl.textContent = '';
+          const currentUserId = getUserId();
+          if (threadEl) renderThread(threadEl, messages, names, currentUserId);
+
+          if (participantEl) {
+            // Named from the conversation's participants, never inferred from who has posted: a
+            // thread the viewer alone has written in used to label itself with the viewer's own
+            // handle, which is the state every conversation starts in.
+            participantEl.textContent =
+              otherParticipantId === null
+                ? 'Conversation'
+                : `Conversation with ${names.get(otherParticipantId)?.handle ?? shortId(otherParticipantId)}`;
+          }
+        },
+        onLoading: (loading) => {
+          if (threadEl) threadEl.setAttribute('aria-busy', loading ? 'true' : 'false');
+        },
+        onError: (msg) => {
+          if (errorEl) errorEl.textContent = msg;
+        },
+      },
+    });
+
+    if (composerEl && composerInputEl) {
+      composerEl.onsubmit = (e) => {
+        e.preventDefault();
+        const text = composerInputEl.value.trim();
+        if (!text) return;
+        // Clear only once the send has landed. Clearing first loses what the user typed whenever
+        // the request fails, and the error message alone gives them no way to get it back.
+        composerInputEl.disabled = true;
+        void messagesCtrl.send(convId, text).then((sent) => {
+          composerInputEl.disabled = false;
+          if (sent) composerInputEl.value = '';
+          composerInputEl.focus();
+        });
+      };
+    }
+
+    const startThread = () => {
+      void messagesCtrl.loadThread(convId);
+      messagesCtrl.startPolling(convId);
+    };
+
+    if (auth.currentSession !== null) {
+      startThread();
+    } else {
+      void restorePromise
+        .then(() => startThread())
+        .catch(() => undefined);
+    }
+
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: messagesCtrl, auth, theme };
+  }
+
+  // --- Standalone board (no game ID, no lobby, no profile, no tournament, no search, no messages) ---
   const board = boardEl
     ? mountBoard({ boardEl, statusEl, flipEl })
     : null;
 
-  return { app, board, controller: null, lobby: null, profile: null, tournament: null, search: null, auth, theme };
+  return { app, board, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, auth, theme };
 }

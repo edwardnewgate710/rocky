@@ -16,6 +16,7 @@
         <a href="/" data-route="lobby">Lobby</a>
         <a href="/profile" data-route="profile">Profile</a>
         <a href="/tournaments" data-route="tournaments">Tournaments</a>
+        <a href="/messages" data-route="messages">Messages</a>
         <form id="search-form" class="nav-search" role="search" action="/search" method="get">
           <label class="sr-only" for="search-input">Search</label>
           <input id="search-input" name="q" type="search" placeholder="Search" autocomplete="off" />
@@ -176,6 +177,21 @@
       <div id="search-mode" class="cg-segmented" role="radiogroup" aria-label="Search mode"></div>
       <div id="search-results" class="panel-list" aria-label="Search results"></div>
       <p id="search-error" class="error" role="alert"></p>
+    </section>
+    <section id="messages" class="messages" aria-label="Messages" hidden>
+      <h2>Messages</h2>
+      <div id="messages-inbox" class="panel-list" aria-label="Inbox"></div>
+      <p id="messages-error" class="error" role="alert"></p>
+    </section>
+    <section id="conversation" class="conversation" aria-label="Conversation" hidden>
+      <h2 id="conversation-participant">Conversation</h2>
+      <div id="conversation-thread" class="message-thread" aria-label="Message thread"></div>
+      <form id="conversation-composer" class="composer-form">
+        <label for="composer-input" class="sr-only">Message</label>
+        <input id="composer-input" type="text" name="body" placeholder="Write a message…" autocomplete="off" required />
+        <button id="composer-submit" type="submit">Send</button>
+      </form>
+      <p id="conversation-error" class="error" role="alert"></p>
     </section>
     <script type="module" src="/src/main.ts"></script>
   </body>

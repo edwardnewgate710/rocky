@@ -23,6 +23,8 @@ export type Route =
   | { readonly name: 'tournaments' }
   | { readonly name: 'tournament'; readonly id: string }
   | { readonly name: 'search' }
+  | { readonly name: 'messages' }
+  | { readonly name: 'conversation'; readonly id: string }
   | { readonly name: 'not-found' };
 
 /** Parse a URL pathname into a typed route. */
@@ -41,6 +43,10 @@ export function parseRoute(pathname: string): Route {
   }
   if (segments[0] === 'search') {
     return { name: 'search' };
+  }
+  if (segments[0] === 'messages') {
+    if (segments.length === 1) return { name: 'messages' };
+    return { name: 'conversation', id: decodeSegment(segments[1]!) };
   }
   return { name: 'not-found' };
 }
@@ -78,6 +84,10 @@ export function routeToPath(route: Route): string {
       return `/tournaments/${route.id}`;
     case 'search':
       return '/search';
+    case 'messages':
+      return '/messages';
+    case 'conversation':
+      return `/messages/${route.id}`;
     case 'not-found':
       return '/not-found';
   }
