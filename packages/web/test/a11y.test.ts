@@ -220,3 +220,25 @@ test('conversation composer form has labelled input', () => {
 
 
 
+
+// --- Teams region (M14 inc 20) ---
+
+test('nav link is present for teams', () => {
+  assert.ok(HTML_TEMPLATE.includes('href="/teams" data-route="teams">Teams</a>'));
+});
+
+test('every teams section carries an aria-label', () => {
+  assert.ok(HTML_TEMPLATE.includes('aria-label="Teams"'));
+  assert.ok(HTML_TEMPLATE.includes('aria-label="Team"'));
+  assert.ok(HTML_TEMPLATE.includes('aria-label="Team members"'));
+});
+
+test('teams error regions have role=alert', () => {
+  assert.match(HTML_TEMPLATE, /id="teams-error"[^>]*role="alert"/);
+  assert.match(HTML_TEMPLATE, /id="team-error"[^>]*role="alert"/);
+});
+
+test('team search form has a labelled input', () => {
+  assert.ok(HTML_TEMPLATE.includes('id="team-search-form"'));
+  assert.ok(HTML_TEMPLATE.includes('for="team-search-input"'));
+});

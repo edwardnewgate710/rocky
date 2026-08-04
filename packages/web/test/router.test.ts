@@ -91,3 +91,15 @@ test('C1 regression: navigate without injected history uses globalThis.history',
     (globalThis as any).history = original;
   }
 });
+
+test('parses the teams list and team detail routes', () => {
+  assert.deepEqual(parseRoute('/teams'), { name: 'teams' });
+  assert.deepEqual(parseRoute('/teams/city-chess'), { name: 'team', slug: 'city-chess' });
+  // Slugs arrive percent-encoded in the path and must be decoded once, not left escaped.
+  assert.deepEqual(parseRoute('/teams/city%20chess'), { name: 'team', slug: 'city chess' });
+});
+
+test('serializes the teams routes back to their paths', () => {
+  assert.equal(routeToPath({ name: 'teams' }), '/teams');
+  assert.equal(routeToPath({ name: 'team', slug: 'city-chess' }), '/teams/city-chess');
+});

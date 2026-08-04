@@ -775,7 +775,8 @@ button:disabled {
 .cg-select,
 .nav-search input[type='search'],
 .cg-form input[type='number'],
-.composer-form input {
+.composer-form input,
+.team-search input {
   padding: 6px 8px;
   border: 1px solid transparent;
   border-radius: 6px;
@@ -787,7 +788,8 @@ button:disabled {
 .cg-select:focus-visible,
 .nav-search input[type='search']:focus-visible,
 .cg-form input:focus-visible,
-.composer-form input:focus-visible { outline: 3px solid var(--sel); outline-offset: 1px; }
+.composer-form input:focus-visible,
+.team-search input:focus-visible { outline: 3px solid var(--sel); outline-offset: 1px; }
 
 /* More options disclosure. */
 .cg-more { display: flex; flex-direction: column; gap: 8px; }
@@ -819,7 +821,8 @@ button:disabled {
   .nav-search input[type='search'],
   .cg-form input[type='number'],
   .composer-form input,
-  .composer-form button { min-height: 44px; }
+  .composer-form button,
+  .team-search input { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .cg-chip,
@@ -1006,3 +1009,61 @@ button:disabled {
 /* --- Route visibility --- */
 [hidden] { display: none !important; }
 
+
+/* --- Teams (M14 inc 20) --- */
+.teams,
+.team {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 16px;
+}
+.teams h2,
+.team h2 {
+  margin: 0 0 16px;
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.team h3 {
+  margin: 16px 0 8px;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+/* The search field shares the one form-control treatment (see the rule it joins above) and
+   declares only its own width, the same way the nav search field does. */
+.team-search {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.team-search input {
+  flex: 1;
+}
+/* The identifying half of a team row. `.panel-row` is space-between, so the name and its
+   description have to travel together as one child or the description lands at the opposite edge.
+   `min-width: 0` lets this shrink so the description can ellipsis instead of forcing the row wide. */
+.team-row-main {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.team-row-main .count {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One action at a time here, so there is nothing to separate; the row exists to keep the button
+   off the description above it. */
+.team-actions {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+/* The description and the action note are both conditional. Collapsing them when empty keeps the
+   block from reserving a gap for text that is not there. */
+.team p:empty {
+  display: none;
+}

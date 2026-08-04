@@ -65,6 +65,7 @@ import {
 } from '@chess-platform/realtime-gateway';
 import { InMemoryMessagingRepository } from '@chess-platform/messaging';
 import { InMemorySocialGraphRepository } from '@chess-platform/social';
+import { InMemoryCommunityRepository } from '@chess-platform/community';
 import {
   InMemorySearchRepository,
   playerToDocument,
@@ -189,7 +190,9 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
   const socialGraphRepository = new InMemorySocialGraphRepository();
   const messagingRepository = new InMemoryMessagingRepository(socialGraphRepository);
   const searchRepository = new InMemorySearchRepository();
-  const deps: ApiDependencies = { repos, hasher, tokens, clock, ids, config, rateLimiter, tournamentRepo, gameLauncher, liveView: broadcaster, emailSender, messagingRepository, socialGraphRepository, searchRepository, graphql: { introspection: false } };
+  // The community repository is OPTIONAL, and an absent one makes `/v1/teams/*` routes answer 503.
+  const communityRepository = new InMemoryCommunityRepository();
+  const deps: ApiDependencies = { repos, hasher, tokens, clock, ids, config, rateLimiter, tournamentRepo, gameLauncher, liveView: broadcaster, emailSender, messagingRepository, socialGraphRepository, searchRepository, communityRepository, graphql: { introspection: false } };
   const apiServer = createApiServer(deps);
 
   const tokenVerifier = new ApiTokenVerifier((token: string) => {

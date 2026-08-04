@@ -45,6 +45,10 @@ import type { Relationship, SelfSocial } from './social-controller.js';
 import { SearchController } from './search-controller.js';
 import type { SearchController as SearchControllerType } from './search-controller.js';
 import { MessagesController } from './messages-controller.js';
+import { TeamsController } from './teams-controller.js';
+import type { TeamsController as TeamsControllerType } from './teams-controller.js';
+import { renderTeamList, renderTeamMembers } from './teams-view.js';
+import { teamAction, actionExplanation, membershipOf } from './teams-helpers.js';
 import type { MessagesController as MessagesControllerType } from './messages-controller.js';
 import { renderSearchResults, renderSearchPrompt } from './search-view.js';
 import { renderInbox, renderThread } from './messages-view.js';
@@ -73,6 +77,7 @@ export interface Bootstrapped {
   readonly tournament: TournamentControllerType | null;
   readonly search: SearchControllerType | null;
   readonly messages: MessagesControllerType | null;
+  readonly teams: TeamsControllerType | null;
   readonly auth: AuthControllerType;
   readonly theme: ThemeToggleType;
 }
@@ -461,6 +466,8 @@ export function bootstrap(
   const searchSectionEl = doc.getElementById('search');
   const messagesSectionEl = doc.getElementById('messages');
   const conversationSectionEl = doc.getElementById('conversation');
+  const teamsSectionEl = doc.getElementById('teams');
+  const teamSectionEl = doc.getElementById('team');
   const showGame = route.name === 'game';
   const showLobby = route.name === 'lobby';
   const showProfile = route.name === 'profile';
@@ -469,6 +476,8 @@ export function bootstrap(
   const showSearch = route.name === 'search';
   const showMessages = route.name === 'messages';
   const showConversation = route.name === 'conversation';
+  const showTeams = route.name === 'teams';
+  const showTeam = route.name === 'team';
   if (mainEl) mainEl.hidden = !showGame;
   if (lobbySectionEl) lobbySectionEl.hidden = !showLobby;
   if (profileSectionEl) profileSectionEl.hidden = !showProfile;
@@ -477,6 +486,8 @@ export function bootstrap(
   if (searchSectionEl) searchSectionEl.hidden = !showSearch;
   if (messagesSectionEl) messagesSectionEl.hidden = !showMessages;
   if (conversationSectionEl) conversationSectionEl.hidden = !showConversation;
+  if (teamsSectionEl) teamsSectionEl.hidden = !showTeams;
+  if (teamSectionEl) teamSectionEl.hidden = !showTeam;
 
   // Board-only controls should not suggest functionality on lobby/profile
   // routes. They were previously visible everywhere despite doing nothing.
@@ -788,7 +799,7 @@ export function bootstrap(
         .finally(() => gameSync.start());
     }
 
-    return { app, board, controller, lobby: null, profile: null, tournament: null, search: null, messages: null, auth, theme };
+    return { app, board, controller, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, auth, theme };
   }
 
   // --- Lobby view ---
@@ -887,7 +898,7 @@ export function bootstrap(
 
     lobby.start();
 
-    return { app, board: null, controller: null, lobby, profile: null, tournament: null, search: null, messages: null, auth, theme };
+    return { app, board: null, controller: null, lobby, profile: null, tournament: null, search: null, messages: null, teams: null, auth, theme };
   }
 
   // --- Profile view ---
@@ -1168,7 +1179,7 @@ export function bootstrap(
       }
     }
 
-    return { app, board: null, controller: null, lobby: null, profile, tournament: null, search: null, messages: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile, tournament: null, search: null, messages: null, teams: null, auth, theme };
   }
 
   // --- Tournaments list view ---
@@ -1208,7 +1219,7 @@ export function bootstrap(
     });
 
     void tournament.loadList();
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament, search: null, messages: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament, search: null, messages: null, teams: null, auth, theme };
   }
 
   // --- Single tournament detail view ---
@@ -1260,7 +1271,7 @@ export function bootstrap(
     });
 
     void tournament.loadDetail(route.id);
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament, search: null, messages: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament, search: null, messages: null, teams: null, auth, theme };
   }
 
   // --- Search view ---
@@ -1357,7 +1368,7 @@ export function bootstrap(
       if (resultsEl) renderSearchPrompt(resultsEl);
     }
 
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: searchCtrl, messages: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: searchCtrl, messages: null, teams: null, auth, theme };
   }
 
   // --- Messages Inbox view (/messages) ---
@@ -1392,7 +1403,7 @@ export function bootstrap(
         .catch(() => undefined);
     }
 
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: messagesCtrl, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: messagesCtrl, teams: null, auth, theme };
   }
 
   // --- Conversation Thread view (/messages/:id) ---
@@ -1463,7 +1474,127 @@ export function bootstrap(
         .catch(() => undefined);
     }
 
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: messagesCtrl, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: messagesCtrl, teams: null, auth, theme };
+  }
+
+  // --- Teams list view (/teams) ---
+  const teamsEl = doc.getElementById('teams');
+  if (teamsEl && route.name === 'teams') {
+    const listEl = doc.getElementById('team-list');
+    const errorEl = doc.getElementById('teams-error');
+    const formEl = doc.getElementById('team-search-form') as HTMLFormElement | null;
+    const inputEl = doc.getElementById('team-search-input') as HTMLInputElement | null;
+    let searched = false;
+
+    const teamsCtrl = new TeamsController({
+      client: app.api,
+      callbacks: {
+        onList: (teams) => {
+          if (errorEl) errorEl.textContent = '';
+          if (listEl) renderTeamList(listEl, teams, searched);
+        },
+        onTeam: () => {},
+        onLoading: (loading) => {
+          if (listEl) listEl.setAttribute('aria-busy', loading ? 'true' : 'false');
+        },
+        onError: (msg) => {
+          if (errorEl) errorEl.textContent = msg;
+        },
+        onNotFound: () => {},
+      },
+    });
+
+    if (formEl && inputEl) {
+      formEl.onsubmit = (e) => {
+        e.preventDefault();
+        const term = inputEl.value.trim();
+        searched = term.length > 0;
+        void teamsCtrl.loadList(term || undefined);
+      };
+    }
+
+    void teamsCtrl.loadList();
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: teamsCtrl, auth, theme };
+  }
+
+  // --- Team detail view (/teams/:slug) ---
+  const teamEl = doc.getElementById('team');
+  if (teamEl && route.name === 'team') {
+    const nameEl = doc.getElementById('team-name');
+    const descEl = doc.getElementById('team-description');
+    const noteEl = doc.getElementById('team-action-note');
+    const actionsEl = doc.getElementById('team-actions');
+    const membersEl = doc.getElementById('team-members');
+    const errorEl = doc.getElementById('team-error');
+    const slug = route.slug;
+    // Read late, never captured: the access token arrives asynchronously, so the viewer's identity
+    // is only known once the session restore has settled.
+    const viewerId = (): string | null => app.api.session.current?.user.id ?? null;
+
+    const teamsCtrl = new TeamsController({
+      client: app.api,
+      callbacks: {
+        onList: () => {},
+        onTeam: (team, members, names) => {
+          if (errorEl) errorEl.textContent = '';
+          if (nameEl) nameEl.textContent = team.name;
+          if (descEl) descEl.textContent = team.description;
+          if (membersEl) renderTeamMembers(membersEl, members, names);
+
+          if (!actionsEl || !noteEl) return;
+          actionsEl.replaceChildren();
+          noteEl.textContent = '';
+
+          const viewer = viewerId();
+          const action = teamAction(team, members, viewer);
+          if (action.kind === 'none') {
+            noteEl.textContent = actionExplanation(action.reason);
+            return;
+          }
+
+          const button = doc.createElement('button');
+          button.type = 'button';
+          button.textContent = action.kind === 'join' ? 'Join team' : 'Leave team';
+          button.addEventListener('click', () => {
+            button.disabled = true;
+            const own = membershipOf(members, viewer);
+            const done =
+              action.kind === 'join'
+                ? teamsCtrl.join(team.id, slug)
+                : own === null
+                  ? Promise.resolve(false)
+                  : teamsCtrl.leave(team.id, own.playerId, slug);
+            void done.then(() => {
+              button.disabled = false;
+            });
+          });
+          actionsEl.appendChild(button);
+        },
+        onLoading: (loading) => {
+          if (membersEl) membersEl.setAttribute('aria-busy', loading ? 'true' : 'false');
+        },
+        onError: (msg) => {
+          if (errorEl) errorEl.textContent = msg;
+        },
+        onNotFound: () => {
+          // A private team the viewer cannot see answers 404 exactly as a missing one does
+          // (ADR-0069). Saying "not permitted" here would confirm that it exists.
+          if (nameEl) nameEl.textContent = 'Team not found';
+          if (descEl) descEl.textContent = 'No such team, or it is private.';
+          if (membersEl) membersEl.replaceChildren();
+          if (actionsEl) actionsEl.replaceChildren();
+          if (noteEl) noteEl.textContent = '';
+        },
+      },
+    });
+
+    // The team routes are public, but WHICH action to offer depends on knowing the viewer, so the
+    // load waits for the session the same way the messages routes do.
+    const load = (): void => void teamsCtrl.loadTeam(slug);
+    if (auth.currentSession !== null) load();
+    else void restorePromise.then(() => load()).catch(() => undefined);
+
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: teamsCtrl, auth, theme };
   }
 
   // --- Standalone board (no game ID, no lobby, no profile, no tournament, no search, no messages) ---
@@ -1471,5 +1602,5 @@ export function bootstrap(
     ? mountBoard({ boardEl, statusEl, flipEl })
     : null;
 
-  return { app, board, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, auth, theme };
+  return { app, board, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, auth, theme };
 }

@@ -58,6 +58,10 @@ import type {
   TournamentSummary,
   UserProfile,
   Variant,
+  TeamList,
+  TeamMemberList,
+  TeamMembership,
+  TeamView,
 } from './models.js';
 
 /** A request spec plus whether it requires authentication. */
@@ -89,6 +93,7 @@ export class GambitClient {
   readonly search: SearchApi;
   readonly messages: MessagesApi;
   readonly social: SocialApi;
+  readonly teams: TeamsApi;
   /** The read layer (ADR-0073). Degrades to null answers when the flag is off. */
   readonly graphql: GraphQLApi;
   private readonly http: HttpClient;
@@ -125,6 +130,7 @@ export class GambitClient {
     this.search = new SearchApi(this.execute);
     this.messages = new MessagesApi(this.execute);
     this.social = new SocialApi(this.execute);
+    this.teams = new TeamsApi(this.execute);
     this.graphql = new GraphQLApi(this.execute);
   }
 
@@ -468,5 +474,66 @@ export class MessagesApi {
   }
 }
 
+export class TeamsApi {
+  private readonly execute: Execute;
+  constructor(execute: Execute) {
+    this.execute = execute;
+  }
 
+  list(opts?: { search?: string; limit?: number; offset?: number }): Promise<TeamList> {
+    return this.execute<TeamList>({
+      method: 'GET',
+      path: '/v1/teams',
+      auth: 'optional',
+      ...(opts?.search !== undefined || opts?.limit !== undefined || opts?.offset !== undefined
+        ? {
+            query: {
+              ...(opts.search !== undefined ? { search: opts.search } : {}),
+              ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+              ...(opts.offset !== undefined ? { offset: opts.offset } : {}),
+            },
+          }
+        : {}),
+    });
+  }
 
+  byId(idOrSlug: string): Promise<TeamView> {
+    return this.execute<TeamView>({
+      method: 'GET',
+      path: `/v1/teams/${encodeURIComponent(idOrSlug)}`,
+      auth: 'optional',
+    });
+  }
+
+  members(id: string, opts?: { limit?: number; offset?: number }): Promise<TeamMemberList> {
+    return this.execute<TeamMemberList>({
+      method: 'GET',
+      path: `/v1/teams/${encodeURIComponent(id)}/members`,
+      auth: 'optional',
+      ...(opts?.limit !== undefined || opts?.offset !== undefined
+        ? {
+            query: {
+              ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+              ...(opts.offset !== undefined ? { offset: opts.offset } : {}),
+            },
+          }
+        : {}),
+    });
+  }
+
+  join(id: string): Promise<TeamMembership> {
+    return this.execute<TeamMembership>({
+      method: 'POST',
+      path: `/v1/teams/${encodeURIComponent(id)}/members`,
+      auth: true,
+    });
+  }
+
+  leave(id: string, playerId: string): Promise<void> {
+    return this.execute<void>({
+      method: 'DELETE',
+      path: `/v1/teams/${encodeURIComponent(id)}/members/${encodeURIComponent(playerId)}`,
+      auth: true,
+    });
+  }
+}

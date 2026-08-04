@@ -16,6 +16,7 @@
         <a href="/" data-route="lobby">Lobby</a>
         <a href="/profile" data-route="profile">Profile</a>
         <a href="/tournaments" data-route="tournaments">Tournaments</a>
+        <a href="/teams" data-route="teams">Teams</a>
         <a href="/messages" data-route="messages">Messages</a>
         <form id="search-form" class="nav-search" role="search" action="/search" method="get">
           <label class="sr-only" for="search-input">Search</label>
@@ -177,6 +178,25 @@
       <div id="search-mode" class="cg-segmented" role="radiogroup" aria-label="Search mode"></div>
       <div id="search-results" class="panel-list" aria-label="Search results"></div>
       <p id="search-error" class="error" role="alert"></p>
+    </section>
+    <section id="teams" class="teams" aria-label="Teams" hidden>
+      <h2>Teams</h2>
+      <form id="team-search-form" class="team-search" role="search">
+        <label class="sr-only" for="team-search-input">Search teams</label>
+        <input id="team-search-input" name="search" type="search" placeholder="Search teams" autocomplete="off" />
+        <button id="team-search-submit" type="submit">Search</button>
+      </form>
+      <div id="team-list" class="panel-list" aria-label="Teams"></div>
+      <p id="teams-error" class="error" role="alert"></p>
+    </section>
+    <section id="team" class="team" aria-label="Team" hidden>
+      <h2 id="team-name">Team</h2>
+      <p id="team-description"></p>
+      <p id="team-action-note"></p>
+      <div id="team-actions" class="team-actions"></div>
+      <h3>Members</h3>
+      <div id="team-members" class="panel-list" aria-label="Team members"></div>
+      <p id="team-error" class="error" role="alert"></p>
     </section>
     <section id="messages" class="messages" aria-label="Messages" hidden>
       <h2>Messages</h2>

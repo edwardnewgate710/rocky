@@ -191,6 +191,15 @@ Flat at rest, everywhere. There is no `box-shadow` in the current implementation
 - **Deleted messages** render placeholder text in `Ash` italic rather than the original body. A tombstone is a state, not an emphasis, so it gets no border, badge or colour of its own.
 - **Composer** (`.composer-form`): shares the single form-control treatment used by the nav search field and the create-a-game panel — it declares only `flex: 1` for width. The send button is the **default** button style; there is no primary-button variant here any more than anywhere else, and its prominence comes from being the only control in the row.
 
+### Teams (list and detail)
+- **Team rows** reuse the one List Row treatment — `.panel-row` inside `.panel-list`, as every other list does. There is no teams-specific row.
+- **Row composition** is the part worth stating, because `.panel-row` is `space-between`: a row holds exactly **two** children, never three. The identifying half (`.team-row-main` — the team name, plus its description in `.count` when there is one) travels as a single leading child; a status tag trails. Handing the row three loose children flings the description to the opposite edge, detached from the name it belongs to. The description carries `min-width: 0` and ellipsis so a long one shortens rather than widening the row.
+- **Status is stated only when it is true.** A `private` tag appears on private teams; public teams carry no tag, because a "public" label on almost every row is noise that teaches the eye to skip the column.
+- **`.count` is the row-metadata voice**, not only a number — timestamps, descriptions, visibility and roles all use it. It is `Small` at `Ash`-muted, and its job is to sit beside primary content without competing. Primary content in a row is the link; everything else in the row is `.count`.
+- **Member rows** show the handle as a link, and a role only for `owner` and `admin`. Rendering "member" on the majority of rows is the same noise as a "public" tag.
+- **Search field** (`.team-search`): shares the single form-control treatment, declaring only `flex: 1`. Same rule as the nav search field and the message composer.
+- **The action bar** (`.team-actions`) holds at most one control, so it needs no grouping rule — but that control is the **default** button style, like every other standalone button. When no action is available the bar is empty and a sentence explains why: private teams say joining is by request, owners say ownership must be transferred first, signed-out visitors are asked to sign in. An explanation is the state; a disabled button that can never enable is not.
+
 ## 6. Do's and Don'ts
 
 ### Do:

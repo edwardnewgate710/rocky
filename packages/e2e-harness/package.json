@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@chess-platform/api": "file:../api",
+    "@chess-platform/community": "file:../community",
     "@chess-platform/core": "file:../chess-core",
     "@chess-platform/game": "file:../game",
     "@chess-platform/messaging": "file:../messaging",

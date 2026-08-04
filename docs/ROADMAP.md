@@ -894,6 +894,18 @@ Exposes the M10 direct messaging backend (`/v1/messages/*`) in the web frontend 
 - **Styles (`packages/web/src/style.css`)**: Added CSS rules for messaging layout, message thread items, own-message styling, composer input, and coarse-pointer touch targets according to DESIGN.md.
 - **Tests & ADR**: Unit tests in `packages/web/test/messages.test.ts`, client tests in `packages/web/test/api-client.test.ts`, a11y tests in `packages/web/test/a11y.test.ts`, Playwright E2E spec in `packages/web/e2e/messages.spec.ts`, and architectural record in `docs/adr/0085-direct-messaging-ui.md`.
 
+### Increment 20: Teams UI - browse, view, join, leave (ADR-0087) OK
+
+Exposes the M10 community backend (20 routes under /v1/teams/*, previously no UI at all) as a usable slice: discover teams, view one with its members, join a public team, leave one.
+
+- **Harness (packages/e2e-harness/src/harness.ts)**: wired InMemoryCommunityRepository as communityRepository, the fifth optional ApiDependencies field the harness has needed; /v1/teams/* previously answered 503 under GAMBIT_E2E_BACKEND=1.
+- **Client & types (packages/web/src/api/client.ts, models.ts)**: TeamsApi (list, byId, members, join, leave) exposed as client.teams; team types narrow visibility and role to literal unions matching packages/community/src/model.ts.
+- **Routing (packages/web/src/app/router.ts)**: /teams and /teams/:slug, preferring the slug since the backend accepts either.
+- **Action logic (packages/web/src/app/teams-helpers.ts)**: pure teamAction over (team, members, viewer) returning join/leave/none-with-reason. Ownership is read from the viewer membership row, never team.createdBy, because ownership transfers.
+- **Controller & views (teams-controller.ts, teams-view.ts)**: requestGeneration stale-response guard, one batched resolvePlayers per render, and a dedicated not-found state so a private team never renders as forbidden (ADR-0069 Existence Oracle protection).
+- **Tests & ADR**: teams-helpers.test.ts covers the action truth table (mutation-verified), plus api-client, a11y and a Playwright browse-join-appear spec. Recorded in docs/adr/0087-teams-ui.md.
+
+
 ### Increment 19: In-memory search index in E2E harness & search hit assertion (ADR-0086) ✅
 
 Wires `InMemorySearchRepository` into the backend harness under `GAMBIT_E2E_BACKEND=1` and exposes a test-only bridge route to seed search documents.

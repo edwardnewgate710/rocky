@@ -361,3 +361,77 @@ test('messages.openWith posts playerId with auth', async () => {
 
 
 
+
+test('teams.list sends no query string when called with no options', async () => {
+  const list = { total: 0, items: [] };
+  const t = new FakeTransport(() => json(200, list));
+  const c = make(t);
+  const res = await c.teams.list();
+  assert.deepEqual(res, list);
+  assert.equal(t.calls[0]!.url, 'https://api.test/v1/teams');
+  assert.equal(t.calls[0]!.method, 'GET');
+});
+
+test('teams.list sends search and pagination only when provided', async () => {
+  const list = { total: 0, items: [] };
+  const t = new FakeTransport(() => json(200, list), () => json(200, list));
+  const c = make(t);
+  await c.teams.list({ search: 'chess club' });
+  // The client percent-encodes the space rather than using the form-style plus. Both are legal in
+  // a query string; this pins which one it actually emits.
+  assert.equal(t.calls[0]!.url, 'https://api.test/v1/teams?search=chess%20club');
+  await c.teams.list({ limit: 10, offset: 20 });
+  assert.equal(t.calls[1]!.url, 'https://api.test/v1/teams?limit=10&offset=20');
+});
+
+test('teams.byId encodes a slug that would otherwise break the path', async () => {
+  const team = { id: 't1', slug: 'a b', name: 'A B', description: '', visibility: 'public', createdBy: 'u1', createdAt: '2026-08-04T00:00:00Z' };
+  const t = new FakeTransport(() => json(200, team));
+  const c = make(t);
+  const res = await c.teams.byId('a b');
+  assert.deepEqual(res, team);
+  assert.equal(t.calls[0]!.url, 'https://api.test/v1/teams/a%20b');
+  assert.equal(t.calls[0]!.method, 'GET');
+});
+
+test('teams.members builds the members path', async () => {
+  const list = { total: 0, items: [] };
+  const t = new FakeTransport(() => json(200, list));
+  const c = make(t);
+  const res = await c.teams.members('t1', { limit: 5 });
+  assert.deepEqual(res, list);
+  assert.equal(t.calls[0]!.url, 'https://api.test/v1/teams/t1/members?limit=5');
+  assert.equal(t.calls[0]!.method, 'GET');
+});
+
+test('teams.join posts to the members path with auth', async () => {
+  const membership = { teamId: 't1', playerId: 'u1', role: 'member', joinedAt: '2026-08-04T00:00:00Z' };
+  const t = new FakeTransport(
+    () => json(200, auth('tok-A')),
+    () => json(201, membership),
+  );
+  const c = make(t);
+  await c.auth.login({ handle: 'alice', password: 'pw' });
+  const res = await c.teams.join('t1');
+  assert.deepEqual(res, membership);
+  assert.equal(t.calls[1]!.url, 'https://api.test/v1/teams/t1/members');
+  assert.equal(t.calls[1]!.method, 'POST');
+  assert.equal(t.calls[1]!.headers['authorization'], 'Bearer tok-A');
+});
+
+test('teams.leave deletes the member path with auth and resolves with no value', async () => {
+  // The shared HTTP client returns undefined for a 204 or an empty body
+  // (packages/web/src/net/http-client.ts). A client that tried to parse the empty body would
+  // throw on every successful leave, so this asserts the resolved value, not just the call.
+  const t = new FakeTransport(
+    () => json(200, auth('tok-A')),
+    () => ({ status: 204, headers: {}, body: '' }),
+  );
+  const c = make(t);
+  await c.auth.login({ handle: 'alice', password: 'pw' });
+  const res = await c.teams.leave('t1', 'u2');
+  assert.equal(res, undefined);
+  assert.equal(t.calls[1]!.url, 'https://api.test/v1/teams/t1/members/u2');
+  assert.equal(t.calls[1]!.method, 'DELETE');
+  assert.equal(t.calls[1]!.headers['authorization'], 'Bearer tok-A');
+});

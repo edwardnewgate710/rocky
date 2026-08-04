@@ -4,7 +4,20 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-04 — M14 Increment 19: In-memory search index in E2E harness & search hit assertion (ADR-0086)._
+_Last updated: 2026-08-04 - M14 Increment 20: Teams UI (browse, view, join, leave) (ADR-0087)._
+
+## M14 Increment 20 - Teams UI (browse, view, join, leave) (ADR-0087)
+
+Exposes the M10 community backend (20 routes under /v1/teams/*) in the web frontend as the smallest usable slice: discover teams, view one with its members, join a public team, leave one.
+
+- **Harness (packages/e2e-harness/src/harness.ts)**: composes InMemoryCommunityRepository as communityRepository. This is the fifth optional ApiDependencies field the harness has needed; without it every /v1/teams/* route answers 503 under GAMBIT_E2E_BACKEND=1. Still unwired: semanticSearchRepository, achievementsRepository, studiesRepository, learningRepository.
+- **Client & types (packages/web/src/api/client.ts, packages/web/src/api/models.ts)**: TeamsApi with list, byId, members, join and leave, exposed as client.teams. leave resolves undefined because the shared HTTP client already returns undefined for a 204 or empty body. Team types narrow visibility and role to literal unions matching packages/community/src/model.ts rather than the presenter bare string.
+- **Action logic (packages/web/src/app/teams-helpers.ts)**: pure teamAction over (team, members, viewer id) returning join, leave, or none with a reason. Encodes three server behaviours the UI can predict: joining a private team is 403, joining twice is 409, and the owner leaving is 409. Ownership is read from the viewer membership row, never team.createdBy, because ownership transfers and the creator may no longer be the owner.
+- **Controller & views (teams-controller.ts, teams-view.ts)**: requestGeneration stale-response guard and dispose(), one batched resolvePlayers per render with shortId fallback, and a dedicated not-found state so a private team the viewer cannot see renders as missing rather than forbidden (ADR-0069 Existence Oracle protection). Detail load defers on restorePromise so a reload does not show a signed-in user the signed-out affordance.
+- **Tests & ADR**: packages/web/test/teams-helpers.test.ts covers the full action truth table and is mutation-verified against both reading ownership from createdBy and offering join on private teams; plus api-client, a11y and packages/web/e2e/teams.spec.ts (browse, join, appear in members). Recorded in docs/adr/0087-teams-ui.md.
+
+Prior: _Last updated: 2026-08-04 — M14 Increment 19: In-memory search index in E2E harness & search hit assertion (ADR-0086)._
+
 
 ## M14 Increment 19 — In-memory search index in E2E harness & search hit assertion (ADR-0086)
 

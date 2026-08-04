@@ -416,5 +416,31 @@ export interface ConversationReadState {
   readonly lastReadAt: string;
 }
 
+// --- Teams (M14 inc 20) --------------------------------------------------------
 
+export interface TeamView {
+  readonly id: string;
+  readonly slug: string;
+  readonly name: string;
+  readonly description: string;
+  readonly visibility: 'public' | 'private';
+  readonly createdBy: string;
+  readonly createdAt: string;
+}
 
+export interface TeamList {
+  readonly total: number;
+  readonly items: readonly TeamView[];
+}
+
+export interface TeamMembership {
+  readonly teamId: string;
+  readonly playerId: string;
+  readonly role: 'owner' | 'admin' | 'member';
+  readonly joinedAt: string;
+}
+
+export interface TeamMemberList {
+  readonly total: number;
+  readonly items: readonly TeamMembership[];
+}
