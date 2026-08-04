@@ -6,6 +6,10 @@
  * and, if it is the side to move, picks a random legal move and submits it
  * via `authority.apply`.
  *
+ * Move choice is seeded per game using `seedFrom(seed, gameId)`. Each game
+ * draws from its own deterministic RNG stream keyed by its game ID, so a game's
+ * move sequence no longer depends on what other games are doing concurrently.
+ *
  * The bot is co-located in the same process as the authority — it calls
  * `authority.apply` directly (no WebSocket). This is the minimal integration;
  * the M14 deployable service would use the engine bridge for bot moves.
@@ -23,7 +27,7 @@
  * deterministic terminal state without unbounded random play.
  */
 import type { GameAuthority } from '@chess-platform/realtime-gateway';
-import { createRng, pick } from './rng.js';
+import { createRng, pick, seedFrom } from './rng.js';
 import type { PubSub, Broadcast, StateView } from '@chess-platform/realtime-gateway';
 
 /** A simple random-move bot that plays in any game where it is seated. */
@@ -34,22 +38,15 @@ export class BotPlayer {
     white: string;
     black: string;
     resignAfterPlies: number | null;
+    rng: () => number;
   }>();
-
-  /**
-   * Move choice is seeded, not random. An unseeded bot made the end-to-end protocol test fail
-   * intermittently rather than reproducibly, which is the one property that makes a test worthless:
-   * a red run could not be told apart from bad luck. See `./rng.ts`.
-   */
-  private readonly rng: () => number;
 
   constructor(
     private readonly authority: GameAuthority,
     private readonly pubsub: PubSub,
-    seed = 0x9e3779b9,
+    private readonly seed = 0x9e3779b9,
   ) {
     this.botUserId = 'bot-0000-0000-0000';
-    this.rng = createRng(seed);
   }
 
   /** The bot's user id (used when creating games with the bot as a player). */
@@ -82,7 +79,8 @@ export class BotPlayer {
     blackUserId: string,
     resignAfterPlies: number | null = null,
   ): void {
-    this.games.set(gameId, { white: whiteUserId, black: blackUserId, resignAfterPlies });
+    const rng = createRng(seedFrom(this.seed, gameId));
+    this.games.set(gameId, { white: whiteUserId, black: blackUserId, resignAfterPlies, rng });
     this.pubsub.subscribe(`game:${gameId}`, (msg: Broadcast) => {
       void this.onBroadcast(gameId, msg);
     });
@@ -129,11 +127,11 @@ export class BotPlayer {
     const origins = Object.keys(legalMoves);
     if (origins.length === 0) return;
 
-    const origin = pick(origins, this.rng);
+    const origin = pick(origins, gameInfo.rng);
     const destinations = legalMoves[origin];
     if (!destinations || destinations.length === 0) return;
 
-    const dest = pick(destinations, this.rng);
+    const dest = pick(destinations, gameInfo.rng);
     const uci = `${origin}${dest}`;
 
     void this.authority

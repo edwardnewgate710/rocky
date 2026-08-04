@@ -39,3 +39,17 @@ export function pick<T>(items: readonly T[], rng: () => number): T {
   if (items.length === 0) throw new Error('pick() called with no items');
   return items[Math.floor(rng() * items.length)]!;
 }
+
+/**
+ * Derive a 32-bit deterministic seed from a base seed and a string key.
+ * Uses 32-bit FNV-1a algorithm over the key's character codes, initialized with base seed.
+ */
+export function seedFrom(seed: number, key: string): number {
+  let hash = (seed >>> 0) ^ 0x811c9dc5;
+  for (let i = 0; i < key.length; i++) {
+    hash ^= key.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+

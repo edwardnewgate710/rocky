@@ -4,7 +4,18 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-03 — M14 Increment 16: Search UI (ADR-0083)._
+_Last updated: 2026-08-04 — M14 Increment 17: Playwright E2E suite stability & per-game bot RNG (ADR-0084)._
+
+## M14 Increment 17 — Playwright E2E suite stability & per-game bot RNG (ADR-0084)
+
+Stabilizes local E2E testing by introducing a worker concurrency ceiling and ensures bot move choice determinism across concurrent games.
+
+- **Worker Concurrency Ceiling (`packages/web/playwright.config.ts`)**: Added `workers: Math.max(1, Math.min(4, Math.floor(cpus().length / 2)))` to clamp worker parallelism on high-core machines. Resolves severe resource contention against the single shared `e2e-harness` process and Vite preview server (which caused global test flakiness ranging from 638ms to 200,621ms on static specs).
+- **Per-Game Bot RNG (`packages/e2e-harness/src/rng.ts`, `packages/e2e-harness/src/bot.ts`)**: Added `seedFrom(seed, key)` FNV-1a helper in `rng.ts` and updated `BotPlayer` in `bot.ts` to derive a dedicated RNG stream for each registered game using `createRng(seedFrom(this.seed, gameId))`. Move selection is now isolated per game ID and no longer depends on interleaved message timing under concurrency.
+- **Unit Tests (`packages/e2e-harness/test/bot.test.ts`)**: Added unit tests proving that interleaved games do not perturb each other's move sequences and that different game IDs generate distinct move streams. The stubs build real `StateView` and `ApplyResult` values with no `any`; the authority stub is still cast at the construction site (`as unknown as GameAuthority`) because `GameAuthority` is a class and the bot only calls two of its members. The interleaving test was run against the previous shared-RNG implementation and fails there, so it demonstrably catches the defect it describes.
+- **Documentation & ADR**: Recorded findings, benchmarks, timing rationale, and scope bounds in `docs/adr/0084-e2e-worker-cap.md` and updated `docs/ROADMAP.md` follow-ups.
+
+Prior: _Last updated: 2026-08-03 — M14 Increment 16: Search UI (ADR-0083)._
 
 ## M14 Increment 16 — Search UI (ADR-0083)
 

@@ -18,6 +18,7 @@
  *   - GAMBIT_E2E_BACKEND=1 environment variable set
  */
 import type { PlaywrightTestConfig } from '@playwright/test';
+import { cpus } from 'node:os';
 
 const isBackend = !!process.env['GAMBIT_E2E_BACKEND'];
 
@@ -25,6 +26,12 @@ const config: PlaywrightTestConfig = {
   testDir: './e2e',
   timeout: 300_000,
   retries: 1,
+  // Ceiling, not a fixed count: pinning `workers: 4` would RAISE parallelism on a 2-core CI
+  // runner, which is the opposite of the fix. The backend-gated suite drives one shared single-process
+  // `e2e-harness` and one vite preview server, and unbounded local parallelism starves them.
+  // Measured: default 10 workers took 485s with 8 flaky and 1 hard failure; 6 workers produced 3 flaky;
+  // 4 workers gave three consecutive clean runs at ~64s.
+  workers: Math.max(1, Math.min(4, Math.floor(cpus().length / 2))),
   use: {
     baseURL: process.env['E2E_BASE_URL'] ?? 'http://localhost:4173',
     headless: true,
