@@ -194,9 +194,35 @@
       <p id="team-description"></p>
       <p id="team-action-note"></p>
       <div id="team-actions" class="team-actions"></div>
+      <!-- href is set from the loaded team's slug; it is inert until then. -->
+      <p><a id="team-forum-link" data-route="forum">Team forum</a></p>
       <h3>Members</h3>
       <div id="team-members" class="panel-list" aria-label="Team members"></div>
       <p id="team-error" class="error" role="alert"></p>
+    </section>
+    <section id="forum" class="forum" aria-label="Team forum" hidden>
+      <h2 id="forum-title">Forum</h2>
+      <form id="thread-form" class="thread-form" hidden>
+        <label class="sr-only" for="thread-title-input">Thread title</label>
+        <input id="thread-title-input" name="title" type="text" placeholder="Thread title" autocomplete="off" required />
+        <label class="sr-only" for="thread-body-input">First post</label>
+        <input id="thread-body-input" name="body" type="text" placeholder="Say something" autocomplete="off" required />
+        <button id="thread-submit" type="submit">Start thread</button>
+      </form>
+      <p id="forum-note"></p>
+      <div id="thread-list" class="panel-list" aria-label="Forum threads"></div>
+      <p id="forum-error" class="error" role="alert"></p>
+    </section>
+    <section id="thread" class="thread" aria-label="Forum thread" hidden>
+      <h2 id="thread-title">Thread</h2>
+      <div id="thread-posts" class="message-thread" aria-label="Thread posts"></div>
+      <form id="reply-form" class="composer-form" hidden>
+        <label class="sr-only" for="reply-input">Reply</label>
+        <input id="reply-input" name="body" type="text" placeholder="Write a reply…" autocomplete="off" required />
+        <button id="reply-submit" type="submit">Reply</button>
+      </form>
+      <p id="thread-note"></p>
+      <p id="thread-error" class="error" role="alert"></p>
     </section>
     <section id="messages" class="messages" aria-label="Messages" hidden>
       <h2>Messages</h2>

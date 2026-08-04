@@ -4,7 +4,21 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-04 - M14 Increment 20: Teams UI (browse, view, join, leave) (ADR-0087)._
+_Last updated: 2026-08-04 - M14 Increment 21: Team forums UI (ADR-0088)._
+
+## M14 Increment 21 - Team forums UI (ADR-0088)
+
+Exposes the M10 team forum backend (7 routes) as a usable slice: read a team's threads, open one, start a thread, reply. Increment 20 deliberately left this as its own increment.
+
+- **Published contract corrected (packages/api/src/openapi/schemas.ts + openapi.json)**: ForumPostView listed updatedAt as required and never mentioned editedAt, while forumPostView in presenters.ts has always emitted editedAt. The spec described a field the server never sends and omitted one it always does; MessageView in the same file was already right. Regenerated with npm run openapi, not hand-edited. Pre-existing defect from M10 inc 4, fixed here because this increment is its first consumer.
+- **Client (packages/web/src/api/client.ts)**: threads, thread, createThread, posts, createPost on the existing TeamsApi - the forum routes are nested under a team, so a second class would have split one resource in two.
+- **Decision logic (packages/web/src/app/forum-helpers.ts)**: pure canStartThread and canReply returning a reason when they refuse. Starting a thread needs membership (403 otherwise); replying needs membership AND an unlocked thread (403 for either). A non-member on a locked thread is told about membership, because that is the obstacle that survives the thread reopening. membershipOf is reused from teams-helpers.
+- **Tombstones and ordering**: postDisplayBody and threadDisplayTitle return placeholders for deleted content; sortThreads puts pinned first then most recent. The sort applies to the returned page only, which the ADR states as a limit rather than hiding.
+- **Controller and views**: ForumController loads thread, posts and members together because the reply decision needs all three, maps NotFoundError to a not-found state so a private team never reads as forbidden (ADR-0069), and both routes defer their load on restorePromise so a reload does not show a member the non-member state.
+- **Tests & docs**: forum-helpers.test.ts (truth table, ordering, tombstones - mutation-verified against dropping the lock check and against leaking a deleted body), client, router, a11y, and packages/web/e2e/forum.spec.ts covering two members through start-thread and reply. ADR-0088, and the DESIGN.md forum component spec written through the impeccable skill.
+
+Prior: _Last updated: 2026-08-04 - M14 Increment 20: Teams UI (browse, view, join, leave) (ADR-0087)._
+
 
 ## M14 Increment 20 - Teams UI (browse, view, join, leave) (ADR-0087)
 

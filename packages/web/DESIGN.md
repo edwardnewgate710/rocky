@@ -200,6 +200,15 @@ Flat at rest, everywhere. There is no `box-shadow` in the current implementation
 - **Search field** (`.team-search`): shares the single form-control treatment, declaring only `flex: 1`. Same rule as the nav search field and the message composer.
 - **The action bar** (`.team-actions`) holds at most one control, so it needs no grouping rule — but that control is the **default** button style, like every other standalone button. When no action is available the bar is empty and a sentence explains why: private teams say joining is by request, owners say ownership must be transferred first, signed-out visitors are asked to sign in. An explanation is the state; a disabled button that can never enable is not.
 
+### Team forum (thread list and thread)
+- **Thread rows** are the one List Row treatment, composed the same way team rows are: exactly two children, because `.panel-row` is `space-between`. The title and its author travel together in `.team-row-main`; thread state trails.
+- **State tags are earned, not default.** A row carries `pinned`, `locked`, or both — never "open" or "unpinned". Tagging the normal case teaches the eye to skip the column, which is exactly when a real `locked` tag stops being read.
+- **Posts reuse the message bubble** (`.message-item`, `.message-header`, `.message-body`) rather than a forum-specific block. A forum post and a direct message are the same object — someone said something at a time — and the system has one treatment for that. Authorship is carried by side and fill, never by the accent, exactly as in Messages.
+- **A deleted post keeps its row and loses its body**, rendered as placeholder text in the `.message-tombstone` italic. A thread deleted the same way keeps its row and shows a placeholder title. A tombstone is a state, not an emphasis: no border, badge or colour of its own.
+- **`edited` is metadata, not a badge.** It sits in the muted `.count` meta line beside the timestamp, and is suppressed on a tombstone where it would be noise about content nobody can see.
+- **Composers** (`.thread-form` for a new thread, `.composer-form` for a reply) share the single form-control treatment and declare only their widths. The thread form wraps rather than crushing two fields and a button onto one line at 320px.
+- **A composer that would fail is not shown.** When the viewer cannot post, the form is hidden and a sentence names the actual obstacle — signed out, not a member, or the thread is locked. Where two obstacles are true, the one that would still block them after the other cleared is the one worth stating. A disabled composer that can never enable is worse than an explanation.
+
 ## 6. Do's and Don'ts
 
 ### Do:

@@ -27,6 +27,8 @@ export type Route =
   | { readonly name: 'conversation'; readonly id: string }
   | { readonly name: 'teams' }
   | { readonly name: 'team'; readonly slug: string }
+  | { readonly name: 'forum'; readonly slug: string }
+  | { readonly name: 'thread'; readonly slug: string; readonly threadId: string }
   | { readonly name: 'not-found' };
 
 /** Parse a URL pathname into a typed route. */
@@ -52,7 +54,15 @@ export function parseRoute(pathname: string): Route {
   }
   if (segments[0] === 'teams') {
     if (segments.length === 1) return { name: 'teams' };
-    return { name: 'team', slug: decodeSegment(segments[1]!) };
+    const slug = decodeSegment(segments[1]!);
+    if (segments.length === 2) return { name: 'team', slug };
+    // The forum is nested under its team, mirroring the API. Anything else under a team slug is
+    // not a route we serve — say so rather than falling through to the team page.
+    if (segments[2] === 'forum') {
+      if (segments.length === 3) return { name: 'forum', slug };
+      if (segments.length === 4) return { name: 'thread', slug, threadId: decodeSegment(segments[3]!) };
+    }
+    return { name: 'not-found' };
   }
   return { name: 'not-found' };
 }
@@ -98,6 +108,10 @@ export function routeToPath(route: Route): string {
       return '/teams';
     case 'team':
       return `/teams/${route.slug}`;
+    case 'forum':
+      return `/teams/${route.slug}/forum`;
+    case 'thread':
+      return `/teams/${route.slug}/forum/${route.threadId}`;
     case 'not-found':
       return '/not-found';
   }

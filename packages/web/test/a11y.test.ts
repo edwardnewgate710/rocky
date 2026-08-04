@@ -242,3 +242,23 @@ test('team search form has a labelled input', () => {
   assert.ok(HTML_TEMPLATE.includes('id="team-search-form"'));
   assert.ok(HTML_TEMPLATE.includes('for="team-search-input"'));
 });
+
+// --- Team forum region (M14 inc 21) ---
+
+test('every forum section carries an aria-label', () => {
+  assert.ok(HTML_TEMPLATE.includes('aria-label="Team forum"'));
+  assert.ok(HTML_TEMPLATE.includes('aria-label="Forum thread"'));
+  assert.ok(HTML_TEMPLATE.includes('aria-label="Forum threads"'));
+  assert.ok(HTML_TEMPLATE.includes('aria-label="Thread posts"'));
+});
+
+test('forum error regions have role=alert', () => {
+  assert.match(HTML_TEMPLATE, /id="forum-error"[^>]*role="alert"/);
+  assert.match(HTML_TEMPLATE, /id="thread-error"[^>]*role="alert"/);
+});
+
+test('forum composers have labelled inputs', () => {
+  assert.ok(HTML_TEMPLATE.includes('for="thread-title-input"'));
+  assert.ok(HTML_TEMPLATE.includes('for="thread-body-input"'));
+  assert.ok(HTML_TEMPLATE.includes('for="reply-input"'));
+});

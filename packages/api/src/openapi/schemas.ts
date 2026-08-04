@@ -1124,14 +1124,17 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
 
   ForumPostView: {
     type: 'object',
-    required: ['id', 'threadId', 'authorId', 'body', 'createdAt', 'updatedAt', 'deletedAt'],
+    // `editedAt`, not `updatedAt`: the presenter has always emitted `editedAt` (see
+    // `forumPostView`), so the published `updatedAt` described a field the server never sends and
+    // omitted one it always does. `MessageView` in this file had it right.
+    required: ['id', 'threadId', 'authorId', 'body', 'createdAt', 'editedAt', 'deletedAt'],
     properties: {
       id: { type: 'string', format: 'uuid' },
       threadId: { type: 'string', format: 'uuid' },
       authorId: { type: 'string', format: 'uuid' },
       body: { type: 'string' },
       createdAt: dateTime,
-      updatedAt: dateTime,
+      editedAt: { ...dateTime, nullable: true },
       deletedAt: { ...dateTime, nullable: true },
     },
   },

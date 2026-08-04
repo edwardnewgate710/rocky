@@ -46,6 +46,10 @@ import { SearchController } from './search-controller.js';
 import type { SearchController as SearchControllerType } from './search-controller.js';
 import { MessagesController } from './messages-controller.js';
 import { TeamsController } from './teams-controller.js';
+import { ForumController } from './forum-controller.js';
+import type { ForumController as ForumControllerType } from './forum-controller.js';
+import { renderThreadList, renderPosts } from './forum-view.js';
+import { canStartThread, canReply, abilityExplanation, threadDisplayTitle } from './forum-helpers.js';
 import type { TeamsController as TeamsControllerType } from './teams-controller.js';
 import { renderTeamList, renderTeamMembers } from './teams-view.js';
 import { teamAction, actionExplanation, membershipOf } from './teams-helpers.js';
@@ -78,6 +82,7 @@ export interface Bootstrapped {
   readonly search: SearchControllerType | null;
   readonly messages: MessagesControllerType | null;
   readonly teams: TeamsControllerType | null;
+  readonly forum: ForumControllerType | null;
   readonly auth: AuthControllerType;
   readonly theme: ThemeToggleType;
 }
@@ -468,6 +473,8 @@ export function bootstrap(
   const conversationSectionEl = doc.getElementById('conversation');
   const teamsSectionEl = doc.getElementById('teams');
   const teamSectionEl = doc.getElementById('team');
+  const forumSectionEl = doc.getElementById('forum');
+  const threadSectionEl = doc.getElementById('thread');
   const showGame = route.name === 'game';
   const showLobby = route.name === 'lobby';
   const showProfile = route.name === 'profile';
@@ -478,6 +485,8 @@ export function bootstrap(
   const showConversation = route.name === 'conversation';
   const showTeams = route.name === 'teams';
   const showTeam = route.name === 'team';
+  const showForum = route.name === 'forum';
+  const showThread = route.name === 'thread';
   if (mainEl) mainEl.hidden = !showGame;
   if (lobbySectionEl) lobbySectionEl.hidden = !showLobby;
   if (profileSectionEl) profileSectionEl.hidden = !showProfile;
@@ -488,6 +497,8 @@ export function bootstrap(
   if (conversationSectionEl) conversationSectionEl.hidden = !showConversation;
   if (teamsSectionEl) teamsSectionEl.hidden = !showTeams;
   if (teamSectionEl) teamSectionEl.hidden = !showTeam;
+  if (forumSectionEl) forumSectionEl.hidden = !showForum;
+  if (threadSectionEl) threadSectionEl.hidden = !showThread;
 
   // Board-only controls should not suggest functionality on lobby/profile
   // routes. They were previously visible everywhere despite doing nothing.
@@ -799,7 +810,7 @@ export function bootstrap(
         .finally(() => gameSync.start());
     }
 
-    return { app, board, controller, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, auth, theme };
+    return { app, board, controller, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, auth, theme };
   }
 
   // --- Lobby view ---
@@ -898,7 +909,7 @@ export function bootstrap(
 
     lobby.start();
 
-    return { app, board: null, controller: null, lobby, profile: null, tournament: null, search: null, messages: null, teams: null, auth, theme };
+    return { app, board: null, controller: null, lobby, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, auth, theme };
   }
 
   // --- Profile view ---
@@ -1179,7 +1190,7 @@ export function bootstrap(
       }
     }
 
-    return { app, board: null, controller: null, lobby: null, profile, tournament: null, search: null, messages: null, teams: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile, tournament: null, search: null, messages: null, teams: null, forum: null, auth, theme };
   }
 
   // --- Tournaments list view ---
@@ -1219,7 +1230,7 @@ export function bootstrap(
     });
 
     void tournament.loadList();
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament, search: null, messages: null, teams: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament, search: null, messages: null, teams: null, forum: null, auth, theme };
   }
 
   // --- Single tournament detail view ---
@@ -1271,7 +1282,7 @@ export function bootstrap(
     });
 
     void tournament.loadDetail(route.id);
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament, search: null, messages: null, teams: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament, search: null, messages: null, teams: null, forum: null, auth, theme };
   }
 
   // --- Search view ---
@@ -1368,7 +1379,7 @@ export function bootstrap(
       if (resultsEl) renderSearchPrompt(resultsEl);
     }
 
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: searchCtrl, messages: null, teams: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: searchCtrl, messages: null, teams: null, forum: null, auth, theme };
   }
 
   // --- Messages Inbox view (/messages) ---
@@ -1403,7 +1414,7 @@ export function bootstrap(
         .catch(() => undefined);
     }
 
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: messagesCtrl, teams: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: messagesCtrl, teams: null, forum: null, auth, theme };
   }
 
   // --- Conversation Thread view (/messages/:id) ---
@@ -1474,7 +1485,7 @@ export function bootstrap(
         .catch(() => undefined);
     }
 
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: messagesCtrl, teams: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: messagesCtrl, teams: null, forum: null, auth, theme };
   }
 
   // --- Teams list view (/teams) ---
@@ -1514,7 +1525,7 @@ export function bootstrap(
     }
 
     void teamsCtrl.loadList();
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: teamsCtrl, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: teamsCtrl, forum: null, auth, theme };
   }
 
   // --- Team detail view (/teams/:slug) ---
@@ -1525,6 +1536,7 @@ export function bootstrap(
     const noteEl = doc.getElementById('team-action-note');
     const actionsEl = doc.getElementById('team-actions');
     const membersEl = doc.getElementById('team-members');
+    const forumLinkEl = doc.getElementById('team-forum-link');
     const errorEl = doc.getElementById('team-error');
     const slug = route.slug;
     // Read late, never captured: the access token arrives asynchronously, so the viewer's identity
@@ -1540,6 +1552,12 @@ export function bootstrap(
           if (nameEl) nameEl.textContent = team.name;
           if (descEl) descEl.textContent = team.description;
           if (membersEl) renderTeamMembers(membersEl, members, names);
+          // The forum belongs to THIS team, so its href is only knowable once the team has loaded.
+          // The SPA click handler navigates to whatever `href` says, so leaving a placeholder here
+          // sends every visitor back to the teams list instead of into the forum.
+          if (forumLinkEl instanceof HTMLAnchorElement) {
+            forumLinkEl.href = `/teams/${encodeURIComponent(team.slug)}/forum`;
+          }
 
           if (!actionsEl || !noteEl) return;
           actionsEl.replaceChildren();
@@ -1594,7 +1612,146 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: teamsCtrl, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: teamsCtrl, forum: null, auth, theme };
+  }
+
+  // --- Forum thread list (/teams/:slug/forum) ---
+  const forumEl = doc.getElementById('forum');
+  if (forumEl && route.name === 'forum') {
+    const titleEl = doc.getElementById('forum-title');
+    const listEl = doc.getElementById('thread-list');
+    const noteEl = doc.getElementById('forum-note');
+    const errorEl = doc.getElementById('forum-error');
+    const formEl = doc.getElementById('thread-form') as HTMLFormElement | null;
+    const titleInputEl = doc.getElementById('thread-title-input') as HTMLInputElement | null;
+    const bodyInputEl = doc.getElementById('thread-body-input') as HTMLInputElement | null;
+    const slug = route.slug;
+    const viewerId = (): string | null => app.api.session.current?.user.id ?? null;
+    let teamId: string | null = null;
+
+    const forumCtrl = new ForumController({
+      client: app.api,
+      callbacks: {
+        onThreads: (team, threads, members, names) => {
+          teamId = team.id;
+          if (errorEl) errorEl.textContent = '';
+          if (titleEl) titleEl.textContent = `${team.name} forum`;
+          if (listEl) renderThreadList(listEl, slug, threads, names);
+
+          const ability = canStartThread(members, viewerId());
+          if (formEl) formEl.hidden = ability.kind !== 'allowed';
+          if (noteEl) {
+            noteEl.textContent = ability.kind === 'allowed' ? '' : abilityExplanation(ability.reason);
+          }
+        },
+        onThread: () => {},
+        onLoading: (loading) => {
+          if (listEl) listEl.setAttribute('aria-busy', loading ? 'true' : 'false');
+        },
+        onError: (msg) => {
+          if (errorEl) errorEl.textContent = msg;
+        },
+        onNotFound: () => {
+          if (titleEl) titleEl.textContent = 'Team not found';
+          if (listEl) listEl.replaceChildren();
+          if (formEl) formEl.hidden = true;
+          if (noteEl) noteEl.textContent = 'No such team, or it is private.';
+        },
+      },
+    });
+
+    if (formEl && titleInputEl && bodyInputEl) {
+      formEl.onsubmit = (e) => {
+        e.preventDefault();
+        const title = titleInputEl.value.trim();
+        const body = bodyInputEl.value.trim();
+        if (!title || !body || teamId === null) return;
+        // Clear only once the thread exists; a failed create otherwise discards what was typed.
+        titleInputEl.disabled = true;
+        bodyInputEl.disabled = true;
+        void forumCtrl.createThread(teamId, slug, title, body).then((created) => {
+          titleInputEl.disabled = false;
+          bodyInputEl.disabled = false;
+          if (created) {
+            titleInputEl.value = '';
+            bodyInputEl.value = '';
+          }
+          titleInputEl.focus();
+        });
+      };
+    }
+
+    const load = (): void => void forumCtrl.loadThreads(slug);
+    if (auth.currentSession !== null) load();
+    else void restorePromise.then(() => load()).catch(() => undefined);
+
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: forumCtrl, auth, theme };
+  }
+
+  // --- Forum thread (/teams/:slug/forum/:threadId) ---
+  const threadEl = doc.getElementById('thread');
+  if (threadEl && route.name === 'thread') {
+    const titleEl = doc.getElementById('thread-title');
+    const postsEl = doc.getElementById('thread-posts');
+    const noteEl = doc.getElementById('thread-note');
+    const errorEl = doc.getElementById('thread-error');
+    const formEl = doc.getElementById('reply-form') as HTMLFormElement | null;
+    const inputEl = doc.getElementById('reply-input') as HTMLInputElement | null;
+    const slug = route.slug;
+    const threadId = route.threadId;
+    const viewerId = (): string | null => app.api.session.current?.user.id ?? null;
+    let teamId: string | null = null;
+
+    const forumCtrl = new ForumController({
+      client: app.api,
+      callbacks: {
+        onThreads: () => {},
+        onThread: (team, thread, posts, members, names) => {
+          teamId = team.id;
+          if (errorEl) errorEl.textContent = '';
+          if (titleEl) titleEl.textContent = threadDisplayTitle(thread);
+          if (postsEl) renderPosts(postsEl, posts, names, viewerId());
+
+          const ability = canReply(thread, members, viewerId());
+          if (formEl) formEl.hidden = ability.kind !== 'allowed';
+          if (noteEl) {
+            noteEl.textContent = ability.kind === 'allowed' ? '' : abilityExplanation(ability.reason);
+          }
+        },
+        onLoading: (loading) => {
+          if (postsEl) postsEl.setAttribute('aria-busy', loading ? 'true' : 'false');
+        },
+        onError: (msg) => {
+          if (errorEl) errorEl.textContent = msg;
+        },
+        onNotFound: () => {
+          if (titleEl) titleEl.textContent = 'Thread not found';
+          if (postsEl) postsEl.replaceChildren();
+          if (formEl) formEl.hidden = true;
+          if (noteEl) noteEl.textContent = 'No such thread, or the team is private.';
+        },
+      },
+    });
+
+    if (formEl && inputEl) {
+      formEl.onsubmit = (e) => {
+        e.preventDefault();
+        const body = inputEl.value.trim();
+        if (!body || teamId === null) return;
+        inputEl.disabled = true;
+        void forumCtrl.createPost(teamId, slug, threadId, body).then((sent) => {
+          inputEl.disabled = false;
+          if (sent) inputEl.value = '';
+          inputEl.focus();
+        });
+      };
+    }
+
+    const load = (): void => void forumCtrl.loadThread(slug, threadId);
+    if (auth.currentSession !== null) load();
+    else void restorePromise.then(() => load()).catch(() => undefined);
+
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: forumCtrl, auth, theme };
   }
 
   // --- Standalone board (no game ID, no lobby, no profile, no tournament, no search, no messages) ---
@@ -1602,5 +1759,5 @@ export function bootstrap(
     ? mountBoard({ boardEl, statusEl, flipEl })
     : null;
 
-  return { app, board, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, auth, theme };
+  return { app, board, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, auth, theme };
 }

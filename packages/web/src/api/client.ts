@@ -62,6 +62,11 @@ import type {
   TeamMemberList,
   TeamMembership,
   TeamView,
+  ForumThread,
+  ForumThreadList,
+  ForumPost,
+  ForumPostList,
+  ForumThreadCreated,
 } from './models.js';
 
 /** A request spec plus whether it requires authentication. */
@@ -533,6 +538,67 @@ export class TeamsApi {
     return this.execute<void>({
       method: 'DELETE',
       path: `/v1/teams/${encodeURIComponent(id)}/members/${encodeURIComponent(playerId)}`,
+      auth: true,
+    });
+  }
+
+  // --- Forum (M14 inc 21) ---
+  // Every forum route is nested under a team, so they live here rather than in a second class.
+
+  threads(teamId: string, opts?: { limit?: number; offset?: number }): Promise<ForumThreadList> {
+    return this.execute<ForumThreadList>({
+      method: 'GET',
+      path: `/v1/teams/${encodeURIComponent(teamId)}/forum/threads`,
+      auth: 'optional',
+      ...(opts?.limit !== undefined || opts?.offset !== undefined
+        ? {
+            query: {
+              ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+              ...(opts.offset !== undefined ? { offset: opts.offset } : {}),
+            },
+          }
+        : {}),
+    });
+  }
+
+  thread(teamId: string, threadId: string): Promise<ForumThread> {
+    return this.execute<ForumThread>({
+      method: 'GET',
+      path: `/v1/teams/${encodeURIComponent(teamId)}/forum/threads/${encodeURIComponent(threadId)}`,
+      auth: 'optional',
+    });
+  }
+
+  createThread(teamId: string, title: string, body: string): Promise<ForumThreadCreated> {
+    return this.execute<ForumThreadCreated>({
+      method: 'POST',
+      path: `/v1/teams/${encodeURIComponent(teamId)}/forum/threads`,
+      body: { title, body },
+      auth: true,
+    });
+  }
+
+  posts(teamId: string, threadId: string, opts?: { limit?: number; offset?: number }): Promise<ForumPostList> {
+    return this.execute<ForumPostList>({
+      method: 'GET',
+      path: `/v1/teams/${encodeURIComponent(teamId)}/forum/threads/${encodeURIComponent(threadId)}/posts`,
+      auth: 'optional',
+      ...(opts?.limit !== undefined || opts?.offset !== undefined
+        ? {
+            query: {
+              ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+              ...(opts.offset !== undefined ? { offset: opts.offset } : {}),
+            },
+          }
+        : {}),
+    });
+  }
+
+  createPost(teamId: string, threadId: string, body: string): Promise<ForumPost> {
+    return this.execute<ForumPost>({
+      method: 'POST',
+      path: `/v1/teams/${encodeURIComponent(teamId)}/forum/threads/${encodeURIComponent(threadId)}/posts`,
+      body: { body },
       auth: true,
     });
   }

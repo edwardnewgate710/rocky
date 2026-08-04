@@ -103,3 +103,17 @@ test('serializes the teams routes back to their paths', () => {
   assert.equal(routeToPath({ name: 'teams' }), '/teams');
   assert.equal(routeToPath({ name: 'team', slug: 'city-chess' }), '/teams/city-chess');
 });
+
+test('parses the forum and thread routes nested under a team', () => {
+  assert.deepEqual(parseRoute('/teams/city-chess/forum'), { name: 'forum', slug: 'city-chess' });
+  assert.deepEqual(parseRoute('/teams/city-chess/forum/th-1'), {
+    name: 'thread', slug: 'city-chess', threadId: 'th-1',
+  });
+  // Anything else under a team slug is not a route we serve, and must not fall through to the team.
+  assert.deepEqual(parseRoute('/teams/city-chess/nonsense'), { name: 'not-found' });
+});
+
+test('serializes the forum routes back to their paths', () => {
+  assert.equal(routeToPath({ name: 'forum', slug: 'city-chess' }), '/teams/city-chess/forum');
+  assert.equal(routeToPath({ name: 'thread', slug: 'city-chess', threadId: 'th-1' }), '/teams/city-chess/forum/th-1');
+});

@@ -435,3 +435,52 @@ test('teams.leave deletes the member path with auth and resolves with no value',
   assert.equal(t.calls[1]!.method, 'DELETE');
   assert.equal(t.calls[1]!.headers['authorization'], 'Bearer tok-A');
 });
+
+test('teams.threads builds the forum path and sends pagination only when given', async () => {
+  const list = { total: 0, items: [] };
+  const t = new FakeTransport(() => json(200, list), () => json(200, list));
+  const c = make(t);
+  await c.teams.threads('t1');
+  assert.equal(t.calls[0]!.url, 'https://api.test/v1/teams/t1/forum/threads');
+  await c.teams.threads('t1', { limit: 5, offset: 10 });
+  assert.equal(t.calls[1]!.url, 'https://api.test/v1/teams/t1/forum/threads?limit=5&offset=10');
+});
+
+test('teams.thread and teams.posts encode both path segments', async () => {
+  const t = new FakeTransport(() => json(200, {}), () => json(200, { total: 0, items: [] }));
+  const c = make(t);
+  await c.teams.thread('t 1', 'th 2');
+  assert.equal(t.calls[0]!.url, 'https://api.test/v1/teams/t%201/forum/threads/th%202');
+  await c.teams.posts('t 1', 'th 2');
+  assert.equal(t.calls[1]!.url, 'https://api.test/v1/teams/t%201/forum/threads/th%202/posts');
+});
+
+test('teams.createThread posts a title and body with auth', async () => {
+  const created = { thread: {}, firstPost: {} };
+  const t = new FakeTransport(
+    () => json(200, auth('tok-A')),
+    () => json(201, created),
+  );
+  const c = make(t);
+  await c.auth.login({ handle: 'alice', password: 'pw' });
+  const res = await c.teams.createThread('t1', 'Title', 'Body');
+  assert.deepEqual(res, created);
+  assert.equal(t.calls[1]!.url, 'https://api.test/v1/teams/t1/forum/threads');
+  assert.equal(t.calls[1]!.method, 'POST');
+  assert.equal(t.calls[1]!.headers['authorization'], 'Bearer tok-A');
+  assert.deepEqual(JSON.parse(t.calls[1]!.body as string), { title: 'Title', body: 'Body' });
+});
+
+test('teams.createPost posts a body to the thread with auth', async () => {
+  const t = new FakeTransport(
+    () => json(200, auth('tok-A')),
+    () => json(201, {}),
+  );
+  const c = make(t);
+  await c.auth.login({ handle: 'alice', password: 'pw' });
+  await c.teams.createPost('t1', 'th1', 'A reply');
+  assert.equal(t.calls[1]!.url, 'https://api.test/v1/teams/t1/forum/threads/th1/posts');
+  assert.equal(t.calls[1]!.method, 'POST');
+  assert.equal(t.calls[1]!.headers['authorization'], 'Bearer tok-A');
+  assert.deepEqual(JSON.parse(t.calls[1]!.body as string), { body: 'A reply' });
+});

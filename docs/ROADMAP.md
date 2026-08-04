@@ -894,6 +894,18 @@ Exposes the M10 direct messaging backend (`/v1/messages/*`) in the web frontend 
 - **Styles (`packages/web/src/style.css`)**: Added CSS rules for messaging layout, message thread items, own-message styling, composer input, and coarse-pointer touch targets according to DESIGN.md.
 - **Tests & ADR**: Unit tests in `packages/web/test/messages.test.ts`, client tests in `packages/web/test/api-client.test.ts`, a11y tests in `packages/web/test/a11y.test.ts`, Playwright E2E spec in `packages/web/e2e/messages.spec.ts`, and architectural record in `docs/adr/0085-direct-messaging-ui.md`.
 
+### Increment 21: Team forums UI - read, start a thread, reply (ADR-0088) OK
+
+Exposes the M10 team forum backend (7 routes, previously no UI) as a usable slice, and corrects a published contract that described a field the server never sends.
+
+- **Contract fix (packages/api/src/openapi/schemas.ts, openapi.json)**: ForumPostView declared updatedAt as required and omitted editedAt, while the presenter has always emitted editedAt. MessageView in the same file was already correct. Schema corrected and openapi.json regenerated with npm run openapi.
+- **Client (packages/web/src/api/client.ts)**: threads, thread, createThread, posts, createPost added to the existing TeamsApi, since every forum route is nested under a team.
+- **Routing (packages/web/src/app/router.ts)**: /teams/:slug/forum and /teams/:slug/forum/:threadId. Any other path under a team slug now resolves to not-found rather than falling through to the team page.
+- **Decision logic (packages/web/src/app/forum-helpers.ts)**: pure canStartThread and canReply. Replying needs membership AND an unlocked thread (the route answers 403 for either), and where both obstacles apply the membership one is reported because it would still block after a reopen. Membership reuses membershipOf from teams-helpers so the two surfaces cannot drift.
+- **Tombstones**: postDisplayBody and threadDisplayTitle render placeholders, never the stored content. Mutation-verified along with the lock rule.
+- **Tests & ADR**: forum-helpers.test.ts covers the truth table, ordering and tombstones; plus client, router, a11y and a two-member Playwright spec. Recorded in docs/adr/0088-team-forums-ui.md, with the DESIGN.md forum component spec written through the impeccable skill.
+
+
 ### Increment 20: Teams UI - browse, view, join, leave (ADR-0087) OK
 
 Exposes the M10 community backend (20 routes under /v1/teams/*, previously no UI at all) as a usable slice: discover teams, view one with its members, join a public team, leave one.

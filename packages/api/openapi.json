@@ -2074,6 +2074,16 @@
               }
             }
           },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "409": {
             "description": "Game id conflict",
             "content": {
@@ -2086,16 +2096,6 @@
           },
           "422": {
             "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
             "content": {
               "application/json": {
                 "schema": {
@@ -13881,7 +13881,7 @@
           "authorId",
           "body",
           "createdAt",
-          "updatedAt",
+          "editedAt",
           "deletedAt"
         ],
         "properties": {
@@ -13904,9 +13904,10 @@
             "type": "string",
             "format": "date-time"
           },
-          "updatedAt": {
+          "editedAt": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "nullable": true
           },
           "deletedAt": {
             "type": "string",

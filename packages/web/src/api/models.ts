@@ -444,3 +444,43 @@ export interface TeamMemberList {
   readonly total: number;
   readonly items: readonly TeamMembership[];
 }
+
+// --- Team forums (M14 inc 21) --------------------------------------------------
+
+export interface ForumThread {
+  readonly id: string;
+  readonly teamId: string;
+  readonly authorId: string;
+  readonly title: string;
+  readonly createdAt: string;
+  readonly lastPostAt: string;
+  readonly locked: boolean;
+  readonly pinned: boolean;
+  readonly deletedAt: string | null;
+}
+
+export interface ForumThreadList {
+  readonly total: number;
+  readonly items: readonly ForumThread[];
+}
+
+export interface ForumPost {
+  readonly id: string;
+  readonly threadId: string;
+  readonly authorId: string;
+  readonly body: string;
+  readonly createdAt: string;
+  readonly editedAt: string | null;
+  readonly deletedAt: string | null;
+}
+
+export interface ForumPostList {
+  readonly total: number;
+  readonly items: readonly ForumPost[];
+}
+
+/** Creating a thread needs a title and an opening body, and returns both objects. */
+export interface ForumThreadCreated {
+  readonly thread: ForumThread;
+  readonly firstPost: ForumPost;
+}

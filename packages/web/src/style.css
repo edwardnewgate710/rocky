@@ -776,7 +776,8 @@ button:disabled {
 .nav-search input[type='search'],
 .cg-form input[type='number'],
 .composer-form input,
-.team-search input {
+.team-search input,
+.thread-form input {
   padding: 6px 8px;
   border: 1px solid transparent;
   border-radius: 6px;
@@ -789,7 +790,8 @@ button:disabled {
 .nav-search input[type='search']:focus-visible,
 .cg-form input:focus-visible,
 .composer-form input:focus-visible,
-.team-search input:focus-visible { outline: 3px solid var(--sel); outline-offset: 1px; }
+.team-search input:focus-visible,
+.thread-form input:focus-visible { outline: 3px solid var(--sel); outline-offset: 1px; }
 
 /* More options disclosure. */
 .cg-more { display: flex; flex-direction: column; gap: 8px; }
@@ -822,7 +824,8 @@ button:disabled {
   .cg-form input[type='number'],
   .composer-form input,
   .composer-form button,
-  .team-search input { min-height: 44px; }
+  .team-search input,
+  .thread-form input { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .cg-chip,
@@ -1066,4 +1069,30 @@ button:disabled {
    block from reserving a gap for text that is not there. */
 .team p:empty {
   display: none;
+}
+
+/* --- Team forum (M14 inc 21) --- */
+.forum,
+.thread {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 16px;
+}
+.forum h2,
+.thread h2 {
+  margin: 0 0 16px;
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+/* Two fields and a control, so it wraps rather than crushing the title on a narrow screen. The
+   inputs share the one form-control treatment; only their widths are declared here. */
+.thread-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.thread-form input {
+  flex: 1 1 12ch;
 }
