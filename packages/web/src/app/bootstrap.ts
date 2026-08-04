@@ -42,7 +42,11 @@ import {
 import type { EmptyStateOptions } from './render-helpers.js';
 import { SocialController } from './social-controller.js';
 import type { Relationship, SelfSocial } from './social-controller.js';
-import type { SocialPlayer, TournamentDetail } from '../api/models.js';
+import { SearchController } from './search-controller.js';
+import type { SearchController as SearchControllerType } from './search-controller.js';
+import { renderSearchResults, renderSearchPrompt } from './search-view.js';
+import { parseSearchMode } from './search-results.js';
+import type { SearchMode, SocialPlayer, TournamentDetail } from '../api/models.js';
 import { ThemeToggle } from './theme-toggle.js';
 import type { ThemeToggle as ThemeToggleType } from './theme-toggle.js';
 import { AuthController } from './auth-controller.js';
@@ -63,6 +67,7 @@ export interface Bootstrapped {
   readonly lobby: LobbyControllerType | null;
   readonly profile: ProfileControllerType | null;
   readonly tournament: TournamentControllerType | null;
+  readonly search: SearchControllerType | null;
   readonly auth: AuthControllerType;
   readonly theme: ThemeToggleType;
 }
@@ -411,6 +416,12 @@ export function bootstrap(
     });
   }
 
+  // The header search form lives in the nav, outside every section this function replaces, so it
+  // survives each re-run — and a listener attached here would be added again on every navigation
+  // until one submit fired a whole stack of them. Its handler is bound once in `main.ts`, next to
+  // the other document-level handlers, for exactly that reason. Only the value is refreshed here.
+  const searchInputEl = doc.getElementById('search-input') as HTMLInputElement | null;
+
   // Restore any persisted session. Kept as a promise so the authenticated game
   // socket below can wait for the access token, which M12 inc 2 obtains
   // asynchronously via the httpOnly refresh cookie rather than from storage.
@@ -430,16 +441,19 @@ export function bootstrap(
   const profileSectionEl = doc.getElementById('profile');
   const tournamentsSectionEl = doc.getElementById('tournaments');
   const tournamentSectionEl = doc.getElementById('tournament');
+  const searchSectionEl = doc.getElementById('search');
   const showGame = route.name === 'game';
   const showLobby = route.name === 'lobby';
   const showProfile = route.name === 'profile';
   const showTournaments = route.name === 'tournaments';
   const showTournament = route.name === 'tournament';
+  const showSearch = route.name === 'search';
   if (mainEl) mainEl.hidden = !showGame;
   if (lobbySectionEl) lobbySectionEl.hidden = !showLobby;
   if (profileSectionEl) profileSectionEl.hidden = !showProfile;
   if (tournamentsSectionEl) tournamentsSectionEl.hidden = !showTournaments;
   if (tournamentSectionEl) tournamentSectionEl.hidden = !showTournament;
+  if (searchSectionEl) searchSectionEl.hidden = !showSearch;
 
   // Board-only controls should not suggest functionality on lobby/profile
   // routes. They were previously visible everywhere despite doing nothing.
@@ -751,7 +765,7 @@ export function bootstrap(
         .finally(() => gameSync.start());
     }
 
-    return { app, board, controller, lobby: null, profile: null, tournament: null, auth, theme };
+    return { app, board, controller, lobby: null, profile: null, tournament: null, search: null, auth, theme };
   }
 
   // --- Lobby view ---
@@ -850,7 +864,7 @@ export function bootstrap(
 
     lobby.start();
 
-    return { app, board: null, controller: null, lobby, profile: null, tournament: null, auth, theme };
+    return { app, board: null, controller: null, lobby, profile: null, tournament: null, search: null, auth, theme };
   }
 
   // --- Profile view ---
@@ -1113,7 +1127,7 @@ export function bootstrap(
       }
     }
 
-    return { app, board: null, controller: null, lobby: null, profile, tournament: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile, tournament: null, search: null, auth, theme };
   }
 
   // --- Tournaments list view ---
@@ -1153,7 +1167,7 @@ export function bootstrap(
     });
 
     void tournament.loadList();
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament, search: null, auth, theme };
   }
 
   // --- Single tournament detail view ---
@@ -1205,13 +1219,110 @@ export function bootstrap(
     });
 
     void tournament.loadDetail(route.id);
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament, search: null, auth, theme };
   }
 
-  // --- Standalone board (no game ID, no lobby, no profile, no tournament) ---
+  // --- Search view ---
+  const searchEl = doc.getElementById('search');
+  if (searchEl && route.name === 'search') {
+    const modeMountEl = doc.getElementById('search-mode');
+    const resultsEl = doc.getElementById('search-results');
+    const errorEl = doc.getElementById('search-error');
+
+    // These elements are static in index.html, so state set by a previous run outlives it. A search
+    // abandoned by navigating away is disposed before `onLoading(false)` reaches the DOM, which
+    // would otherwise leave the region announcing itself as busy forever. Starting each run from a
+    // known state costs nothing and does not depend on the controller getting a last word in.
+    if (resultsEl) resultsEl.setAttribute('aria-busy', 'false');
+    if (errorEl) errorEl.textContent = '';
+
+    const searchParams = new URLSearchParams(typeof location !== 'undefined' ? location.search : '');
+    const rawQ = searchParams.get('q') ?? '';
+    const q = rawQ.trim();
+    const activeMode = parseSearchMode(searchParams.get('mode'));
+
+    if (searchInputEl) {
+      searchInputEl.value = rawQ;
+    }
+
+    // Render mode selector (segmented control matching create-game-panel.ts)
+    if (modeMountEl) {
+      modeMountEl.innerHTML = '';
+      const modes: { readonly value: SearchMode; readonly label: string }[] = [
+        { value: 'keyword', label: 'Keyword' },
+        { value: 'semantic', label: 'Semantic' },
+        { value: 'hybrid', label: 'Hybrid' },
+      ];
+      for (const m of modes) {
+        const labelEl = doc.createElement('label');
+        labelEl.className = 'cg-seg';
+        const inputEl = doc.createElement('input');
+        inputEl.type = 'radio';
+        inputEl.name = 'search-mode-option';
+        inputEl.value = m.value;
+        if (m.value === activeMode) inputEl.checked = true;
+
+        inputEl.addEventListener('change', () => {
+          if (inputEl.checked) {
+            const params = new URLSearchParams();
+            if (q) params.set('q', q);
+            if (m.value !== 'keyword') params.set('mode', m.value);
+            const url = `/search?${params.toString()}`;
+
+            // Reuse the single navigation path: update history and dispatch popstate.
+            history.pushState(null, '', url);
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          }
+        });
+
+        const spanEl = doc.createElement('span');
+        spanEl.className = 'cg-seg-label';
+        spanEl.textContent = m.label;
+
+        labelEl.append(inputEl, spanEl);
+        modeMountEl.appendChild(labelEl);
+      }
+    }
+
+    let resultsRendered = false;
+    const searchCtrl = new SearchController({
+      client: app.api,
+      callbacks: {
+        onResults: (hits) => {
+          resultsRendered = true;
+          if (errorEl) errorEl.textContent = '';
+          if (resultsEl) renderSearchResults(resultsEl, hits);
+        },
+        onLoading: (loading) => {
+          if (!resultsEl) return;
+          resultsEl.setAttribute('aria-busy', loading ? 'true' : 'false');
+          if (loading) {
+            resultsRendered = false;
+            resultsEl.innerHTML = '<div class="panel-row">Loading…</div>';
+            return;
+          }
+          // Loading ended without results rendered (e.g. on failure). Clear placeholder.
+          if (!resultsRendered) resultsEl.innerHTML = '';
+        },
+        onError: (msg) => {
+          if (errorEl) errorEl.textContent = msg;
+        },
+      },
+    });
+
+    if (q) {
+      void searchCtrl.search(q, activeMode);
+    } else {
+      if (resultsEl) renderSearchPrompt(resultsEl);
+    }
+
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: searchCtrl, auth, theme };
+  }
+
+  // --- Standalone board (no game ID, no lobby, no profile, no tournament, no search) ---
   const board = boardEl
     ? mountBoard({ boardEl, statusEl, flipEl })
     : null;
 
-  return { app, board, controller: null, lobby: null, profile: null, tournament: null, auth, theme };
+  return { app, board, controller: null, lobby: null, profile: null, tournament: null, search: null, auth, theme };
 }

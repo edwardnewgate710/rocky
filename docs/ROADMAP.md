@@ -860,6 +860,20 @@ Exposes the M9 tournament system in the web frontend with a read-only interface 
 - **Wiring & Styles (`packages/web/src/app/bootstrap.ts`, `style.css`)**: Exported `renderEmpty` and `EmptyStateOptions`. Wired section visibility and controller lifecycle. Added CSS rules conforming to DESIGN.md constraints.
 - **Tests & ADR**: Added `packages/web/test/tournament-routes.test.ts`, updated `packages/web/test/api-client.test.ts` and `packages/web/test/a11y.test.ts`, added Playwright E2E spec `packages/web/e2e/tournaments.spec.ts`, and documented architectural decisions in `docs/adr/0082-tournaments-ui.md`.
 
+### Increment 16: Search UI (ADR-0083) ✅
+
+Exposes the M11 search backend (`GET /v1/search`) in the web frontend with a dedicated search interface, header search bar, mode selector, and per-result hydration.
+
+- **Types (`packages/web/src/api/models.ts`)**: Added `SearchMode` (`'keyword' | 'semantic' | 'hybrid'`), `SearchResult`, and `SearchResults`.
+- **Client (`packages/web/src/api/client.ts`)**: Added `SearchApi` class exposed as `readonly search` on `GambitClient` with `query({ q, mode, limit, offset })` (`auth: 'optional'`).
+- **Pure Helpers (`packages/web/src/app/search-results.ts`)**: Created `parseSearchHit` (splitting namespaced entity IDs `game:<uuid>`, `player:<uuid>`, `tournament:<uuid>` on first colon without throwing on unknown/unprefixed IDs), `parseSearchMode`, and `HydratedHit` shape.
+- **Controller (`packages/web/src/app/search-controller.ts`)**: Built DOM-free `SearchController` with `requestGeneration` stale-response guard, parallel `Promise.all` hydration of tournaments and games, and single-batch player ID resolution (`client.graphql.resolvePlayers(ids)`), with per-row `shortId` fallbacks for failed hydrations.
+- **Views (`packages/web/src/app/search-view.ts`)**: Pure DOM render helpers (`renderSearchResults`, `renderSearchPrompt`) using `.panel-row` inside `.panel-list` (without `role="list"`), entity type labels, resolved names, links for valid `href`s, and `renderEmpty` prompt/empty states.
+- **Routing & Wiring (`packages/web/src/app/router.ts`, `bootstrap.ts`, `main.ts`, `index.html`)**: Added `/search` route, header search form with `role="search"`, `#search` section with mode selector (`.cg-seg` segmented control), SPA pushState+popstate navigation, and controller disposal lifecycle in `main.ts`.
+- **Styles (`packages/web/src/style.css`)**: Added styles for `.nav-search`, `.search`, and `.sr-only` complying with DESIGN.md tokens and 320px responsiveness.
+- **Tests & ADR**: Unit tests in `packages/web/test/search-results.test.ts`, updated `packages/web/test/api-client.test.ts`, `packages/web/test/tournament-routes.test.ts`, and `packages/web/test/a11y.test.ts`, Playwright E2E spec in `packages/web/e2e/search.spec.ts`, and architectural record in `docs/adr/0083-search-ui.md`.
+
+
 
 
 ## ✅ Verification hygiene — ADR claim drift guard (ADR-0079)
@@ -887,6 +901,35 @@ removes one source of variance but was measurably not sufficient alone. 10 conse
 - 100k-user cluster load testing (chaos and failover mechanisms validated in Increment 11)
 - Dedicated game authority shards separate from gateway processes (ADR-0010 §3/§9; single-owner authority with Redis ownership registry and command forwarding is implemented)
 - Optional sticky per-game routing as an optimization (ADR-0010 rejected sticky routing as primary authority architecture in favor of command forwarding; preserved as optional future load-balancing optimization)
+
+### Known follow-ups (tracked)
+
+Debt observed during M14 that no increment has closed. Each states what is known, not what is planned.
+
+- **Playwright suite flakiness in the backend-gated game/seek family.** Under `GAMBIT_E2E_BACKEND=1`,
+  specs in `packages/web/e2e/game-actions.spec.ts`, `game-presence.spec.ts`, `game-vs-bot.spec.ts`,
+  `game-vs-human.spec.ts`, `play-vs-computer.spec.ts` and `seek-acceptance.spec.ts` fail their first
+  attempt and pass on retry. `retries: 1` in `packages/web/playwright.config.ts` means the suite still
+  exits 0, so the cost is runtime and a hidden signal rather than a red build. Observed on
+  2026-08-04 across repeated full runs of the Increment 16 branch, varying between 2 and 6 flaky specs
+  per run, always within this set. **Pre-existing: not introduced by the Increment 16 Search UI work**
+  — every one of these specs is untouched by that diff, and no search spec has appeared in a flaky
+  list. (Whether they also flake on `main` was not measured — the branch runs are the evidence here,
+  and the specs predate the branch.) Distinct from the
+  `e2e-harness` protocol-test flake fixed in ADR-0079, which was a single test bounded by
+  `resignAfterPlies`. Root cause not yet diagnosed; the shared harness and timing-dependent waits are
+  the first place to look.
+- **`GET /v1/search` returns no display metadata, forcing per-result hydration.** The contract in
+  `packages/api/src/openapi/schemas.ts` returns `{ id, score }` only, so the Search UI resolves every
+  row through a second call. ADR-0083 §2 records the gap and the three mitigations in place (page size
+  10, parallel entity fetches, single-batch `resolvePlayers`). A richer search response — entity type,
+  title, and snippet carried in the hit itself — would remove the secondary lookups entirely. **The
+  contract is deliberately unchanged for now**; changing it is its own increment with its own ADR.
+- **The E2E environment indexes no documents, so no test asserts a query returns hits.** ADR-0083 §7
+  records this. `packages/web/e2e/search.spec.ts` covers navigation, deep links, prompt state and
+  history behaviour — all reachable without an index. Asserting on real results requires either
+  indexing fixture documents in the `e2e-harness` or seeding the search tables directly; neither
+  exists today.
 
 ---
 

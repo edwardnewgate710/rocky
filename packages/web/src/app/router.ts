@@ -13,6 +13,7 @@
  * - `/profile/{handle}` → profile for a specific user (future)
  * - `/tournaments` → tournaments list
  * - `/tournaments/{id}` → tournament detail
+ * - `/search` → search
  */
 
 export type Route =
@@ -21,6 +22,7 @@ export type Route =
   | { readonly name: 'profile'; readonly handle: string | null }
   | { readonly name: 'tournaments' }
   | { readonly name: 'tournament'; readonly id: string }
+  | { readonly name: 'search' }
   | { readonly name: 'not-found' };
 
 /** Parse a URL pathname into a typed route. */
@@ -36,6 +38,9 @@ export function parseRoute(pathname: string): Route {
   if (segments[0] === 'tournaments') {
     if (segments.length === 1) return { name: 'tournaments' };
     return { name: 'tournament', id: decodeSegment(segments[1]!) };
+  }
+  if (segments[0] === 'search') {
+    return { name: 'search' };
   }
   return { name: 'not-found' };
 }
@@ -71,6 +76,8 @@ export function routeToPath(route: Route): string {
       return '/tournaments';
     case 'tournament':
       return `/tournaments/${route.id}`;
+    case 'search':
+      return '/search';
     case 'not-found':
       return '/not-found';
   }

@@ -47,3 +47,10 @@ test('parseRoute keeps a malformed escape rather than throwing', () => {
   const route = parseRoute('/tournaments/%zz');
   assert.deepEqual(route, { name: 'tournament', id: '%zz' });
 });
+
+test('parseRoute handles /search', () => {
+  const r = parseRoute('/search');
+  assert.deepEqual(r, { name: 'search' });
+  assert.equal(routeToPath(r), '/search');
+});
+

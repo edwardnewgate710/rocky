@@ -43,6 +43,8 @@ import type {
   RatingView,
   RegisterRequest,
   SeekView,
+  SearchMode,
+  SearchResults,
   SelfUser,
   SessionView,
   TournamentDetail,
@@ -79,6 +81,7 @@ export class GambitClient {
   readonly games: GamesApi;
   readonly seeks: SeeksApi;
   readonly tournaments: TournamentsApi;
+  readonly search: SearchApi;
   readonly social: SocialApi;
   /** The read layer (ADR-0073). Degrades to null answers when the flag is off. */
   readonly graphql: GraphQLApi;
@@ -113,6 +116,7 @@ export class GambitClient {
     this.games = new GamesApi(this.execute);
     this.seeks = new SeeksApi(this.execute);
     this.tournaments = new TournamentsApi(this.execute);
+    this.search = new SearchApi(this.execute);
     this.social = new SocialApi(this.execute);
     this.graphql = new GraphQLApi(this.execute);
   }
@@ -353,4 +357,31 @@ export class TournamentsApi {
     });
   }
 }
+
+export class SearchApi {
+  private readonly execute: Execute;
+  constructor(execute: Execute) {
+    this.execute = execute;
+  }
+
+  query(params: {
+    q: string;
+    mode?: SearchMode;
+    limit?: number;
+    offset?: number;
+  }): Promise<SearchResults> {
+    const searchParams = new URLSearchParams();
+    searchParams.set('q', params.q);
+    if (params.mode !== undefined) searchParams.set('mode', params.mode);
+    if (params.limit !== undefined) searchParams.set('limit', String(params.limit));
+    if (params.offset !== undefined) searchParams.set('offset', String(params.offset));
+
+    return this.execute<SearchResults>({
+      method: 'GET',
+      path: `/v1/search?${searchParams.toString()}`,
+      auth: 'optional',
+    });
+  }
+}
+
 

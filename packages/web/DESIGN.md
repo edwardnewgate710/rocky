@@ -181,6 +181,7 @@ Flat at rest, everywhere. There is no `box-shadow` in the current implementation
 
 ### Navigation
 - Plain text links (`Ash` color, 80% opacity, 100% on hover), no underline, no pill/tab background. Wordmark is `Title` typography and doubles as the home link.
+- **Search field** (`.nav-search`): the one control that sits in the nav. It is not a nav-specific input style — it shares the single form-control treatment used by the create-a-game panel's select and number fields (`Panel Tint Strong` fill, transparent 1px border, the system's one 6px radius, `Small` type, teal focus ring, 44px minimum target on coarse pointers), and declares only its own width. A second input treatment here would be the same drift a second button style would be: the field is in a different place, not a different kind of control.
 
 ## 6. Do's and Don'ts
 

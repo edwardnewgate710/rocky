@@ -373,10 +373,34 @@ button:disabled {
 .cb-promo-cancel:hover { background: var(--promo-cancel-hover); }
 
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* --- Navigation --- */
 .nav {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
+}
+.nav-search {
+  display: inline-flex;
+  align-items: center;
+}
+/* Width is the only thing specific to this field — the rest of the treatment (padding, border,
+   radius, surface, focus ring, and the coarse-pointer target size) comes from the shared
+   form-control rule further down, so the nav input cannot drift away from the panel's controls. */
+.nav-search input[type='search'] {
+  width: 140px;
 }
 .nav a {
   color: var(--fg);
@@ -741,6 +765,7 @@ button:disabled {
   width: 6rem;
 }
 .cg-select,
+.nav-search input[type='search'],
 .cg-form input[type='number'] {
   padding: 6px 8px;
   border: 1px solid transparent;
@@ -751,6 +776,7 @@ button:disabled {
   font-size: 0.875rem;
 }
 .cg-select:focus-visible,
+.nav-search input[type='search']:focus-visible,
 .cg-form input:focus-visible { outline: 3px solid var(--sel); outline-offset: 1px; }
 
 /* More options disclosure. */
@@ -780,6 +806,7 @@ button:disabled {
   .cg-chip,
   .cg-seg,
   .cg-select,
+  .nav-search input[type='search'],
   .cg-form input[type='number'] { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -879,6 +906,22 @@ button:disabled {
 .tournament-link:focus-visible {
   text-decoration: underline;
   color: var(--sel);
+}
+
+/* --- Search (M14 inc 16) --- */
+.search {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 16px;
+}
+.search h2 {
+  margin: 0 0 12px;
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.search .cg-segmented {
+  margin-bottom: 16px;
 }
 
 /* --- Route visibility --- */

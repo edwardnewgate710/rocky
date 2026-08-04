@@ -246,4 +246,26 @@ test('tournaments.live fetches /v1/tournaments/:id/live', async () => {
   assert.equal(t.calls[0]!.method, 'GET');
 });
 
+test('search.query fetches /v1/search with default params and auth:optional', async () => {
+  const resData = { total: 1, results: [{ id: 'player:p1', score: 0.9 }] };
+  const t = new FakeTransport(() => json(200, resData));
+  const c = make(t);
+  const res = await c.search.query({ q: 'alice' });
+  assert.equal(res.total, 1);
+  assert.equal(res.results[0]!.id, 'player:p1');
+  assert.equal(t.calls[0]!.url, 'https://api.test/v1/search?q=alice');
+  assert.equal(t.calls[0]!.method, 'GET');
+  assert.equal(t.calls[0]!.headers['authorization'], undefined);
+});
+
+test('search.query encodes mode, limit, and offset when specified', async () => {
+  const resData = { total: 0, results: [] };
+  const t = new FakeTransport(() => json(200, resData));
+  const c = make(t);
+  await c.search.query({ q: 'bob', mode: 'semantic', limit: 10, offset: 20 });
+  assert.equal(t.calls[0]!.url, 'https://api.test/v1/search?q=bob&mode=semantic&limit=10&offset=20');
+  assert.equal(t.calls[0]!.method, 'GET');
+});
+
+
 

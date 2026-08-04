@@ -360,3 +360,18 @@ export interface TournamentLive {
   readonly standings: readonly TournamentStanding[];
 }
 
+// --- Search (M14 inc 16) ----------------------------------------------------
+
+export type SearchMode = 'keyword' | 'semantic' | 'hybrid';
+
+export interface SearchResult {
+  readonly id: string;
+  readonly score: number;
+}
+
+export interface SearchResults {
+  readonly total: number;
+  readonly results: readonly SearchResult[];
+}
+
+

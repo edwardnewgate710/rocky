@@ -4,7 +4,25 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-03 — M14 Increment 15: Tournaments UI (read-only) (ADR-0082)._
+_Last updated: 2026-08-03 — M14 Increment 16: Search UI (ADR-0083)._
+
+## M14 Increment 16 — Search UI (ADR-0083)
+
+Exposes the search backend (M11) in the web frontend with a dedicated search interface, header search bar, mode selector, and per-result hydration.
+
+- **Types (`packages/web/src/api/models.ts`)**: Added `SearchMode` (`'keyword' | 'semantic' | 'hybrid'`), `SearchResult` (`{ id, score }`), and `SearchResults` (`{ total, results }`).
+- **Client (`packages/web/src/api/client.ts`)**: Added `SearchApi` class exposed as `readonly search` on `GambitClient` with `query({ q, mode, limit, offset })` method (`auth: 'optional'`).
+- **Pure Helpers (`packages/web/src/app/search-results.ts`)**: Created `parseSearchHit` (splitting namespaced entity IDs `game:<uuid>`, `player:<uuid>`, `tournament:<uuid>` on first colon without throwing on unknown/unprefixed IDs), `parseSearchMode`, and `HydratedHit` interface.
+- **Controller (`packages/web/src/app/search-controller.ts`)**: Built DOM-free `SearchController` with `requestGeneration` stale-response guard, parallel `Promise.all` hydration of tournaments and games, and single-batch player ID resolution (`client.graphql.resolvePlayers(ids)`), with per-row `shortId` fallbacks for failed hydrations.
+- **Views (`packages/web/src/app/search-view.ts`)**: Pure DOM render helpers (`renderSearchResults`, `renderSearchPrompt`) using `.panel-row` inside `.panel-list` (without `role="list"`), entity type labels, resolved names, links for valid `href`s, and `renderEmpty` prompt/empty states.
+- **Routing & Wiring (`packages/web/src/app/router.ts`, `bootstrap.ts`, `main.ts`, `index.html`)**: Added `/search` route, header search form with `role="search"`, `#search` section with mode selector (`.cg-seg` segmented control), SPA pushState+popstate navigation, and controller disposal lifecycle in `main.ts`.
+- **Styles (`packages/web/src/style.css`)**: Added styles for `.nav-search`, `.search`, and `.sr-only` complying with DESIGN.md tokens and 320px responsiveness.
+- **Tests & ADR**: Unit tests in `packages/web/test/search-results.test.ts`, updated `packages/web/test/api-client.test.ts`, `packages/web/test/tournament-routes.test.ts`, and `packages/web/test/a11y.test.ts`, Playwright E2E spec in `packages/web/e2e/search.spec.ts`, and architectural record in `docs/adr/0083-search-ui.md`.
+- **Deferred (search API enrichment)**: `GET /v1/search` returns `{ id, score }` only, so every result row costs a second call to resolve its display metadata. ADR-0083 §2 records the gap; the mitigations shipped are page size 10, parallel entity fetches, and one batched `resolvePlayers`. A response carrying entity type, title and snippet would remove the secondary lookups. The contract is intentionally unchanged in this increment. Tracked under "Known follow-ups (tracked)" in `docs/ROADMAP.md`.
+- **Deferred (search test infrastructure)**: the E2E environment indexes no documents, so `packages/web/e2e/search.spec.ts` asserts navigation, deep links, prompt state and history behaviour — never that a query returns hits. ADR-0083 §7 records this. Functional result assertions need fixture indexing in the `e2e-harness` or direct seeding of the search tables; neither exists. Tracked in `docs/ROADMAP.md`.
+- **Pre-existing debt observed, not caused, here**: the backend-gated Playwright game/seek specs flake on first attempt and pass on retry. Not introduced by this increment — those specs are untouched by its diff. Tracked in `docs/ROADMAP.md`.
+
+Prior: _Last updated: 2026-08-03 — M14 Increment 15: Tournaments UI (read-only) (ADR-0082)._
 
 ## M14 Increment 15 — Tournaments UI (read-only) (ADR-0082)
 

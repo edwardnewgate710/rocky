@@ -173,3 +173,23 @@ test('tournament errors are announced', () => {
   assert.match(HTML_TEMPLATE, /id="tournament-error"[^>]*role="alert"/);
 });
 
+// --- Search region (M14 inc 16) ---
+
+test('search section carries an aria-label', () => {
+  assert.ok(HTML_TEMPLATE.includes('aria-label="Search"'));
+});
+
+test('search results list region carries an aria-label', () => {
+  assert.ok(HTML_TEMPLATE.includes('aria-label="Search results"'));
+});
+
+test('nav search form has role=search and associated label', () => {
+  assert.ok(HTML_TEMPLATE.includes('role="search"'));
+  assert.ok(HTML_TEMPLATE.includes('for="search-input"'));
+});
+
+test('search error region has role=alert', () => {
+  assert.match(HTML_TEMPLATE, /id="search-error"[^>]*role="alert"/);
+});
+
+
