@@ -4,7 +4,16 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-05 - M14 Increment 25: Structural bootstrap teardown & disposal exhaustiveness (ADR-0092)._
+_Last updated: 2026-08-05 - M14 Increment 26: PGN suffix annotations reach the tree (ADR-0093)._
+
+## M14 Increment 26 - PGN suffix annotations reach the tree (ADR-0093)
+
+Fixes silent data loss on PGN import: a move annotated in the suffix form (`Nf3!`, `Qh5!!`, `c5?!`) lost that annotation entirely — it survived neither in the stored SAN nor in `nags`, and nothing errored.
+
+- **Parser (`packages/studies/src/pgn-parse.ts`)**: the trailing `[!?]+` run is captured whole and mapped to its NAG (`! → $1` … `?! → $6`). Capturing the run rather than a single character is what keeps `!!` a single `$3`. `+`/`#` remain part of the SAN, and an explicit `$n` following a suffix is preserved alongside it.
+- **Unrecognised runs reject with a located error** rather than importing the move stripped of its annotation. Import is atomic, so this fails the file loudly instead of half-applying it.
+- **Both adapters covered by one change** — `packages/persistence/src/pg/studies.ts:24` imports `parsePgn` from `@chess-platform/studies`. Checked deliberately: ADR-0091 §10 found these two had silently diverged on import ordering, so shared-vs-duplicated is verified rather than assumed.
+- Closes the tracked follow-up opened during Increment 24.
 
 ## M14 Increment 25 - Structural bootstrap teardown & disposal exhaustiveness (ADR-0092)
 
