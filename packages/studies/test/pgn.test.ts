@@ -98,10 +98,52 @@ describe('PGN parsing', () => {
     assert.equal(tagValue(game!, 'Annotator'), 'say "hi" \\ C:\\path');
   });
 
-  it('drops move numbers rather than trusting them', () => {
-    // The tree already knows the order. A number that disagrees is the file's problem.
-    const [game] = parsePgn('1. e4 1... e5 7. Nf3 *');
-    assert.deepEqual(game?.moves.map((m) => m.san), ['e4', 'e5', 'Nf3']);
+  it('converts all six PGN move suffix annotations to their equivalent NAGs ($1-$6)', () => {
+    const pgn = '1. e4! e5? 2. Nf3!! Nc6?? 3. d4!? c5?! *';
+    const [game] = parsePgn(pgn);
+    assert.ok(game);
+
+    assert.deepEqual(
+      game.moves.map((m) => ({ san: m.san, nags: m.nags })),
+      [
+        { san: 'e4', nags: [1] },
+        { san: 'e5', nags: [2] },
+        { san: 'Nf3', nags: [3] },
+        { san: 'Nc6', nags: [4] },
+        { san: 'd4', nags: [5] },
+        { san: 'c5', nags: [6] },
+      ]
+    );
+  });
+
+  it('handles check/mate markers, castling, promotion, and explicit NAGs with suffixes', () => {
+    const pgn = '1. e8=Q! Qh5+! 2. O-O! Rxe8#?? 3. O-O-O?! Nf3! $16 *';
+    const [game] = parsePgn(pgn);
+    assert.ok(game);
+
+    assert.deepEqual(
+      game.moves.map((m) => ({ san: m.san, nags: m.nags })),
+      [
+        { san: 'e8=Q', nags: [1] },
+        { san: 'Qh5+', nags: [1] },
+        { san: 'O-O', nags: [1] },
+        { san: 'Rxe8#', nags: [4] },
+        { san: 'O-O-O', nags: [6] },
+        { san: 'Nf3', nags: [1, 16] },
+      ]
+    );
+  });
+
+  it('converts suffix annotations on moves inside variations', () => {
+    const pgn = '1. e4 e5 (1... c5! $16) 2. Nf3! *';
+    const [game] = parsePgn(pgn);
+    assert.ok(game);
+
+    const e5 = game.moves[1];
+    assert.equal(e5?.san, 'e5');
+    const c5 = e5?.variations[0]?.[0];
+    assert.equal(c5?.san, 'c5');
+    assert.deepEqual(c5?.nags, [1, 16]);
   });
 });
 
@@ -116,6 +158,7 @@ describe('PGN rejection', () => {
     ['a NAG with no number', '1. e4 $ *\n', 'NAG has no number'],
     ['a token that cannot be a move', '1. e4 hello *\n', 'Not a move'],
     ['a null move', '1. e4 -- *\n', 'Null moves are not supported'],
+    ['an unrecognised suffix annotation', '1. e4!!! *\n', 'Unrecognised move annotation'],
   ];
 
   for (const [name, pgn, needle] of cases) {
@@ -214,5 +257,18 @@ describe('PGN serialization', () => {
   it('writes several games so they read back as several games', () => {
     const games = parsePgn('[White "A"]\n\n1. e4 1-0\n\n[White "B"]\n\n1. d4 0-1\n');
     assert.deepEqual(parsePgn(serializePgnGames(games)), games);
+  });
+
+  it('semantically round-trips suffix annotations (converting to $n and back)', () => {
+    const input = '1. e4! e5?! 2. Bc4!? Nc6 3. Qh5+!! Nf6?? 4. Qxf7#! *';
+    const { first, second } = roundTrip(input);
+
+    // The exported text will contain `$1`, `$6`, `$5`, `$3`, `$4`, `$1` instead of `!`, `?!`, etc.
+    // The round trip is semantic rather than literal: the NAGs must be present and identical.
+    assert.deepEqual(
+      first.moves.map((m) => m.nags),
+      [[1], [6], [5], [], [3], [4], [1]]
+    );
+    assert.deepEqual(second, first);
   });
 });

@@ -7,6 +7,15 @@ import {
   MAX_VARIATION_DEPTH,
 } from './pgn-model';
 
+const SUFFIX_TO_NAG: Readonly<Record<string, number>> = {
+  '!': 1,
+  '?': 2,
+  '!!': 3,
+  '??': 4,
+  '!?': 5,
+  '?!': 6,
+};
+
 /**
  * A mutable node used only while building. The public `PgnMoveNode` is readonly, and the
  * difference matters: callers get a tree they cannot accidentally reshape, while the parser gets
@@ -299,11 +308,32 @@ class PgnParser {
         throw new PgnParseError('Null moves are not supported', this.pos - token.length, token);
       }
 
-      if (!isSanShaped(token)) {
+      let cleanSan = token;
+      let suffix = '';
+      const suffixMatch = token.match(/^(.*?)([!?]+)$/);
+      if (suffixMatch) {
+        cleanSan = suffixMatch[1]!;
+        suffix = suffixMatch[2]!;
+      }
+
+      if (!isSanShaped(cleanSan) || cleanSan.length === 0) {
         throw new PgnParseError('Not a move', this.pos - token.length, token);
       }
 
-      out.push({ san: token, nags: [], comments: [], variations: [] });
+      const nags: number[] = [];
+      if (suffix.length > 0) {
+        const nag = SUFFIX_TO_NAG[suffix];
+        if (nag === undefined) {
+          throw new PgnParseError(
+            `Unrecognised move annotation '${suffix}'`,
+            this.pos - token.length,
+            token
+          );
+        }
+        nags.push(nag);
+      }
+
+      out.push({ san: cleanSan, nags, comments: [], variations: [] });
     }
   }
 
