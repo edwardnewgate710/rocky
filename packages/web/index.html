@@ -132,6 +132,14 @@
       <div id="profile-ratings" class="ratings" aria-label="Ratings"></div>
       <div id="social-actions" class="social-actions"></div>
 
+      <!-- Hidden until a load succeeds: a deployment without ACHIEVEMENTS_ENABLED answers 503 on
+           every profile, and an empty heading on all of them is worse than no section. -->
+      <div id="achievements" hidden>
+        <h3>Achievements <span id="achievements-count" class="count"></span></h3>
+        <div id="achievements-list" class="panel-list" aria-label="Achievements"></div>
+        <p id="achievements-error" class="error" role="alert"></p>
+      </div>
+
       <h3>Followers <span id="social-follower-count" class="count"></span></h3>
       <div id="social-followers" class="panel-list" aria-label="Followers"></div>
 

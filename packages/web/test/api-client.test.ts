@@ -484,3 +484,30 @@ test('teams.createPost posts a body to the thread with auth', async () => {
   assert.equal(t.calls[1]!.headers['authorization'], 'Bearer tok-A');
   assert.deepEqual(JSON.parse(t.calls[1]!.body as string), { body: 'A reply' });
 });
+
+test('achievements.forPlayer builds the player-scoped path and sends no token', async () => {
+  const list = { total: 0, items: [] };
+  const t = new FakeTransport(
+    () => json(200, auth('tok-A')),
+    () => json(200, list),
+  );
+  const c = make(t);
+  await c.auth.login({ handle: 'alice', password: 'pw' });
+  const res = await c.achievements.forPlayer('u 1');
+  assert.deepEqual(res, list);
+  assert.equal(t.calls[1]!.url, 'https://api.test/v1/players/u%201/achievements');
+  assert.equal(t.calls[1]!.method, 'GET');
+  // The route is public and its answer does not vary by viewer. Signed in above precisely so this
+  // asserts the token is withheld by design rather than absent by accident.
+  assert.equal(t.calls[1]!.headers['authorization'], undefined);
+});
+
+test('achievements.summary builds the summary path', async () => {
+  const summary = { unlockedCount: 3, pointsTotal: 45 };
+  const t = new FakeTransport(() => json(200, summary));
+  const c = make(t);
+  const res = await c.achievements.summary('u1');
+  assert.deepEqual(res, summary);
+  assert.equal(t.calls[0]!.url, 'https://api.test/v1/players/u1/achievements/summary');
+  assert.equal(t.calls[0]!.method, 'GET');
+});

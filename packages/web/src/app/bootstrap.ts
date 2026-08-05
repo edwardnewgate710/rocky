@@ -42,6 +42,9 @@ import {
 import type { EmptyStateOptions } from './render-helpers.js';
 import { SocialController } from './social-controller.js';
 import type { Relationship, SelfSocial } from './social-controller.js';
+import { AchievementsController } from './achievements-controller.js';
+import { renderAchievements } from './achievements-view.js';
+import { summaryLabel } from './achievements-helpers.js';
 import { SearchController } from './search-controller.js';
 import type { SearchController as SearchControllerType } from './search-controller.js';
 import { MessagesController } from './messages-controller.js';
@@ -935,6 +938,12 @@ export function bootstrap(
     const socialNoteEl = doc.getElementById('social-note');
     const socialErrorEl = doc.getElementById('social-error');
 
+    // --- Achievements region (M14 inc 22) ---
+    const achievementsEl = doc.getElementById('achievements');
+    const achievementsListEl = doc.getElementById('achievements-list');
+    const achievementsCountEl = doc.getElementById('achievements-count');
+    const achievementsErrorEl = doc.getElementById('achievements-error');
+
     let socialBusy = false;
     let lastRelationship: Relationship | null = null;
     let lastSelfSocial: SelfSocial | null = null;
@@ -1084,12 +1093,44 @@ export function bootstrap(
       void social.load(player, auth.currentSession?.userId ?? null);
     };
 
+    const achievements = new AchievementsController({
+      client: app.api,
+      callbacks: {
+        onAchievements: (items, summary) => {
+          if (achievementsCountEl) achievementsCountEl.textContent = summaryLabel(summary, items);
+          if (achievementsListEl) renderAchievements(achievementsListEl, items);
+          if (achievementsErrorEl) achievementsErrorEl.textContent = '';
+          if (achievementsEl) achievementsEl.hidden = false;
+        },
+        onError: (msg) => {
+          // Revealed on failure, unlike the unavailable case: a load that broke for this profile is
+          // something the visitor can retry, so saying nothing would look like the player has none.
+          if (achievementsErrorEl) achievementsErrorEl.textContent = msg;
+          if (achievementsEl) achievementsEl.hidden = false;
+        },
+        onUnavailable: () => {
+          if (achievementsEl) achievementsEl.hidden = true;
+        },
+      },
+    });
+
+    const loadAchievementsFor = (playerId: string): void => {
+      achievements.reset();
+      if (achievementsListEl) achievementsListEl.replaceChildren();
+      if (achievementsCountEl) achievementsCountEl.textContent = '';
+      if (achievementsErrorEl) achievementsErrorEl.textContent = '';
+      void achievements.load(playerId);
+    };
+
     const profile = new ProfileController({
       client: app.api,
       callbacks: {
         onProfile: (p) => {
           if (handleEl) handleEl.textContent = p.user.handle;
           loadSocialFor({ id: p.user.id, handle: p.user.handle });
+          // Keyed by id, not handle: both achievements routes take a player id, and this is the
+          // first point on the page where one is known.
+          loadAchievementsFor(p.user.id);
           if (ratingsEl) {
             if (p.ratings.length === 0) {
               renderEmpty(ratingsEl, {
@@ -1159,7 +1200,13 @@ export function bootstrap(
         // account's friends and blocked list on screen for the next visitor
         // would be a disclosure, not a stale render.
         social.reset();
-        for (const el of [socialActionsEl, followersEl, followingEl, incomingEl, outgoingEl, friendsEl, blockedEl]) {
+        // Achievements are public, so a stale one is not a disclosure the way a friends list is —
+        // but leaving the previous account's row of unlocks under a blank handle still reads as
+        // the next visitor's, so it goes with the rest.
+        achievements.reset();
+        if (achievementsEl) achievementsEl.hidden = true;
+        if (achievementsCountEl) achievementsCountEl.textContent = '';
+        for (const el of [socialActionsEl, followersEl, followingEl, incomingEl, outgoingEl, friendsEl, blockedEl, achievementsListEl]) {
           if (el) el.innerHTML = '';
         }
         for (const el of [followerCountEl, followingCountEl, friendCountEl, socialNoteEl, socialErrorEl]) {

@@ -38,7 +38,7 @@ export function renderTeamList(
     if (team.description) {
       leading.push(el(doc, 'span', { class: 'count' }, team.description));
     }
-    const row = el(doc, 'div', { class: 'panel-row' }, el(doc, 'span', { class: 'team-row-main' }, ...leading));
+    const row = el(doc, 'div', { class: 'panel-row' }, el(doc, 'span', { class: 'row-main' }, ...leading));
 
     // Only say "private" when it is; a "public" tag on every other row is noise.
     if (team.visibility === 'private') {

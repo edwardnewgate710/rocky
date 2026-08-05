@@ -7,6 +7,7 @@ import {
   NotFoundError,
   RateLimitError,
   ServerError,
+  ServiceUnavailableError,
   UnauthorizedError,
   ValidationError,
   httpErrorFrom,
@@ -21,7 +22,11 @@ test('maps status codes to specific HttpError subclasses', () => {
   assert.ok(httpErrorFrom(409, undefined) instanceof ConflictError);
   assert.ok(httpErrorFrom(422, undefined) instanceof ValidationError);
   assert.ok(httpErrorFrom(429, undefined) instanceof RateLimitError);
+  // 503 is its own class so callers can tell "subsystem not configured" from a fault, but it is
+  // still a `ServerError` — narrowing it must not fall out of an existing 5xx branch.
+  assert.ok(httpErrorFrom(503, undefined) instanceof ServiceUnavailableError);
   assert.ok(httpErrorFrom(503, undefined) instanceof ServerError);
+  assert.equal(httpErrorFrom(500, undefined) instanceof ServiceUnavailableError, false);
   const teapot = httpErrorFrom(418, undefined);
   assert.ok(teapot instanceof HttpError);
   assert.equal(teapot.constructor, HttpError);

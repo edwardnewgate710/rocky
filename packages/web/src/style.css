@@ -1045,13 +1045,13 @@ button:disabled {
 /* The identifying half of a team row. `.panel-row` is space-between, so the name and its
    description have to travel together as one child or the description lands at the opposite edge.
    `min-width: 0` lets this shrink so the description can ellipsis instead of forcing the row wide. */
-.team-row-main {
+.row-main {
   display: flex;
   align-items: baseline;
   gap: 8px;
   min-width: 0;
 }
-.team-row-main .count {
+.row-main .count {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1095,4 +1095,13 @@ button:disabled {
 }
 .thread-form input {
   flex: 1 1 12ch;
+}
+
+/* The trailing half of an achievement row. Longer than the one-word tag the teams and forum rows
+   trail with ("private", "locked"), so at 320px flexbox shrank it and "bronze · 0 / 50" wrapped to
+   three lines, taking the row from 32px to 51px. The description is the part that should give way —
+   it already ellipsises — so the standing refuses to shrink and the leading half absorbs it. */
+.achievement-standing {
+  flex-shrink: 0;
+  white-space: nowrap;
 }

@@ -4,7 +4,20 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-04 - M14 Increment 21: Team forums UI (ADR-0088)._
+_Last updated: 2026-08-05 - M14 Increment 22: Achievements UI (ADR-0089)._
+
+## M14 Increment 22 - Achievements UI (ADR-0089)
+
+Exposes the M10 achievements backend (3 routes) as a section on the profile page. The plumbing is ordinary; the substance is that DESIGN.md and PRODUCT.md both name "badge walls, streak counters, and noisy gamification" as an explicit anti-reference, so the increment had to settle where that line falls before it could render anything.
+
+- **The design decision (packages/web/DESIGN.md)**: the prohibition is about treatment, not subject matter. The section is the one List Row treatment every other list uses and adds no colour, icon, radius or accent. Tier is a word in the muted .count voice, never three metal colours; there is deliberately no progress bar. The Don't now carries that qualification and points at the component spec, so the next reader does not conclude the section violates the rule it was designed around.
+- **Helpers (packages/web/src/app/achievements-helpers.ts)**: pure progressLabel and summaryLabel. unlockedAt is the only authority on an unlock, never progress >= target - the two disagree in both directions when a catalogue target moves. An absent target counts to 1, matching resolveAward's `definition.target ?? 1`, rather than rendering every one-shot achievement as "0 / undefined". Four rules, each mutation-verified against the broken version.
+- **Controller and view**: requestGeneration stale-response guard as with teams and forum. A 503 hides the section rather than painting an error on every profile, because the award worker is opt-in behind ACHIEVEMENTS_ENABLED (services/gateway/src/serve.ts) and its absence is a deployment configuration, not a fault; other failures do show.
+- **Client (packages/web/src/api/client.ts)**: AchievementsApi.forPlayer and .summary, keyed by player id and sending no token, because both routes are public and their answer does not vary by viewer. GET /v1/achievements is deliberately not exposed - the per-player list already carries every visible definition joined with progress.
+- **Harness (packages/e2e-harness/src/harness.ts)**: wired InMemoryAchievementsRepository as achievementsRepository, the sixth optional ApiDependencies field the harness has needed. POST /e2e/achievements calls the repository's real award(), the same method the production worker calls, so the unlock follows the production rule rather than a fixture.
+- **Responsive fix found by measuring, not guessing**: at 320px the trailing "bronze · 0 / 50" wrapped to three lines and took the row from 32px to 51px, so .achievement-standing refuses to shrink. A teams row with a comparably long name measures the same 51px, so multi-line rows at that width are incumbent behaviour, not a regression.
+- **Rename**: .team-row-main to .row-main across teams-view, forum-view, style.css and DESIGN.md. It is a generic row-leading primitive and achievements is a third consumer with nothing to do with teams.
+- **Tests & docs**: achievements-helpers.test.ts, client and a11y tests, packages/web/e2e/achievements.spec.ts covering an award that unlocks and one that does not. ADR-0089, and the DESIGN.md component spec written through the impeccable skill.
 
 ## M14 Increment 21 - Team forums UI (ADR-0088)
 
@@ -16,6 +29,8 @@ Exposes the M10 team forum backend (7 routes) as a usable slice: read a team's t
 - **Tombstones and ordering**: postDisplayBody and threadDisplayTitle return placeholders for deleted content; sortThreads puts pinned first then most recent. The sort applies to the returned page only, which the ADR states as a limit rather than hiding.
 - **Controller and views**: ForumController loads thread, posts and members together because the reply decision needs all three, maps NotFoundError to a not-found state so a private team never reads as forbidden (ADR-0069), and both routes defer their load on restorePromise so a reload does not show a member the non-member state.
 - **Tests & docs**: forum-helpers.test.ts (truth table, ordering, tombstones - mutation-verified against dropping the lock check and against leaking a deleted body), client, router, a11y, and packages/web/e2e/forum.spec.ts covering two members through start-thread and reply. ADR-0088, and the DESIGN.md forum component spec written through the impeccable skill.
+
+Prior: _Last updated: 2026-08-04 - M14 Increment 21: Team forums UI (ADR-0088)._
 
 Prior: _Last updated: 2026-08-04 - M14 Increment 20: Teams UI (browse, view, join, leave) (ADR-0087)._
 

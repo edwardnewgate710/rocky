@@ -193,7 +193,7 @@ Flat at rest, everywhere. There is no `box-shadow` in the current implementation
 
 ### Teams (list and detail)
 - **Team rows** reuse the one List Row treatment — `.panel-row` inside `.panel-list`, as every other list does. There is no teams-specific row.
-- **Row composition** is the part worth stating, because `.panel-row` is `space-between`: a row holds exactly **two** children, never three. The identifying half (`.team-row-main` — the team name, plus its description in `.count` when there is one) travels as a single leading child; a status tag trails. Handing the row three loose children flings the description to the opposite edge, detached from the name it belongs to. The description carries `min-width: 0` and ellipsis so a long one shortens rather than widening the row.
+- **Row composition** is the part worth stating, because `.panel-row` is `space-between`: a row holds exactly **two** children, never three. The identifying half (`.row-main` — the team name, plus its description in `.count` when there is one) travels as a single leading child; a status tag trails. Handing the row three loose children flings the description to the opposite edge, detached from the name it belongs to. The description carries `min-width: 0` and ellipsis so a long one shortens rather than widening the row.
 - **Status is stated only when it is true.** A `private` tag appears on private teams; public teams carry no tag, because a "public" label on almost every row is noise that teaches the eye to skip the column.
 - **`.count` is the row-metadata voice**, not only a number — timestamps, descriptions, visibility and roles all use it. It is `Small` at `Ash`-muted, and its job is to sit beside primary content without competing. Primary content in a row is the link; everything else in the row is `.count`.
 - **Member rows** show the handle as a link, and a role only for `owner` and `admin`. Rendering "member" on the majority of rows is the same noise as a "public" tag.
@@ -201,13 +201,22 @@ Flat at rest, everywhere. There is no `box-shadow` in the current implementation
 - **The action bar** (`.team-actions`) holds at most one control, so it needs no grouping rule — but that control is the **default** button style, like every other standalone button. When no action is available the bar is empty and a sentence explains why: private teams say joining is by request, owners say ownership must be transferred first, signed-out visitors are asked to sign in. An explanation is the state; a disabled button that can never enable is not.
 
 ### Team forum (thread list and thread)
-- **Thread rows** are the one List Row treatment, composed the same way team rows are: exactly two children, because `.panel-row` is `space-between`. The title and its author travel together in `.team-row-main`; thread state trails.
+- **Thread rows** are the one List Row treatment, composed the same way team rows are: exactly two children, because `.panel-row` is `space-between`. The title and its author travel together in `.row-main`; thread state trails.
 - **State tags are earned, not default.** A row carries `pinned`, `locked`, or both — never "open" or "unpinned". Tagging the normal case teaches the eye to skip the column, which is exactly when a real `locked` tag stops being read.
 - **Posts reuse the message bubble** (`.message-item`, `.message-header`, `.message-body`) rather than a forum-specific block. A forum post and a direct message are the same object — someone said something at a time — and the system has one treatment for that. Authorship is carried by side and fill, never by the accent, exactly as in Messages.
 - **A deleted post keeps its row and loses its body**, rendered as placeholder text in the `.message-tombstone` italic. A thread deleted the same way keeps its row and shows a placeholder title. A tombstone is a state, not an emphasis: no border, badge or colour of its own.
 - **`edited` is metadata, not a badge.** It sits in the muted `.count` meta line beside the timestamp, and is suppressed on a tombstone where it would be noise about content nobody can see.
 - **Composers** (`.thread-form` for a new thread, `.composer-form` for a reply) share the single form-control treatment and declare only their widths. The thread form wraps rather than crushing two fields and a button onto one line at 320px.
 - **A composer that would fail is not shown.** When the viewer cannot post, the form is hidden and a sentence names the actual obstacle — signed out, not a member, or the thread is locked. Where two obstacles are true, the one that would still block them after the other cleared is the one worth stating. A disabled composer that can never enable is worse than an explanation.
+
+### Achievements (profile section)
+- **This is the section the anti-gamification rule is about, so it is worth being exact.** The Don't below forbids a *badge wall* — tiles, medals, tier colours and trophy iconography competing for attention. A list of rows is not a wall. The section renders as the one List Row treatment every other list uses — `.panel-row`, `.row-main` and `.count`, unchanged — and adds no colour, icon, shape or radius of its own. Its only new CSS is two layout properties on the trailing half (see below). If a future change to this section needs a new colour, icon or shape, that is the signal it has drifted into what the rule prohibits.
+- **Row composition** is the shared two-child rule: the name and the description that says what earns it travel together in `.row-main`; the standing trails in `.count`. The description ellipsises rather than widening the row.
+- **The trailing standing does not shrink** (`.achievement-standing`: `flex-shrink: 0`, `white-space: nowrap`). It is several words where the teams and forum rows trail with one, and measured at 320px it wrapped to three lines and took the row from 32px to 51px. The description is the half that should give way, because it already ellipsises. A trailing tag longer than a single word needs this; `private` and `locked` do not.
+- **Tier is a word, never a colour.** `bronze`/`silver`/`gold` sit in the muted `.count` voice beside the progress. Rendering tier as three metal colours would add a second, third and fourth accent to a system that has exactly one, and would encode meaning in hue alone.
+- **There is no progress bar.** A hairline fill was considered and rejected: it is the most recognisably gamified element in the set, and it would be a new visual primitive the system has no rule for. `7 / 10` carries the same fact in the voice the system already speaks.
+- **An unlocked row says `Unlocked`, not `10 / 10`.** Same principle as state tags being earned rather than default — a finished count reads as a task still in hand.
+- **The section hides itself when the deployment has no achievements service.** Every route answers 503 when `ACHIEVEMENTS_ENABLED` is unset, and that is identical on every profile, so an empty heading everywhere is worse than no section. A load that fails for one profile does show its error, because that one a visitor can retry.
 
 ## 6. Do's and Don'ts
 
@@ -222,7 +231,7 @@ Flat at rest, everywhere. There is no `box-shadow` in the current implementation
 
 ### Don't:
 - **Don't** build a generic SaaS-dashboard look — no card grids, no gradient hero banners, no tool-for-work chrome. This is a game, not a B2B console.
-- **Don't** add gamification clutter — no badge walls, streak counters, or achievement noise competing with the board or the game state.
+- **Don't** add gamification clutter — no badge walls, streak counters, or achievement noise competing with the board or the game state. Achievements themselves are not banned and do exist on the profile; what is banned is giving them tiles, medals, tier colours, icons or a progress bar. See the Achievements component above for where that line falls.
 - **Don't** introduce a second accent color "for variety." One saturated interactive color is the point, not a limitation.
 - **Don't** add a resting-state shadow to any card, panel, or list row — shadows only ever respond to interaction.
 - **Don't** introduce a new border-radius value. Everything rounded in this system uses the same 6px — a second radius reads as inconsistency, not craft.

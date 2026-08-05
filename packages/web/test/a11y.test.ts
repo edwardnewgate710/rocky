@@ -262,3 +262,21 @@ test('forum composers have labelled inputs', () => {
   assert.ok(HTML_TEMPLATE.includes('for="thread-body-input"'));
   assert.ok(HTML_TEMPLATE.includes('for="reply-input"'));
 });
+
+// --- Achievements region (M14 inc 22) ---
+
+test('the achievements list carries an aria-label', () => {
+  // It sits among five other visually similar panel lists on the profile page.
+  assert.ok(HTML_TEMPLATE.includes('aria-label="Achievements"'));
+});
+
+test('achievements errors are announced', () => {
+  assert.match(HTML_TEMPLATE, /id="achievements-error"[^>]*role="alert"/);
+});
+
+test('the achievements region starts hidden', () => {
+  // A deployment without ACHIEVEMENTS_ENABLED answers 503 on every profile. Shipping the heading
+  // visible would put an empty "Achievements" on every profile in that deployment, and a screen
+  // reader would announce a section that never gets content.
+  assert.match(HTML_TEMPLATE, /id="achievements"[^>]*hidden/);
+});

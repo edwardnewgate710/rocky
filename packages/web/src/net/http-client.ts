@@ -41,6 +41,16 @@ export interface RequestSpec {
   /** Override the method-based retry-safety decision. */
   readonly idempotent?: boolean;
   /**
+   * Statuses this endpoint answers permanently, overriding the transport's transient
+   * classification. Retrying them can only produce the same answer, so they fail on the first
+   * attempt; every other retryable failure still retries as normal.
+   *
+   * Narrower than `idempotent: false`, which suppresses retries for *all* failure classes — a
+   * network blip included — and so trades away transient recovery to save a repeat that was only
+   * ever pointless for one status.
+   */
+  readonly permanentStatuses?: readonly number[];
+  /**
    * Whether to send credentials (cookies) with this request. Default `false`.
    * Set to `'include'` for cookie-based auth (M12 inc 2: refresh/logout).
    */
@@ -90,12 +100,17 @@ export class HttpClient {
   async request<T>(spec: RequestSpec): Promise<T> {
     const url = this.buildUrl(spec.path, spec.query);
     const idempotent = spec.idempotent ?? RETRIABLE_METHODS.has(spec.method);
+    const permanent = spec.permanentStatuses;
 
     const response = await withRetry((): Promise<HttpResponse> => this.sendOnce(spec.method, url, spec), {
       policy: this.retry,
       sleep: this.sleep,
       rng: this.rng,
-      isRetriable: (error): boolean => idempotent && error instanceof ApiError && error.retryable,
+      isRetriable: (error): boolean =>
+        idempotent &&
+        error instanceof ApiError &&
+        error.retryable &&
+        !(permanent?.includes(error.status) ?? false),
       delayHintMs: (error): number | undefined =>
         error instanceof HttpError ? error.retryAfterMs : undefined,
     });

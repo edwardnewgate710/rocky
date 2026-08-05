@@ -23,6 +23,7 @@
     "node": ">=22"
   },
   "dependencies": {
+    "@chess-platform/achievements": "file:../achievements",
     "@chess-platform/api": "file:../api",
     "@chess-platform/community": "file:../community",
     "@chess-platform/core": "file:../chess-core",

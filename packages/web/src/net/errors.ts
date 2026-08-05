@@ -102,6 +102,14 @@ export class ConflictError extends HttpError {} // 409
 export class ValidationError extends HttpError {} // 422
 export class RateLimitError extends HttpError {} // 429
 export class ServerError extends HttpError {} // 5xx
+/**
+ * 503 specifically. Split out of {@link ServerError} because callers act on the two differently: a
+ * 500 is a fault worth surfacing, while a 503 is how the API reports an optional subsystem this
+ * deployment did not configure (the `ApiDependencies` fields in `packages/api` — achievements,
+ * search, messaging, …). Extends `ServerError` so an existing `instanceof ServerError` branch keeps
+ * catching it.
+ */
+export class ServiceUnavailableError extends ServerError {} // 503
 
 const RETRYABLE_STATUS: ReadonlySet<number> = new Set([429, 502, 503, 504]);
 
@@ -160,6 +168,8 @@ export function httpErrorFrom(
       return new ValidationError(params);
     case 429:
       return new RateLimitError(params);
+    case 503:
+      return new ServiceUnavailableError(params);
     default:
       return status >= 500 ? new ServerError(params) : new HttpError(params);
   }

@@ -41,7 +41,7 @@ export function renderThreadList(
     // `.panel-row` is space-between, so the row takes exactly two children: what identifies the
     // thread leads, and its state trails.
     const leading: (Node | string)[] = [link, el(doc, 'span', { class: 'count' }, author)];
-    const row = el(doc, 'div', { class: 'panel-row' }, el(doc, 'span', { class: 'team-row-main' }, ...leading));
+    const row = el(doc, 'div', { class: 'panel-row' }, el(doc, 'span', { class: 'row-main' }, ...leading));
 
     // Only states that change what you can do earn a tag; "unlocked" and "unpinned" are the norm.
     const tags: string[] = [];

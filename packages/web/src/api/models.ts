@@ -484,3 +484,37 @@ export interface ForumThreadCreated {
   readonly thread: ForumThread;
   readonly firstPost: ForumPost;
 }
+
+// --- Achievements (M14 inc 22) ---------------------------------------------------
+
+export type AchievementTier = 'bronze' | 'silver' | 'gold';
+
+/**
+ * One catalogue entry joined with this player's progress towards it.
+ *
+ * `target` is optional in the published contract and absent for one-shot achievements; the domain
+ * reads an absent target as 1 (`packages/achievements/src/award.ts`), and so must anything here that
+ * turns progress into a fraction.
+ */
+export interface PlayerAchievement {
+  readonly key: string;
+  readonly name: string;
+  readonly description: string;
+  readonly category: string;
+  readonly tier: AchievementTier;
+  readonly points: number;
+  readonly hidden: boolean;
+  readonly target?: number;
+  readonly progress: number;
+  readonly unlockedAt: string | null;
+}
+
+export interface PlayerAchievementList {
+  readonly total: number;
+  readonly items: readonly PlayerAchievement[];
+}
+
+export interface AchievementSummary {
+  readonly unlockedCount: number;
+  readonly pointsTotal: number;
+}

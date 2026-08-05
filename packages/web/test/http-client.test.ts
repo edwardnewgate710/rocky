@@ -2,7 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { HttpClient } from '../src/net/http-client.js';
 import type { RetryPolicy } from '../src/net/retry.js';
-import { DecodeError, NetworkError, NotFoundError, TimeoutError } from '../src/net/errors.js';
+import {
+  DecodeError,
+  NetworkError,
+  NotFoundError,
+  ServiceUnavailableError,
+  TimeoutError,
+} from '../src/net/errors.js';
 import { FakeTransport, abortableHang, empty, json } from './support/fake-transport.js';
 
 const NO_JITTER: RetryPolicy = { maxAttempts: 3, baseDelayMs: 10, maxDelayMs: 50, jitter: 'none' };
@@ -78,6 +84,33 @@ test('does not retry a non-idempotent POST on 503', async () => {
   );
   await assert.rejects(client(t).request({ method: 'POST', path: '/v1/x' }));
   assert.equal(t.calls.length, 1);
+});
+
+test('a permanent status is not retried even on an idempotent GET', async () => {
+  const t = new FakeTransport().onEach(() =>
+    json(503, { error: { code: 'service_unavailable', message: 'not configured', requestId: 'r' } }),
+  );
+  await assert.rejects(
+    client(t).request({ method: 'GET', path: '/v1/x', permanentStatuses: [503] }),
+    ServiceUnavailableError,
+  );
+  assert.equal(t.calls.length, 1);
+});
+
+test('a permanent status does not disable retries for other failures', async () => {
+  // The whole point of naming statuses instead of setting `idempotent: false`: this endpoint still
+  // recovers from a blip. 502 is retryable and not listed, so it retries and succeeds.
+  const t = new FakeTransport(
+    () => json(502, { error: { code: 'server_error', message: 'bad gateway', requestId: 'r' } }),
+    () => json(200, { ok: 1 }),
+  );
+  const out = await client(t).request<{ ok: number }>({
+    method: 'GET',
+    path: '/v1/x',
+    permanentStatuses: [503],
+  });
+  assert.deepEqual(out, { ok: 1 });
+  assert.equal(t.calls.length, 2);
 });
 
 test('client timeout produces a TimeoutError', async () => {

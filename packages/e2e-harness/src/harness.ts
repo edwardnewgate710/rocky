@@ -30,6 +30,16 @@
  * Namespaced under `/e2e/` so it never leaks into the product API surface.
  * Body: `{ players?: PlayerDocumentInput[], games?: GameDocumentInput[], tournaments?: TournamentDocumentInput[] }`.
  * Returns `{ indexed: number }`.
+ *
+ * ## Bridge route: `POST /e2e/achievements`
+ *
+ * Achievements are awarded in production by `AchievementsAwardWorker`, which reacts to
+ * `games:ended` pub/sub events and reads finished games from Postgres. That worker is not wired
+ * here, so a spec asserting on an unlocked badge would otherwise have to play a full game to move a
+ * single counter. This third **test-only** bridge route calls the repository's real `award()` —
+ * the same method the worker calls — so progress and unlock timing follow the production rules
+ * rather than a fixture that hardcodes them.
+ * Body: `{ playerId, key, increment? }`. Returns the resulting `{ playerId, key, progress, unlockedAt }`.
  */
 import { createServer, type Server } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -65,6 +75,7 @@ import {
 } from '@chess-platform/realtime-gateway';
 import { InMemoryMessagingRepository } from '@chess-platform/messaging';
 import { InMemorySocialGraphRepository } from '@chess-platform/social';
+import { AchievementRuleError, InMemoryAchievementsRepository } from '@chess-platform/achievements';
 import { InMemoryCommunityRepository } from '@chess-platform/community';
 import {
   InMemorySearchRepository,
@@ -119,6 +130,13 @@ interface BridgeGameBody {
   readonly blackId?: string;
   /** If set and the bot is a player, the bot resigns after this many plies. */
   readonly botResignsAfterPlies?: number;
+}
+
+/** Body for the bridge route `POST /e2e/achievements`. */
+interface BridgeAwardBody {
+  readonly playerId?: unknown;
+  readonly key?: unknown;
+  readonly increment?: unknown;
 }
 
 /** Body for the bridge route `POST /e2e/search-index`. */
@@ -192,7 +210,11 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
   const searchRepository = new InMemorySearchRepository();
   // The community repository is OPTIONAL, and an absent one makes `/v1/teams/*` routes answer 503.
   const communityRepository = new InMemoryCommunityRepository();
-  const deps: ApiDependencies = { repos, hasher, tokens, clock, ids, config, rateLimiter, tournamentRepo, gameLauncher, liveView: broadcaster, emailSender, messagingRepository, socialGraphRepository, searchRepository, communityRepository, graphql: { introspection: false } };
+  // Same for achievements: `/v1/achievements` and `/v1/players/:id/achievements*` answer 503 without
+  // it. The profile page reads the per-player list, so an absent repository would render the section
+  // as an error rather than as an empty catalogue.
+  const achievementsRepository = new InMemoryAchievementsRepository();
+  const deps: ApiDependencies = { repos, hasher, tokens, clock, ids, config, rateLimiter, tournamentRepo, gameLauncher, liveView: broadcaster, emailSender, messagingRepository, socialGraphRepository, searchRepository, communityRepository, achievementsRepository, graphql: { introspection: false } };
   const apiServer = createApiServer(deps);
 
   const tokenVerifier = new ApiTokenVerifier((token: string) => {
@@ -255,6 +277,72 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ code: 'internal_error', message: (err as Error).message }));
         }
+        })();
+      });
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/e2e/achievements') {
+      let body = '';
+      req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+      req.on('end', () => {
+        void (async () => {
+          try {
+            let parsed: BridgeAwardBody;
+            try {
+              parsed = JSON.parse(body) as BridgeAwardBody;
+            } catch {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ code: 'bad_request', message: 'Invalid JSON body' }));
+              return;
+            }
+
+            if (!parsed || typeof parsed !== 'object') {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ code: 'bad_request', message: 'Body must be an object' }));
+              return;
+            }
+            if (typeof parsed.playerId !== 'string' || typeof parsed.key !== 'string') {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ code: 'bad_request', message: 'playerId and key must be strings' }));
+              return;
+            }
+            // Left undefined rather than defaulted here: `award` has its own default of 1, and a
+            // second copy of that number is one more place for the two to drift apart.
+            if (parsed.increment !== undefined && typeof parsed.increment !== 'number') {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ code: 'bad_request', message: 'increment must be a number' }));
+              return;
+            }
+
+            let awarded;
+            try {
+              awarded = parsed.increment === undefined
+                ? await achievementsRepository.award(parsed.playerId, parsed.key)
+                : await achievementsRepository.award(parsed.playerId, parsed.key, parsed.increment);
+            } catch (err) {
+              // An unknown key or a fractional increment is a broken fixture, not a harness fault.
+              // Answering 500 would send whoever is debugging it reading this file instead of their
+              // own payload.
+              if (err instanceof AchievementRuleError) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ code: err.code, message: err.message }));
+                return;
+              }
+              throw err;
+            }
+
+            res.writeHead(201, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              playerId: awarded.playerId,
+              key: awarded.key,
+              progress: awarded.progress,
+              unlockedAt: awarded.unlockedAt ? awarded.unlockedAt.toISOString() : null,
+            }));
+          } catch (err) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ code: 'internal_error', message: (err as Error).message }));
+          }
         })();
       });
       return;

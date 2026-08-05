@@ -67,6 +67,8 @@ import type {
   ForumPost,
   ForumPostList,
   ForumThreadCreated,
+  AchievementSummary,
+  PlayerAchievementList,
 } from './models.js';
 
 /** A request spec plus whether it requires authentication. */
@@ -99,6 +101,7 @@ export class GambitClient {
   readonly messages: MessagesApi;
   readonly social: SocialApi;
   readonly teams: TeamsApi;
+  readonly achievements: AchievementsApi;
   /** The read layer (ADR-0073). Degrades to null answers when the flag is off. */
   readonly graphql: GraphQLApi;
   private readonly http: HttpClient;
@@ -136,6 +139,7 @@ export class GambitClient {
     this.messages = new MessagesApi(this.execute);
     this.social = new SocialApi(this.execute);
     this.teams = new TeamsApi(this.execute);
+    this.achievements = new AchievementsApi(this.execute);
     this.graphql = new GraphQLApi(this.execute);
   }
 
@@ -600,6 +604,57 @@ export class TeamsApi {
       path: `/v1/teams/${encodeURIComponent(teamId)}/forum/threads/${encodeURIComponent(threadId)}/posts`,
       body: { body },
       auth: true,
+    });
+  }
+}
+
+/**
+ * Achievements (M14 inc 22).
+ *
+ * Both routes are public and keyed by player id, not by handle — unlike the rest of the profile
+ * page, which is keyed by handle. No `auth` flag: the answer does not vary by viewer, so sending a
+ * token would buy nothing and would make a signed-out profile render differently from a signed-in
+ * one for no reason.
+ *
+ * The catalogue route `GET /v1/achievements` is deliberately not exposed. `forPlayer` already
+ * returns every visible definition joined with progress, so a second call would add nothing this
+ * app renders.
+ */
+/**
+ * Every achievements route answers 503 when the deployment did not configure the achievements
+ * repository (`checkAchievementsRepo` in `packages/api/src/routes.ts`). That is a setting, not an
+ * outage, so the transport's default "503 is transient, retry it" would spend two more attempts per
+ * endpoint to be told the same thing. Every other retryable failure still retries.
+ */
+const ACHIEVEMENTS_PERMANENT_STATUSES: readonly number[] = [503];
+
+export class AchievementsApi {
+  private readonly execute: Execute;
+  constructor(execute: Execute) {
+    this.execute = execute;
+  }
+
+  /**
+   * Every visible achievement for a player, unlocked first (the API orders by `unlockedAt` DESC,
+   * `key` ASC). Hidden achievements appear only once earned.
+   *
+   * No pagination argument: the catalogue is 14 entries against a server default page of 50, so a
+   * page control today would be a lever with nothing on the end of it. It becomes a real question
+   * when the catalogue passes 50.
+   */
+  forPlayer(playerId: string): Promise<PlayerAchievementList> {
+    return this.execute<PlayerAchievementList>({
+      method: 'GET',
+      path: `/v1/players/${encodeURIComponent(playerId)}/achievements`,
+      permanentStatuses: ACHIEVEMENTS_PERMANENT_STATUSES,
+    });
+  }
+
+  summary(playerId: string): Promise<AchievementSummary> {
+    return this.execute<AchievementSummary>({
+      method: 'GET',
+      path: `/v1/players/${encodeURIComponent(playerId)}/achievements/summary`,
+      permanentStatuses: ACHIEVEMENTS_PERMANENT_STATUSES,
     });
   }
 }
