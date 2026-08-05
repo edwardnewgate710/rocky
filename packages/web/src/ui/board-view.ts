@@ -58,6 +58,9 @@ export class BoardView {
   private floatEl: HTMLElement | null = null;
   private suppressClick = false;
   private overlay: HTMLElement | null = null;
+  // Held as fields so `destroy` can remove the very same references `addEventListener` received.
+  private readonly onClick = (e: MouseEvent): void => this.handleClick(e);
+  private readonly onPointerDown = (e: PointerEvent): void => this.handlePointerDown(e);
 
   constructor(root: HTMLElement, options: BoardViewOptions) {
     this.root = root;
@@ -67,9 +70,22 @@ export class BoardView {
     this.root.classList.add('cb-board');
     this.root.setAttribute('role', 'grid');
     this.root.setAttribute('aria-label', 'Chess board');
-    this.root.addEventListener('click', (e) => this.handleClick(e));
-    this.root.addEventListener('pointerdown', (e) => this.handlePointerDown(e));
+    this.root.addEventListener('click', this.onClick);
+    this.root.addEventListener('pointerdown', this.onPointerDown);
     this.render();
+  }
+
+  /**
+   * Detach from the root element.
+   *
+   * Mounting is not idempotent: the two listeners above are bound to the element, not to this
+   * instance, so mounting a second view onto the same element leaves the first one's listeners
+   * attached and every gesture is handled twice. Sections whose board element outlives the view —
+   * anything rendered into markup that `bootstrap` re-runs over — must call this before remounting.
+   */
+  destroy(): void {
+    this.root.removeEventListener('click', this.onClick);
+    this.root.removeEventListener('pointerdown', this.onPointerDown);
   }
 
   /** Set the position: updates both the rendered pieces and the interaction. */

@@ -610,3 +610,64 @@ export interface SubmitAttemptRequest {
   readonly selectedIndex?: number;
 }
 
+// --- Studies (M14 inc 24) ------------------------------------------------------
+
+export type StudyVisibility = 'public' | 'unlisted' | 'private';
+export type StudyRole = 'owner' | 'contributor' | 'viewer';
+
+export interface StudyView {
+  readonly id: string;
+  readonly ownerId: string;
+  readonly name: string;
+  readonly description: string;
+  readonly visibility: StudyVisibility;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly deletedAt?: string;
+}
+
+export interface StudyList {
+  readonly total: number;
+  readonly items: readonly StudyView[];
+}
+
+export interface ChapterView {
+  readonly id: string;
+  readonly studyId: string;
+  readonly name: string;
+  readonly orderIndex: number;
+  readonly startingFen: string;
+  readonly deletedAt?: string;
+}
+
+export interface ChapterList {
+  readonly items: readonly ChapterView[];
+}
+
+export interface TreeNodeView {
+  readonly id: string;
+  readonly chapterId: string;
+  readonly parentId: string | null;
+  readonly san: string;
+  readonly fenAfter: string;
+  readonly comment?: string;
+  readonly nags: readonly number[];
+  readonly orderIndex: number;
+}
+
+export interface ChapterDetailView {
+  readonly chapter: ChapterView;
+  readonly tree: readonly TreeNodeView[];
+}
+
+export interface CollaboratorView {
+  readonly studyId: string;
+  readonly playerId: string;
+  readonly role: StudyRole;
+}
+
+export interface CollaboratorList {
+  readonly items: readonly CollaboratorView[];
+}
+
+

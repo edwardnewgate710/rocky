@@ -78,6 +78,13 @@ import type {
   ProgressView,
   AttemptResultView,
   SubmitAttemptRequest,
+  ChapterDetailView,
+  ChapterList,
+  ChapterView,
+  CollaboratorList,
+  StudyList,
+  StudyView,
+  TreeNodeView,
 } from './models.js';
 
 /** A request spec plus whether it requires authentication. */
@@ -112,6 +119,7 @@ export class GambitClient {
   readonly teams: TeamsApi;
   readonly achievements: AchievementsApi;
   readonly learning: LearningApi;
+  readonly studies: StudiesApi;
   /** The read layer (ADR-0073). Degrades to null answers when the flag is off. */
   readonly graphql: GraphQLApi;
   private readonly http: HttpClient;
@@ -151,6 +159,7 @@ export class GambitClient {
     this.teams = new TeamsApi(this.execute);
     this.achievements = new AchievementsApi(this.execute);
     this.learning = new LearningApi(this.execute);
+    this.studies = new StudiesApi(this.execute, options.baseUrl);
     this.graphql = new GraphQLApi(this.execute);
   }
 
@@ -768,3 +777,79 @@ export class LearningApi {
   }
 }
 
+/**
+ * Studies (M14 inc 24).
+ *
+ * Answers 503 when the deployment did not configure the studies repository.
+ * `permanentStatuses: [503]` suppresses transport retries for 503 on studies endpoints.
+ */
+const STUDIES_PERMANENT_STATUSES: readonly number[] = [503];
+
+export class StudiesApi {
+  private readonly execute: Execute;
+  private readonly baseUrl: string;
+  constructor(execute: Execute, baseUrl: string = '') {
+    this.execute = execute;
+    this.baseUrl = baseUrl;
+  }
+
+  listStudies(opts?: { search?: string; limit?: number; offset?: number; ownerId?: string }): Promise<StudyList> {
+    return this.execute<StudyList>({
+      method: 'GET',
+      path: '/v1/studies',
+      auth: 'optional',
+      permanentStatuses: STUDIES_PERMANENT_STATUSES,
+      ...(opts?.search !== undefined || opts?.limit !== undefined || opts?.offset !== undefined || opts?.ownerId !== undefined
+        ? {
+            query: {
+              ...(opts.search !== undefined ? { search: opts.search } : {}),
+              ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+              ...(opts.offset !== undefined ? { offset: opts.offset } : {}),
+              ...(opts.ownerId !== undefined ? { ownerId: opts.ownerId } : {}),
+            },
+          }
+        : {}),
+    });
+  }
+
+  study(id: string): Promise<StudyView> {
+    return this.execute<StudyView>({
+      method: 'GET',
+      path: `/v1/studies/${encodeURIComponent(id)}`,
+      auth: 'optional',
+      permanentStatuses: STUDIES_PERMANENT_STATUSES,
+    });
+  }
+
+  chapters(studyId: string): Promise<ChapterList> {
+    return this.execute<ChapterList>({
+      method: 'GET',
+      path: `/v1/studies/${encodeURIComponent(studyId)}/chapters`,
+      auth: 'optional',
+      permanentStatuses: STUDIES_PERMANENT_STATUSES,
+    });
+  }
+
+  chapterDetail(studyId: string, chapterId: string): Promise<ChapterDetailView> {
+    return this.execute<ChapterDetailView>({
+      method: 'GET',
+      path: `/v1/studies/${encodeURIComponent(studyId)}/chapters/${encodeURIComponent(chapterId)}`,
+      auth: 'optional',
+      permanentStatuses: STUDIES_PERMANENT_STATUSES,
+    });
+  }
+
+  collaborators(studyId: string): Promise<CollaboratorList> {
+    return this.execute<CollaboratorList>({
+      method: 'GET',
+      path: `/v1/studies/${encodeURIComponent(studyId)}/collaborators`,
+      auth: 'optional',
+      permanentStatuses: STUDIES_PERMANENT_STATUSES,
+    });
+  }
+
+  exportPgnUrl(studyId: string, chapterId?: string): string {
+    const query = chapterId ? `?chapterId=${encodeURIComponent(chapterId)}` : '';
+    return `${this.baseUrl}/v1/studies/${encodeURIComponent(studyId)}/export.pgn${query}`;
+  }
+}

@@ -22,7 +22,13 @@ if (typeof document !== 'undefined') {
   // the lobby's seek refresh, the profile's fetches, and the tournament live poll all outlive the
   // page that started them and accumulate one more copy per navigation. Disposing the previous set
   // first is what makes re-bootstrapping safe.
-  let previous: { lobby: Disposable; profile: Disposable; tournament: Disposable; search: Disposable; messages: Disposable; teams: Disposable; forum: Disposable; learning: Disposable } | null = null;
+  let previous: { lobby: Disposable; profile: Disposable; tournament: Disposable; search: Disposable; messages: Disposable; teams: Disposable; forum: Disposable; learning: Disposable; studies: Disposable } | null = null;
+
+  // The board is tracked apart from the controllers because it is torn down differently and for a
+  // different reason. `#board` and `#chapter-board` both live in `index.html`, so they outlive any
+  // one route; `BoardView` binds click/pointerdown to the element rather than to itself, so a second
+  // mount leaves the first view's listeners in place and every gesture is handled twice over.
+  let previousBoard: { destroy: () => void } | null = null;
 
   const run = (): void => {
     previous?.lobby?.dispose();
@@ -33,9 +39,12 @@ if (typeof document !== 'undefined') {
     previous?.teams?.dispose();
     previous?.forum?.dispose();
     previous?.learning?.dispose();
+    previous?.studies?.dispose();
+    previousBoard?.destroy();
     const result = bootstrap(document);
     currentTheme = result.theme;
-    previous = { lobby: result.lobby, profile: result.profile, tournament: result.tournament, search: result.search, messages: result.messages, teams: result.teams, forum: result.forum, learning: result.learning };
+    previousBoard = result.board;
+    previous = { lobby: result.lobby, profile: result.profile, tournament: result.tournament, search: result.search, messages: result.messages, teams: result.teams, forum: result.forum, learning: result.learning, studies: result.studies };
   };
 
   // Bound once on document — survives bootstrap re-runs (which replace the

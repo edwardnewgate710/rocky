@@ -33,6 +33,7 @@
     "@chess-platform/realtime-gateway": "file:../realtime-gateway",
     "@chess-platform/search": "file:../search",
     "@chess-platform/social": "file:../social",
+    "@chess-platform/studies": "file:../studies",
     "@chess-platform/tournament": "file:../tournament",
     "ws": "^8.16.0"
   },

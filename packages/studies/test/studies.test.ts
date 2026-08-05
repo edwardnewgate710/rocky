@@ -10,7 +10,11 @@ import {
 const mockReader: PositionReader = {
   legalSans(fen: string): readonly string[] {
     if (fen.includes('rnbqkbnr') || fen === 'start') {
-      return ['e4', 'd4', 'Nf3', 'c4', 'e5', 'c5', 'd5'];
+      // `play` returns `${fen}+${san}`, so every derived FEN still contains the starting placement
+      // and this branch answers for the whole game — the two below are unreachable. The list is
+      // therefore every SAN any test in this file plays; `Ke2` is deliberately absent, because the
+      // import-atomicity test relies on it being rejected.
+      return ['e4', 'd4', 'Nf3', 'c4', 'e5', 'c5', 'd5', 'Nc6', 'Nf6', 'Nxe5', 'd6', 'Bb5', 'a6'];
     }
     if (fen.includes('e4')) {
       return ['e5', 'c5', 'e6', 'c6', 'Nf3', 'Nc6'];
@@ -266,5 +270,34 @@ describe('Domain Rule 7: Import PGN validation and atomicity', () => {
     // Verify study chapters count did NOT increase from the failed import
     const chapters = await repo.listChapters('s1', 'p-owner');
     assert.equal(chapters.length, 2, 'failed import must not be imported half-way');
+  });
+
+  it('preserves move and variation ordering (mainline orderIndex 0, variations orderIndex >= 1) on import and round-trip', async () => {
+    const repo = new InMemoryStudiesRepository();
+    await repo.createStudy('s1', 'p-owner', 'Study 1', 'Desc', 'public');
+
+    const pgnWithVar = '[Event "Petroff Line"]\n[White "W"]\n[Black "B"]\n\n1. e4 e5 2. Nf3 Nc6 (2... Nf6 3. Nxe5 d6) 3. Bb5 *';
+    const chapters = await repo.importPgn('s1', 'p-owner', pgnWithVar, mockReader);
+    assert.equal(chapters.length, 1);
+
+    const chapterId = chapters[0]!.id;
+    const { tree } = await repo.getChapter(chapterId, 'p-owner');
+
+    // Find Nf3 node
+    const nf3Node = tree.find((n) => n.san === 'Nf3');
+    assert.ok(nf3Node);
+
+    // Find children of Nf3 ordered by orderIndex
+    const children = tree
+      .filter((n) => n.parentId === nf3Node.id)
+      .sort((a, b) => a.orderIndex - b.orderIndex);
+
+    assert.equal(children.length, 2);
+    assert.equal(children[0]?.san, 'Nc6', 'mainline move must have orderIndex 0');
+    assert.equal(children[1]?.san, 'Nf6', 'variation move must have orderIndex 1');
+
+    // Export PGN and confirm round-trip mainline & variation structure is preserved
+    const exported = await repo.exportPgn('s1', 'p-owner', chapterId);
+    assert.match(exported, /2\. Nf3 Nc6 \(2\.\.\. Nf6 3\. Nxe5 d6\) 3\. Bb5/);
   });
 });

@@ -813,16 +813,21 @@ export class InMemoryStudiesRepository implements StudiesRepository {
     let currentFen = fen;
 
     for (const moveNode of moves) {
-      // Append variations from parent position
-      for (const varLine of moveNode.variations) {
-        await this.buildTreeFromMovetext(chapterId, actorId, currentParentId, varLine, currentFen, reader);
-      }
+      const parentBefore = currentParentId;
+      const fenBefore = currentFen;
 
       const comment = moveNode.comments.length > 0 ? moveNode.comments.join('\n') : undefined;
-      const appended = await this.appendNode(chapterId, actorId, currentParentId, moveNode.san, reader, {
+      const appended = await this.appendNode(chapterId, actorId, parentBefore, moveNode.san, reader, {
         comment,
         nags: moveNode.nags,
       });
+
+      // Variations are alternatives to this move, so they hang off the same parent — appended
+      // *after* it so the mainline keeps orderIndex 0, which is what `exportPgn` and every tree
+      // reader assume. The Postgres adapter already did this; see ADR-0091 §10.
+      for (const varLine of moveNode.variations) {
+        await this.buildTreeFromMovetext(chapterId, actorId, parentBefore, varLine, fenBefore, reader);
+      }
 
       currentParentId = appended.id;
       currentFen = appended.fenAfter;

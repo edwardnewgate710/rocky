@@ -51,6 +51,9 @@ import { LearningController } from './learning-controller.js';
 import type { LearningController as LearningControllerType } from './learning-controller.js';
 import { renderCourseList, renderCourseDetail, renderLessonDetail } from './learning-view.js';
 import { courseProgressLabel, stepStatusLabel } from './learning-helpers.js';
+import { StudiesController } from './studies-controller.js';
+import type { StudiesController as StudiesControllerType } from './studies-controller.js';
+import { renderStudyList, renderStudyDetail, renderChapterDetail } from './studies-view.js';
 import { MessagesController } from './messages-controller.js';
 import { TeamsController } from './teams-controller.js';
 import { ForumController } from './forum-controller.js';
@@ -91,6 +94,7 @@ export interface Bootstrapped {
   readonly teams: TeamsControllerType | null;
   readonly forum: ForumControllerType | null;
   readonly learning: LearningControllerType | null;
+  readonly studies: StudiesControllerType | null;
   readonly auth: AuthControllerType;
   readonly theme: ThemeToggleType;
 }
@@ -486,6 +490,9 @@ export function bootstrap(
   const coursesSectionEl = doc.getElementById('courses');
   const courseSectionEl = doc.getElementById('course');
   const lessonSectionEl = doc.getElementById('lesson');
+  const studiesSectionEl = doc.getElementById('studies');
+  const studySectionEl = doc.getElementById('study');
+  const studyChapterSectionEl = doc.getElementById('study-chapter');
   const showGame = route.name === 'game';
   const showLobby = route.name === 'lobby';
   const showProfile = route.name === 'profile';
@@ -501,6 +508,9 @@ export function bootstrap(
   const showCourses = route.name === 'courses';
   const showCourse = route.name === 'course';
   const showLesson = route.name === 'lesson';
+  const showStudies = route.name === 'studies';
+  const showStudy = route.name === 'study';
+  const showStudyChapter = route.name === 'study-chapter';
   if (mainEl) mainEl.hidden = !showGame;
   if (lobbySectionEl) lobbySectionEl.hidden = !showLobby;
   if (profileSectionEl) profileSectionEl.hidden = !showProfile;
@@ -516,6 +526,9 @@ export function bootstrap(
   if (coursesSectionEl) coursesSectionEl.hidden = !showCourses;
   if (courseSectionEl) courseSectionEl.hidden = !showCourse;
   if (lessonSectionEl) lessonSectionEl.hidden = !showLesson;
+  if (studiesSectionEl) studiesSectionEl.hidden = !showStudies;
+  if (studySectionEl) studySectionEl.hidden = !showStudy;
+  if (studyChapterSectionEl) studyChapterSectionEl.hidden = !showStudyChapter;
 
   // Board-only controls should not suggest functionality on lobby/profile
   // routes. They were previously visible everywhere despite doing nothing.
@@ -827,7 +840,7 @@ export function bootstrap(
         .finally(() => gameSync.start());
     }
 
-    return { app, board, controller, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, auth, theme };
+    return { app, board, controller, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
   }
 
   // --- Lobby view ---
@@ -926,7 +939,7 @@ export function bootstrap(
 
     lobby.start();
 
-    return { app, board: null, controller: null, lobby, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, auth, theme };
+    return { app, board: null, controller: null, lobby, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
   }
 
   // --- Profile view ---
@@ -1251,7 +1264,7 @@ export function bootstrap(
       }
     }
 
-    return { app, board: null, controller: null, lobby: null, profile, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
   }
 
   // --- Tournaments list view ---
@@ -1291,7 +1304,7 @@ export function bootstrap(
     });
 
     void tournament.loadList();
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament, search: null, messages: null, teams: null, forum: null, learning: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
   }
 
   // --- Single tournament detail view ---
@@ -1343,7 +1356,7 @@ export function bootstrap(
     });
 
     void tournament.loadDetail(route.id);
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament, search: null, messages: null, teams: null, forum: null, learning: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
   }
 
   // --- Search view ---
@@ -1440,7 +1453,7 @@ export function bootstrap(
       if (resultsEl) renderSearchPrompt(resultsEl);
     }
 
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: searchCtrl, messages: null, teams: null, forum: null, learning: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: searchCtrl, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
   }
 
   // --- Messages Inbox view (/messages) ---
@@ -1475,7 +1488,7 @@ export function bootstrap(
         .catch(() => undefined);
     }
 
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: messagesCtrl, teams: null, forum: null, learning: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: messagesCtrl, teams: null, forum: null, learning: null, studies: null, auth, theme };
   }
 
   // --- Conversation Thread view (/messages/:id) ---
@@ -1546,7 +1559,7 @@ export function bootstrap(
         .catch(() => undefined);
     }
 
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: messagesCtrl, teams: null, forum: null, learning: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: messagesCtrl, teams: null, forum: null, learning: null, studies: null, auth, theme };
   }
 
   // --- Teams list view (/teams) ---
@@ -1586,7 +1599,7 @@ export function bootstrap(
     }
 
     void teamsCtrl.loadList();
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: teamsCtrl, forum: null, learning: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: teamsCtrl, forum: null, learning: null, studies: null, auth, theme };
   }
 
   // --- Team detail view (/teams/:slug) ---
@@ -1673,7 +1686,7 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: teamsCtrl, forum: null, learning: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: teamsCtrl, forum: null, learning: null, studies: null, auth, theme };
   }
 
   // --- Forum thread list (/teams/:slug/forum) ---
@@ -1746,7 +1759,7 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: forumCtrl, learning: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: forumCtrl, learning: null, studies: null, auth, theme };
   }
 
   // --- Forum thread (/teams/:slug/forum/:threadId) ---
@@ -1812,7 +1825,7 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: forumCtrl, learning: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: forumCtrl, learning: null, studies: null, auth, theme };
   }
 
   // --- Courses list view (/courses) ---
@@ -1850,7 +1863,7 @@ export function bootstrap(
     });
 
     void learningCtrl.loadCourses();
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, studies: null, auth, theme };
   }
 
   // --- Course detail view (/courses/:slug) ---
@@ -1892,7 +1905,7 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, studies: null, auth, theme };
   }
 
   // --- Lesson detail view (/lessons/:id) ---
@@ -1953,7 +1966,169 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, studies: null, auth, theme };
+  }
+
+  // --- Studies list view (/studies) ---
+  const studiesEl = doc.getElementById('studies');
+  if (studiesEl && route.name === 'studies') {
+    const listEl = doc.getElementById('study-list');
+    const errorEl = doc.getElementById('studies-error');
+    const searchFormEl = doc.getElementById('study-search-form') as HTMLFormElement | null;
+
+    const studiesCtrl = new StudiesController({
+      client: app.api,
+      callbacks: {
+        onStudyList: (studies) => {
+          if (errorEl) errorEl.textContent = '';
+          if (listEl) renderStudyList(listEl, studies);
+        },
+        onStudy: () => {},
+        onChapterDetail: () => {},
+        onLoading: (loading) => {
+          if (listEl) listEl.setAttribute('aria-busy', loading ? 'true' : 'false');
+        },
+        onError: (msg) => {
+          if (errorEl) errorEl.textContent = msg;
+        },
+        onUnavailable: () => {
+          if (studiesEl) {
+            studiesEl.replaceChildren();
+            const p = doc.createElement('p');
+            p.className = 'count';
+            p.textContent = 'Studies service unavailable.';
+            studiesEl.appendChild(p);
+          }
+        },
+      },
+    });
+
+    if (searchFormEl) {
+      // Assignment, not addEventListener: `#study-search-form` lives in index.html and outlives the
+      // route, so a listener added per bootstrap would stack one more copy — each holding a disposed
+      // controller — on every visit. `onsubmit` replaces. Same as the teams and forum forms.
+      searchFormEl.onsubmit = (e): void => {
+        e.preventDefault();
+        const input = doc.getElementById('study-search-input') as HTMLInputElement | null;
+        const q = input?.value.trim() ?? '';
+        void studiesCtrl.loadStudies(q);
+      };
+    }
+
+    void studiesCtrl.loadStudies();
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: studiesCtrl, auth, theme };
+  }
+
+  // --- Study detail view (/studies/:id) ---
+  const studyEl = doc.getElementById('study');
+  if (studyEl && route.name === 'study') {
+    const studyId = route.id;
+    const errorEl = doc.getElementById('study-error');
+
+    const studiesCtrl = new StudiesController({
+      client: app.api,
+      callbacks: {
+        onStudyList: () => {},
+        onStudy: (study, chapters, collaborators, exportUrl) => {
+          if (errorEl) errorEl.textContent = '';
+          renderStudyDetail(
+            {
+              nameEl: doc.getElementById('study-name'),
+              descEl: doc.getElementById('study-description'),
+              visEl: doc.getElementById('study-visibility'),
+              exportEl: doc.getElementById('study-export-link') as HTMLAnchorElement | null,
+              chaptersEl: doc.getElementById('study-chapters'),
+              collabsEl: doc.getElementById('study-collaborators'),
+            },
+            study,
+            chapters,
+            collaborators,
+            exportUrl,
+          );
+        },
+        onChapterDetail: () => {},
+        onLoading: (loading) => {
+          const chaptersEl = doc.getElementById('study-chapters');
+          if (chaptersEl) chaptersEl.setAttribute('aria-busy', loading ? 'true' : 'false');
+        },
+        onError: (msg) => {
+          if (errorEl) errorEl.textContent = msg;
+        },
+        onUnavailable: () => {
+          if (studyEl) {
+            studyEl.replaceChildren();
+            const p = doc.createElement('p');
+            p.className = 'count';
+            p.textContent = 'Studies service unavailable.';
+            studyEl.appendChild(p);
+          }
+        },
+      },
+    });
+
+    void studiesCtrl.loadStudy(studyId);
+    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: studiesCtrl, auth, theme };
+  }
+
+  // --- Study chapter detail view (/studies/:id/chapters/:chapterId) ---
+  const studyChapterEl = doc.getElementById('study-chapter');
+  if (studyChapterEl && route.name === 'study-chapter') {
+    const { id: studyId, chapterId } = route;
+    const errorEl = doc.getElementById('study-chapter-error');
+    const boardEl = doc.getElementById('chapter-board');
+
+    const chapterBoard = boardEl ? mountBoard({ boardEl }) : null;
+    if (chapterBoard) {
+      chapterBoard.setTurn(false);
+    }
+
+    const studiesCtrl = new StudiesController({
+      client: app.api,
+      callbacks: {
+        onStudyList: () => {},
+        onStudy: () => {},
+        onChapterDetail: (study, chapter, tree, chapters, exportUrl) => {
+          if (errorEl) errorEl.textContent = '';
+          chapterBoard?.setPosition(chapter.startingFen);
+          renderChapterDetail(
+            {
+              studyLinkEl: doc.getElementById('chapter-study-link') as HTMLAnchorElement | null,
+              chapterNameEl: doc.getElementById('chapter-name'),
+              exportEl: doc.getElementById('chapter-export-link') as HTMLAnchorElement | null,
+              treeEl: doc.getElementById('chapter-tree'),
+              navEl: doc.getElementById('chapter-list-nav'),
+            },
+            study,
+            chapter,
+            tree,
+            chapters,
+            exportUrl,
+            (fenAfter) => {
+              chapterBoard?.setPosition(fenAfter);
+            },
+          );
+        },
+        onLoading: (loading) => {
+          const treeEl = doc.getElementById('chapter-tree');
+          if (treeEl) treeEl.setAttribute('aria-busy', loading ? 'true' : 'false');
+        },
+        onError: (msg) => {
+          if (errorEl) errorEl.textContent = msg;
+        },
+        onUnavailable: () => {
+          if (studyChapterEl) {
+            studyChapterEl.replaceChildren();
+            const p = doc.createElement('p');
+            p.className = 'count';
+            p.textContent = 'Studies service unavailable.';
+            studyChapterEl.appendChild(p);
+          }
+        },
+      },
+    });
+
+    void studiesCtrl.loadChapter(studyId, chapterId);
+    return { app, board: chapterBoard, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: studiesCtrl, auth, theme };
   }
 
   // --- Standalone board (no game ID, no lobby, no profile, no tournament, no search, no messages) ---
@@ -1961,5 +2136,5 @@ export function bootstrap(
     ? mountBoard({ boardEl, statusEl, flipEl })
     : null;
 
-  return { app, board, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, auth, theme };
+  return { app, board, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
 }

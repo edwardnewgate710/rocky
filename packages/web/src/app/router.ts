@@ -32,6 +32,9 @@ export type Route =
   | { readonly name: 'courses' }
   | { readonly name: 'course'; readonly slug: string }
   | { readonly name: 'lesson'; readonly id: string }
+  | { readonly name: 'studies' }
+  | { readonly name: 'study'; readonly id: string }
+  | { readonly name: 'study-chapter'; readonly id: string; readonly chapterId: string }
   | { readonly name: 'not-found' };
 
 /** Parse a URL pathname into a typed route. */
@@ -65,6 +68,15 @@ export function parseRoute(pathname: string): Route {
     }
     return { name: 'not-found' };
   }
+  if (segments[0] === 'studies') {
+    if (segments.length === 1) return { name: 'studies' };
+    const id = decodeSegment(segments[1]!);
+    if (segments.length === 2) return { name: 'study', id };
+    if (segments.length === 4 && segments[2] === 'chapters') {
+      return { name: 'study-chapter', id, chapterId: decodeSegment(segments[3]!) };
+    }
+    return { name: 'not-found' };
+  }
   if (segments[0] === 'teams') {
     if (segments.length === 1) return { name: 'teams' };
     const slug = decodeSegment(segments[1]!);
@@ -80,16 +92,7 @@ export function parseRoute(pathname: string): Route {
   return { name: 'not-found' };
 }
 
-/**
- * Decode a single path segment, tolerating malformed input.
- *
- * The link that produces this URL percent-encodes the id, and the API client encodes it again on
- * the way out, so a segment left encoded here would be sent double-encoded and resolve to nothing.
- * Today's ids are UUIDs, which survive `encodeURIComponent` untouched — this keeps the round trip
- * honest for anything that does not. `decodeURIComponent` throws on a malformed escape (`%zz`),
- * which a hand-typed URL can easily contain, and a thrown router is a blank page; the raw segment
- * is the better answer because it simply fails to match a tournament.
- */
+/** Decode a single path segment, tolerating malformed input. */
 function decodeSegment(segment: string): string {
   try {
     return decodeURIComponent(segment);
@@ -131,6 +134,12 @@ export function routeToPath(route: Route): string {
       return `/courses/${route.slug}`;
     case 'lesson':
       return `/lessons/${route.id}`;
+    case 'studies':
+      return '/studies';
+    case 'study':
+      return `/studies/${route.id}`;
+    case 'study-chapter':
+      return `/studies/${route.id}/chapters/${route.chapterId}`;
     case 'not-found':
       return '/not-found';
   }

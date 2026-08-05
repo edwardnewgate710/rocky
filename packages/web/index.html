@@ -15,6 +15,7 @@
       <nav class="nav">
         <a href="/" data-route="lobby">Lobby</a>
         <a href="/courses" data-route="courses">Learn</a>
+        <a href="/studies" data-route="studies">Studies</a>
         <a href="/profile" data-route="profile">Profile</a>
         <a href="/tournaments" data-route="tournaments">Tournaments</a>
         <a href="/teams" data-route="teams">Teams</a>
@@ -266,6 +267,45 @@
       <p id="lesson-progress" class="count"></p>
       <div id="step-list" class="step-list" aria-label="Steps"></div>
       <p id="lesson-error" class="error" role="alert"></p>
+    </section>
+    <section id="studies" class="studies" aria-label="Studies" hidden>
+      <h2>Studies</h2>
+      <form id="study-search-form" class="study-search" role="search">
+        <label class="sr-only" for="study-search-input">Search studies</label>
+        <input id="study-search-input" name="search" type="search" placeholder="Search studies" autocomplete="off" />
+        <button id="study-search-submit" type="submit">Search</button>
+      </form>
+      <div id="study-list" class="panel-list" aria-label="Studies list"></div>
+      <p id="studies-error" class="error" role="alert"></p>
+    </section>
+    <section id="study" class="study" aria-label="Study" hidden>
+      <h2 id="study-name">Study</h2>
+      <p id="study-description"></p>
+      <p id="study-visibility" class="count"></p>
+      <p><a id="study-export-link" class="button" download>Download PGN</a></p>
+      <h3>Chapters</h3>
+      <div id="study-chapters" class="panel-list" aria-label="Chapters"></div>
+      <h3>Collaborators</h3>
+      <div id="study-collaborators" class="panel-list" aria-label="Collaborators"></div>
+      <p id="study-error" class="error" role="alert"></p>
+    </section>
+    <section id="study-chapter" class="study-chapter" aria-label="Study chapter" hidden>
+      <div class="study-chapter-header">
+        <h2><a id="chapter-study-link" data-route="study">Study</a> &rsaquo; <span id="chapter-name">Chapter</span></h2>
+        <p><a id="chapter-export-link" class="button" download>Download PGN</a></p>
+      </div>
+      <div class="study-chapter-layout">
+        <section id="chapter-board-container" class="chapter-board-container">
+          <div id="chapter-board" aria-label="Chess board position (read-only)"></div>
+        </section>
+        <aside class="chapter-sidebar" aria-label="Chapter move notation and navigation">
+          <h3>Notation</h3>
+          <div id="chapter-tree" class="notation-tree"></div>
+          <h3>Chapters</h3>
+          <div id="chapter-list-nav" class="panel-list" aria-label="Chapter list"></div>
+        </aside>
+      </div>
+      <p id="study-chapter-error" class="error" role="alert"></p>
     </section>
     <script type="module" src="/src/main.ts"></script>
   </body>

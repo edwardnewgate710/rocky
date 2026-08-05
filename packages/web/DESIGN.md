@@ -227,6 +227,13 @@ Flat at rest, everywhere. There is no `box-shadow` in the current implementation
 - **Attempt feedback** uses words (`Done`, `Try again`) in the muted `.count` voice, respecting the Single Accent Rule without adding secondary accent colors or gamification clutter. `Done` is driven by `completedAt`, never by whether the last attempt was correct — a completed step stays done even if the learner later answers it wrongly, which the domain permits.
 - **Service unavailability (503)** degrades quietly with a plain sentence (`Learning service unavailable.`) in muted text voice.
 
+### Notation Pane (studies viewer)
+- **Inline move text with indented variations.** Chess move trees render as inline wrapping move text (`1. e4 e5 2. Nf3 Nc6`) with indented blocks for variations, one step per nesting level, without bullets or list markers. This is the one place the app follows chess convention over its own list idiom — the same argument §1 makes for keeping classic board colours. Moves are not rendered as one per `.panel-row`.
+- **Mainline weight is unbolded.** `font-weight: 600` is strictly reserved for the clock's `Numeric` role. The mainline is distinguished from variations by indentation, structure, and muted voice, never by bold font weight.
+- **Selection uses Grandmaster Teal (`--sel`), as an outline and never a fill.** The selected move carries a **2px** `--sel` outline; keyboard focus keeps the system's standard **3px** `--sel` ring, so the two states stay distinguishable when a move is both. A filled swatch was tried first and cannot work: `--sel` resolves to Teal Deep on Paper, where ink text measures 3.93:1 and paper text 4.30:1 against it — both under the 4.5:1 that 14px text needs. An outline leaves the text on its normal background, and an indicator only needs 3:1, which Teal Deep clears at 4.30:1. This is the same reason the board draws selection as a ring rather than tinting the square.
+- **Accessible move buttons.** Each move in the tree is a focusable `<button class="notation-move">` control with an accessible `aria-label` (e.g. `Move 2 White Nf3!`). On coarse pointers (`@media (pointer: coarse)`), move targets expand to a minimum 44px hit area to ensure touch accessibility.
+- **NAG fusion and comment prose.** PGN NAG codes 1–6 fuse to the move glyph (`Bb5!`). Comments follow moves as inline prose in the muted `.count` voice (`#8f8f8c`). Positional assessment NAGs outside 1–6 render as empty strings to avoid unestablished system font glyphs.
+
 ## 6. Do's and Don'ts
 
 ### Do:

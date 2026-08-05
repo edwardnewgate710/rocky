@@ -4,7 +4,20 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-05 - M14 Increment 23: Learner-facing Learning UI (ADR-0090)._
+_Last updated: 2026-08-05 - M14 Increment 24: Viewer-facing Studies UI (ADR-0091)._
+
+## M14 Increment 24 - Viewer-facing Studies UI (browse, chapters, move tree) (ADR-0091)
+
+Exposes the M10 studies backend (21 routes under `/v1/studies`, previously no UI at all) as a viewer UI: browse public/collaborative studies, view chapter lists, and analyze chapter move trees on a read-only board.
+
+- **Routing & Client (`packages/web/src/app/router.ts`, `packages/web/src/api/client.ts`, `models.ts`)**: Added `/studies`, `/studies/:id`, and `/studies/:id/chapters/:chapterId` routes to `router.ts`. Added `StudiesApi` class and `GambitClient.studies` with `permanentStatuses: [503]` retry suppression. Added REST models for studies, chapters, tree nodes, collaborators, and chapter details.
+- **Notation Pane & Read-Only Board (`studies-view.ts`, `studies-helpers.ts`)**: Move tree renders as inline wrapping move text (`1. e4 e5 2. Nf3 Nc6`) with indented variation blocks, one step per nesting level, with no bullets or list markers. Selecting a move sets board position via stored `fenAfter`. Board mounts with `setTurn(false)`. Topbar navigation adds `Studies` as a 7th plain-text nav entry.
+- **Typography & Accent Rules (`DESIGN.md`)**: Mainline typography retains normal weight without bold emphasis (`font-weight: 600` is reserved for clock numeric time). Selected move uses Grandmaster Teal (`--sel`). Moves are focusable `<button class="notation-move">` controls with accessible `aria-label` attributes and a 44px coarse pointer touch target.
+- **NAG Mapping & Comments**: PGN NAG codes 1–6 map to annotation symbols (`1 → !`, `2 → ?`, `3 → !!`, `4 → ??`, `5 → !?`, `6 → ?!`), fusing to moves (`Bb5!`). Out-of-range NAGs render as empty strings to avoid unestablished font glyphs. Move comments wrap as prose in the muted `.count` voice (`#8f8f8c`).
+- **503 Latching & Controller (`studies-controller.ts`)**: GETs pass `permanentStatuses: [503]`, and `StudiesController` latches on `ServiceUnavailableError` for the view duration. On 503, the Studies surface degrades quietly with a plain sentence (`Studies service unavailable.`). `main.ts` disposes `previous.studies` on SPA navigation.
+- **Domain Fix (`packages/studies/src/repository.ts`)**: Fixed PGN import move ordering in `buildTreeFromMovetext` so mainline moves are appended before their variations, ensuring the mainline receives `orderIndex 0` and variations receive `orderIndex >= 1` (matching `exportPgn` and reader expectations).
+- **Harness & Bridge Route (`packages/e2e-harness/src/harness.ts`)**: Wired `studiesRepository` as the 8th `ApiDependencies` field in `packages/e2e-harness` and added bridge route `POST /e2e/studies` to seed public studies with chapters, mainline >= 4 moves, 1 variation, 1 comment, and 1 NAG in 1–6 range.
+- **Tests & ADR**: Unit tests in `studies-helpers.test.ts`, `studies-controller.test.ts`, and domain test `studies.test.ts`, Playwright E2E spec in `studies.spec.ts`. Documented in `docs/adr/0091-studies-viewer.md`.
 
 ## M14 Increment 23 - Learner-facing Learning UI (courses, lessons, steps) (ADR-0090)
 

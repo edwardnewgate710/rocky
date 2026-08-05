@@ -65,6 +65,12 @@ export interface MountedBoard {
   setTurn: (myTurn: boolean) => void;
   /** Set the board orientation ('white' or 'black' perspective). */
   setOrientation: (orientation: 'white' | 'black') => void;
+  /**
+   * Detach the view's listeners from the board element. Required wherever the element outlives the
+   * mount — `bootstrap` re-runs on every SPA navigation, so a section that mounts into markup from
+   * `index.html` stacks a fresh set of handlers on each visit unless it destroys the previous one.
+   */
+  destroy: () => void;
 }
 
 /** Convert a {@link Premove} to UCI notation. */
@@ -85,11 +91,29 @@ function premoveToUci(m: Premove): string {
  * `onPosition` callback). When `onMove` is omitted, the board applies moves
  * optimistically itself (standalone/offline mode).
  */
+/**
+ * The view currently mounted on each element, so a remount can detach the previous one.
+ *
+ * `BoardView` binds its click and pointerdown handlers to the *element*, and the board elements
+ * (`#board`, `#chapter-board`) live in `index.html` — they outlive any route, while `bootstrap`
+ * re-runs on every SPA navigation. Making the mount itself idempotent is what keeps that safe:
+ * relying on each caller to destroy its previous board means one route that forgets reintroduces
+ * doubled gestures, and forgetting is exactly what happens (see the tracked follow-up in
+ * `docs/ROADMAP.md` about hand-maintained teardown lists).
+ *
+ * Weak so an element that is discarded takes its entry with it.
+ */
+const mountedTeardowns = new WeakMap<HTMLElement, () => void>();
+
 export function mountBoard(
   elements: BoardElements,
   options?: MountBoardOptions,
 ): MountedBoard {
   const { boardEl, statusEl, flipEl } = elements;
+
+  // The whole teardown, not just the view's: the flip button's handler is bound out here and would
+  // otherwise survive a remount, stacking one flip per navigation.
+  mountedTeardowns.get(boardEl)?.();
 
   let fen = STARTING_FEN;
   const oracle = options?.oracle ?? new NullMoveOracle();
@@ -124,7 +148,18 @@ export function mountBoard(
   });
   view.setPosition(fen);
 
-  flipEl?.addEventListener('click', () => view.flip());
+  // `#flip` is persistent markup too, so this listener needs the same treatment as the board's own:
+  // named, and removed on destroy. Left anonymous it stacked one flip-per-navigation, which reads as
+  // the board refusing to flip — an even number of handlers returns it to where it started.
+  const onFlip = (): void => view.flip();
+  flipEl?.addEventListener('click', onFlip);
+
+  const teardown = (): void => {
+    flipEl?.removeEventListener('click', onFlip);
+    view.destroy();
+    if (mountedTeardowns.get(boardEl) === teardown) mountedTeardowns.delete(boardEl);
+  };
+  mountedTeardowns.set(boardEl, teardown);
 
   return {
     view,
@@ -134,5 +169,6 @@ export function mountBoard(
     setOrientation: (orientation: 'white' | 'black') => {
       if (view.orientationColor !== orientation) view.flip();
     },
+    destroy: teardown,
   };
 }

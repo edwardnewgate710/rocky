@@ -39,7 +39,11 @@
  * single counter. This third **test-only** bridge route calls the repository's real `award()` —
  * the same method the worker calls — so progress and unlock timing follow the production rules
  * rather than a fixture that hardcodes them.
- * Body: `{ playerId, key, increment? }`. Returns the resulting `{ playerId, key, progress, unlockedAt }`.
+ * ## Bridge route: `POST /e2e/studies`
+ *
+ * Seeds a public study with a PGN-imported chapter for E2E tests.
+ * Body: `{ ownerId?, name?, description?, pgn? }`.
+ * Returns `{ studyId, chapterId }`.
  */
 import { createServer, type Server } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -78,6 +82,7 @@ import { InMemoryMessagingRepository } from '@chess-platform/messaging';
 import { InMemorySocialGraphRepository } from '@chess-platform/social';
 import { AchievementRuleError, InMemoryAchievementsRepository } from '@chess-platform/achievements';
 import { LearningRuleError, InMemoryLearningRepository } from '@chess-platform/learning';
+import { StudyRuleError, InMemoryStudiesRepository } from '@chess-platform/studies';
 import { InMemoryCommunityRepository } from '@chess-platform/community';
 import {
   InMemorySearchRepository,
@@ -217,7 +222,8 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
   // as an error rather than as an empty catalogue.
   const achievementsRepository = new InMemoryAchievementsRepository();
   const learningRepository = new InMemoryLearningRepository();
-  const deps: ApiDependencies = { repos, hasher, tokens, clock, ids, config, rateLimiter, tournamentRepo, gameLauncher, liveView: broadcaster, emailSender, messagingRepository, socialGraphRepository, searchRepository, communityRepository, achievementsRepository, learningRepository, graphql: { introspection: false } };
+  const studiesRepository = new InMemoryStudiesRepository();
+  const deps: ApiDependencies = { repos, hasher, tokens, clock, ids, config, rateLimiter, tournamentRepo, gameLauncher, liveView: broadcaster, emailSender, messagingRepository, socialGraphRepository, searchRepository, communityRepository, achievementsRepository, learningRepository, studiesRepository, graphql: { introspection: false } };
   const apiServer = createApiServer(deps);
 
   const tokenVerifier = new ApiTokenVerifier((token: string) => {
@@ -566,6 +572,67 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
               slug: createdCourse.slug,
               lessonId: createdLesson.id,
               stepIds: [textStep.id, moveStep.id, quizStep.id],
+            }));
+          } catch (err) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ code: 'internal_error', message: (err as Error).message }));
+          }
+        })();
+      });
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/e2e/studies') {
+      let body = '';
+      req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+      req.on('end', () => {
+        void (async () => {
+          try {
+            let parsed: Record<string, unknown> = {};
+            if (body.trim()) {
+              try {
+                parsed = JSON.parse(body) as Record<string, unknown>;
+              } catch {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ code: 'bad_request', message: 'Invalid JSON body' }));
+                return;
+              }
+            }
+
+            if (!parsed || typeof parsed !== 'object') {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ code: 'bad_request', message: 'Body must be an object' }));
+              return;
+            }
+
+            const ownerId = typeof parsed.ownerId === 'string' ? parsed.ownerId : ids.next();
+            const name = typeof parsed.name === 'string' ? parsed.name : 'Ruy Lopez Masterclass';
+            const description = typeof parsed.description === 'string' ? parsed.description : 'Detailed analysis of the Ruy Lopez opening.';
+            const pgnText = typeof parsed.pgn === 'string'
+              ? parsed.pgn
+              : '[Event "Ruy Lopez Main Line"]\n[White "Kasparov"]\n[Black "Deep Blue"]\n\n1. e4 { King\'s pawn opening. } e5 2. Nf3 $1 Nc6 (2... Nf6 $2 3. Nxe5 d6) 3. Bb5 *';
+
+            const posReader = new CorePositionReader();
+
+            let createdStudy;
+            let chapters;
+            try {
+              const studyId = ids.next();
+              createdStudy = await studiesRepository.createStudy(studyId, ownerId, name, description, 'public');
+              chapters = await studiesRepository.importPgn(createdStudy.id, ownerId, pgnText, posReader);
+            } catch (err) {
+              if (err instanceof StudyRuleError) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ code: err.code, message: err.message }));
+                return;
+              }
+              throw err;
+            }
+
+            res.writeHead(201, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              studyId: createdStudy.id,
+              chapterId: chapters[0] ? chapters[0].id : null,
             }));
           } catch (err) {
             res.writeHead(500, { 'Content-Type': 'application/json' });

@@ -94,7 +94,7 @@ export class LearningController {
       }
       this.callbacks.onError(messageOf(err));
     } finally {
-      if (this.isCurrent(generation)) this.callbacks.onLoading(false);
+      if (generation === this.requestGeneration) this.callbacks.onLoading(false);
     }
   }
 
@@ -138,7 +138,7 @@ export class LearningController {
       }
       this.callbacks.onError(messageOf(err));
     } finally {
-      if (this.isCurrent(generation)) this.callbacks.onLoading(false);
+      if (generation === this.requestGeneration) this.callbacks.onLoading(false);
     }
   }
 
@@ -193,7 +193,7 @@ export class LearningController {
       }
       this.callbacks.onError(messageOf(err));
     } finally {
-      if (this.isCurrent(generation)) this.callbacks.onLoading(false);
+      if (generation === this.requestGeneration) this.callbacks.onLoading(false);
     }
   }
 
