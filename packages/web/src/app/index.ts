@@ -12,3 +12,5 @@ export * from './lobby-controller.js';
 export * from './profile-controller.js';
 export * from './router.js';
 export * from './theme-toggle.js';
+export * from './lifecycle.js';
+

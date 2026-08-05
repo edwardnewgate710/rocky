@@ -115,10 +115,16 @@ export class GameController {
     this.handleState(this.gameSync.getState());
   }
 
-  /** Stop listening. */
+  /** Stop listening to state changes and stop GameSync. */
   stop(): void {
     this.unsubscribe?.();
     this.unsubscribe = null;
+    this.gameSync.stop();
+  }
+
+  /** Teardown the controller (alias for {@link stop}). */
+  dispose(): void {
+    this.stop();
   }
 
   /** The current projected FEN (valid at the latest applied ply). */

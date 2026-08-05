@@ -71,6 +71,8 @@ export interface MountedBoard {
    * `index.html` stacks a fresh set of handlers on each visit unless it destroys the previous one.
    */
   destroy: () => void;
+  /** Alias for {@link destroy} to normalise teardown verb across all disposables. */
+  dispose: () => void;
 }
 
 /** Convert a {@link Premove} to UCI notation. */
@@ -170,5 +172,6 @@ export function mountBoard(
       if (view.orientationColor !== orientation) view.flip();
     },
     destroy: teardown,
+    dispose: teardown,
   };
 }

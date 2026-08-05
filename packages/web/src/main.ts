@@ -6,45 +6,14 @@
  * navigation, and registering the service worker for PWA installability. It
  * contains no application logic.
  */
-import { bootstrap } from './app/index.js';
+import { bootstrap, createLifecycle } from './app/index.js';
 import { buildSearchUrl, parseSearchMode } from './app/search-results.js';
 
-/** The disposal surface `run()` needs; every controller it tears down exposes exactly this. */
-type Disposable = { dispose: () => void } | null;
-
 if (typeof document !== 'undefined') {
-  // The theme controller is recreated on every bootstrap; keep the latest so
-  // the (document-level, bound-once) theme click handler always targets it.
-  let currentTheme: { toggle: () => void } | null = null;
-
-  // Controllers from the previous route. `run()` re-bootstraps in place, and the ones that own a
-  // timer or in-flight requests keep working against sections the new route has already hidden —
-  // the lobby's seek refresh, the profile's fetches, and the tournament live poll all outlive the
-  // page that started them and accumulate one more copy per navigation. Disposing the previous set
-  // first is what makes re-bootstrapping safe.
-  let previous: { lobby: Disposable; profile: Disposable; tournament: Disposable; search: Disposable; messages: Disposable; teams: Disposable; forum: Disposable; learning: Disposable; studies: Disposable } | null = null;
-
-  // The board is tracked apart from the controllers because it is torn down differently and for a
-  // different reason. `#board` and `#chapter-board` both live in `index.html`, so they outlive any
-  // one route; `BoardView` binds click/pointerdown to the element rather than to itself, so a second
-  // mount leaves the first view's listeners in place and every gesture is handled twice over.
-  let previousBoard: { destroy: () => void } | null = null;
+  const lifecycle = createLifecycle(() => bootstrap(document));
 
   const run = (): void => {
-    previous?.lobby?.dispose();
-    previous?.profile?.dispose();
-    previous?.tournament?.dispose();
-    previous?.search?.dispose();
-    previous?.messages?.dispose();
-    previous?.teams?.dispose();
-    previous?.forum?.dispose();
-    previous?.learning?.dispose();
-    previous?.studies?.dispose();
-    previousBoard?.destroy();
-    const result = bootstrap(document);
-    currentTheme = result.theme;
-    previousBoard = result.board;
-    previous = { lobby: result.lobby, profile: result.profile, tournament: result.tournament, search: result.search, messages: result.messages, teams: result.teams, forum: result.forum, learning: result.learning, studies: result.studies };
+    lifecycle.run();
   };
 
   // Bound once on document — survives bootstrap re-runs (which replace the
@@ -54,7 +23,7 @@ if (typeof document !== 'undefined') {
   document.addEventListener('click', (e) => {
     const target = e.target;
     if (target instanceof HTMLElement && target.closest('#theme-toggle')) {
-      currentTheme?.toggle();
+      lifecycle.getCurrentTheme()?.toggle();
     }
   });
 

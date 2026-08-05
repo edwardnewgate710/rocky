@@ -81,11 +81,10 @@ import type { TimeControl } from '../net/ws-protocol.js';
 export { renderEmpty, formatClock, formatTimeControl };
 export type { EmptyStateOptions };
 
-/** Everything the bootstrap wired, returned for later increments and tests. */
-export interface Bootstrapped {
-  readonly app: App;
-  readonly board: MountedBoard | null;
+/** Disposables returned by bootstrap, torn down on SPA route navigation. */
+export interface BootstrappedDisposables {
   readonly controller: GameControllerType | null;
+  readonly board: MountedBoard | null;
   readonly lobby: LobbyControllerType | null;
   readonly profile: ProfileControllerType | null;
   readonly tournament: TournamentControllerType | null;
@@ -95,9 +94,17 @@ export interface Bootstrapped {
   readonly forum: ForumControllerType | null;
   readonly learning: LearningControllerType | null;
   readonly studies: StudiesControllerType | null;
+}
+
+/** Everything the bootstrap wired, returned for later increments and tests. */
+export interface Bootstrapped extends BootstrappedDisposables {
+  readonly app: App;
   readonly auth: AuthControllerType;
   readonly theme: ThemeToggleType;
 }
+
+/** Key of disposables returned by bootstrap. Driven by BootstrappedDisposables for structural teardown exhaustiveness. */
+export type DisposableKey = keyof BootstrappedDisposables;
 
 /**
  * Extract a game ID from a URL-like path. Only `/game/{id}` is accepted.

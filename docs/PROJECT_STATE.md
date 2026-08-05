@@ -4,7 +4,16 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-05 - M14 Increment 24: Viewer-facing Studies UI (ADR-0091)._
+_Last updated: 2026-08-05 - M14 Increment 25: Structural bootstrap teardown & disposal exhaustiveness (ADR-0092)._
+
+## M14 Increment 25 - Structural bootstrap teardown & disposal exhaustiveness (ADR-0092)
+
+Eliminates manual route controller teardown in `main.ts` and fixes latent memory/subscription leaks by making un-disposed route controllers a compile error.
+
+- **Types & Exhaustiveness (`bootstrap.ts`, `lifecycle.ts`)**: Separated `BootstrappedDisposables` from `Bootstrapped`. Derived `DisposableKey = keyof BootstrappedDisposables`. `DISPOSABLE_TEARDOWN_MAP` is typed strictly as `Record<DisposableKey, true>` so omitting a disposable controller fails TypeScript compilation (`TS2741`).
+- **Lifecycle Unit & Main Entry (`lifecycle.ts`, `main.ts`)**: Extracted the run and teardown loop into `createLifecycle` in `packages/web/src/app/lifecycle.ts`. `main.ts` becomes a thin DOM entry point delegating run and theme state management to `createLifecycle`.
+- **Verb Normalisation & Socket Leak Fix (`game-controller.ts`, `board.ts`)**: Normalised teardown verb to `.dispose()` across all disposables (`MountedBoard.dispose()`, `GameController.dispose()`). Cascaded `GameController.stop()` to `gameSync.stop()`, unsubscribing game socket listeners when navigating away from `/game/{id}` routes.
+- **Tests & Documentation (`lifecycle.test.ts`, `0092-bootstrap-teardown.md`)**: Added unit tests covering teardown order before next bootstrap, null disposable skipping, and type-level `@ts-expect-error` exhaustiveness guard. Documented in `docs/adr/0092-bootstrap-teardown.md`.
 
 ## M14 Increment 24 - Viewer-facing Studies UI (browse, chapters, move tree) (ADR-0091)
 
