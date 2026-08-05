@@ -518,3 +518,95 @@ export interface AchievementSummary {
   readonly unlockedCount: number;
   readonly pointsTotal: number;
 }
+
+// --- Learning & Courses (M14 inc 23) -------------------------------------------
+
+export type CourseDifficulty = 'beginner' | 'intermediate' | 'advanced';
+
+export interface CourseView {
+  readonly id: string;
+  readonly authorId: string;
+  readonly slug: string;
+  readonly title: string;
+  readonly description: string;
+  readonly difficulty: CourseDifficulty;
+  readonly published: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly deletedAt?: string;
+}
+
+export interface CourseList {
+  readonly total: number;
+  readonly items: readonly CourseView[];
+}
+
+export interface LessonView {
+  readonly id: string;
+  readonly courseId: string;
+  readonly title: string;
+  readonly orderIndex: number;
+  readonly deletedAt?: string;
+}
+
+export interface TextStepView {
+  readonly id: string;
+  readonly lessonId: string;
+  readonly orderIndex: number;
+  readonly kind: 'text';
+  readonly prose: string;
+  readonly deletedAt?: string;
+}
+
+export interface MoveStepView {
+  readonly id: string;
+  readonly lessonId: string;
+  readonly orderIndex: number;
+  readonly kind: 'move';
+  readonly fen: string;
+  // expectedSan is sent by the server but deliberately omitted in the client model so the client cannot grade attempts locally
+  readonly hint?: string;
+  readonly deletedAt?: string;
+}
+
+export interface QuizStepView {
+  readonly id: string;
+  readonly lessonId: string;
+  readonly orderIndex: number;
+  readonly kind: 'quiz';
+  readonly question: string;
+  readonly options: readonly string[];
+  // correctIndex is sent by the server but deliberately omitted in the client model so the client cannot grade attempts locally
+  readonly deletedAt?: string;
+}
+
+export type StepView = TextStepView | MoveStepView | QuizStepView;
+
+export interface CourseProgressSummaryView {
+  readonly courseId: string;
+  readonly playerId: string;
+  readonly totalSteps: number;
+  readonly completedSteps: number;
+}
+
+export interface ProgressView {
+  readonly playerId: string;
+  readonly courseId: string;
+  readonly lessonId: string;
+  readonly stepId: string;
+  readonly completedAt?: string;
+  readonly attempts: number;
+}
+
+export interface AttemptResultView {
+  readonly stepId: string;
+  readonly correct: boolean;
+  readonly completedAt?: string;
+  readonly attempts: number;
+}
+
+export interface SubmitAttemptRequest {
+  readonly san?: string;
+  readonly selectedIndex?: number;
+}
+

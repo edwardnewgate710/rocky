@@ -29,6 +29,9 @@ export type Route =
   | { readonly name: 'team'; readonly slug: string }
   | { readonly name: 'forum'; readonly slug: string }
   | { readonly name: 'thread'; readonly slug: string; readonly threadId: string }
+  | { readonly name: 'courses' }
+  | { readonly name: 'course'; readonly slug: string }
+  | { readonly name: 'lesson'; readonly id: string }
   | { readonly name: 'not-found' };
 
 /** Parse a URL pathname into a typed route. */
@@ -51,6 +54,16 @@ export function parseRoute(pathname: string): Route {
   if (segments[0] === 'messages') {
     if (segments.length === 1) return { name: 'messages' };
     return { name: 'conversation', id: decodeSegment(segments[1]!) };
+  }
+  if (segments[0] === 'courses') {
+    if (segments.length === 1) return { name: 'courses' };
+    return { name: 'course', slug: decodeSegment(segments[1]!) };
+  }
+  if (segments[0] === 'lessons') {
+    if (segments.length >= 2) {
+      return { name: 'lesson', id: decodeSegment(segments[1]!) };
+    }
+    return { name: 'not-found' };
   }
   if (segments[0] === 'teams') {
     if (segments.length === 1) return { name: 'teams' };
@@ -112,6 +125,12 @@ export function routeToPath(route: Route): string {
       return `/teams/${route.slug}/forum`;
     case 'thread':
       return `/teams/${route.slug}/forum/${route.threadId}`;
+    case 'courses':
+      return '/courses';
+    case 'course':
+      return `/courses/${route.slug}`;
+    case 'lesson':
+      return `/lessons/${route.id}`;
     case 'not-found':
       return '/not-found';
   }

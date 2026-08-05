@@ -69,6 +69,15 @@ import type {
   ForumThreadCreated,
   AchievementSummary,
   PlayerAchievementList,
+  CourseDifficulty,
+  CourseList,
+  CourseView,
+  LessonView,
+  StepView,
+  CourseProgressSummaryView,
+  ProgressView,
+  AttemptResultView,
+  SubmitAttemptRequest,
 } from './models.js';
 
 /** A request spec plus whether it requires authentication. */
@@ -102,6 +111,7 @@ export class GambitClient {
   readonly social: SocialApi;
   readonly teams: TeamsApi;
   readonly achievements: AchievementsApi;
+  readonly learning: LearningApi;
   /** The read layer (ADR-0073). Degrades to null answers when the flag is off. */
   readonly graphql: GraphQLApi;
   private readonly http: HttpClient;
@@ -140,6 +150,7 @@ export class GambitClient {
     this.social = new SocialApi(this.execute);
     this.teams = new TeamsApi(this.execute);
     this.achievements = new AchievementsApi(this.execute);
+    this.learning = new LearningApi(this.execute);
     this.graphql = new GraphQLApi(this.execute);
   }
 
@@ -658,3 +669,102 @@ export class AchievementsApi {
     });
   }
 }
+
+/**
+ * Learning & Courses (M14 inc 23).
+ *
+ * Answers 503 when the deployment did not configure the learning repository.
+ * `permanentStatuses: [503]` suppresses transport retries for 503 on learning endpoints.
+ */
+const LEARNING_PERMANENT_STATUSES: readonly number[] = [503];
+
+export class LearningApi {
+  private readonly execute: Execute;
+  constructor(execute: Execute) {
+    this.execute = execute;
+  }
+
+  listCourses(opts?: { search?: string; limit?: number; offset?: number; difficulty?: CourseDifficulty }): Promise<CourseList> {
+    return this.execute<CourseList>({
+      method: 'GET',
+      path: '/v1/courses',
+      auth: 'optional',
+      permanentStatuses: LEARNING_PERMANENT_STATUSES,
+      ...(opts?.search !== undefined || opts?.limit !== undefined || opts?.offset !== undefined || opts?.difficulty !== undefined
+        ? {
+            query: {
+              ...(opts.search !== undefined ? { search: opts.search } : {}),
+              ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+              ...(opts.offset !== undefined ? { offset: opts.offset } : {}),
+              ...(opts.difficulty !== undefined ? { difficulty: opts.difficulty } : {}),
+            },
+          }
+        : {}),
+    });
+  }
+
+  courseBySlug(slug: string): Promise<CourseView> {
+    return this.execute<CourseView>({
+      method: 'GET',
+      path: `/v1/courses/slug/${encodeURIComponent(slug)}`,
+      auth: 'optional',
+      permanentStatuses: LEARNING_PERMANENT_STATUSES,
+    });
+  }
+
+  lessons(courseId: string): Promise<readonly LessonView[]> {
+    return this.execute<readonly LessonView[]>({
+      method: 'GET',
+      path: `/v1/courses/${encodeURIComponent(courseId)}/lessons`,
+      auth: 'optional',
+      permanentStatuses: LEARNING_PERMANENT_STATUSES,
+    });
+  }
+
+  progress(courseId: string): Promise<CourseProgressSummaryView> {
+    return this.execute<CourseProgressSummaryView>({
+      method: 'GET',
+      path: `/v1/courses/${encodeURIComponent(courseId)}/progress`,
+      auth: true,
+      permanentStatuses: LEARNING_PERMANENT_STATUSES,
+    });
+  }
+
+  progressDetails(courseId: string): Promise<readonly ProgressView[]> {
+    return this.execute<readonly ProgressView[]>({
+      method: 'GET',
+      path: `/v1/courses/${encodeURIComponent(courseId)}/progress/details`,
+      auth: true,
+      permanentStatuses: LEARNING_PERMANENT_STATUSES,
+    });
+  }
+
+  lesson(lessonId: string): Promise<LessonView> {
+    return this.execute<LessonView>({
+      method: 'GET',
+      path: `/v1/lessons/${encodeURIComponent(lessonId)}`,
+      auth: 'optional',
+      permanentStatuses: LEARNING_PERMANENT_STATUSES,
+    });
+  }
+
+  steps(lessonId: string): Promise<readonly StepView[]> {
+    return this.execute<readonly StepView[]>({
+      method: 'GET',
+      path: `/v1/lessons/${encodeURIComponent(lessonId)}/steps`,
+      auth: 'optional',
+      permanentStatuses: LEARNING_PERMANENT_STATUSES,
+    });
+  }
+
+  attempt(stepId: string, body: SubmitAttemptRequest): Promise<AttemptResultView> {
+    return this.execute<AttemptResultView>({
+      method: 'POST',
+      path: `/v1/steps/${encodeURIComponent(stepId)}/attempt`,
+      auth: true,
+      body,
+      permanentStatuses: LEARNING_PERMANENT_STATUSES,
+    });
+  }
+}
+

@@ -50,9 +50,13 @@ export class AchievementsController {
    * Keyed by player id, not by handle: both routes take an id, and the profile page already holds
    * one by the time this runs.
    *
-   * Answers nothing once the deployment has been found to run without achievements: that is a
-   * process-lifetime setting, so re-asking on the next profile would spend two requests — each one
-   * up to `maxAttempts` because 503 is classified retryable — to be told the same thing.
+   * Answers nothing once this deployment has been found to run without achievements: that is a
+   * process-lifetime setting on the server, so asking again can only get the same answer.
+   *
+   * The latch only reaches to the end of this view — `bootstrap` re-runs on every SPA navigation
+   * (`main.ts`) and builds a fresh controller — and a profile view loads once, so it rarely fires.
+   * What keeps the cost down is `permanentStatuses: [503]` on both reads, which stops the retry
+   * policy repeating a known-permanent answer.
    */
   async load(playerId: string): Promise<void> {
     if (this.disposed || this.unavailable) return;

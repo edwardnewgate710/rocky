@@ -58,6 +58,7 @@ import {
   ArenaService,
   TournamentResultReporter,
   ConsoleEmailSender,
+  CorePositionReader,
   type ApiServer,
   type ApiDependencies,
 } from '@chess-platform/api';
@@ -76,6 +77,7 @@ import {
 import { InMemoryMessagingRepository } from '@chess-platform/messaging';
 import { InMemorySocialGraphRepository } from '@chess-platform/social';
 import { AchievementRuleError, InMemoryAchievementsRepository } from '@chess-platform/achievements';
+import { LearningRuleError, InMemoryLearningRepository } from '@chess-platform/learning';
 import { InMemoryCommunityRepository } from '@chess-platform/community';
 import {
   InMemorySearchRepository,
@@ -214,7 +216,8 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
   // it. The profile page reads the per-player list, so an absent repository would render the section
   // as an error rather than as an empty catalogue.
   const achievementsRepository = new InMemoryAchievementsRepository();
-  const deps: ApiDependencies = { repos, hasher, tokens, clock, ids, config, rateLimiter, tournamentRepo, gameLauncher, liveView: broadcaster, emailSender, messagingRepository, socialGraphRepository, searchRepository, communityRepository, achievementsRepository, graphql: { introspection: false } };
+  const learningRepository = new InMemoryLearningRepository();
+  const deps: ApiDependencies = { repos, hasher, tokens, clock, ids, config, rateLimiter, tournamentRepo, gameLauncher, liveView: broadcaster, emailSender, messagingRepository, socialGraphRepository, searchRepository, communityRepository, achievementsRepository, learningRepository, graphql: { introspection: false } };
   const apiServer = createApiServer(deps);
 
   const tokenVerifier = new ApiTokenVerifier((token: string) => {
@@ -460,6 +463,110 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
 
             res.writeHead(201, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ indexed: docs.length }));
+          } catch (err) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ code: 'internal_error', message: (err as Error).message }));
+          }
+        })();
+      });
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/e2e/courses') {
+      let body = '';
+      req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+      req.on('end', () => {
+        void (async () => {
+          try {
+            let parsed: Record<string, unknown> = {};
+            if (body.trim()) {
+              try {
+                parsed = JSON.parse(body) as Record<string, unknown>;
+              } catch {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ code: 'bad_request', message: 'Invalid JSON body' }));
+                return;
+              }
+            }
+
+            if (!parsed || typeof parsed !== 'object') {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ code: 'bad_request', message: 'Body must be an object' }));
+              return;
+            }
+
+            const authorId = typeof parsed.authorId === 'string' ? parsed.authorId : ids.next();
+            const slug = typeof parsed.slug === 'string' ? parsed.slug : `course-${ids.next()}`;
+            const title = typeof parsed.title === 'string' ? parsed.title : 'Starter Tactics';
+            const description = typeof parsed.description === 'string' ? parsed.description : 'Learn basic tactics.';
+            const difficulty = (parsed.difficulty === 'beginner' || parsed.difficulty === 'intermediate' || parsed.difficulty === 'advanced')
+              ? parsed.difficulty
+              : 'beginner';
+
+            const posReader = new CorePositionReader();
+
+            let createdCourse;
+            let createdLesson;
+            let textStep;
+            let moveStep;
+            let quizStep;
+
+            try {
+              const courseId = ids.next();
+              createdCourse = await learningRepository.createCourse(courseId, authorId, slug, title, description, difficulty, true);
+
+              const lessonId = ids.next();
+              createdLesson = await learningRepository.createLesson(lessonId, createdCourse.id, authorId, 'Basics');
+
+              textStep = await learningRepository.createStep(
+                ids.next(),
+                createdLesson.id,
+                authorId,
+                { kind: 'text', prose: 'Welcome to this lesson! Learn basic tactical themes.' },
+                posReader,
+              );
+
+              moveStep = await learningRepository.createStep(
+                ids.next(),
+                createdLesson.id,
+                authorId,
+                {
+                  kind: 'move',
+                  fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+                  expectedSan: 'e4',
+                  hint: 'Advance your king pawn two squares.',
+                },
+                posReader,
+              );
+
+              quizStep = await learningRepository.createStep(
+                ids.next(),
+                createdLesson.id,
+                authorId,
+                {
+                  kind: 'quiz',
+                  question: 'Which piece moves diagonally?',
+                  options: ['Rook', 'Bishop', 'Knight'],
+                  correctIndex: 1,
+                },
+                posReader,
+              );
+            } catch (err) {
+              if (err instanceof LearningRuleError) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ code: err.code, message: err.message }));
+                return;
+              }
+              throw err;
+            }
+
+            res.writeHead(201, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              courseId: createdCourse.id,
+              slug: createdCourse.slug,
+              lessonId: createdLesson.id,
+              stepIds: [textStep.id, moveStep.id, quizStep.id],
+            }));
           } catch (err) {
             res.writeHead(500, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ code: 'internal_error', message: (err as Error).message }));

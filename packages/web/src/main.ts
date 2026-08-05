@@ -22,7 +22,7 @@ if (typeof document !== 'undefined') {
   // the lobby's seek refresh, the profile's fetches, and the tournament live poll all outlive the
   // page that started them and accumulate one more copy per navigation. Disposing the previous set
   // first is what makes re-bootstrapping safe.
-  let previous: { lobby: Disposable; profile: Disposable; tournament: Disposable; search: Disposable; messages: Disposable; teams: Disposable; forum: Disposable } | null = null;
+  let previous: { lobby: Disposable; profile: Disposable; tournament: Disposable; search: Disposable; messages: Disposable; teams: Disposable; forum: Disposable; learning: Disposable } | null = null;
 
   const run = (): void => {
     previous?.lobby?.dispose();
@@ -32,9 +32,10 @@ if (typeof document !== 'undefined') {
     previous?.messages?.dispose();
     previous?.teams?.dispose();
     previous?.forum?.dispose();
+    previous?.learning?.dispose();
     const result = bootstrap(document);
     currentTheme = result.theme;
-    previous = { lobby: result.lobby, profile: result.profile, tournament: result.tournament, search: result.search, messages: result.messages, teams: result.teams, forum: result.forum };
+    previous = { lobby: result.lobby, profile: result.profile, tournament: result.tournament, search: result.search, messages: result.messages, teams: result.teams, forum: result.forum, learning: result.learning };
   };
 
   // Bound once on document — survives bootstrap re-runs (which replace the

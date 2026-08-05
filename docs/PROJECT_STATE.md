@@ -4,7 +4,18 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-05 - M14 Increment 22: Achievements UI (ADR-0089)._
+_Last updated: 2026-08-05 - M14 Increment 23: Learner-facing Learning UI (ADR-0090)._
+
+## M14 Increment 23 - Learner-facing Learning UI (courses, lessons, steps) (ADR-0090)
+
+Exposes the M10 learning backend (23 routes under `/v1/courses`, `/v1/lessons`, `/v1/steps`, previously no UI at all) as a learner UI: browse published courses, view course lessons, and work through steps.
+
+- **Routing & Client (`packages/web/src/app/router.ts`, `packages/web/src/api/client.ts`, `models.ts`)**: Added `/courses`, `/courses/:slug`, and `/lessons/:id` routes to `router.ts`. Added `LearningApi` class and `GambitClient.learning` with `permanentStatuses: [503]` retry suppression. Defined REST models including `StepView` discriminated union.
+- **Learner Interaction & Read-Only Board**: Move steps render positions on a read-only board (`setTurn(false)`) and accept SAN move attempts via a text input field, evaluated server-side by `POST /v1/steps/:id/attempt`. All steps of a lesson render on one scrolling page. Navigation adds `Learn` as a 6th topbar nav entry matching existing link styling.
+- **Per-step progress survives a reload (`learning-helpers.ts`)**: `loadLesson` seeds per-step state from `GET /v1/courses/:id/progress/details` via `deriveStepAttempts`, so a step completed in an earlier session still reads `Done` on first paint. Without it the page contradicted itself after a reload — the summary read `1 / 3 steps completed` while every step showed no status. The e2e spec reloads and re-asserts.
+- **503 Latching & Controller (`learning-controller.ts`)**: GETs pass `permanentStatuses: [503]` so an unconfigured deployment is not retried, and the controller latches on `ServiceUnavailableError` for the rest of that view — not the session, since `bootstrap` re-runs per SPA navigation and builds a fresh controller (ADR-0090 §7, which also corrects the same overstatement in ADR-0089). On 503, the Learn surface degrades quietly with a plain sentence in the muted `.count` voice (`Learning service unavailable.`).
+- **Harness & Bridge Route (`packages/e2e-harness/src/harness.ts`)**: Wired `learningRepository` into `packages/e2e-harness` (`ApiDependencies`) and added bridge route `POST /e2e/courses` to seed published courses with lessons and steps.
+- **Tests & ADR**: Unit tests in `learning-helpers.test.ts` and `learning-controller.test.ts`, Playwright E2E spec in `learning.spec.ts`. Documented in `docs/adr/0090-learning-ui.md`.
 
 ## M14 Increment 22 - Achievements UI (ADR-0089)
 

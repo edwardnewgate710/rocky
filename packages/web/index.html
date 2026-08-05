@@ -14,6 +14,7 @@
       <h1><a href="/" data-route="lobby">Gambit</a></h1>
       <nav class="nav">
         <a href="/" data-route="lobby">Lobby</a>
+        <a href="/courses" data-route="courses">Learn</a>
         <a href="/profile" data-route="profile">Profile</a>
         <a href="/tournaments" data-route="tournaments">Tournaments</a>
         <a href="/teams" data-route="teams">Teams</a>
@@ -246,6 +247,25 @@
         <button id="composer-submit" type="submit">Send</button>
       </form>
       <p id="conversation-error" class="error" role="alert"></p>
+    </section>
+    <section id="courses" class="courses" aria-label="Courses" hidden>
+      <h2>Courses</h2>
+      <div id="course-list" class="panel-list" aria-label="Courses list"></div>
+      <p id="courses-error" class="error" role="alert"></p>
+    </section>
+    <section id="course" class="course" aria-label="Course" hidden>
+      <h2 id="course-title">Course</h2>
+      <p id="course-description"></p>
+      <p id="course-progress" class="count"></p>
+      <h3>Lessons</h3>
+      <div id="lesson-list" class="panel-list" aria-label="Lessons list"></div>
+      <p id="course-error" class="error" role="alert"></p>
+    </section>
+    <section id="lesson" class="lesson" aria-label="Lesson" hidden>
+      <h2 id="lesson-title">Lesson</h2>
+      <p id="lesson-progress" class="count"></p>
+      <div id="step-list" class="step-list" aria-label="Steps"></div>
+      <p id="lesson-error" class="error" role="alert"></p>
     </section>
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -777,7 +777,8 @@ button:disabled {
 .cg-form input[type='number'],
 .composer-form input,
 .team-search input,
-.thread-form input {
+.thread-form input,
+.step-san-input {
   padding: 6px 8px;
   border: 1px solid transparent;
   border-radius: 6px;
@@ -791,7 +792,8 @@ button:disabled {
 .cg-form input:focus-visible,
 .composer-form input:focus-visible,
 .team-search input:focus-visible,
-.thread-form input:focus-visible { outline: 3px solid var(--sel); outline-offset: 1px; }
+.thread-form input:focus-visible,
+.step-san-input:focus-visible { outline: 3px solid var(--sel); outline-offset: 1px; }
 
 /* More options disclosure. */
 .cg-more { display: flex; flex-direction: column; gap: 8px; }
@@ -825,7 +827,8 @@ button:disabled {
   .composer-form input,
   .composer-form button,
   .team-search input,
-  .thread-form input { min-height: 44px; }
+  .thread-form input,
+  .step-san-input { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .cg-chip,
@@ -1105,3 +1108,85 @@ button:disabled {
   flex-shrink: 0;
   white-space: nowrap;
 }
+
+/* --- Learning & Courses (M14 inc 23) --- */
+.courses,
+.course,
+.lesson {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 16px;
+}
+.courses h2,
+.course h2,
+.lesson h2 {
+  margin: 0 0 16px;
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.step-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.step-block {
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--panel-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.step-block:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+.step-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.step-number {
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+.step-status {
+  font-size: 0.875rem;
+}
+.step-prose {
+  font-size: 1rem;
+  line-height: 1.4;
+}
+.step-board-wrapper {
+  width: 100%;
+  max-width: 320px;
+  aspect-ratio: 1 / 1;
+  margin: 4px 0;
+}
+.step-board {
+  width: 100%;
+  height: 100%;
+}
+.step-hint {
+  margin: 0;
+  font-size: 0.875rem;
+}
+.step-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.step-san-input {
+  flex: 1 1 12ch;
+}
+.step-quiz-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.quiz-option-btn {
+  text-align: left;
+  justify-content: flex-start;
+  width: 100%;
+}
+
