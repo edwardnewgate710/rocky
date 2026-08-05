@@ -98,6 +98,12 @@ describe('PGN parsing', () => {
     assert.equal(tagValue(game!, 'Annotator'), 'say "hi" \\ C:\\path');
   });
 
+  it('drops move numbers rather than trusting them', () => {
+    // The tree already knows the order. A number that disagrees is the file's problem.
+    const [game] = parsePgn('1. e4 1... e5 7. Nf3 *');
+    assert.deepEqual(game?.moves.map((m) => m.san), ['e4', 'e5', 'Nf3']);
+  });
+
   it('converts all six PGN move suffix annotations to their equivalent NAGs ($1-$6)', () => {
     const pgn = '1. e4! e5? 2. Nf3!! Nc6?? 3. d4!? c5?! *';
     const [game] = parsePgn(pgn);
@@ -270,5 +276,23 @@ describe('PGN serialization', () => {
       [[1], [6], [5], [], [3], [4], [1]]
     );
     assert.deepEqual(second, first);
+  });
+});
+
+describe('PGN error offsets', () => {
+  it('points an unrecognised annotation at the first ! rather than at the move', () => {
+    // `1. e4!!! *` — the move itself is fine; `!!!` is what the reader has to go and fix, so the
+    // offset must land on the first `!` (index 5), not on the `e` at index 3. A range check alone
+    // cannot see this: both are inside the input.
+    const pgn = '1. e4!!! *\n';
+    assert.throws(
+      () => parsePgn(pgn),
+      (err: unknown) => {
+        assert.ok(err instanceof PgnParseError);
+        assert.equal(pgn[err.offset], '!', `offset ${err.offset} should sit on the first '!'`);
+        assert.equal(err.offset, pgn.indexOf('!'));
+        return true;
+      }
+    );
   });
 });

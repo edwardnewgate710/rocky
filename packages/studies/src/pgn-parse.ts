@@ -326,7 +326,9 @@ class PgnParser {
         if (nag === undefined) {
           throw new PgnParseError(
             `Unrecognised move annotation '${suffix}'`,
-            this.pos - token.length,
+            // Point at the first `!`/`?`, not at the start of the move. The move itself parsed
+            // fine; the annotation is what the reader has to go and look at.
+            this.pos - suffix.length,
             token
           );
         }
