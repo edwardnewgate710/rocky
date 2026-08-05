@@ -33,7 +33,7 @@ export function renderThreadList(
       {
         href: `/teams/${encodeURIComponent(slug)}/forum/${encodeURIComponent(thread.id)}`,
         'data-route': 'thread',
-        class: 'tournament-link',
+        class: 'row-link',
       },
       threadDisplayTitle(thread),
     );

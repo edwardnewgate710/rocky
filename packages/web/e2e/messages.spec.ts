@@ -111,7 +111,7 @@ test('direct messaging flow: User A messages User B from profile and User B sees
     await expect(convRow).toBeVisible({ timeout: 15_000 });
 
     // Click the conversation row/link
-    await convRow.locator('a.tournament-link').click();
+    await convRow.locator('a.row-link').click();
 
     // User B is navigated to the thread and sees User A's message
     await expect(pageB).toHaveURL(/\/messages\/[a-zA-Z0-9-]+$/, { timeout: 15_000 });

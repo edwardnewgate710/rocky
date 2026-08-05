@@ -136,3 +136,63 @@ test('SECURITY / PII REGRESSION TEST: player document contains NO email, email_h
   assert.strictEqual(docString.includes('secret_hash'), false);
   assert.strictEqual(docString.includes('confidential'), false);
 });
+
+test('display: gives a game a readable title and a subtitle from data already indexed', () => {
+  const doc = gameToDocument({
+    id: 'g1',
+    whiteHandle: 'Kasparov',
+    blackHandle: 'DeepBlue',
+    variant: 'Standard',
+    speed: 'Blitz',
+    result: '1-0',
+    rated: true,
+  });
+
+  // Original casing, unlike `fields`, which canonicalizes to lowercase for exact-match filtering.
+  assert.equal(doc.display?.type, 'game');
+  assert.equal(doc.display?.title, 'Kasparov vs DeepBlue');
+  assert.equal(doc.display?.subtitle, 'Standard · Blitz · 1-0');
+  assert.equal(doc.fields?.white, 'kasparov', 'fields stay canonicalized');
+});
+
+test('display: degrades a game title to the side that is present rather than rendering an empty vs', () => {
+  const doc = gameToDocument({
+    id: 'g2',
+    whiteHandle: 'Solo',
+    blackHandle: '   ',
+    variant: 'Standard',
+    speed: 'Bullet',
+    result: '*',
+    rated: false,
+  });
+  assert.equal(doc.display?.title, 'Solo');
+});
+
+test('display: titles a player by handle and never carries anything else about them', () => {
+  const doc = playerToDocument({ id: 'p1', handle: 'MagnusC', country: 'NO' });
+
+  // The SECURITY note on playerToDocument says email, email_hash and flags are never indexed, and
+  // `display` must reuse only the handle and country the projection already had. Asserted as the
+  // whole document rather than a scan for forbidden substrings: a handle may legitimately contain
+  // "hash" or "flag", and a substring denylist would fail on those while still missing any leak
+  // that arrives under a name nobody thought to list. Anything new on a player document has to be
+  // added here deliberately, which is the point.
+  assert.deepEqual(doc, {
+    id: 'player:p1',
+    text: 'MagnusC',
+    fields: { type: 'player', country: 'no' },
+    display: { type: 'player', title: 'MagnusC', subtitle: 'NO' },
+  });
+});
+
+test('display: titles a tournament by name with format and state beneath', () => {
+  const doc = tournamentToDocument({
+    id: 't1',
+    name: 'Summer Arena',
+    format: 'Arena',
+    state: 'Running',
+  });
+  assert.equal(doc.display?.type, 'tournament');
+  assert.equal(doc.display?.title, 'Summer Arena');
+  assert.equal(doc.display?.subtitle, 'Arena · Running');
+});

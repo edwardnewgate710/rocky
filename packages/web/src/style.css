@@ -921,13 +921,13 @@ button:disabled {
   gap: 4px;
   margin-bottom: 16px;
 }
-.tournament-link {
+.row-link {
   color: var(--fg);
   text-decoration: none;
   font-weight: 600;
 }
-.tournament-link:hover,
-.tournament-link:focus-visible {
+.row-link:hover,
+.row-link:focus-visible {
   text-decoration: underline;
   color: var(--sel);
 }

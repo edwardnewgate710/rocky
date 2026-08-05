@@ -12,9 +12,54 @@ export interface ParsedSearchHit {
   readonly score: number;
 }
 
-export interface HydratedHit extends ParsedSearchHit {
+/**
+ * A row, ready to render.
+ *
+ * Named for what it is rather than how it was built: nothing hydrates any more. The server sends
+ * the title and subtitle on the hit, so this is a pure mapping from one response — no per-result
+ * fetches, and no partial row when one of them fails.
+ */
+export interface SearchRow extends ParsedSearchHit {
   readonly label: string;
+  readonly subtitle?: string;
   readonly href?: string;
+}
+
+/** Shorten a bare id for the fallback label. */
+function shortId(id: string): string {
+  return id.length > 8 ? `${id.slice(0, 8)}…` : id;
+}
+
+/**
+ * Map one hit to a row.
+ *
+ * `display` is optional in the contract — a document indexed before the field existed still
+ * matches — so a hit without it degrades to a linkless row labelled by its id rather than being
+ * dropped. That is the same posture the old hydration took when a per-result fetch failed, minus
+ * the fetch.
+ */
+export function toSearchRow(result: SearchResult): SearchRow {
+  const parsed = parseSearchHit(result);
+  const display = result.display;
+
+  if (!display) {
+    return { ...parsed, label: shortId(parsed.id) };
+  }
+
+  const href =
+    display.type === 'tournament'
+      ? `/tournaments/${encodeURIComponent(parsed.id)}`
+      : display.type === 'game'
+        ? `/game/${encodeURIComponent(parsed.id)}`
+        : // A profile is addressed by handle, and for a player document the title *is* the handle.
+          `/profile/${encodeURIComponent(display.title)}`;
+
+  return {
+    ...parsed,
+    label: display.title,
+    ...(display.subtitle !== undefined ? { subtitle: display.subtitle } : {}),
+    href,
+  };
 }
 
 /** Split `game:<uuid>` into its type and id. Returns type `null` for an unrecognised prefix. */

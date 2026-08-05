@@ -100,10 +100,25 @@ export function gameToDocument(input: GameDocumentInput): SearchableDocument {
     input.speed,
   ].filter((v): v is string => Boolean(v && v.trim().length > 0));
 
+  // Every part is already in `fields` or `text`; this only restores the casing and the reading
+  // order a person needs. Handles can legitimately be blank in a projection input, so the title
+  // degrades to the side that is present rather than rendering "  vs  ".
+  const white = input.whiteHandle?.trim() ?? '';
+  const black = input.blackHandle?.trim() ?? '';
+  const title = white !== '' && black !== '' ? `${white} vs ${black}` : white || black || 'Game';
+  const subtitleParts = [input.variant, input.speed, input.result].filter(
+    (v): v is string => Boolean(v && v.trim().length > 0)
+  );
+
   return {
     id: `game:${input.id}`,
     text: textParts.join(' '),
     fields,
+    display: {
+      type: 'game',
+      title,
+      ...(subtitleParts.length > 0 ? { subtitle: subtitleParts.join(' · ') } : {}),
+    },
   };
 }
 
@@ -122,10 +137,20 @@ export function playerToDocument(input: PlayerDocumentInput): SearchableDocument
     fields.country = input.country.trim().toLowerCase();
   }
 
+  // The handle and the optional country are the only two things this projection is allowed to
+  // know — see the SECURITY note above. The display block adds no new source of data; it reuses
+  // exactly those two, so it cannot widen what a search response exposes.
+  const country = input.country?.trim() ?? '';
+
   return {
     id: `player:${input.id}`,
     text: input.handle,
     fields,
+    display: {
+      type: 'player',
+      title: input.handle,
+      ...(country !== '' ? { subtitle: country } : {}),
+    },
   };
 }
 
@@ -141,9 +166,18 @@ export function tournamentToDocument(input: TournamentDocumentInput): Searchable
     state: input.state.toLowerCase(),
   };
 
+  const subtitleParts = [input.format, input.state].filter(
+    (v): v is string => Boolean(v && v.trim().length > 0)
+  );
+
   return {
     id: `tournament:${input.id}`,
     text: input.name,
     fields,
+    display: {
+      type: 'tournament',
+      title: input.name,
+      ...(subtitleParts.length > 0 ? { subtitle: subtitleParts.join(' · ') } : {}),
+    },
   };
 }

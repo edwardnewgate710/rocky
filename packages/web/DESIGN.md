@@ -218,6 +218,12 @@ Flat at rest, everywhere. There is no `box-shadow` in the current implementation
 - **An unlocked row says `Unlocked`, not `10 / 10`.** Same principle as state tags being earned rather than default — a finished count reads as a task still in hand.
 - **The section hides itself when the deployment has no achievements service.** Every route answers 503 when `ACHIEVEMENTS_ENABLED` is unset, and that is identical on every profile, so an empty heading everywhere is worse than no section. A load that fails for one profile does show its error, because that one a visitor can retry.
 
+### Search results
+
+- **`.row-link` is the shared row-link primitive.** It was called `.tournament-link` while it was styling forum threads, message conversations, team rows, member rows and search results — six call sites, one of which was a tournament. Renamed for the same reason `.team-row-main` became `.row-main` (ADR-0089 §7): a shared primitive named after its first consumer invites someone to add a second, per-entity variant beside it rather than reuse it.
+- **Row composition** is the shared two-child rule, and search is its fourth consumer. The title and its subtitle travel together in `.row-main`; the entity type (`Player`, `Game`, `Tournament`) trails in `.count`. The subtitle carries what the row is — `Standard · Blitz · 1-0` for a game, `Arena · Running` for a tournament — and ellipsises rather than widening the row.
+- **No loading row.** The results list never contains a placeholder row. A `.panel-row` reading "Loading…" is a counterfeit result: a screen reader announces it as one, and a sighted reader sees a row-shaped thing that is not a row. `aria-busy` on the results container carries the state instead. This is affordable because a search is now a single request (ADR-0094) rather than a query plus up to ten hydrating fetches.
+
 ### Learning (courses, lessons, steps)
 - **Course and lesson lists** use the one List Row treatment (`.panel-row`, `.row-main` and `.count`). A course row trails its difficulty (`Beginner`, `Intermediate`, `Advanced`) in the muted `.count` voice. A lesson row trails **nothing** — an `Open →` affordance on every row was removed for the same reason a `public` tag is not rendered on public teams: a column that says the same thing on every row teaches the eye to skip it, and the title is already the link.
 - **Single scrolling lesson page.** All steps of a lesson render on one page in `orderIndex` order. No multi-step wizard chrome, step tabs, or prev/next pagination buttons.

@@ -962,6 +962,29 @@ Exposes the M10 studies backend (21 routes under `/v1/studies`, previously no UI
 - **Harness & Bridge Route (`packages/e2e-harness/src/harness.ts`)**: Wired `studiesRepository` in `packages/e2e-harness` (`ApiDependencies`) and added bridge route `POST /e2e/studies` to seed public studies with chapters, mainline >= 4 moves, 1 variation, 1 comment, and 1 NAG in 1–6 range.
 - **Tests & ADR**: Unit tests in `studies-helpers.test.ts`, `studies-controller.test.ts`, and domain test `studies.test.ts`, Playwright E2E spec in `studies.spec.ts`. Documented in `docs/adr/0091-studies-viewer.md`.
 
+### Increment 27: Search hits carry their own display metadata (ADR-0094) ✅
+
+Removes the search N+1. A page of ten cost up to **12 requests** — one query, up to ten per-result
+entity fetches, one batched player resolve — and painted only once every one of them settled.
+Now **one**.
+
+- **Domain (`packages/search`)**: `SearchableDocument` and `SearchResult` gain an optional
+  `display` (`type`, `title`, `subtitle`). Deliberately not in `fields` (canonicalized lowercase for
+  exact-match filtering, so a title's casing would be destroyed) and not in `text` (a match corpus,
+  not something a person reads).
+- **Security held, and asserted**: `display` reuses only what each projection already indexed — the
+  player projection's SECURITY note still holds, with a test checking the serialized document carries
+  no `email`, `hash`, `flag` or `@` rather than restating the rule.
+- **API**: `SearchResult` schema exposes `display`, optional — a document indexed before the field
+  existed still matches and must still be returned. Declaring it required would repeat the
+  `ForumPostView` defect (ADR-0088).
+- **Web**: `SearchController` maps hits straight to rows; the per-result fetches and
+  `resolvePlayers` batch are deleted. `HydratedHit` became `SearchRow` — nothing hydrates any more.
+- **Frontend (Impeccable audit, 16/20)**: removed the counterfeit `.panel-row` "Loading…"
+  placeholder — a fake result a screen reader announces as a row — leaving `aria-busy` to carry the
+  state; and renamed `.tournament-link` to `.row-link` across its six call sites, four of which were
+  never tournaments. Both recorded in `packages/web/DESIGN.md`.
+
 ### Increment 26: PGN suffix annotations reach the tree (ADR-0093) ✅
 
 Fixes a silent data-loss bug found while building the studies viewer: a move annotation written in
@@ -1025,12 +1048,17 @@ Debt observed during M14. Each states what is known, not what is planned; items 
 - **`stepView` sends the answers to the learner.** `packages/api/src/presenters.ts` emits `expectedSan` on a move step and `correctIndex` on a quiz step, and `GET /v1/lessons/:id/steps` is the route the learner's own lesson page calls. Increment 23 omits both from the client-side types (`packages/web/src/api/models.ts`), so the app cannot render or grade against them and a future edit that tries becomes a compile error — but the fields are still on the wire and readable in devtools. The authoring routes legitimately need them returned to the author, so the fix is a learner-scoped step view (or a caller-dependent projection), not a deletion: an API contract decision with its own ADR. Nothing rated or rewarded depends on step progress today, so this is a wart rather than a breach. **The contract is deliberately unchanged for now.**
 - **`attemptResultView` drops the domain's `message`.** `AttemptResult` in `packages/learning/src/model.ts` carries `readonly message?: string`, and `attemptResultView` in `packages/api/src/presenters.ts` maps `stepId`, `correct`, `attempts` and `completedAt` only — so whatever explanation the domain attaches to a wrong answer never reaches a client. Increment 23's UI therefore says `Try again` with no reason attached, which is the honest rendering of what the contract actually carries. Same class of defect as the `ForumPostView` divergence fixed in Increment 21 (ADR-0088) and the `JoinRequestView` one still open below; it lands with whichever increment first needs the explanation.
 - **Playwright suite flakiness across specs (RESOLVED in Increment 17 / ADR-0084).** The cause was unbounded local worker parallelism against a single shared `e2e-harness` process and Vite preview server on high-core machines, degrading every spec including static ones like `packages/web/e2e/app-loads.spec.ts` (which ranged 638ms to 200,621ms). Fixed in Increment 17 by introducing a worker ceiling in `packages/web/playwright.config.ts`. CI never encountered this because runners have fewer cores. Recorded in `docs/adr/0084-e2e-worker-cap.md`.
-- **`GET /v1/search` returns no display metadata, forcing per-result hydration.** The contract in
-  `packages/api/src/openapi/schemas.ts` returns `{ id, score }` only, so the Search UI resolves every
-  row through a second call. ADR-0083 §2 records the gap and the three mitigations in place (page size
-  10, parallel entity fetches, single-batch `resolvePlayers`). A richer search response — entity type,
-  title, and snippet carried in the hit itself — would remove the secondary lookups entirely. **The
-  contract is deliberately unchanged for now**; changing it is its own increment with its own ADR.
+- **`GET /v1/search` returns no display metadata, forcing per-result hydration (RESOLVED in Increment 27 / ADR-0094).** The contract in
+  `packages/api/src/openapi/schemas.ts` returned `{ id, score }` only, so the Search UI resolved every
+  row through a second call — up to 12 requests for a page of 10, painting only once every one of them
+  settled. ADR-0083 §2 recorded the gap and the three mitigations in place (page size
+  10, parallel entity fetches, single-batch `resolvePlayers`), which bounded the cost without removing it.
+  **Resolved in Increment 27 (ADR-0094):** `SearchableDocument` gained an optional `display`
+  (`type`, `title`, `subtitle`) — deliberately separate from `fields`, whose values are canonicalized
+  lowercase for exact-match filtering, and from `text`, which is a match corpus rather than something a
+  person reads. Built only from data each entity's public view already exposes, with a test asserting a
+  player document still carries no email, hash or flag. One request per query; the per-row hydration
+  failure mode is gone with the fetches.
 - **Private-team join requests are unreachable through discovery, so the 4 routes cannot get a UI as they stand.** Found while scoping Increment 22, which originally intended to build them. `listTeams` skips private teams for non-members and `GET /v1/teams/:id` answers 404 for them (`findVisibleTeam`, `packages/community/src/repository.ts`) — deliberately, as ADR-0069's Existence Oracle protection. `POST /v1/teams/:id/join-requests` does *not* apply that check, so the route works for any team id, but a non-member has no way to reach the team page the button would live on, and no way to learn the id. A second gap compounds it: `GET /v1/teams/:id/join-requests` is admin/owner-only and there is no "my join requests" route, so a requester who reloads cannot discover their own pending request in order to cancel it. Building the requester half needs an API decision first — a reduced public view of a private team, or a self-scoped requests route — each of which trades against ADR-0069 and is its own increment with its own ADR. **The contract is deliberately unchanged for now.** The owner/admin moderation half is reachable today and could ship alone.
 - **`JoinRequestView` in the OpenAPI spec declares a field the server never sends.** `packages/api/src/openapi/schemas.ts` puts `updatedAt` in the `required` list and never mentions `respondedAt`; `joinRequestView` in `packages/api/src/presenters.ts` has always emitted `createdAt` and `respondedAt`. `FriendRequestView`, the same shape in the same file, has it right — which is what makes the divergence visible. This is the identical defect class fixed for `ForumPostView` in Increment 21 (ADR-0088), and dates to M10 increment 4 (#64). Not fixed here: Increment 22 does not consume this shape, and ADR-0088's precedent was to correct a contract *in the increment that first consumes it*, so it lands with whichever increment builds join requests.
 - **The E2E environment indexes no documents, so no test asserts a query returns hits (RESOLVED in Increment 19 / ADR-0086).** ADR-0083 §7 records this. `packages/web/e2e/search.spec.ts` covers navigation, deep links, prompt state and history behaviour — all reachable without an index. Resolved in Increment 19 by wiring an `InMemorySearchRepository` into `e2e-harness` and exposing `POST /e2e/search-index` to seed fixture documents in E2E tests.

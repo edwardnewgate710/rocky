@@ -55,7 +55,7 @@ export function renderTournamentList(
     const link = el(
       doc,
       'a',
-      { href: `/tournaments/${encodeURIComponent(item.id)}`, class: 'tournament-link' },
+      { href: `/tournaments/${encodeURIComponent(item.id)}`, class: 'row-link' },
       item.name,
     );
 
@@ -209,7 +209,7 @@ export function renderLiveBoards(
     const matchupLink = el(
       doc,
       'a',
-      { href: `/game/${encodeURIComponent(g.gameId)}`, class: 'tournament-link' },
+      { href: `/game/${encodeURIComponent(g.gameId)}`, class: 'row-link' },
       `${whiteHandle} vs ${blackHandle}`,
     );
 

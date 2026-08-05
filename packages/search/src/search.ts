@@ -2,17 +2,42 @@ import { tokenize } from './tokenize';
 import { type SearchQuery } from './query';
 import { matchesAllFilters } from './filters';
 
+/** The kinds of entity a document can project from. */
+export type SearchEntityType = 'game' | 'player' | 'tournament';
+
+/**
+ * What a caller needs to render a hit without fetching the entity again.
+ *
+ * Deliberately not part of `fields`. Those are canonicalized to lowercase for exact-match
+ * filtering, so a title stored there would come back with its casing destroyed — and a filter map
+ * that also holds prose stops being a filter map. `text` is no use either: it is the match corpus,
+ * a concatenation tuned for recall, not something a person should read.
+ *
+ * Only ever built from data the entity's own public view already exposes. See the security note on
+ * `playerToDocument`.
+ */
+export interface SearchDisplay {
+  readonly type: SearchEntityType;
+  /** Primary label, in its original casing. */
+  readonly title: string;
+  /** Secondary line. Absent when the entity has nothing worth a second line. */
+  readonly subtitle?: string;
+}
+
 export interface SearchableDocument {
   readonly id: string;
   /** Free text to match terms/phrases against. */
   readonly text: string;
   /** Exact-match filterable fields (e.g. { variant: 'blitz', result: '1-0' }). */
   readonly fields?: Readonly<Record<string, string>>;
+  /** Carried onto every hit so a result list needs no per-row hydration. */
+  readonly display?: SearchDisplay;
 }
 
 export interface SearchResult {
   readonly id: string;
   readonly score: number;
+  readonly display?: SearchDisplay;
 }
 
 function countPhraseOccurrences(docTokens: readonly string[], phraseTokens: readonly string[]): number {
@@ -110,7 +135,7 @@ export function search(
 
     // 5. Score calculation
     const score = termScore + 2 * phraseMatches;
-    hits.push({ id: doc.id, score });
+    hits.push({ id: doc.id, score, ...(doc.display ? { display: doc.display } : {}) });
   }
 
   // Sort hits by score DESC, tie-broken by id ASC

@@ -364,9 +364,22 @@ export interface TournamentLive {
 
 export type SearchMode = 'keyword' | 'semantic' | 'hybrid';
 
+/**
+ * Everything the row needs, carried on the hit itself.
+ *
+ * Optional because a document indexed before the field existed still matches and is still returned;
+ * the UI falls back to the id rather than dropping the row.
+ */
+export interface SearchDisplay {
+  readonly type: 'game' | 'player' | 'tournament';
+  readonly title: string;
+  readonly subtitle?: string;
+}
+
 export interface SearchResult {
   readonly id: string;
   readonly score: number;
+  readonly display?: SearchDisplay;
 }
 
 export interface SearchResults {

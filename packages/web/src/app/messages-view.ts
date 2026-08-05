@@ -34,7 +34,7 @@ export function renderInbox(
     const nameLink = el(
       doc,
       'a',
-      { href: `/messages/${encodeURIComponent(item.conversation.id)}`, class: 'tournament-link' },
+      { href: `/messages/${encodeURIComponent(item.conversation.id)}`, class: 'row-link' },
       handle,
     );
 

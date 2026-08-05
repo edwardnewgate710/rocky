@@ -28,7 +28,7 @@ export function renderTeamList(
     const link = el(
       doc,
       'a',
-      { href: `/teams/${encodeURIComponent(team.slug)}`, 'data-route': 'team', class: 'tournament-link' },
+      { href: `/teams/${encodeURIComponent(team.slug)}`, 'data-route': 'team', class: 'row-link' },
       team.name,
     );
     // The row is `space-between`, so it holds exactly two children: everything identifying the
@@ -66,7 +66,7 @@ export function renderTeamMembers(
     const name = el(
       doc,
       'a',
-      { href: `/profile/${encodeURIComponent(handle)}`, 'data-route': 'profile', class: 'tournament-link' },
+      { href: `/profile/${encodeURIComponent(handle)}`, 'data-route': 'profile', class: 'row-link' },
       handle,
     );
     // Every member has a role, so showing "member" on most rows would be filler; only the two

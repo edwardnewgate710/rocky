@@ -787,12 +787,29 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     },
   },
 
+  SearchDisplay: {
+    type: 'object',
+    description:
+      'What a client needs to render the hit without fetching the entity again. Built only from ' +
+      'data the entity’s own public view already exposes.',
+    required: ['type', 'title'],
+    properties: {
+      type: { type: 'string', enum: ['game', 'player', 'tournament'] },
+      title: { type: 'string' },
+      subtitle: { type: 'string' },
+    },
+  },
+
   SearchResult: {
     type: 'object',
+    // `display` is optional, not required: a document indexed before this field existed still
+    // matches and must still be returned. Declaring it required would make the spec claim
+    // something the server cannot promise for older rows.
     required: ['id', 'score'],
     properties: {
       id: { type: 'string' },
       score: { type: 'number' },
+      display: { $ref: '#/components/schemas/SearchDisplay' },
     },
   },
 

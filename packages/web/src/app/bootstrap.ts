@@ -1439,13 +1439,16 @@ export function bootstrap(
         },
         onLoading: (loading) => {
           if (!resultsEl) return;
+          // `aria-busy` carries the state on its own. The placeholder that used to sit here was a
+          // `.panel-row` reading "Loading…" — a counterfeit result inside the results list, which a
+          // screen reader announces as a row. It existed to cover the window while per-result
+          // hydration filled in; hits now arrive complete in one request (ADR-0094), so the window
+          // it covered is a single round trip and the fake row costs more than it buys.
           resultsEl.setAttribute('aria-busy', loading ? 'true' : 'false');
           if (loading) {
             resultsRendered = false;
-            resultsEl.innerHTML = '<div class="panel-row">Loading…</div>';
             return;
           }
-          // Loading ended without results rendered (e.g. on failure). Clear placeholder.
           if (!resultsRendered) resultsEl.innerHTML = '';
         },
         onError: (msg) => {
