@@ -4,7 +4,17 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-06 - M14 Increment 32: Perft coverage for the chess variants (ADR-0098)._
+_Last updated: 2026-08-06 - M14 Increment 33: Chess960 withheld from the lobby (ADR-0099)._
+
+## M14 Increment 33 - Chess960 withheld from the lobby, and a variant audit (ADR-0099)
+
+Chess960 was selectable in the lobby with no implementation behind it. `Position.initial('chess960')` returns the standard array, and `packages/game/src/game.ts:92` uses it for any seek without an explicit FEN; `generateCastles` in `packages/chess-core/src/movegen.ts` pins the king to e1/e8 and looks for rooks at fixed offsets, so castling generates for exactly one of the 960 start positions — the one that is standard chess.
+
+- **Withheld, not deleted**: `VARIANTS` still mirrors the server enum; a new `OFFERED_VARIANTS` in `packages/web/src/api/models.ts` is what the lobby renders. They were the same array, which is why a hollow variant stayed selectable — there was no way to withhold one without misstating the contract. Restoring it is one line, and the test says so.
+- **Audit of all eight variants**: Chess960 was the only hollow one. `horde` and `racingkings` start correctly and enforce their win conditions; the rest were verified in Increment 32.
+- **Corrections worth keeping**: `racingkings` first looked broken — the probe position had both kings on rank 8, which is genuinely a draw. `threecheck` first looked as though it never counted checks — the reading was taken through `snapshot()`, which round-trips via FEN and drops `checkCount`.
+- **Found, not fixed**: `Position.snapshot()` loses three-check counters. Latent, since its only production callers build repetition keys, which use the first four FEN fields. Tracked in `docs/ROADMAP.md`.
+- **Open**: implementing Chess960 properly — 960-position generation, castling from arbitrary squares, Shredder/X-FEN, UCI king-takes-rook encoding, SAN, perft against published values.
 
 ## M14 Increment 32 - Perft coverage for the chess variants (ADR-0098)
 
