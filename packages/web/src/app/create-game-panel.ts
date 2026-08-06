@@ -14,7 +14,7 @@
  */
 import { el } from './dom.js';
 import type { TimeControl, Variant, SeekColor } from '../api/models.js';
-import { VARIANTS } from '../api/models.js';
+import { OFFERED_VARIANTS } from '../api/models.js';
 import type { KeyValueStorage } from '../net/session.js';
 import {
   TIME_PRESETS,
@@ -216,7 +216,7 @@ export class CreateGamePanel {
     this.moreToggle.textContent = 'More options';
 
     this.variantSelect = el(d, 'select', { id: 'cg-variant', class: 'cg-select' });
-    for (const v of VARIANTS) {
+    for (const v of OFFERED_VARIANTS) {
       const opt = el(d, 'option', { value: v }, VARIANT_LABELS[v]);
       if (v === 'standard') opt.selected = true;
       this.variantSelect.append(opt);

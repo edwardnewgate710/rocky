@@ -5,6 +5,7 @@ import {
   serializeCreateGamePrefs,
   PREFS_STORAGE_KEY,
 } from '../src/app/create-game-prefs.js';
+import { VARIANTS, OFFERED_VARIANTS } from '../src/api/models.js';
 
 test('parse returns null for missing / malformed input', () => {
   assert.equal(parseCreateGamePrefs(null), null);
@@ -52,4 +53,30 @@ test('serialize round-trips through parse', () => {
 
 test('storage key is stable', () => {
   assert.equal(PREFS_STORAGE_KEY, 'gambit-create-game');
+});
+
+/**
+ * Chess960 was selectable in the lobby while nothing behind it existed:
+ * `Position.initial('chess960')` returns the standard array rather than one of the 960 arrangements,
+ * and castling in `packages/chess-core` is hardcoded to e1/a1/h1, so it works only from the start
+ * position that *is* standard chess. Picking it produced an ordinary game with a different label.
+ *
+ * The two lists are separate on purpose (ADR-0099). `VARIANTS` mirrors what the server's enum
+ * accepts and must keep naming `chess960`, because the API really does take it; `OFFERED_VARIANTS`
+ * is what a player may pick. Asserting both directions is the point — dropping it from the contract
+ * list would be a different bug, and this test would catch that too.
+ */
+test('the lobby does not offer chess960, while the contract still names it', () => {
+  assert.equal(VARIANTS.includes('chess960'), true, 'the server enum accepts chess960; the client must still name it');
+  assert.equal(
+    OFFERED_VARIANTS.includes('chess960' as never),
+    false,
+    'chess960 must not be selectable while Position.initial returns the standard array',
+  );
+
+  // Every other variant stays on offer: this withholds one thing, it does not narrow the lobby.
+  for (const v of VARIANTS) {
+    if (v === 'chess960') continue;
+    assert.ok(OFFERED_VARIANTS.includes(v as never), `${v} must remain selectable`);
+  }
 });

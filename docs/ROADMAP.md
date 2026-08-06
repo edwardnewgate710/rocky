@@ -31,14 +31,8 @@ The correctness-critical foundation everything else depends on.
   are pinned by the divergence they must show. **Still open:** `horde` and `racingkings`, which need
   perft values sourced from an independent implementation — ADR-0098 §4 records why inventing them
   was refused.
-- **Chess960 castling-by-file is broken, not merely missing.** `packages/chess-core/src/fen.ts`
-  parses only `KQkq` and silently discards file-letter (Shredder-FEN) castling rights via its
-  `default: break;`, and the comment there points at a "960 module" that does not exist in
-  `packages/chess-core/src/`. Demonstrated on kiwipete: rights of `HAha` give `perft(1) = 46`,
-  identical to no castling rights at all, against `48` for `KQkq` — so a real Chess960 position
-  loaded from a Shredder FEN silently loses the ability to castle. Same class as the PGN suffix loss
-  fixed in Increment 26 (ADR-0093): a parser dropping input without erroring. Found while scoping
-  Increment 32 and left alone there, since it is a source fix with its own tests.
+- **Chess960 is not implemented; it was a label with nothing behind it (WITHHELD in Increment 33 / ADR-0099).** Bigger than the "castling-by-file" wording suggested, and verified by running the code. (1) `Position.initial('chess960')` returns the standard array on every call, and `packages/game/src/game.ts:92` uses it for any seek without an explicit FEN — so a Chess960 game was ordinary chess. (2) `generateCastles` in `packages/chess-core/src/movegen.ts` pins the king to e1/e8 and looks for rooks at fixed offsets, so castling generates for exactly one of the 960 start positions, and that one is standard chess: king on b1 with rooks a1/h1 produces 0 castling moves, as does king g1 with rooks f1/h1. (3) `packages/chess-core/src/fen.ts` discards file-letter castling rights, so `HAha` on kiwipete gives `perft(1) = 46`, identical to no rights, against 48 for `KQkq`. **Withheld in Increment 33 (ADR-0099):** removed from the lobby's offered variants so nobody receives a mislabelled standard game; still accepted by the API and still a rule set in `chess-core`. **Open:** implementing it — 960-position generation, castling from arbitrary king and rook squares, Shredder/X-FEN in and out, the UCI king-takes-rook encoding, SAN, and perft against published values.
+- **`Position.snapshot()` loses three-check state.** `snapshot()` in `packages/chess-core/src/position.ts` round-trips through `parseFen(this.fen(), variant)`, and `toFen` does not serialise `checkCount` — so both counters reset to zero. Latent, not live: the only production callers are the `repetitionKey(...)` calls in `packages/game/src/game.ts`, and a repetition key uses the first four FEN fields where the count plays no part; live games rebuild state by replaying their event log. A trap for the next feature that snapshots a position. Found during the Increment 33 audit (ADR-0099 §4).
 - **PGN parser (RESOLVED).** Shipped in M10 as `packages/studies/src/pgn-parse.ts` and extended in
   Increment 26 (ADR-0093) to carry suffix annotations.
 
@@ -979,6 +973,15 @@ Exposes the M10 studies backend (21 routes under `/v1/studies`, previously no UI
 - **Harness & Bridge Route (`packages/e2e-harness/src/harness.ts`)**: Wired `studiesRepository` in `packages/e2e-harness` (`ApiDependencies`) and added bridge route `POST /e2e/studies` to seed public studies with chapters, mainline >= 4 moves, 1 variation, 1 comment, and 1 NAG in 1–6 range.
 - **Tests & ADR**: Unit tests in `studies-helpers.test.ts`, `studies-controller.test.ts`, and domain test `studies.test.ts`, Playwright E2E spec in `studies.spec.ts`. Documented in `docs/adr/0091-studies-viewer.md`.
 
+### Increment 33: Chess960 withheld from the lobby, and a variant audit (ADR-0099) ✅
+
+Chess960 was selectable while nothing behind it existed: `Position.initial('chess960')` returns the standard array, and castling in `packages/chess-core/src/movegen.ts` is hardcoded to e1/a1/h1 — 0 castling moves generated from any Chess960 arrangement whose king is not on e1. Picking it produced an ordinary game with a different label.
+
+- **Withheld, not deleted (`packages/web/src/api/models.ts`, `packages/web/src/app/create-game-panel.ts`)**: `VARIANTS` keeps mirroring the server enum — the API really does accept `chess960` — and a new `OFFERED_VARIANTS` is what the lobby renders. The two lists were the same array, which is the structural reason a hollow variant stayed selectable: there was no way to withhold one without lying about the contract.
+- **Test pins both directions (`packages/web/test/create-game-prefs.test.ts`)**: `chess960` absent from what is offered, present in the contract list. Quietly dropping it from the contract would fail too. Mutation-verified.
+- **Audit of all eight variants (ADR-0099 §3)**: Chess960 was the only hollow one. `horde` and `racingkings` have correct start positions and enforce their own win conditions; `kingofthehill`, `threecheck`, `atomic` and `crazyhouse` were already verified in Increment 32.
+- **Two first impressions corrected, and recorded because the wrong version was believable**: `racingkings` looked broken until the test position turned out to have both kings on rank 8, which genuinely is a draw; `threecheck` looked as though it never counted checks, until the measurement turned out to be taken through the lossy `snapshot()`.
+- **Found, not fixed**: `Position.snapshot()` loses three-check counters. Latent — see the Milestone 1 follow-ups.
 ### Increment 32: Perft coverage for the chess variants (ADR-0098) ✅
 
 Perft is the definitive correctness test for a move generator, and all five cases in `packages/chess-core/test/perft.test.ts` ran the `standard` variant while `packages/chess-core/src/movegen.ts` branches on the variant in six places. Seven rule sets had no perft verification at all.

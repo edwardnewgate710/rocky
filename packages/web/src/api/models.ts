@@ -33,6 +33,21 @@ export const VARIANTS = [
 export type Variant = (typeof VARIANTS)[number];
 
 /**
+ * The variants the lobby offers, which is deliberately not the same list.
+ *
+ * `VARIANTS` mirrors what the server's enum accepts and must keep doing so — the API really does
+ * take `chess960`, and a client that could not name it would be wrong about the contract. What a
+ * player may *pick* is a separate question, and conflating the two is why a variant with no
+ * implementation behind it was selectable for so long.
+ *
+ * `chess960` is withheld: `Position.initial('chess960')` returns the standard array rather than one
+ * of the 960 arrangements, and castling is hardcoded to e1/a1/h1 in `packages/chess-core`, so it
+ * only works from the one start position that is standard chess. Choosing it produced an ordinary
+ * game wearing a different label. See ADR-0099; restore it here once the variant is real.
+ */
+export const OFFERED_VARIANTS = VARIANTS.filter((v) => v !== 'chess960');
+
+/**
  * A seek's color preference (matches the server's `color` enum). `random` (the
  * default) lets pairing assign sides; `white`/`black` request that side.
  */
