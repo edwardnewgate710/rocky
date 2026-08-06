@@ -34,13 +34,17 @@
   --last: rgba(155, 199, 0, 0.41);
   --premove: rgba(20, 30, 200, 0.4);
   /* Promotion overlay surfaces. The tile is deliberately near-white in both
-     themes (the piece glyphs are dark), so these are theme-independent and the
-     ring over them uses --sel-deep, not --sel. The scrim is dark enough that a
-     focus ring over it clears 3:1 on either board square (4.1:1 / 5.9:1). */
+     themes, so these are theme-independent and the ring over them uses
+     --sel-deep, not --sel. It reads for either colour because the Cburnett
+     pieces are drawn with a heavy contrasting outline — a white queen is white
+     with a black edge, not a pale silhouette that a pale tile would swallow.
+     (This note used to say the glyphs were dark, which was true of the Unicode
+     characters the picker drew before the SVG set replaced them.) The scrim is
+     dark enough that a focus ring over it clears 3:1 on either board square
+     (4.1:1 / 5.9:1). */
   --scrim: rgba(0, 0, 0, 0.72);
   --promo-tile: #fafafa;
   --promo-tile-hover: #fff;
-  --promo-tile-ink: #111;
   --promo-cancel-ink: #fff;
   --promo-cancel-hover: rgba(255, 255, 255, 0.12);
   /* Light-theme values. Assigned by BOTH light entry points below (OS
@@ -251,13 +255,19 @@ body {
   background: var(--scrim);
   z-index: var(--z-promotion);
 }
+/* The piece artwork arrives as a `background-image` on the shared `.cb-p-*` class, so this rule must
+   set `background-color` and never the `background` shorthand — the shorthand resets
+   `background-image` to none, and being the later rule at equal specificity it won, leaving four
+   identical blank tiles with nothing to tell the queen from the knight. The sizing trio below is
+   needed for the same reason: `.cb-piece` carries it on the board, and this button is not one. */
 .cb-promo-choice {
-  font-size: clamp(24px, 9vw, 48px);
   line-height: 1;
   width: 22%;
   aspect-ratio: 1 / 1;
-  background: var(--promo-tile);
-  color: var(--promo-tile-ink);
+  background-color: var(--promo-tile);
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
   border: none;
   border-radius: 6px;
   cursor: pointer;
@@ -351,14 +361,14 @@ button {
   padding: 6px 14px;
   border-radius: 6px;
   border: 1px solid currentColor;
-  background: transparent;
+  background-color: transparent;
   color: inherit;
   cursor: pointer;
   transition: background 160ms ease, box-shadow 160ms ease;
 }
 /* Interactive Lift + Panel Tint fill — feedback only, never a resting state. */
 button:not(:disabled):hover {
-  background: var(--panel);
+  background-color: var(--panel);
   box-shadow: var(--lift);
 }
 button:focus-visible { outline: 3px solid var(--sel); }
@@ -369,7 +379,8 @@ button:disabled {
 }
 /* Promotion choices carry their own near-white fill; keep it on hover and let
    them take only the lift, not the panel tint. */
-.cb-promo-choice:hover { background: var(--promo-tile-hover); }
+/* `background-color`, not the shorthand: hovering must not erase the piece. */
+.cb-promo-choice:hover { background-color: var(--promo-tile-hover); }
 .cb-promo-cancel:hover { background: var(--promo-cancel-hover); }
 
 
@@ -413,13 +424,13 @@ button:disabled {
 .topbar h1 a:focus-visible {
   outline: 3px solid var(--sel);
   outline-offset: 3px;
-  border-radius: 2px;
+  border-radius: 6px;
   opacity: 1;
 }
 
 /* --- Theme toggle button --- */
 #theme-toggle {
-  font-size: 1.2rem;
+  font-size: 1.25rem;
   line-height: 1;
   padding: 4px 8px;
 }
@@ -612,7 +623,7 @@ button:disabled {
   background: var(--panel);
 }
 .empty-mark {
-  font-size: 1.75rem;
+  font-size: 1.5rem;
   line-height: 1;
   color: var(--muted);
   margin-bottom: 2px;
@@ -748,7 +759,7 @@ button:disabled {
   outline: 3px solid var(--sel);
   outline-offset: 2px;
 }
-.cg-chip-speed { font-size: 0.7rem; color: var(--muted); }
+.cg-chip-speed { font-size: 0.75rem; color: var(--muted); }
 .cg-seg-label { display: inline-flex; align-items: center; gap: 5px; }
 .cg-seg-glyph { font-size: 1rem; line-height: 1; }
 

@@ -4,7 +4,18 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-06 - M14 Increment 34: Per-variant timeout material rules (ADR-0100)._
+_Last updated: 2026-08-06 - M14 Increment 35: The promotion picker rendered blank tiles (ADR-0101)._
+
+## M14 Increment 35 - The promotion picker rendered blank tiles (ADR-0101)
+
+A design pass over `packages/web/src/style.css`, opened as token-compliance work, found a user-facing rendering bug. The promotion dialog was drawing four identical blank tiles.
+
+- **Cause**: each choice carries `.cb-promo-choice` plus the shared `.cb-p-*` class, and `.cb-p-*` supplies only a `background-image`. `.cb-promo-choice` set `background: var(--promo-tile)` — the shorthand resets `background-image` to none, and at equal specificity the later rule won. Confirmed by reading the computed style, not by inference.
+- **Fix**: `background-color` on the rule and its `:hover`, plus `background-size` / `background-repeat` / `background-position`, which `.cb-piece` carries for board pieces and this button does not inherit. Removed the dead `font-size`, the dead `color`, and the unused `--promo-tile-ink` token — all fossils of the Unicode-glyph picker that preceded the Cburnett SVG set.
+- **It existed twice.** PR #98 review found `button:not(:disabled):hover` using the shorthand as well; at (0,2,1) against `.cb-p-*` at (0,1,0) it outranked the artwork, so the piece disappeared on hover even though a later `.cb-promo-choice:hover` rule reset the fill. Both generic `button` rules now use `background-color`.
+- **Pinned** in `packages/web/test/style-contract.test.ts`, which asserts across every selector that can match a promotion tile — nothing else could catch either instance, since markup, classes and DOM were all correct and every test passed. The first version checked only the two obviously-named rules and missed the hover case. Mutation-verified against both.
+- **DESIGN.md** gains a Promotion picker component entry: the shorthand rule, where the sizing lives, and why the near-white tile reads for both colours (the Cburnett white pieces carry a heavy black outline — the previous comment credited "dark glyphs", which described the retired Unicode version).
+- **Token drift closed**: a second `border-radius` and three font sizes off the documented ramp are back on their steps; the Impeccable detector reports zero findings across `style.css`, `index.html` and `src/app`.
 
 ## M14 Increment 34 - Per-variant timeout material rules (ADR-0100)
 
