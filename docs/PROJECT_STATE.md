@@ -4,7 +4,18 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-05 - M14 Increment 28: Fix JoinRequestView OpenAPI contract (ADR-0088)._
+_Last updated: 2026-08-06 - M14 Increment 29: Learner-scoped lesson step view (ADR-0095)._
+
+## M14 Increment 29 - Learner-scoped lesson step view (ADR-0095)
+
+Implements a learner-scoped step projection (`LearnerStepView` / `learnerStepView`) on public step read routes (`GET /v1/lessons/:id/steps` and `GET /v1/steps/:id`), omitting `expectedSan` and `correctIndex` for learners and anonymous callers while preserving full step details for course authors.
+
+- **Presenter & Projection (`packages/api/src/presenters.ts`)**: Added `LearnerStepView` interface and `learnerStepView` function built directly from the `LessonStep` domain object without mutating or deriving from `stepView`.
+- **Routes & Authorship Resolution (`packages/api/src/routes.ts`)**: Updated `GET /v1/lessons/:id/steps` and `GET /v1/steps/:id` to check whether the actor is the course author via repository calls (`repo.getLesson` / `repo.getStep` → `repo.getCourse`). Returns `stepView` if author, `learnerStepView` otherwise.
+- **Repository (`packages/learning/src/repository.ts`, `packages/learning/src/in-memory-repository.ts`, `packages/persistence/src/pg/learning.ts`)**: Added `getStepWithCourse` / `listStepsWithCourse`, returning the course the plain `getStep` / `listSteps` already load to enforce visibility and then discard. `getStep` and `listSteps` delegate to them. Without this the authorship check doubled both public step routes from 3 SQL queries to 6; they now cost exactly one repository call, held there by a counting-proxy test in `packages/api/test/learning-api.test.ts`.
+- **OpenAPI Specs (`packages/api/src/openapi/schemas.ts`, `packages/api/openapi.json`)**: Added `LearnerStepView` and `LearnerStepList` schemas and updated the 200 response types for routes 16 and 17. Regenerated `packages/api/openapi.json` via `npm run openapi`.
+- **Web Client Comments (`packages/web/src/api/models.ts`)**: Updated comments on `MoveStepView` and `QuizStepView` to reference ADR-0095 and state that the server no longer sends `expectedSan` / `correctIndex` to learners.
+- **Tests & ADR (`packages/api/test/learning-api.test.ts`, `packages/api/test/openapi.test.ts`, `docs/adr/0095-learner-step-view.md`)**: Added contract tests covering anonymous, non-author, and author requests on both public read routes, schema declaration checks, and documented decisions in ADR-0095.
 
 ## M14 Increment 28 - Fix JoinRequestView OpenAPI contract (ADR-0088)
 

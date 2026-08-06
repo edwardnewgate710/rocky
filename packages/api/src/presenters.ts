@@ -775,6 +775,32 @@ export function stepView(s: import('@chess-platform/learning').LessonStep): Step
   };
 }
 
+export interface LearnerStepView {
+  readonly id: string;
+  readonly lessonId: string;
+  readonly orderIndex: number;
+  readonly kind: 'text' | 'move' | 'quiz';
+  readonly prose?: string;
+  readonly fen?: string;
+  readonly hint?: string;
+  readonly question?: string;
+  readonly options?: readonly string[];
+  readonly deletedAt?: string;
+}
+
+export function learnerStepView(s: import('@chess-platform/learning').LessonStep): LearnerStepView {
+  return {
+    id: s.id,
+    lessonId: s.lessonId,
+    orderIndex: s.orderIndex,
+    kind: s.kind,
+    ...(s.kind === 'text' ? { prose: s.prose } : {}),
+    ...(s.kind === 'move' ? { fen: s.fen, ...(s.hint ? { hint: s.hint } : {}) } : {}),
+    ...(s.kind === 'quiz' ? { question: s.question, options: [...s.options] } : {}),
+    ...(s.deletedAt ? { deletedAt: s.deletedAt.toISOString() } : {}),
+  };
+}
+
 export interface ProgressView {
   readonly playerId: string;
   readonly courseId: string;

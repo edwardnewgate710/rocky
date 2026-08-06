@@ -1,6 +1,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startHarness, type Harness } from './helpers.js';
+import { InMemoryLearningRepository, type LearningRepository } from '@chess-platform/learning';
 
 describe('Learning & Courses REST API', () => {
   let harness: Harness;
@@ -244,6 +245,85 @@ describe('Learning & Courses REST API', () => {
       assert.equal(reorderRes.body[0].id, stepQuizId);
       assert.equal(reorderRes.body[0].orderIndex, 0);
     });
+
+    describe('Learner-scoped Step View (Public Read Routes)', () => {
+      const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+
+      it('GET /v1/lessons/:id/steps - omits expectedSan/correctIndex for anonymous and non-author, preserves for author', async () => {
+        // 1. Anonymous caller
+        const anonRes = await harness.json('GET', `/v1/lessons/${lesson1Id}/steps`);
+        assert.equal(anonRes.status, 200);
+        const moveStepAnon = anonRes.body.find((s: any) => s.id === stepMoveId);
+        const quizStepAnon = anonRes.body.find((s: any) => s.id === stepQuizId);
+        assert.ok(moveStepAnon);
+        assert.ok(quizStepAnon);
+
+        assert.equal('expectedSan' in moveStepAnon, false);
+        assert.equal('correctIndex' in quizStepAnon, false);
+        assert.equal(moveStepAnon.fen, startFen);
+        assert.equal(moveStepAnon.hint, 'Control center');
+        assert.equal(quizStepAnon.question, 'What is the key bishop square in the Italian Game?');
+        assert.deepEqual(quizStepAnon.options, ['b5', 'c4', 'd3', 'e2']);
+
+        // 2. Non-author authenticated caller
+        const studentRes = await harness.json('GET', `/v1/lessons/${lesson1Id}/steps`, {
+          token: student.token,
+        });
+        assert.equal(studentRes.status, 200);
+        const moveStepStudent = studentRes.body.find((s: any) => s.id === stepMoveId);
+        const quizStepStudent = studentRes.body.find((s: any) => s.id === stepQuizId);
+        assert.equal('expectedSan' in moveStepStudent, false);
+        assert.equal('correctIndex' in quizStepStudent, false);
+
+        // 3. Course author caller
+        const authorRes = await harness.json('GET', `/v1/lessons/${lesson1Id}/steps`, {
+          token: author.token,
+        });
+        assert.equal(authorRes.status, 200);
+        const moveStepAuthor = authorRes.body.find((s: any) => s.id === stepMoveId);
+        const quizStepAuthor = authorRes.body.find((s: any) => s.id === stepQuizId);
+        assert.equal('expectedSan' in moveStepAuthor, true);
+        assert.equal(moveStepAuthor.expectedSan, 'e4');
+        assert.equal('correctIndex' in quizStepAuthor, true);
+        assert.equal(quizStepAuthor.correctIndex, 1);
+      });
+
+      it('GET /v1/steps/:id - omits expectedSan/correctIndex for anonymous and non-author, preserves for author', async () => {
+        // 1. Anonymous caller on move step
+        const moveAnon = await harness.json('GET', `/v1/steps/${stepMoveId}`);
+        assert.equal(moveAnon.status, 200);
+        assert.equal('expectedSan' in moveAnon.body, false);
+        assert.equal(moveAnon.body.fen, startFen);
+        assert.equal(moveAnon.body.hint, 'Control center');
+
+        // Anonymous caller on quiz step
+        const quizAnon = await harness.json('GET', `/v1/steps/${stepQuizId}`);
+        assert.equal(quizAnon.status, 200);
+        assert.equal('correctIndex' in quizAnon.body, false);
+        assert.equal(quizAnon.body.question, 'What is the key bishop square in the Italian Game?');
+        assert.deepEqual(quizAnon.body.options, ['b5', 'c4', 'd3', 'e2']);
+
+        // 2. Non-author authenticated caller
+        const moveStudent = await harness.json('GET', `/v1/steps/${stepMoveId}`, { token: student.token });
+        assert.equal(moveStudent.status, 200);
+        assert.equal('expectedSan' in moveStudent.body, false);
+
+        const quizStudent = await harness.json('GET', `/v1/steps/${stepQuizId}`, { token: student.token });
+        assert.equal(quizStudent.status, 200);
+        assert.equal('correctIndex' in quizStudent.body, false);
+
+        // 3. Course author caller
+        const moveAuthor = await harness.json('GET', `/v1/steps/${stepMoveId}`, { token: author.token });
+        assert.equal(moveAuthor.status, 200);
+        assert.equal('expectedSan' in moveAuthor.body, true);
+        assert.equal(moveAuthor.body.expectedSan, 'e4');
+
+        const quizAuthor = await harness.json('GET', `/v1/steps/${stepQuizId}`, { token: author.token });
+        assert.equal(quizAuthor.status, 200);
+        assert.equal('correctIndex' in quizAuthor.body, true);
+        assert.equal(quizAuthor.body.correctIndex, 1);
+      });
+    });
   });
 
   describe('Progress & Attempt Submission', () => {
@@ -364,5 +444,123 @@ describe('Learning & Courses REST API', () => {
         await unavailHarness.close();
       }
     });
+  });
+});
+
+/**
+ * Counts the calls a route makes on the repository, without counting the repository's own internal
+ * calls: each method is invoked with the raw target as `this`, so `listStepsWithCourse` reaching for
+ * `this.getCourse` internally stays inside and never re-enters the proxy. What the map holds is
+ * therefore exactly the reads the route asked for.
+ */
+function countingLearningRepository(inner: LearningRepository): {
+  readonly repo: LearningRepository;
+  readonly calls: Map<string, number>;
+} {
+  const calls = new Map<string, number>();
+  const repo = new Proxy(inner, {
+    get(target, prop) {
+      const value = Reflect.get(target, prop, target);
+      if (typeof value !== 'function') return value;
+      return (...args: unknown[]) => {
+        calls.set(String(prop), (calls.get(String(prop)) ?? 0) + 1);
+        return (value as (...a: unknown[]) => unknown).apply(target, args);
+      };
+    },
+  }) as LearningRepository;
+  return { repo, calls };
+}
+
+/**
+ * ADR-0095 resolved step authorship by re-reading lesson → course after the step read. Both reads
+ * had already happened inside `listSteps` / `getStep`, which resolve the same two rows to enforce
+ * visibility — so the public step routes went from 3 SQL queries to 6 for a signed-in caller, with
+ * the courses table read three times. Found in the PR review of #92.
+ *
+ * Counting the calls is the only way to see this: the responses were correct throughout, and every
+ * shape and permission test passed while the query count doubled. Pinning it at one call means
+ * re-introducing the second lookup fails here rather than being noticed in production latency.
+ */
+describe('Learning step reads make no redundant repository calls', () => {
+  let harness: Harness;
+  let calls: Map<string, number>;
+  let author: { userId: string; token: string };
+  let learner: { userId: string; token: string };
+  let lessonId: string;
+  let stepId: string;
+
+  before(async () => {
+    const counting = countingLearningRepository(new InMemoryLearningRepository());
+    calls = counting.calls;
+    harness = await startHarness({}, { learningRepository: counting.repo });
+    author = await harness.makeUser('CountingAuthor');
+    learner = await harness.makeUser('CountingLearner');
+
+    const course = await harness.json('POST', '/v1/courses', {
+      token: author.token,
+      body: {
+        slug: 'counting-course',
+        title: 'Counting Course',
+        description: 'For counting repository reads.',
+        difficulty: 'beginner',
+        published: true,
+      },
+    });
+    assert.equal(course.status, 201);
+
+    const lesson = await harness.json('POST', `/v1/courses/${course.body.id}/lessons`, {
+      token: author.token,
+      body: { title: 'Counting Lesson' },
+    });
+    assert.equal(lesson.status, 201);
+    lessonId = lesson.body.id;
+
+    const step = await harness.json('POST', `/v1/lessons/${lessonId}/steps`, {
+      token: author.token,
+      body: {
+        kind: 'move',
+        fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+        expectedSan: 'e4',
+        hint: 'Control center',
+      },
+    });
+    assert.equal(step.status, 201);
+    stepId = step.body.id;
+  });
+
+  after(async () => {
+    if (harness) await harness.close();
+  });
+
+  // Both the author and a learner are checked: authorship is what the extra lookup existed to
+  // decide, so a fix that only avoids the redundant read on one branch is not a fix.
+  for (const who of ['author', 'learner'] as const) {
+    it(`GET /v1/lessons/:id/steps reads the repository once for the ${who}`, async () => {
+      const token = who === 'author' ? author.token : learner.token;
+      calls.clear();
+
+      const res = await harness.json('GET', `/v1/lessons/${lessonId}/steps`, { token });
+      assert.equal(res.status, 200);
+
+      assert.deepEqual([...calls], [['listStepsWithCourse', 1]]);
+    });
+
+    it(`GET /v1/steps/:id reads the repository once for the ${who}`, async () => {
+      const token = who === 'author' ? author.token : learner.token;
+      calls.clear();
+
+      const res = await harness.json('GET', `/v1/steps/${stepId}`, { token });
+      assert.equal(res.status, 200);
+
+      assert.deepEqual([...calls], [['getStepWithCourse', 1]]);
+    });
+  }
+
+  it('still tells the author and the learner apart', async () => {
+    const asAuthor = await harness.json('GET', `/v1/steps/${stepId}`, { token: author.token });
+    const asLearner = await harness.json('GET', `/v1/steps/${stepId}`, { token: learner.token });
+
+    assert.equal(asAuthor.body.expectedSan, 'e4');
+    assert.equal('expectedSan' in asLearner.body, false);
   });
 });

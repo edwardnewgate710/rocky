@@ -1,8 +1,9 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { startHarness } from './helpers';
-import { joinRequestView } from '../src/presenters';
+import { joinRequestView, learnerStepView } from '../src/presenters';
 import type { JoinRequest } from '@chess-platform/community';
+import type { LessonStep } from '@chess-platform/learning';
 
 function collectRefs(node: unknown, acc: string[]): void {
   if (Array.isArray(node)) {
@@ -124,6 +125,114 @@ test('JoinRequestView: the served schema describes exactly what the presenter em
     assert.deepEqual([...schema.required].sort(), declared);
     assert.equal(pending.respondedAt, null);
     assert.equal(typeof responded.respondedAt, 'string');
+  } finally {
+    await h.close();
+  }
+});
+
+/**
+ * Defining `LearnerStepView` and pointing the routes at it are two separate edits, and only the
+ * second one changes what the published document promises. Reverting just the two `doc({ responses })
+ * lines — leaving the presenter, the routes and both schemas intact — left the api suite at 0 failures while
+ * `openapi.json` advertised `expectedSan` and `correctIndex` on routes that no longer send them.
+ * The well-formedness test above cannot catch that: it checks every `$ref` resolves, never that a
+ * schema is referenced, so an orphaned `LearnerStepView` is invisible to it.
+ *
+ * The PATCH assertion guards the other direction — a blanket rename that strips the answers from the
+ * author too breaks authoring, and would otherwise pass.
+ */
+test('public step routes reference LearnerStepView/LearnerStepList schemas, authoring routes retain StepView', async () => {
+  const h = await startHarness();
+  try {
+    const doc = h.server.openapiDocument() as any;
+
+    const listRef = doc.paths['/v1/lessons/{id}/steps']?.get?.responses?.['200']?.content?.['application/json']?.schema?.$ref;
+    assert.equal(listRef, '#/components/schemas/LearnerStepList');
+
+    const getStepRef = doc.paths['/v1/steps/{id}']?.get?.responses?.['200']?.content?.['application/json']?.schema?.$ref;
+    assert.equal(getStepRef, '#/components/schemas/LearnerStepView');
+
+    const patchStepRef = doc.paths['/v1/steps/{id}']?.patch?.responses?.['200']?.content?.['application/json']?.schema?.$ref;
+    assert.equal(patchStepRef, '#/components/schemas/StepView');
+  } finally {
+    await h.close();
+  }
+});
+
+/**
+ * Same coupling the `JoinRequestView` test above pins, for the view whose whole purpose is to leave
+ * two fields out: the schema and the presenter are two declarations of one contract, and nothing else
+ * makes them agree. A property added to `LearnerStepView` that the presenter never emits would put the
+ * answer back in the published contract while every route test stayed green.
+ *
+ * Asserted as the union across all four kinds rather than per-fixture, because the view is a union of
+ * three step kinds plus the tombstone — no single fixture can match the schema exactly, and the union
+ * can. Fixtures are typed as the real `LessonStep`: a test that exists to catch contract drift has no
+ * business opting out of the check that catches it.
+ */
+test('LearnerStepView: the served schema describes exactly what the presenter emits across all step kinds', async () => {
+  const h = await startHarness();
+  try {
+    const schema = (h.server.openapiDocument() as any).components.schemas.LearnerStepView;
+
+    const textStep: LessonStep = {
+      id: 'e6f0b1a2-0000-4000-8000-000000000001',
+      lessonId: 'e6f0b1a2-0000-4000-8000-000000000002',
+      orderIndex: 0,
+      kind: 'text',
+      prose: 'Introduction to basic tactical themes.',
+    };
+
+    const moveStep: LessonStep = {
+      id: 'e6f0b1a2-0000-4000-8000-000000000010',
+      lessonId: 'e6f0b1a2-0000-4000-8000-000000000002',
+      orderIndex: 1,
+      kind: 'move',
+      fen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1',
+      expectedSan: 'e5',
+      hint: 'Push e5',
+    };
+
+    const quizStep: LessonStep = {
+      id: 'e6f0b1a2-0000-4000-8000-000000000011',
+      lessonId: 'e6f0b1a2-0000-4000-8000-000000000002',
+      orderIndex: 2,
+      kind: 'quiz',
+      question: 'What is the best move?',
+      options: ['e4', 'd4', 'Nf3'],
+      correctIndex: 0,
+    };
+
+    const deletedStep: LessonStep = {
+      id: 'e6f0b1a2-0000-4000-8000-000000000012',
+      lessonId: 'e6f0b1a2-0000-4000-8000-000000000002',
+      orderIndex: 3,
+      kind: 'text',
+      prose: 'Tombstoned step.',
+      deletedAt: new Date('2026-01-01T00:00:00.000Z'),
+    };
+
+    const textView = learnerStepView(textStep);
+    const moveView = learnerStepView(moveStep);
+    const quizView = learnerStepView(quizStep);
+    const deletedView = learnerStepView(deletedStep);
+
+    assert.equal('expectedSan' in moveView, false);
+    assert.equal('correctIndex' in quizView, false);
+    assert.equal('expectedSan' in schema.properties, false);
+    assert.equal('correctIndex' in schema.properties, false);
+
+    const emittedKeysSet = new Set<string>([
+      ...Object.keys(textView),
+      ...Object.keys(moveView),
+      ...Object.keys(quizView),
+      ...Object.keys(deletedView),
+    ]);
+
+    const emittedKeys = [...emittedKeysSet].sort();
+    const schemaDeclaredKeys = Object.keys(schema.properties).sort();
+
+    assert.deepEqual(emittedKeys, schemaDeclaredKeys);
   } finally {
     await h.close();
   }

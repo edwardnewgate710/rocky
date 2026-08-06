@@ -569,11 +569,11 @@ export class PgLearningRepository implements LearningRepository {
   }
 
   /** Reads a lesson on a caller-supplied connection. See `getCourseOn` for why this exists. */
-  private async getLessonOn(
+  private async getLessonWithCourseOn(
     client: PoolClient | Pool,
     lessonId: string,
     actorId?: string
-  ): Promise<Lesson> {
+  ): Promise<{ lesson: Lesson; course: Course }> {
     try {
       const res = await client.query<LessonRow>(
         `SELECT id, course_id, title, order_index, deleted_at FROM learning_lessons WHERE id = $1 AND deleted_at IS NULL`,
@@ -584,11 +584,19 @@ export class PgLearningRepository implements LearningRepository {
       }
 
       const lesson = mapLesson(res.rows[0]);
-      await this.getCourseOn(client, lesson.courseId, actorId);
-      return lesson;
+      const course = await this.getCourseOn(client, lesson.courseId, actorId);
+      return { lesson, course };
     } catch (err) {
       this.handleSqlError(err, 'Lesson');
     }
+  }
+
+  private async getLessonOn(
+    client: PoolClient | Pool,
+    lessonId: string,
+    actorId?: string
+  ): Promise<Lesson> {
+    return (await this.getLessonWithCourseOn(client, lessonId, actorId)).lesson;
   }
 
   async getLesson(lessonId: string, actorId?: string): Promise<Lesson> {
@@ -884,7 +892,10 @@ export class PgLearningRepository implements LearningRepository {
     }
   }
 
-  async getStep(stepId: string, actorId?: string): Promise<LessonStep> {
+  async getStepWithCourse(
+    stepId: string,
+    actorId?: string
+  ): Promise<{ step: LessonStep; course: Course }> {
     try {
       const res = await this.pool.query<StepRow>(
         `SELECT id, lesson_id, order_index, kind, prose, fen, expected_san, hint, question, options, correct_index, deleted_at FROM learning_steps WHERE id = $1 AND deleted_at IS NULL`,
@@ -895,15 +906,22 @@ export class PgLearningRepository implements LearningRepository {
       }
 
       const step = mapStep(res.rows[0]);
-      await this.getLesson(step.lessonId, actorId);
-      return step;
+      const { course } = await this.getLessonWithCourseOn(this.pool, step.lessonId, actorId);
+      return { step, course };
     } catch (err) {
       this.handleSqlError(err, 'Step');
     }
   }
 
-  async listSteps(lessonId: string, actorId?: string): Promise<readonly LessonStep[]> {
-    await this.getLesson(lessonId, actorId);
+  async getStep(stepId: string, actorId?: string): Promise<LessonStep> {
+    return (await this.getStepWithCourse(stepId, actorId)).step;
+  }
+
+  async listStepsWithCourse(
+    lessonId: string,
+    actorId?: string
+  ): Promise<{ steps: readonly LessonStep[]; course: Course }> {
+    const { course } = await this.getLessonWithCourseOn(this.pool, lessonId, actorId);
 
     try {
       const res = await this.pool.query<StepRow>(
@@ -912,10 +930,14 @@ export class PgLearningRepository implements LearningRepository {
       );
       const list = res.rows.map(mapStep);
       list.sort(compareSteps);
-      return list;
+      return { steps: list, course };
     } catch (err) {
       this.handleSqlError(err, 'Step');
     }
+  }
+
+  async listSteps(lessonId: string, actorId?: string): Promise<readonly LessonStep[]> {
+    return (await this.listStepsWithCourse(lessonId, actorId)).steps;
   }
 
   async updateStep(

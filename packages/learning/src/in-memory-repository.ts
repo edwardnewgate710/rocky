@@ -234,14 +234,21 @@ export class InMemoryLearningRepository implements LearningRepository {
     return lesson;
   }
 
-  async getLesson(lessonId: string, actorId?: string): Promise<Lesson> {
+  private async lessonWithCourse(
+    lessonId: string,
+    actorId?: string
+  ): Promise<{ lesson: Lesson; course: Course }> {
     const lesson = this.lessons.get(lessonId);
     if (!lesson || lesson.deletedAt) {
       throw new LearningRuleError('not_found', `Lesson '${lessonId}' not found`);
     }
 
-    await this.getCourse(lesson.courseId, actorId);
-    return lesson;
+    const course = await this.getCourse(lesson.courseId, actorId);
+    return { lesson, course };
+  }
+
+  async getLesson(lessonId: string, actorId?: string): Promise<Lesson> {
+    return (await this.lessonWithCourse(lessonId, actorId)).lesson;
   }
 
   async listLessons(courseId: string, actorId?: string): Promise<readonly Lesson[]> {
@@ -469,7 +476,10 @@ export class InMemoryLearningRepository implements LearningRepository {
     return step;
   }
 
-  async getStep(stepId: string, actorId?: string): Promise<LessonStep> {
+  async getStepWithCourse(
+    stepId: string,
+    actorId?: string
+  ): Promise<{ step: LessonStep; course: Course }> {
     const step = this.steps.get(stepId);
     if (!step || step.deletedAt) {
       throw new LearningRuleError('not_found', `Step '${stepId}' not found`);
@@ -480,18 +490,29 @@ export class InMemoryLearningRepository implements LearningRepository {
       throw new LearningRuleError('not_found', `Step '${stepId}' not found`);
     }
 
-    await this.getCourse(lesson.courseId, actorId);
-    return step;
+    const course = await this.getCourse(lesson.courseId, actorId);
+    return { step, course };
   }
 
-  async listSteps(lessonId: string, actorId?: string): Promise<readonly LessonStep[]> {
-    await this.getLesson(lessonId, actorId);
+  async getStep(stepId: string, actorId?: string): Promise<LessonStep> {
+    return (await this.getStepWithCourse(stepId, actorId)).step;
+  }
+
+  async listStepsWithCourse(
+    lessonId: string,
+    actorId?: string
+  ): Promise<{ steps: readonly LessonStep[]; course: Course }> {
+    const { course } = await this.lessonWithCourse(lessonId, actorId);
 
     const list = Array.from(this.steps.values()).filter(
       (s) => s.lessonId === lessonId && !s.deletedAt
     );
     list.sort(compareSteps);
-    return list;
+    return { steps: list, course };
+  }
+
+  async listSteps(lessonId: string, actorId?: string): Promise<readonly LessonStep[]> {
+    return (await this.listStepsWithCourse(lessonId, actorId)).steps;
   }
 
   async updateStep(

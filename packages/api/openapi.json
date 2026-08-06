@@ -10534,7 +10534,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/StepList"
+                  "$ref": "#/components/schemas/LearnerStepList"
                 }
               }
             }
@@ -10606,7 +10606,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/StepView"
+                  "$ref": "#/components/schemas/LearnerStepView"
                 }
               }
             }
@@ -13160,6 +13160,30 @@
           }
         }
       },
+      "SearchDisplay": {
+        "type": "object",
+        "description": "What a client needs to render the hit without fetching the entity again. Built only from data the entity’s own public view already exposes.",
+        "required": [
+          "type",
+          "title"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "game",
+              "player",
+              "tournament"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "subtitle": {
+            "type": "string"
+          }
+        }
+      },
       "SearchResult": {
         "type": "object",
         "required": [
@@ -13172,6 +13196,9 @@
           },
           "score": {
             "type": "number"
+          },
+          "display": {
+            "$ref": "#/components/schemas/SearchDisplay"
           }
         }
       },
@@ -14497,6 +14524,65 @@
         "type": "array",
         "items": {
           "$ref": "#/components/schemas/StepView"
+        }
+      },
+      "LearnerStepView": {
+        "type": "object",
+        "required": [
+          "id",
+          "lessonId",
+          "orderIndex",
+          "kind"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "lessonId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "orderIndex": {
+            "type": "integer"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "text",
+              "move",
+              "quiz"
+            ]
+          },
+          "prose": {
+            "type": "string"
+          },
+          "fen": {
+            "type": "string"
+          },
+          "hint": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "deletedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      },
+      "LearnerStepList": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/LearnerStepView"
         }
       },
       "ProgressView": {

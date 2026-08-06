@@ -1403,6 +1403,28 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     items: { $ref: '#/components/schemas/StepView' },
   },
 
+  LearnerStepView: {
+    type: 'object',
+    required: ['id', 'lessonId', 'orderIndex', 'kind'],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      lessonId: { type: 'string', format: 'uuid' },
+      orderIndex: { type: 'integer' },
+      kind: { type: 'string', enum: ['text', 'move', 'quiz'] },
+      prose: { type: 'string' },
+      fen: { type: 'string' },
+      hint: { type: 'string' },
+      question: { type: 'string' },
+      options: { type: 'array', items: { type: 'string' } },
+      deletedAt: { ...dateTime, nullable: true },
+    },
+  },
+
+  LearnerStepList: {
+    type: 'array',
+    items: { $ref: '#/components/schemas/LearnerStepView' },
+  },
+
   ProgressView: {
     type: 'object',
     required: ['playerId', 'courseId', 'lessonId', 'stepId', 'attempts'],

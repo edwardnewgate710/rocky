@@ -79,6 +79,7 @@ import {
   courseView,
   lessonView,
   stepView,
+  learnerStepView,
   progressView,
   courseProgressSummaryView,
   attemptResultView,
@@ -4433,7 +4434,7 @@ export function buildRouter(deps: RouteDeps): Router {
       tags: ['steps'],
       params: [pathParam('id', 'Lesson ID (UUID)')],
       responses: {
-        200: ['StepList', 'List of steps'],
+        200: ['LearnerStepList', 'List of steps'],
         404: ['Error', 'Lesson not found'],
         422: ['Error', 'Malformed ID'],
         503: ['Error', 'Learning service unavailable'],
@@ -4446,8 +4447,12 @@ export function buildRouter(deps: RouteDeps): Router {
       const lessonId = parseUuid(ctx.params['id']!, 'id');
 
       try {
-        const steps = await repo.listSteps(lessonId, actorId);
-        return json(200, steps.map(stepView));
+        // The course comes back from the read that already loaded it: `listSteps` resolves
+        // lesson → course to enforce visibility either way, and re-resolving it here to find the
+        // author doubled the query count on the route a lesson page calls (ADR-0095 §4).
+        const { steps, course } = await repo.listStepsWithCourse(lessonId, actorId);
+        const isAuthor = actorId !== undefined && course.authorId === actorId;
+        return json(200, steps.map((s) => (isAuthor ? stepView(s) : learnerStepView(s))));
       } catch (err) {
         mapLearningError(err);
       }
@@ -4462,7 +4467,7 @@ export function buildRouter(deps: RouteDeps): Router {
       tags: ['steps'],
       params: [pathParam('id', 'Step ID (UUID)')],
       responses: {
-        200: ['StepView', 'Step details'],
+        200: ['LearnerStepView', 'Step details'],
         404: ['Error', 'Step not found'],
         422: ['Error', 'Malformed ID'],
         503: ['Error', 'Learning service unavailable'],
@@ -4475,8 +4480,9 @@ export function buildRouter(deps: RouteDeps): Router {
       const stepId = parseUuid(ctx.params['id']!, 'id');
 
       try {
-        const step = await repo.getStep(stepId, actorId);
-        return json(200, stepView(step));
+        const { step, course } = await repo.getStepWithCourse(stepId, actorId);
+        const isAuthor = actorId !== undefined && course.authorId === actorId;
+        return json(200, isAuthor ? stepView(step) : learnerStepView(step));
       } catch (err) {
         mapLearningError(err);
       }

@@ -121,6 +121,29 @@ export interface LearningRepository {
 
   listSteps(lessonId: string, actorId?: string): Promise<readonly LessonStep[]>;
 
+  /**
+   * The same reads as `getStep` / `listSteps`, returning the owning course alongside the steps.
+   *
+   * Both plain forms already resolve lesson → course to enforce invariant 1, then discard the course.
+   * A caller that needs to know who the author is — the learner-scoped step projection in
+   * `packages/api` (ADR-0095) is the one that does — otherwise re-resolves the same two rows after
+   * the fact, doubling the query count on the routes a lesson page calls. These return what was
+   * already loaded.
+   *
+   * Visibility, ordering and `not_found` behaviour are identical to the plain forms. The course is
+   * returned as data, not as a permission: deciding what an actor may see with it stays with the
+   * caller.
+   */
+  getStepWithCourse(
+    stepId: string,
+    actorId?: string
+  ): Promise<{ readonly step: LessonStep; readonly course: Course }>;
+
+  listStepsWithCourse(
+    lessonId: string,
+    actorId?: string
+  ): Promise<{ readonly steps: readonly LessonStep[]; readonly course: Course }>;
+
   updateStep(
     stepId: string,
     actorId: string,

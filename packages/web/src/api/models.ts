@@ -577,7 +577,7 @@ export interface MoveStepView {
   readonly orderIndex: number;
   readonly kind: 'move';
   readonly fen: string;
-  // expectedSan is sent by the server but deliberately omitted in the client model so the client cannot grade attempts locally
+  // expectedSan is omitted in the learner step view (ADR-0095) so the client cannot grade attempts locally
   readonly hint?: string;
   readonly deletedAt?: string;
 }
@@ -589,7 +589,7 @@ export interface QuizStepView {
   readonly kind: 'quiz';
   readonly question: string;
   readonly options: readonly string[];
-  // correctIndex is sent by the server but deliberately omitted in the client model so the client cannot grade attempts locally
+  // correctIndex is omitted in the learner step view (ADR-0095) so the client cannot grade attempts locally
   readonly deletedAt?: string;
 }
 

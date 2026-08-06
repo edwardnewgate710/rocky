@@ -105,6 +105,8 @@ export interface HarnessOptions {
   readonly withoutStudies?: boolean;
   /** Pass true to simulate a server constructed without learning repository. */
   readonly withoutLearning?: boolean;
+  /** Substitute the learning repository — e.g. a decorator that counts the calls a route makes. */
+  readonly learningRepository?: import('@chess-platform/learning').LearningRepository;
   /** Pass true to simulate a server constructed with the GraphQL endpoint switched off. */
   readonly withoutGraphql?: boolean;
   /** Expose the gated `__schema` field. Off by default, as in production (ADR-0073). */
@@ -183,7 +185,7 @@ export async function startHarness(
     : repos.studies;
   const learningRepository = harnessOptions.withoutLearning
     ? undefined
-    : repos.learning;
+    : (harnessOptions.learningRepository ?? repos.learning);
   const graphql = harnessOptions.withoutGraphql
     ? undefined
     : { introspection: harnessOptions.graphqlIntrospection === true };
