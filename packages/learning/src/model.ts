@@ -80,7 +80,6 @@ export interface AttemptResult {
   readonly correct: boolean;
   readonly completedAt?: Date;
   readonly attempts: number;
-  readonly message?: string;
 }
 
 export type CreateStepInput =

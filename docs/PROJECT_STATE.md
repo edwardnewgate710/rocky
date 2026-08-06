@@ -4,7 +4,16 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-06 - M14 Increment 30: Team join-request moderation (ADR-0096)._
+_Last updated: 2026-08-06 - M14 Increment 31: Delete the speculative AttemptResult.message (ADR-0097)._
+
+## M14 Increment 31 - Delete the speculative `AttemptResult.message` (ADR-0097)
+
+Closes the last open item in the ROADMAP follow-up list. `AttemptResult` in `packages/learning/src/model.ts` declared `readonly message?: string`, and no implementation ever set it — the declaration was the only occurrence of the field in the repository. The presenter omitting it dropped nothing.
+
+- **Domain (`packages/learning/src/model.ts`)**: field deleted. Populating it would have meant writing the wording of a feedback feature that has never existed, which is a product decision; deleting is the reversible direction, and the domain can regain the field the day something produces a value.
+- **Contract test (`packages/api/test/openapi.test.ts`)**: `AttemptResultView` was the last presenter without a schema/presenter coupling test — the divergence found three times before (ADR-0088, Increments 28 and 30), each time surviving because every route test reads the response and none read the schema. Its assertion differs from its neighbours: `completedAt` is genuinely optional on both sides, so declared properties are checked against the union of both branches while `required` is checked against the always-present keys.
+- **Stale marker corrected (`docs/ROADMAP.md`)**: Increment 1 still read `🚧` while all five acceptance artifacts exist and its criteria are met. Now ✅.
+- **Known gap, not closed**: a wrong quiz answer yields `Try again` and nothing else — a quiz step has no author-written explanation field, and ADR-0095 removed `correctIndex` from the learner view. A move step still carries its author-written `hint`. Recorded in ADR-0097 §2 as a design task.
 
 ## M14 Increment 30 - Team join-request moderation (ADR-0096)
 

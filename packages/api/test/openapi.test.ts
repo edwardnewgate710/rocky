@@ -1,9 +1,9 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { startHarness } from './helpers';
-import { joinRequestView, learnerStepView, teamView, teamDetailView } from '../src/presenters';
+import { joinRequestView, learnerStepView, teamView, teamDetailView, attemptResultView } from '../src/presenters';
 import type { JoinRequest, Team } from '@chess-platform/community';
-import type { LessonStep } from '@chess-platform/learning';
+import type { AttemptResult, LessonStep } from '@chess-platform/learning';
 
 function collectRefs(node: unknown, acc: string[]): void {
   if (Array.isArray(node)) {
@@ -277,6 +277,45 @@ test('TeamView and TeamDetailView describe exactly what their presenters emit', 
     assert.deepEqual(detailKeys, Object.keys(asStranger).sort());
     assert.deepEqual(detailKeys, [...schemas.TeamDetailView.required].sort());
     assert.equal(asStranger.viewerRole, null);
+  } finally {
+    await h.close();
+  }
+});
+
+/**
+ * The last presenter without one of these, added when `AttemptResult.message` was deleted
+ * (ADR-0097). The same divergence has been found here three times — `ForumPostView` (ADR-0088),
+ * `JoinRequestView` (increment 28) and `TeamView` (increment 30) — and each time it survived because
+ * every route test reads the response and none read the schema.
+ *
+ * Unlike those, `completedAt` here is genuinely optional on both sides: the presenter spreads it
+ * conditionally and the schema leaves it out of `required`. So the declared properties are checked
+ * against the union of what both branches emit, and `required` is checked separately against the
+ * keys that are always present. Asserting one against the other would fail on a correct contract.
+ */
+test('AttemptResultView: the served schema describes exactly what the presenter emits', async () => {
+  const h = await startHarness();
+  try {
+    const schema = (h.server.openapiDocument() as any).components.schemas.AttemptResultView;
+
+    const base = { stepId: 'e6f0b1a2-0000-4000-8000-000000000001', attempts: 2 };
+    const inProgress: AttemptResult = { ...base, correct: false };
+    const completed: AttemptResult = {
+      ...base,
+      correct: true,
+      completedAt: new Date('2026-01-01T00:00:00.000Z'),
+    };
+
+    const pending = attemptResultView(inProgress);
+    const done = attemptResultView(completed);
+
+    const emitted = [...new Set([...Object.keys(pending), ...Object.keys(done)])].sort();
+    assert.deepEqual(emitted, Object.keys(schema.properties).sort());
+
+    // `required` is what every response carries, which is the pending shape.
+    assert.deepEqual([...schema.required].sort(), Object.keys(pending).sort());
+    assert.equal('completedAt' in pending, false);
+    assert.equal(typeof done.completedAt, 'string');
   } finally {
     await h.close();
   }
