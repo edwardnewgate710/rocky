@@ -65,6 +65,7 @@ function makeCannedState(gameId: string, ply: number): StateView {
     ply,
     turn: 'w',
     clock: { w: 300000, b: 300000 },
+    turnStartedAt: null,
     status: { over: false },
     drawOffer: null,
     moves: [],

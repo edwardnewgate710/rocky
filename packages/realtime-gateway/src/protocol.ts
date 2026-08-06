@@ -67,6 +67,13 @@ export interface StateView {
   readonly ply: number;
   readonly turn: Color;
   readonly clock: ClockView;
+  /**
+   * Server timestamp (ms since epoch) at which the side to move's turn began — the anchor a
+   * client interpolates its displayed countdown from. Mirrors `ClockState.turnStartedAt`, so it
+   * is null exactly when that is: a game whose clock was never started. It is a *server* clock
+   * reading; a client must correct for skew before comparing it to its own `Date.now()`.
+   */
+  readonly turnStartedAt: number | null;
   readonly status:
     | { readonly over: false }
     | {

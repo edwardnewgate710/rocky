@@ -38,6 +38,7 @@ function stateView(
     ply,
     turn,
     clock: { w: 60_000, b: 60_000 },
+    turnStartedAt: null,
     status: { over: false },
     drawOffer: null,
     moves,
@@ -377,4 +378,51 @@ test('M6: submitMove returns null when a move is already pending', () => {
   assert.ok(first, 'first submit should succeed');
   const second = sync.submitMove('d2d4');
   assert.equal(second, null, 'second submit while pending should return null');
+});
+
+/**
+ * `decodeServer()` validates only the `t` discriminant and casts the rest, so a frame that omits
+ * `turnStartedAt` — a gateway that predates ADR-0103, which a rolling deploy makes ordinary — hands
+ * the app `undefined` where it declares `number | null`. `undefined !== null`, so the countdown
+ * would accept it as an anchor and interpolate against it, producing NaN remaining and a `NaN:NaN`
+ * clock face. The boundary coerces it instead, so nothing downstream has to re-check.
+ */
+test('a snapshot frame with no turnStartedAt lands as null, not undefined', () => {
+  const { factory, sync } = setup();
+  sync.start();
+  factory.last.open();
+
+  const withoutAnchor: Record<string, unknown> = { ...stateView(0, 'w') };
+  delete withoutAnchor['turnStartedAt'];
+  // Emitted as a raw frame, the way the socket actually delivers one — no cast needed to express
+  // "the server sent a shape our types promise but do not enforce".
+  factory.last.emit(JSON.stringify({ t: 'joined', gameId: 'g1', role: 'white', state: withoutAnchor }));
+
+  const anchor = sync.getState().turnStartedAt;
+  assert.equal(anchor, null);
+  assert.notEqual(anchor, undefined, 'undefined would pass the `!== null` guard and yield NaN');
+});
+
+/** The move path takes its anchor from `serverTs` and is exposed exactly the same way. */
+test('a move broadcast whose serverTs is not a number does not become a clock anchor', () => {
+  const { factory, sync } = setup();
+  sync.start();
+  factory.last.open();
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: stateView(0, 'w') });
+
+  factory.last.emit(JSON.stringify({
+    t: 'move',
+    gameId: 'g1',
+    ply: 1,
+    uci: 'e2e4',
+    san: 'e4',
+    by: 'w',
+    fenHash: 'h1',
+    clock: { w: 59_000, b: 60_000 },
+    serverTs: 'not-a-timestamp',
+    legalMoves: {},
+  }));
+
+  assert.equal(sync.getState().ply, 1, 'the move itself still applies');
+  assert.equal(sync.getState().turnStartedAt, null);
 });

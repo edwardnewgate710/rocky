@@ -4,7 +4,17 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-06 - M14 Increment 36: Dev-server API proxy and the engine bot (ADR-0102)._
+_Last updated: 2026-08-06 - M14 Increment 37: Live clock countdown UI interpolation and web container build chain (ADR-0103)._
+
+## M14 Increment 37 - Live clock countdown UI interpolation and web container build chain (ADR-0103)
+
+A player watching their own game saw a frozen clock that only updated when a move landed, remaining unchanged while sitting and thinking and across page reloads. The server timing was authoritative and correct; the browser never rendered the passage of time between moves. Additionally, adding `@chess-platform/realtime-gateway` to web exposed a container build chain defect in `Dockerfile.web`.
+
+- **Anchor in snapshot (`packages/realtime-gateway/src/protocol.ts`, `authority.ts`, `packages/web/src/net/ws-protocol.ts`)**: `StateView` now carries `readonly turnStartedAt: number | null` (populated from `snap.clock.turnStartedAt`), allowing clients joining mid-game or reloading to anchor countdown interpolation.
+- **Clock skew in WebSocket client (`packages/web/src/net/ws-client.ts`, `game-sync.ts`)**: `WsClient` calculates skew on `pong` messages using `estimateSkewMs(msg.ts, msg.serverTs, rtt)` and exposes it via a `skew` getter.
+- **Single pure helper implementation re-exported through barrel (`packages/realtime-gateway/src/index.ts`)**: Re-exported latency functions explicitly in `index.ts`. `packages/web` imports `estimateSkewMs` and `interpolateRemaining` directly from `@chess-platform/realtime-gateway`, ensuring exactly one interpolation implementation exists in the repo without requiring Vite alias rules.
+- **Injectable clock timer with second-granularity DOM throttling (`packages/web/src/app/game-controller.ts`)**: `GameController` ticks an injectable timer on live games to emit interpolated remaining time. `updateClockDisplay` suppresses callbacks unless the rounded second value (`Math.floor(ms / 1000)`) changes, reducing DOM updates by ~90%, while authoritative state updates (`handleState`) emit immediately with zero lag.
+- **Web image build chain & build-order gate expansion (`packages/web/package.json`, `package.json`, `Dockerfile.web`, `scripts/check-docker-build-order.mjs`)**: Moved `@chess-platform/realtime-gateway` to `dependencies` in `packages/web/package.json`, added root `build:web` script in `package.json`, updated `Dockerfile.web` to delegate to `build:web`, and extended `scripts/check-docker-build-order.mjs` into a parameterized gate checking both `server` and `web` container build chains.
 
 ## M14 Increment 36 - The dev server had no API proxy, and the bot had no engine (ADR-0102)
 

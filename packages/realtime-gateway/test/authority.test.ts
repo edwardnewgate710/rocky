@@ -28,6 +28,7 @@ test('createGame registers a game and exposes authoritative state', async () => 
   const s = authority.getState('g1');
   assert.equal(s.ply, 0);
   assert.equal(s.turn, 'w');
+  assert.equal(s.turnStartedAt, 1_000, 'turnStartedAt must carry through from domain clock');
   assert.equal(s.status.over, false);
   assert.equal(s.fenHash.length, 12);
   assert.deepEqual(s.players, { white: 'alice', black: 'bob' });

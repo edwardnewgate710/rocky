@@ -57,6 +57,8 @@ export interface GameSyncState {
   readonly ply: number;
   readonly turn: WsColor | null;
   readonly clock: { readonly w: number; readonly b: number } | null;
+  /** Server timestamp (ms) when turn started (anchor for interpolation). */
+  readonly turnStartedAt: number | null;
   readonly status: GameStatus | null;
   readonly drawOffer: WsColor | null;
   readonly fenHash: string | null;
@@ -85,6 +87,20 @@ export interface GameSyncOptions {
 
 export type GameSyncListener = (state: GameSyncState) => void;
 
+/**
+ * The clock anchor as a number, or null for "no anchor".
+ *
+ * `decodeServer()` validates only the `t` discriminant and casts the rest, so every other field is
+ * a claim about the frame rather than a fact about it. That was harmless while the wire values were
+ * only rendered; this one is multiplied into a countdown ten times a second, and `undefined` here
+ * yields `NaN` remaining and a `NaN:NaN` clock face. A gateway that predates ADR-0103 sends exactly
+ * that frame, which a rolling deploy makes an ordinary Tuesday rather than a malformed-input edge
+ * case. Coerced once here, at the boundary, so nothing downstream has to re-check it.
+ */
+function clockAnchor(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 function initialState(gameId: string): GameSyncState {
   return {
     gameId,
@@ -96,6 +112,7 @@ function initialState(gameId: string): GameSyncState {
     ply: 0,
     turn: null,
     clock: null,
+    turnStartedAt: null,
     status: null,
     drawOffer: null,
     fenHash: null,
@@ -127,6 +144,11 @@ export class GameSync {
 
   getState(): GameSyncState {
     return this.state;
+  }
+
+  /** Estimated clock skew (ms; serverClock - clientClock) from the WebSocket client. */
+  get skew(): number {
+    return this.client.skew ?? 0;
   }
 
   subscribe(listener: GameSyncListener): () => void {
@@ -288,6 +310,7 @@ export class GameSync {
       ply: view.ply,
       turn: view.turn,
       clock: view.clock,
+      turnStartedAt: clockAnchor(view.turnStartedAt),
       status: view.status,
       drawOffer: view.drawOffer,
       fenHash: view.fenHash,
@@ -313,6 +336,7 @@ export class GameSync {
       ply: msg.ply,
       turn: opposite(msg.by),
       clock: msg.clock,
+      turnStartedAt: clockAnchor(msg.serverTs),
       fenHash: msg.fenHash,
       drawOffer: null,
       // The broadcast carries the authoritative legal-move map for the

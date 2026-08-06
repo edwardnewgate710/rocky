@@ -8,8 +8,8 @@ COPY packages/ ./packages/
 
 RUN npm ci
 
-# Build the web package (tsc + vite build)
-RUN npm run build --workspace @chess-platform/web
+# Build the web package and its dependencies in order
+RUN npm run build:web
 
 # --- Runtime stage: nginx serving static files ---
 # nginxinc/nginx-unprivileged runs as a non-root user by default and listens

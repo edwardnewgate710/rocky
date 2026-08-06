@@ -422,6 +422,7 @@ export class GameAuthority {
       ply: snap.ply,
       turn: game.turn,
       clock: { w: snap.clock.remaining.w, b: snap.clock.remaining.b },
+      turnStartedAt: snap.clock.turnStartedAt,
       status: snap.status,
       drawOffer: snap.drawOffer,
       moves: snap.moves.map((m) => ({ ply: m.ply, uci: m.uci, san: m.san, by: m.by })),

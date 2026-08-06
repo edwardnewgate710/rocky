@@ -73,6 +73,7 @@ test('pong updates rtt and is not surfaced as a message', () => {
   factory.last.emit({ t: 'pong', ts: 100, serverTs: 200 });
   assert.deepEqual(pongs, [150]);
   assert.equal(client.rtt, 150);
+  assert.equal(client.skew, 25);
   assert.equal(msgs.length, 0);
 });
 
@@ -121,9 +122,12 @@ test('heartbeat pings while active and drops a silent socket', () => {
   factory.last.open();
   const socket = factory.last;
   assert.equal(scheduler.pending, 1); // heartbeat armed
+  // Since ADR-0103 the open itself pings, so the heartbeat's own ping is the second frame, not the
+  // first. Asserted rather than skipped past: this is the contract change, not an off-by-one.
+  assert.deepEqual(JSON.parse(socket.sent[0]!), { t: 'ping', ts: 0 });
   clock.t = 1000;
   scheduler.runNext(); // tick: still fresh → ping + re-arm
-  assert.deepEqual(JSON.parse(socket.sent[0]!), { t: 'ping', ts: 1000 });
+  assert.deepEqual(JSON.parse(socket.sent[1]!), { t: 'ping', ts: 1000 });
   clock.t = 2000; // no activity since t=0 → exceeds 1000 + 500
   scheduler.runNext(); // tick: stale → drop socket
   assert.deepEqual(socket.closed, { code: 4000, reason: 'heartbeat timeout' });
@@ -174,4 +178,41 @@ test('networkOffline does not fight an intentional close', () => {
   assert.equal(client.state, 'closed');
   client.networkOffline(); // must stay closed, no reconnect
   assert.equal(client.state, 'closed');
+});
+
+/**
+ * The pong is what establishes the clock-skew estimate the live countdown interpolates against
+ * (ADR-0103). Arming the heartbeat without pinging left the first `heartbeatMs` of every game
+ * counting down against an unmeasured client clock — 25 seconds by default, and always the seconds
+ * right after a join or reload, which is precisely when a player is watching the clock.
+ */
+test('opening the socket pings immediately, so skew is measured before the first heartbeat', () => {
+  const { client, factory, scheduler, clock } = makeClient({ heartbeatMs: 25_000 });
+  clock.t = 1_000;
+  client.connect();
+  factory.last.open();
+
+  assert.deepEqual(
+    JSON.parse(factory.last.sent[0]!),
+    { t: 'ping', ts: 1_000 },
+    'a ping must be sent on open, not only when the heartbeat interval elapses',
+  );
+
+  // And the periodic heartbeat still runs afterwards.
+  clock.t = 26_000;
+  scheduler.runNext();
+  assert.deepEqual(JSON.parse(factory.last.sent[1]!), { t: 'ping', ts: 26_000 });
+});
+
+test('a pong answered before any heartbeat elapses yields a usable skew', () => {
+  const { client, factory, clock } = makeClient({ heartbeatMs: 25_000 });
+  clock.t = 1_000;
+  client.connect();
+  factory.last.open();
+  assert.equal(client.skew, null, 'no skew before the first pong');
+
+  clock.t = 1_040;
+  factory.last.emit({ t: 'pong', ts: 1_000, serverTs: 5_020 });
+  // rtt = 40, skew = serverTs - pingSentTs - rtt/2 = 5020 - 1000 - 20 = 4000.
+  assert.equal(client.skew, 4_000);
 });

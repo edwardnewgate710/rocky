@@ -55,6 +55,7 @@ function stateView(
     ply,
     turn,
     clock: { w: 60_000, b: 60_000 },
+    turnStartedAt: null,
     status: { over: false },
     drawOffer: null,
     moves,
@@ -750,6 +751,290 @@ test('onMetadata deduplicates identical timeControl objects', () => {
   factory.last.emit({ t: 'state', gameId: 'g1', state: stateView3 });
 
   assert.equal(metadatas.length, lenBefore + 1, 'Different timeControl object should trigger onMetadata');
+
+  controller.stop();
+  sync.stop();
+});
+
+// ── Live Clock Countdown ─────────────────────────────────────────────────────
+
+test('live clock ticks White remaining down when White is to move', () => {
+  const factory = new FakeSocketFactory();
+  const scheduler = new ManualScheduler();
+  let fakeNow = 1000;
+  const client = new WsClient({
+    url: 'wss://example.test/ws',
+    factory: factory.factory,
+    scheduler,
+    now: () => fakeNow,
+    rng: () => 0,
+    heartbeatMs: 0,
+  });
+  const sync = new GameSync(client, { gameId: 'g1', token: 'token-u1' });
+
+  const clocks: Array<[number, number]> = [];
+  let timerFn: (() => void) | null = null;
+  let timerCleared = false;
+
+  const controller = new GameController({
+    gameSync: sync,
+    now: () => fakeNow,
+    setInterval: (fn) => {
+      timerFn = fn;
+      return 123 as unknown as ReturnType<typeof setInterval>;
+    },
+    clearInterval: () => {
+      timerCleared = true;
+      timerFn = null;
+    },
+    callbacks: {
+      onPosition: () => {},
+      onTurn: () => {},
+      onClock: (w, b) => clocks.push([w, b]),
+      onStatus: () => {},
+    },
+  });
+
+  controller.start();
+  sync.start();
+  factory.last.open();
+
+  const sv: StateView = {
+    ...stateView(0, 'w', 'startpos'),
+    clock: { w: 60_000, b: 60_000 },
+    turnStartedAt: 1000,
+  };
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: sv });
+
+  assert.deepEqual(clocks.at(-1), [60_000, 60_000]);
+
+  fakeNow = 1500;
+  if (timerFn) (timerFn as () => void)();
+  assert.deepEqual(clocks.at(-1), [59_500, 60_000]);
+
+  // Sub-second tick within the same second (59s) is suppressed to avoid redundant DOM writes
+  fakeNow = 2000;
+  const countBefore = clocks.length;
+  if (timerFn) (timerFn as () => void)();
+  assert.equal(clocks.length, countBefore, 'sub-second tick within same second should be suppressed');
+
+  // Next second boundary (58s) fires onClock
+  fakeNow = 2500;
+  if (timerFn) (timerFn as () => void)();
+  assert.deepEqual(clocks.at(-1), [58_500, 60_000]);
+
+  controller.stop();
+  assert.equal(timerCleared, true);
+  sync.stop();
+});
+
+test('countdown stops when game ends, and timer is cleared on stop', () => {
+  const factory = new FakeSocketFactory();
+  const scheduler = new ManualScheduler();
+  let fakeNow = 1000;
+  const client = new WsClient({
+    url: 'wss://example.test/ws',
+    factory: factory.factory,
+    scheduler,
+    now: () => fakeNow,
+    rng: () => 0,
+  });
+  const sync = new GameSync(client, { gameId: 'g1', token: 'token-u1' });
+  const clocks: Array<[number, number]> = [];
+  let timerFn: (() => void) | null = null;
+  let timerCleared = false;
+
+  const controller = new GameController({
+    gameSync: sync,
+    now: () => fakeNow,
+    setInterval: (fn) => {
+      timerFn = fn;
+      return 123 as unknown as ReturnType<typeof setInterval>;
+    },
+    clearInterval: () => {
+      timerCleared = true;
+      timerFn = null;
+    },
+    callbacks: {
+      onPosition: () => {},
+      onTurn: () => {},
+      onClock: (w, b) => clocks.push([w, b]),
+      onStatus: () => {},
+    },
+  });
+
+  controller.start();
+  sync.start();
+  factory.last.open();
+
+  const sv: StateView = {
+    ...stateView(0, 'w', 'startpos'),
+    clock: { w: 60_000, b: 60_000 },
+    turnStartedAt: 1000,
+  };
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: sv });
+  assert.ok(timerFn !== null);
+
+  factory.last.emit({ t: 'ended', gameId: 'g1', result: '1-0', termination: 'checkmate', winner: 'w', serverTs: 2000 });
+  assert.equal(timerCleared, true);
+  assert.equal(timerFn, null);
+
+  controller.stop();
+  sync.stop();
+});
+
+test('clock value never goes below zero once anchor is exhausted', () => {
+  const factory = new FakeSocketFactory();
+  const scheduler = new ManualScheduler();
+  let fakeNow = 1000;
+  const client = new WsClient({
+    url: 'wss://example.test/ws',
+    factory: factory.factory,
+    scheduler,
+    now: () => fakeNow,
+    rng: () => 0,
+  });
+  const sync = new GameSync(client, { gameId: 'g1', token: 'token-u1' });
+  const clocks: Array<[number, number]> = [];
+  let timerFn: (() => void) | null = null;
+
+  const controller = new GameController({
+    gameSync: sync,
+    now: () => fakeNow,
+    setInterval: (fn) => {
+      timerFn = fn;
+      return 123 as unknown as ReturnType<typeof setInterval>;
+    },
+    clearInterval: () => {},
+    callbacks: {
+      onPosition: () => {},
+      onTurn: () => {},
+      onClock: (w, b) => clocks.push([w, b]),
+      onStatus: () => {},
+    },
+  });
+
+  controller.start();
+  sync.start();
+  factory.last.open();
+
+  const sv: StateView = {
+    ...stateView(0, 'w', 'startpos'),
+    clock: { w: 1000, b: 60_000 },
+    turnStartedAt: 1000,
+  };
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: sv });
+
+  fakeNow = 6000;
+  if (timerFn) (timerFn as () => void)();
+  assert.deepEqual(clocks.at(-1), [0, 60_000]);
+
+  controller.stop();
+  sync.stop();
+});
+
+test('snapshot with turnStartedAt null does not crash and does not tick', () => {
+  const factory = new FakeSocketFactory();
+  const scheduler = new ManualScheduler();
+  let fakeNow = 1000;
+  const client = new WsClient({
+    url: 'wss://example.test/ws',
+    factory: factory.factory,
+    scheduler,
+    now: () => fakeNow,
+    rng: () => 0,
+  });
+  const sync = new GameSync(client, { gameId: 'g1', token: 'token-u1' });
+  const clocks: Array<[number, number]> = [];
+  let timerFn: (() => void) | null = null;
+
+  const controller = new GameController({
+    gameSync: sync,
+    now: () => fakeNow,
+    setInterval: (fn) => {
+      timerFn = fn;
+      return 123 as unknown as ReturnType<typeof setInterval>;
+    },
+    clearInterval: () => {},
+    callbacks: {
+      onPosition: () => {},
+      onTurn: () => {},
+      onClock: (w, b) => clocks.push([w, b]),
+      onStatus: () => {},
+    },
+  });
+
+  controller.start();
+  sync.start();
+  factory.last.open();
+
+  const sv: StateView = {
+    ...stateView(0, 'w', 'startpos'),
+    clock: { w: 60_000, b: 60_000 },
+    turnStartedAt: null,
+  };
+  factory.last.emit({ t: 'joined', gameId: 'g1', role: 'white', state: sv });
+
+  assert.deepEqual(clocks.at(-1), [60_000, 60_000]);
+  assert.equal(timerFn, null, 'timer should not start when turnStartedAt is null');
+
+  controller.stop();
+  sync.stop();
+});
+
+/**
+ * The end of the chain the boundary coercion protects: even given a frame whose anchor is missing,
+ * the clock face must stay a real time rather than `NaN:NaN`.
+ */
+test('a snapshot with no clock anchor renders the authoritative time, never NaN', () => {
+  const factory = new FakeSocketFactory();
+  const scheduler = new ManualScheduler();
+  let fakeNow = 1000;
+  const client = new WsClient({
+    url: 'wss://example.test/ws',
+    factory: factory.factory,
+    scheduler,
+    now: () => fakeNow,
+    rng: () => 0,
+    heartbeatMs: 0,
+  });
+  const sync = new GameSync(client, { gameId: 'g1', token: 'token-u1' });
+
+  const clocks: Array<[number, number]> = [];
+  let timerFn: (() => void) | null = null;
+  const controller = new GameController({
+    gameSync: sync,
+    now: () => fakeNow,
+    setInterval: (fn) => {
+      timerFn = fn;
+      return 123 as unknown as ReturnType<typeof setInterval>;
+    },
+    clearInterval: () => {
+      timerFn = null;
+    },
+    callbacks: {
+      onPosition: () => {},
+      onTurn: () => {},
+      onClock: (w, b) => clocks.push([w, b]),
+      onStatus: () => {},
+    },
+  });
+
+  controller.start();
+  sync.start();
+  factory.last.open();
+
+  const withoutAnchor: Record<string, unknown> = { ...stateView(0, 'w', 'startpos') };
+  delete withoutAnchor['turnStartedAt'];
+  factory.last.emit(JSON.stringify({ t: 'joined', gameId: 'g1', role: 'white', state: withoutAnchor }));
+
+  fakeNow = 9_000;
+  if (timerFn) (timerFn as () => void)();
+
+  for (const [w, b] of clocks) {
+    assert.ok(Number.isFinite(w) && Number.isFinite(b), `onClock emitted a non-finite value: ${w}, ${b}`);
+  }
+  assert.deepEqual(clocks.at(-1), [60_000, 60_000], 'with no anchor the authoritative values stand');
 
   controller.stop();
   sync.stop();

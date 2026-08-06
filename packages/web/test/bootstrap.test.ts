@@ -153,6 +153,7 @@ const BASE_STATE: StateView = {
   ply: 0,
   turn: 'w',
   clock: { w: 60_000, b: 60_000 },
+  turnStartedAt: null,
   status: { over: false },
   drawOffer: null,
   moves: [],

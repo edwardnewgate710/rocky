@@ -17,6 +17,7 @@ import type { GameSync, GameSyncState, PresenceInfo } from '../net/game-sync.js'
 import type { WsColor, Role, Variant, TimeControl } from '../net/ws-protocol.js';
 import { applyMove } from '../core/mover.js';
 import type { PromotionRole } from '../core/interaction.js';
+import { interpolateRemaining } from '@chess-platform/realtime-gateway/latency';
 
 /**
  * The unified UI state for game actions, projected from authoritative server state.
@@ -81,6 +82,13 @@ export interface GameControllerCallbacks {
 export interface GameControllerOptions {
   readonly gameSync: GameSync;
   readonly callbacks: GameControllerCallbacks;
+  /** Injected timer (for tests). */
+  readonly setInterval?: (fn: () => void, ms: number) => ReturnType<typeof setInterval>;
+  readonly clearInterval?: (id: ReturnType<typeof setInterval>) => void;
+  /** Injected clock (for tests). Defaults to Date.now. */
+  readonly now?: () => number;
+  /** Countdown tick interval in ms (default 100ms). */
+  readonly tickIntervalMs?: number;
 }
 
 /**
@@ -94,11 +102,19 @@ export interface GameControllerOptions {
 export class GameController {
   private readonly gameSync: GameSync;
   private readonly callbacks: GameControllerCallbacks;
+  private readonly _setInterval: (fn: () => void, ms: number) => ReturnType<typeof setInterval>;
+  private readonly _clearInterval: (id: ReturnType<typeof setInterval>) => void;
+  private readonly now: () => number;
+  private readonly tickIntervalMs: number;
+  private timerId: ReturnType<typeof setInterval> | null = null;
+  private lastState: GameSyncState | null = null;
+
   private unsubscribe: (() => void) | null = null;
   private currentFen = '';
   private currentMyTurn: boolean | undefined = undefined;
   private currentLastMove: { from: string; to: string } | null | undefined = undefined;
   private currentClock: { w: number; b: number } | undefined = undefined;
+  private lastEmittedSec: { w: number; b: number } | undefined = undefined;
   private currentActionState: GameActionState | undefined = undefined;
   private currentMetadataState: GameMetadataState | undefined = undefined;
   private colorEmitted = false;
@@ -106,6 +122,10 @@ export class GameController {
   constructor(options: GameControllerOptions) {
     this.gameSync = options.gameSync;
     this.callbacks = options.callbacks;
+    this._setInterval = options.setInterval ?? ((fn, ms) => setInterval(fn, ms));
+    this._clearInterval = options.clearInterval ?? ((id) => clearInterval(id));
+    this.now = options.now ?? (() => Date.now());
+    this.tickIntervalMs = options.tickIntervalMs ?? 100;
   }
 
   /** Start listening to GameSync state changes. */
@@ -117,6 +137,7 @@ export class GameController {
 
   /** Stop listening to state changes and stop GameSync. */
   stop(): void {
+    this.stopTimer();
     this.unsubscribe?.();
     this.unsubscribe = null;
     this.gameSync.stop();
@@ -194,7 +215,57 @@ export class GameController {
     return this.canResign();
   }
 
+  private startTimer(): void {
+    if (this.timerId !== null) return;
+    this.timerId = this._setInterval(() => this.tickClock(), this.tickIntervalMs);
+  }
+
+  private stopTimer(): void {
+    if (this.timerId !== null) {
+      this._clearInterval(this.timerId);
+      this.timerId = null;
+    }
+  }
+
+  private tickClock(): void {
+    if (this.lastState !== null) {
+      this.updateClockDisplay(this.lastState, false);
+    }
+  }
+
+  private updateClockDisplay(state: GameSyncState, isAuthoritative = false): void {
+    if (state.clock === null) return;
+
+    let displayW = state.clock.w;
+    let displayB = state.clock.b;
+
+    if (state.status?.over === false && state.turn !== null && state.turnStartedAt !== null) {
+      const nowMs = this.now();
+      const skewMs = this.gameSync.skew;
+      if (state.turn === 'w') {
+        displayW = interpolateRemaining(state.clock.w, state.turnStartedAt, nowMs, skewMs);
+      } else {
+        displayB = interpolateRemaining(state.clock.b, state.turnStartedAt, nowMs, skewMs);
+      }
+    }
+
+    const secW = Math.max(0, Math.floor(displayW / 1000));
+    const secB = Math.max(0, Math.floor(displayB / 1000));
+
+    const shouldEmit = isAuthoritative
+      || this.lastEmittedSec === undefined
+      || this.lastEmittedSec.w !== secW
+      || this.lastEmittedSec.b !== secB;
+
+    if (shouldEmit) {
+      this.currentClock = { w: displayW, b: displayB };
+      this.lastEmittedSec = { w: secW, b: secB };
+      this.callbacks.onClock(displayW, displayB);
+    }
+  }
+
   private handleState(state: GameSyncState): void {
+    this.lastState = state;
     // --- Position projection ---
     if (state.snapshot !== null) {
       let fen = state.snapshot.fen;
@@ -242,16 +313,14 @@ export class GameController {
       this.callbacks.onTurn(myTurn);
     }
 
-    // --- Clock (with change detection) ---
-    if (state.clock !== null) {
-      const clockChanged = this.currentClock === undefined
-        || this.currentClock.w !== state.clock.w
-        || this.currentClock.b !== state.clock.b;
-      if (clockChanged) {
-        this.currentClock = { w: state.clock.w, b: state.clock.b };
-        this.callbacks.onClock(state.clock.w, state.clock.b);
-      }
+    // --- Clock (with change detection and live countdown timer) ---
+    const isLive = state.status?.over === false && state.clock !== null && state.turn !== null && state.turnStartedAt !== null;
+    if (isLive) {
+      this.startTimer();
+    } else {
+      this.stopTimer();
     }
+    this.updateClockDisplay(state, true);
 
     // --- Status ---
     const statusText = this.statusText(state);

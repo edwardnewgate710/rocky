@@ -95,6 +95,8 @@ export interface StateView {
   readonly ply: number;
   readonly turn: WsColor;
   readonly clock: ClockView;
+  /** Server timestamp (ms since epoch) when current turn began, or null if unlimited/not started. */
+  readonly turnStartedAt: number | null;
   readonly status: GameStatus;
   readonly drawOffer: WsColor | null;
   readonly moves: readonly MoveView[];

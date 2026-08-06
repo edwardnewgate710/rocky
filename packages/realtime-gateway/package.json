@@ -5,6 +5,16 @@
   "license": "AGPL-3.0-or-later",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./latency": {
+      "types": "./dist/latency.d.ts",
+      "default": "./dist/latency.js"
+    }
+  },
   "files": [
     "dist",
     "src"

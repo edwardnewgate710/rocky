@@ -1107,6 +1107,15 @@ Eliminates manual route controller teardown in `main.ts` and fixes latent memory
 - **Verb Normalisation & Socket Leak Fix (`game-controller.ts`, `board.ts`)**: Normalised teardown verb to `.dispose()` across all disposables (`MountedBoard.dispose()`, `GameController.dispose()`). Cascaded `GameController.stop()` to `gameSync.stop()`, unsubscribing game socket listeners when navigating away from `/game/{id}` routes.
 - **Tests & Documentation (`lifecycle.test.ts`, `0092-bootstrap-teardown.md`)**: Added unit tests covering teardown order before next bootstrap, null disposable skipping, and type-level `@ts-expect-error` exhaustiveness guard. Documented in `docs/adr/0092-bootstrap-teardown.md`.
 
+### Increment 26 (M14 Inc 37): Live clock countdown UI interpolation (ADR-0103) ✅
+
+Connects existing unit-tested pure latency interpolation helpers (`estimateSkewMs`, `interpolateRemaining` in `@chess-platform/realtime-gateway`) to the web UI.
+
+- **StateView anchor (`protocol.ts`, `authority.ts`, `ws-protocol.ts`)**: Added `turnStartedAt: number | null` to `StateView` carrying `snap.clock.turnStartedAt` to anchor interpolation on snapshot resume and join.
+- **Clock Skew & Sync (`ws-client.ts`, `game-sync.ts`)**: `WsClient` computes `skew` on `pong` messages using `estimateSkewMs`; `GameSync` exposes `skew` and `turnStartedAt`.
+- **GameController Timer (`game-controller.ts`)**: Ticks an injectable timer on live games to emit interpolated remaining time for the side to move using `interpolateRemaining`. Suppresses `onClock` callbacks unless second boundary changes (reducing DOM writes by ~90%), while authoritative updates emit instantly.
+- **Container Build Chain & Build-Order Gate (`package.json`, `Dockerfile.web`, `check-docker-build-order.mjs`)**: Moved `@chess-platform/realtime-gateway` to `dependencies` in web's manifest, added root `build:web` script, updated `Dockerfile.web` to delegate to `build:web`, and extended `scripts/check-docker-build-order.mjs` into a parameterized gate guarding both server and web container builds. Documented in `docs/adr/0103-live-clock-countdown.md`.
+
 ## ✅ Verification hygiene — ADR claim drift guard (ADR-0079)
 
 Cross-cutting, not tied to one milestone. Increment 11 found ADR-0010 §7 specifying six ownership

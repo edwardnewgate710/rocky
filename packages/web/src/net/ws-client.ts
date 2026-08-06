@@ -20,6 +20,12 @@ import { decodeServer, encodeClient } from './ws-protocol.js';
 import type { SocketHandlers, WebSocketConnection, WebSocketFactory, WsCloseInfo } from '../ports/ws.js';
 import { browserWebSocketFactory } from '../ports/ws.js';
 import { computeBackoff } from './retry.js';
+// The `/latency` subpath, never the package root: importing the barrel would pull the whole
+// server-side gateway into the browser bundle. `tsc` resolves this through the package's `exports`
+// map to the compiled `dist`; `vite.config.ts` aliases it to the TypeScript source instead, because
+// the gateway emits CommonJS and Vite only runs its CJS interop inside `node_modules`. Both paths
+// lead to the same authored file, so there is still exactly one implementation. See ADR-0103.
+import { estimateSkewMs } from '@chess-platform/realtime-gateway/latency';
 
 export type WsConnectionState = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'closed';
 
@@ -93,6 +99,7 @@ export class WsClient {
   private heartbeatHandle: unknown = null;
   private lastActivityAt = 0;
   private rttMs: number | null = null;
+  private skewMs: number | null = null;
   private readonly listeners = new Set<WsClientListeners>();
 
   constructor(options: WsClientOptions) {
@@ -114,6 +121,11 @@ export class WsClient {
   /** Last measured round-trip time (ms) from ping/pong, or null. */
   get rtt(): number | null {
     return this.rttMs;
+  }
+
+  /** One-way clock skew estimate (ms; serverClock - clientClock), or null. */
+  get skew(): number | null {
+    return this.skewMs;
   }
 
   /** Register listeners; returns an unsubscribe function. */
@@ -229,6 +241,7 @@ export class WsClient {
     }
     if (msg.t === 'pong') {
       this.rttMs = Math.max(0, this.now() - msg.ts);
+      this.skewMs = estimateSkewMs(msg.ts, msg.serverTs, this.rttMs);
       this.emit('pong', this.rttMs);
       return;
     }
@@ -280,6 +293,13 @@ export class WsClient {
 
   private startHeartbeat(): void {
     if (this.heartbeatMs <= 0) return;
+    // Ping once on open rather than waiting out the first interval. The pong is what establishes
+    // the skew estimate the live countdown interpolates against (ADR-0103), so deferring it left
+    // the first `heartbeatMs` of every game — 25 seconds by default, and always the seconds right
+    // after a join or reload — counting down against an unmeasured client clock. On a machine set
+    // ahead of the server that reads as time already spent, so the clock can show 0:00 on a game
+    // that has barely started.
+    this.send({ t: 'ping', ts: this.now() });
     this.armHeartbeat();
   }
 

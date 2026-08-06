@@ -1,10 +1,22 @@
 import { defineConfig } from 'vite';
+import { fileURLToPath, URL } from 'node:url';
 
 // Static SPA build. When running e2e tests with GAMBIT_E2E_BACKEND=1, the
 // vite preview server proxies /v1 (REST), /e2e (harness bridge), and /ws
 // (WebSocket) to the e2e harness backend. This lets the frontend talk to
 // real backends without CORS configuration.
 export default defineConfig({
+  resolve: {
+    alias: {
+      // The clock-interpolation helpers are authored once, in the gateway, and shared with the
+      // browser (ADR-0103). That package emits CommonJS, and Vite only applies its CommonJS
+      // interop inside `node_modules` — so bundling the compiled `dist/latency.js` fails with
+      // "estimateSkewMs is not exported". Pointing at the TypeScript source lets Vite compile it
+      // as ordinary ESM. `tsc` still resolves the same import through the package `exports` map,
+      // and both routes originate from this one file, so the arithmetic exists in one place only.
+      '@chess-platform/realtime-gateway/latency': fileURLToPath(new URL('../realtime-gateway/src/latency.ts', import.meta.url)),
+    },
+  },
   build: {
     target: 'es2022',
     outDir: 'dist',
