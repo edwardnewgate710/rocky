@@ -61,6 +61,18 @@ that could not name `chess960` would be wrong about what the API takes. `OFFERED
 subset the lobby renders. `packages/web/test/create-game-prefs.test.ts` asserts both directions, so
 quietly dropping `chess960` from the contract list would fail too.
 
+**`OFFERED_VARIANTS` names what is offered rather than subtracting what is not.** The first version
+of this change was `VARIANTS.filter(v => v !== 'chess960')`, and the test asserted "every contract
+variant except `chess960` must be offered". That reproduces the very defect this ADR exists for: it
+makes offering the default and withholding the exception, so a variant added to `VARIANTS` tomorrow
+becomes selectable the moment it is named, and stays selectable unless someone remembers to write
+another exclusion. Found in the PR review of #96.
+
+The same reasoning as the allowlist in ADR-0094's projection test: an exhaustive statement of what is
+permitted fails closed when something new appears; a list of exclusions fails open. Adding a variant
+now requires a deliberate entry in `OFFERED_VARIANTS` **and** in the test's expected set, and the
+test fails until both happen.
+
 ### 3. What the audit found in the other seven variants
 
 Chess960 was the only hollow one. Each of the following was checked by running it:

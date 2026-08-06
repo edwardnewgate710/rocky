@@ -44,8 +44,23 @@ export type Variant = (typeof VARIANTS)[number];
  * of the 960 arrangements, and castling is hardcoded to e1/a1/h1 in `packages/chess-core`, so it
  * only works from the one start position that is standard chess. Choosing it produced an ordinary
  * game wearing a different label. See ADR-0099; restore it here once the variant is real.
+ *
+ * Written out rather than derived as `VARIANTS.filter(v => v !== 'chess960')`. Subtracting from the
+ * contract list makes offering the default and withholding the exception, so a variant added to
+ * `VARIANTS` tomorrow becomes selectable the moment it is named — which is precisely how a variant
+ * with nothing behind it came to be on the board in the first place. Naming what is offered means a
+ * new variant has to be let in deliberately, and the test in `create-game-prefs.test.ts` fails until
+ * someone does.
  */
-export const OFFERED_VARIANTS = VARIANTS.filter((v) => v !== 'chess960');
+export const OFFERED_VARIANTS: readonly Variant[] = [
+  'standard',
+  'kingofthehill',
+  'atomic',
+  'crazyhouse',
+  'threecheck',
+  'horde',
+  'racingkings',
+];
 
 /**
  * A seek's color preference (matches the server's `color` enum). `random` (the
