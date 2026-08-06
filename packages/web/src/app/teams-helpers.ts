@@ -14,6 +14,9 @@
  */
 import type { TeamMembership, TeamView } from '../api/models.js';
 
+/** A viewer's role in a team, or null when they are not a member. */
+export type TeamRole = 'owner' | 'admin' | 'member';
+
 /**
  * What the team page offers the viewer.
  *
@@ -37,20 +40,22 @@ export function membershipOf(
 /**
  * Decide which action to offer. Order matters: membership is checked before visibility, because a
  * member of a private team can still leave it.
+ *
+ * `viewerRole` comes from the server on the team detail response rather than being looked up in the
+ * member list. That list is paginated and sorted owner → admin → member, so an ordinary member of a
+ * team with more members than one page is not in it, and searching it offered them a Join button for
+ * a team they were already in.
  */
 export function teamAction(
   team: TeamView,
-  members: readonly TeamMembership[],
+  viewerRole: TeamRole | null,
   viewerId: string | null,
 ): TeamAction {
   if (viewerId === null) return { kind: 'none', reason: 'signed-out' };
 
-  const membership = membershipOf(members, viewerId);
-  if (membership !== null) {
+  if (viewerRole !== null) {
     // The owner cannot leave without transferring ownership first, and transfer is not built yet.
-    return membership.role === 'owner'
-      ? { kind: 'none', reason: 'owner' }
-      : { kind: 'leave' };
+    return viewerRole === 'owner' ? { kind: 'none', reason: 'owner' } : { kind: 'leave' };
   }
 
   // Not a member. Only public teams can be joined directly.
@@ -67,4 +72,33 @@ export function actionExplanation(reason: 'signed-out' | 'by-request' | 'owner')
     case 'owner':
       return 'You own this team. Transfer ownership before leaving.';
   }
+}
+
+export interface JoinRequestQueue {
+  readonly render: () => void;
+  readonly respond: (requestId: string, status: 'accepted' | 'declined') => Promise<void>;
+}
+
+export function createJoinRequestQueue(deps: {
+  readonly renderQueue: (busy: boolean) => void;
+  readonly respond: (requestId: string, status: 'accepted' | 'declined') => Promise<boolean>;
+}): JoinRequestQueue {
+  return {
+    render: () => {
+      deps.renderQueue(false);
+    },
+    respond: async (requestId: string, status: 'accepted' | 'declined') => {
+      deps.renderQueue(true);
+      try {
+        // `respond` reports failure by returning false, not by throwing — the controller catches and
+        // surfaces the error itself. Awaiting without reading the result is what left the queue with
+        // every button disabled after a 409, which is the case this whole seam exists for.
+        const ok = await deps.respond(requestId, status);
+        if (!ok) deps.renderQueue(false);
+      } catch (err) {
+        deps.renderQueue(false);
+        throw err;
+      }
+    },
+  };
 }

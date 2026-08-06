@@ -4,9 +4,9 @@
  * user-supplied, so nothing here goes near `innerHTML`.
  */
 import { el } from './dom.js';
-import { renderEmpty } from './render-helpers.js';
+import { appendPanelRow, renderEmpty } from './render-helpers.js';
 import { shortId } from '../api/graphql.js';
-import type { SocialPlayer, TeamMembership, TeamView } from '../api/models.js';
+import type { JoinRequestView, SocialPlayer, TeamMembership, TeamView } from '../api/models.js';
 
 export function renderTeamList(
   container: HTMLElement,
@@ -76,5 +76,39 @@ export function renderTeamMembers(
       children.push(el(doc, 'span', { class: 'count' }, member.role));
     }
     container.appendChild(el(doc, 'div', { class: 'panel-row' }, ...children));
+  }
+}
+
+export function renderJoinRequests(
+  container: HTMLElement,
+  requests: readonly JoinRequestView[],
+  names: ReadonlyMap<string, SocialPlayer>,
+  busy: boolean,
+  actions: {
+    readonly onAccept: (request: JoinRequestView) => void;
+    readonly onDecline: (request: JoinRequestView) => void;
+  },
+): void {
+  container.replaceChildren();
+  if (requests.length === 0) {
+    renderEmpty(container, {
+      title: 'No pending requests',
+      body: 'Requests to join this team will appear here.',
+      inline: true,
+    });
+    return;
+  }
+
+  for (const req of requests) {
+    const handle = names.get(req.playerId)?.handle ?? shortId(req.playerId);
+    appendPanelRow(
+      container,
+      handle,
+      [
+        { label: 'Accept', run: () => actions.onAccept(req) },
+        { label: 'Decline', run: () => actions.onDecline(req) },
+      ],
+      busy,
+    );
   }
 }

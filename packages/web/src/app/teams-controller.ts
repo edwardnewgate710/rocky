@@ -7,14 +7,15 @@
  */
 import type { GambitClient } from '../api/client.js';
 import { NotFoundError } from '../net/errors.js';
-import type { SocialPlayer, TeamMembership, TeamView } from '../api/models.js';
+import type { JoinRequestView, SocialPlayer, TeamDetailView, TeamMembership, TeamView } from '../api/models.js';
 
 export interface TeamsCallbacks {
   onList: (teams: readonly TeamView[], total: number) => void;
   onTeam: (
-    team: TeamView,
+    team: TeamDetailView,
     members: readonly TeamMembership[],
     names: ReadonlyMap<string, SocialPlayer>,
+    joinRequests?: readonly JoinRequestView[],
   ) => void;
   onLoading: (loading: boolean) => void;
   onError: (message: string) => void;
@@ -69,11 +70,29 @@ export class TeamsController {
       const memberPage = await this.client.teams.members(team.id);
       if (!this.isCurrent(generation)) return;
 
-      const ids = memberPage.items.map((m) => m.playerId);
+      // From the team response, not from the member page. That page is capped at 50 and sorted
+      // owner → admin → member, so on a large team the viewer is simply not in it — an admin behind
+      // 50 other admins never saw the queue, and an ordinary member was offered a Join button for a
+      // team they were already in.
+      const canModerate = team.viewerRole === 'owner' || team.viewerRole === 'admin';
+
+      let joinRequests: readonly JoinRequestView[] | undefined = undefined;
+      let joinReqPlayerIds: string[] = [];
+
+      if (canModerate) {
+        const joinReqPage = await this.client.teams.joinRequests(team.id, { status: 'pending' });
+        if (!this.isCurrent(generation)) return;
+        joinRequests = joinReqPage.items;
+        joinReqPlayerIds = joinReqPage.items.map((r) => r.playerId);
+      }
+
+      const ids = Array.from(
+        new Set([...memberPage.items.map((m) => m.playerId), ...joinReqPlayerIds]),
+      );
       const names = await this.client.graphql.resolvePlayers(ids);
       if (!this.isCurrent(generation)) return;
 
-      this.callbacks.onTeam(team, memberPage.items, names);
+      this.callbacks.onTeam(team, memberPage.items, names, joinRequests);
     } catch (err) {
       if (!this.isCurrent(generation)) return;
       // A private team the viewer cannot see answers 404, identically to one that does not exist.
@@ -103,6 +122,24 @@ export class TeamsController {
     if (this.disposed) return false;
     try {
       await this.client.teams.leave(teamId, playerId);
+    } catch (err) {
+      if (!this.disposed) this.callbacks.onError(messageOf(err));
+      return false;
+    }
+    if (!this.disposed) await this.loadTeam(slugOrId);
+    return true;
+  }
+
+  /** Respond to a join request (accept or decline), then reload team. */
+  async respondToJoinRequest(
+    teamId: string,
+    requestId: string,
+    status: 'accepted' | 'declined',
+    slugOrId: string,
+  ): Promise<boolean> {
+    if (this.disposed) return false;
+    try {
+      await this.client.teams.respondToJoinRequest(teamId, requestId, status);
     } catch (err) {
       if (!this.disposed) this.callbacks.onError(messageOf(err));
       return false;

@@ -4,6 +4,7 @@ import type {
   ForumThread,
   JoinRequest,
   JoinRequestId,
+  JoinRequestStatus,
   Membership,
   PlayerId,
   PostId,
@@ -149,7 +150,7 @@ export interface CommunityRepository {
   listJoinRequests(
     teamId: TeamId,
     actorId: PlayerId,
-    options?: PageOptions
+    options?: PageOptions & { status?: JoinRequestStatus }
   ): Promise<Page<JoinRequest>>;
 
   // Forum Threads & Posts
@@ -631,7 +632,7 @@ export class InMemoryCommunityRepository implements CommunityRepository {
   async listJoinRequests(
     teamId: TeamId,
     actorId: PlayerId,
-    options?: PageOptions
+    options?: PageOptions & { status?: JoinRequestStatus }
   ): Promise<Page<JoinRequest>> {
     const team = await this.findVisibleTeam(teamId, actorId);
     const actorMem = this.getMembershipInternal(team.id, actorId);
@@ -641,7 +642,7 @@ export class InMemoryCommunityRepository implements CommunityRepository {
 
     const requests: JoinRequest[] = [];
     for (const req of this.joinRequests.values()) {
-      if (req.teamId === teamId) {
+      if (req.teamId === teamId && (!options?.status || req.status === options.status)) {
         requests.push(req);
       }
     }

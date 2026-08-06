@@ -79,3 +79,54 @@ export function renderEmpty(container: HTMLElement, opts: EmptyStateOptions): vo
 
   container.appendChild(wrap);
 }
+
+/** A row action: a label plus what it does. */
+export interface RowAction {
+  readonly label: string;
+  readonly run: () => void;
+  /** Severs a relationship; separated from the connective actions by position. */
+  readonly destructive?: boolean;
+  /**
+   * Opens a conversation rather than changing a relationship. Set apart from the relationship
+   * controls by position for the same reason `destructive` is: a row of interchangeable-looking
+   * verbs reads as rival calls to action, and this system's only lever for that is placement.
+   */
+  readonly communicative?: boolean;
+}
+
+/**
+ * Render one `panel-row` — the single row treatment every list in the app
+ * shares. Actions are optional; a row without them is a plain label.
+ */
+export function appendPanelRow(
+  container: HTMLElement,
+  label: string,
+  actions: readonly RowAction[],
+  busy: boolean,
+): void {
+  const row = document.createElement('div');
+  row.className = 'panel-row';
+
+  const name = document.createElement('span');
+  name.textContent = label;
+  row.appendChild(name);
+
+  if (actions.length > 0) {
+    const group = document.createElement('div');
+    group.className = 'panel-row-actions';
+    for (const action of actions) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = action.label;
+      button.disabled = busy;
+      // The accessible name has to say who the action applies to: a column of
+      // buttons all reading "Accept" is unusable without the surrounding row.
+      button.setAttribute('aria-label', `${action.label} ${label}`);
+      button.addEventListener('click', action.run);
+      group.appendChild(button);
+    }
+    row.appendChild(group);
+  }
+
+  container.appendChild(row);
+}

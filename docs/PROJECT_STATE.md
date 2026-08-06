@@ -4,7 +4,16 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-06 - M14 Increment 29: Learner-scoped lesson step view (ADR-0095)._
+_Last updated: 2026-08-06 - M14 Increment 30: Team join-request moderation (ADR-0096)._
+
+## M14 Increment 30 - Team join-request moderation (ADR-0096)
+
+Implements the owner/admin moderation panel for private team join requests in the web UI and adds server-side status filtering before pagination across all repository layers and API routes.
+
+- **Server-side Status Filtering (`packages/community/src/repository.ts`, `packages/persistence/src/pg/community.ts`)**: Widened `listJoinRequests` signature to accept an optional `status` parameter (`PageOptions & { status?: JoinRequestStatus }`). Filter is applied in the SQL `WHERE` clause and in-memory list before applying pagination (`paginate`), ensuring pending requests beyond page 1 of team history remain visible to moderators.
+- **API Route & OpenAPI (`packages/api/src/routes.ts`, `packages/api/openapi.json`)**: Updated `GET /v1/teams/:id/join-requests` to accept an optional `status` query parameter, validating it against allowed domain values via `oneOf` (returning 422 on invalid input). Added `statusParam()` helper to OpenAPI route documentation and regenerated `packages/api/openapi.json`.
+- **Web UI & Moderation Panel (`packages/web/src/app/bootstrap.ts`, `packages/web/src/app/render-helpers.ts`, `packages/web/src/app/teams-view.ts`, `packages/web/src/app/teams-controller.ts`, `packages/web/src/api/client.ts`, `packages/web/src/api/models.ts`, `packages/web/index.html`)**: Extracted `appendPanelRow` and `RowAction` to `render-helpers.ts` for reuse. Added `JoinRequestView` and `JoinRequestList` models and `joinRequests` / `respondToJoinRequest` methods to `TeamsApi`. Added `#join-requests-heading` and `#join-requests` elements to `index.html` section `#team`, rendered via pure DOM helper `renderJoinRequests`. Hidden for non-admin viewers.
+- **Tests & ADR (`packages/community/test/community.test.ts`, `packages/persistence/test/community.integration.test.ts`, `packages/api/test/community-api.test.ts`, `packages/web/test/teams-controller.test.ts`, `packages/web/test/a11y.test.ts`, `packages/web/e2e/teams.spec.ts`, `docs/adr/0096-join-request-moderation.md`)**: Added unit/integration tests for server-side filtering before pagination, status query param validation (422), non-admin zero-fetch assertion, a11y DOM tests, Playwright E2E spec for owner moderation flow, and documented in ADR-0096.
 
 ## M14 Increment 29 - Learner-scoped lesson step view (ADR-0095)
 

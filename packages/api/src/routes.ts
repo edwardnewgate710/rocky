@@ -68,6 +68,7 @@ import {
   selfUser,
   sessionView,
   teamView,
+  teamDetailView,
   achievementDefinitionView,
   playerAchievementView,
   achievementSummaryView,
@@ -2321,7 +2322,7 @@ export function buildRouter(deps: RouteDeps): Router {
       tags: ['community'],
       params: [pathParam('id', 'Team ID (UUID) or slug')],
       responses: {
-        200: ['TeamView', 'Team details'],
+        200: ['TeamDetailView', 'Team details, including the role of the viewer'],
         404: ['Error', 'Team not found or not visible'],
         503: ['Error', 'Community service unavailable'],
       },
@@ -2342,7 +2343,11 @@ export function buildRouter(deps: RouteDeps): Router {
         const team = UUID_PATTERN.test(idOrSlug)
           ? await repo.getTeam(idOrSlug, actorId)
           : await repo.getTeamBySlug(idOrSlug, actorId);
-        return json(200, teamView(team));
+        // One lookup, and only for a signed-in caller. The client cannot work this out from the
+        // member list: that list is paginated and sorted owner → admin → member, so on a large team
+        // the viewer is often not on the page it reads.
+        const membership = actorId ? await repo.getMembership(team.id, actorId, actorId) : null;
+        return json(200, teamDetailView(team, membership?.role ?? null));
       } catch (err) {
         mapCommunityError(err);
       }
@@ -2595,7 +2600,7 @@ export function buildRouter(deps: RouteDeps): Router {
       summary: 'List join requests for team',
       tags: ['community'],
       security: 'bearer',
-      params: [pathParam('id', 'Team ID (UUID)'), limitParam(), offsetParam()],
+      params: [pathParam('id', 'Team ID (UUID)'), statusParam(), limitParam(), offsetParam()],
       responses: {
         200: ['JoinRequestList', 'Paginated join requests'],
         403: ['Error', 'Only admins and owners can view join requests'],
@@ -2608,11 +2613,16 @@ export function buildRouter(deps: RouteDeps): Router {
       const repo = checkCommunityRepo();
       const actorId = requireAuth(ctx).userId;
       const teamId = parseUuid(ctx.params['id']!, 'id');
+      // `has` not truthiness: `?status=` is a status the caller supplied and got wrong, so it is a
+      // 422 like any other bad value. Treating empty as absent silently returns the unfiltered list.
+      const status = ctx.query.has('status')
+        ? oneOf(ctx.query.get('status') ?? '', ['pending', 'accepted', 'declined', 'cancelled'] as const, 'status')
+        : undefined;
       const limit = parseLimit(ctx.query, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
       const offset = parseOffset(ctx.query);
 
       try {
-        const page = await repo.listJoinRequests(teamId, actorId, { limit, offset });
+        const page = await repo.listJoinRequests(teamId, actorId, { limit, offset, status });
         return json(200, {
           total: page.total,
           items: page.items.map(joinRequestView),
@@ -5035,6 +5045,16 @@ function doc(spec: DocSpec): RouteDoc {
 
 function pathParam(name: string, description: string): NonNullable<RouteDoc['params']>[number] {
   return { name, in: 'path', required: true, description, schema: { type: 'string' } };
+}
+
+function statusParam(): NonNullable<RouteDoc['params']>[number] {
+  return {
+    name: 'status',
+    in: 'query',
+    required: false,
+    description: 'Filter by join request status.',
+    schema: { type: 'string', enum: ['pending', 'accepted', 'declined', 'cancelled'] },
+  };
 }
 
 function limitParam(): NonNullable<RouteDoc['params']>[number] {

@@ -38,8 +38,9 @@ import {
   renderEmpty,
   formatClock,
   formatTimeControl,
+  appendPanelRow,
 } from './render-helpers.js';
-import type { EmptyStateOptions } from './render-helpers.js';
+import type { EmptyStateOptions, RowAction } from './render-helpers.js';
 import { SocialController } from './social-controller.js';
 import type { Relationship, SelfSocial } from './social-controller.js';
 import { AchievementsController } from './achievements-controller.js';
@@ -61,13 +62,13 @@ import type { ForumController as ForumControllerType } from './forum-controller.
 import { renderThreadList, renderPosts } from './forum-view.js';
 import { canStartThread, canReply, abilityExplanation, threadDisplayTitle } from './forum-helpers.js';
 import type { TeamsController as TeamsControllerType } from './teams-controller.js';
-import { renderTeamList, renderTeamMembers } from './teams-view.js';
-import { teamAction, actionExplanation, membershipOf } from './teams-helpers.js';
+import { renderTeamList, renderTeamMembers, renderJoinRequests } from './teams-view.js';
+import { teamAction, actionExplanation, membershipOf, createJoinRequestQueue } from './teams-helpers.js';
 import type { MessagesController as MessagesControllerType } from './messages-controller.js';
 import { renderSearchResults, renderSearchPrompt } from './search-view.js';
 import { renderInbox, renderThread } from './messages-view.js';
 import { parseSearchMode } from './search-results.js';
-import type { SearchMode, SocialPlayer, TournamentDetail } from '../api/models.js';
+import type { JoinRequestView, SearchMode, SocialPlayer, TournamentDetail } from '../api/models.js';
 import { ThemeToggle } from './theme-toggle.js';
 import type { ThemeToggle as ThemeToggleType } from './theme-toggle.js';
 import { AuthController } from './auth-controller.js';
@@ -121,57 +122,6 @@ export interface BootstrapDependencies extends Partial<AppDependencies> {
   readonly gameId?: string;
   /** Override the access token (for authenticated join). */
   readonly token?: string;
-}
-
-/** A row action: a label plus what it does. */
-interface RowAction {
-  readonly label: string;
-  readonly run: () => void;
-  /** Severs a relationship; separated from the connective actions by position. */
-  readonly destructive?: boolean;
-  /**
-   * Opens a conversation rather than changing a relationship. Set apart from the relationship
-   * controls by position for the same reason `destructive` is: a row of interchangeable-looking
-   * verbs reads as rival calls to action, and this system's only lever for that is placement.
-   */
-  readonly communicative?: boolean;
-}
-
-/**
- * Render one `panel-row` — the single row treatment every list in the app
- * shares. Actions are optional; a row without them is a plain label.
- */
-function appendPanelRow(
-  container: HTMLElement,
-  label: string,
-  actions: readonly RowAction[],
-  busy: boolean,
-): void {
-  const row = document.createElement('div');
-  row.className = 'panel-row';
-
-  const name = document.createElement('span');
-  name.textContent = label;
-  row.appendChild(name);
-
-  if (actions.length > 0) {
-    const group = document.createElement('div');
-    group.className = 'panel-row-actions';
-    for (const action of actions) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.textContent = action.label;
-      button.disabled = busy;
-      // The accessible name has to say who the action applies to: a column of
-      // buttons all reading "Accept" is unusable without the surrounding row.
-      button.setAttribute('aria-label', `${action.label} ${label}`);
-      button.addEventListener('click', action.run);
-      group.appendChild(button);
-    }
-    row.appendChild(group);
-  }
-
-  container.appendChild(row);
 }
 
 /**
@@ -1620,6 +1570,8 @@ export function bootstrap(
     const noteEl = doc.getElementById('team-action-note');
     const actionsEl = doc.getElementById('team-actions');
     const membersEl = doc.getElementById('team-members');
+    const joinRequestsHeadingEl = doc.getElementById('join-requests-heading');
+    const joinRequestsEl = doc.getElementById('join-requests');
     const forumLinkEl = doc.getElementById('team-forum-link');
     const errorEl = doc.getElementById('team-error');
     const slug = route.slug;
@@ -1631,7 +1583,7 @@ export function bootstrap(
       client: app.api,
       callbacks: {
         onList: () => {},
-        onTeam: (team, members, names) => {
+        onTeam: (team, members, names, joinRequests) => {
           if (errorEl) errorEl.textContent = '';
           if (nameEl) nameEl.textContent = team.name;
           if (descEl) descEl.textContent = team.description;
@@ -1643,12 +1595,27 @@ export function bootstrap(
             forumLinkEl.href = `/teams/${encodeURIComponent(team.slug)}/forum`;
           }
 
+          if (joinRequestsHeadingEl) joinRequestsHeadingEl.hidden = joinRequests === undefined;
+          if (joinRequestsEl) joinRequestsEl.hidden = joinRequests === undefined;
+          if (joinRequestsEl && joinRequests !== undefined) {
+            const queue = createJoinRequestQueue({
+              renderQueue: (busy) => {
+                renderJoinRequests(joinRequestsEl, joinRequests, names, busy, {
+                  onAccept: (req) => void queue.respond(req.id, 'accepted'),
+                  onDecline: (req) => void queue.respond(req.id, 'declined'),
+                });
+              },
+              respond: (requestId, status) => teamsCtrl.respondToJoinRequest(team.id, requestId, status, slug),
+            });
+            queue.render();
+          }
+
           if (!actionsEl || !noteEl) return;
           actionsEl.replaceChildren();
           noteEl.textContent = '';
 
           const viewer = viewerId();
-          const action = teamAction(team, members, viewer);
+          const action = teamAction(team, team.viewerRole, viewer);
           if (action.kind === 'none') {
             noteEl.textContent = actionExplanation(action.reason);
             return;
@@ -1674,6 +1641,7 @@ export function bootstrap(
         },
         onLoading: (loading) => {
           if (membersEl) membersEl.setAttribute('aria-busy', loading ? 'true' : 'false');
+          if (joinRequestsEl) joinRequestsEl.setAttribute('aria-busy', loading ? 'true' : 'false');
         },
         onError: (msg) => {
           if (errorEl) errorEl.textContent = msg;
@@ -1686,6 +1654,8 @@ export function bootstrap(
           if (membersEl) membersEl.replaceChildren();
           if (actionsEl) actionsEl.replaceChildren();
           if (noteEl) noteEl.textContent = '';
+          if (joinRequestsHeadingEl) joinRequestsHeadingEl.hidden = true;
+          if (joinRequestsEl) joinRequestsEl.hidden = true;
         },
       },
     });

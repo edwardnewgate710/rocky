@@ -1018,7 +1018,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
 
   TeamView: {
     type: 'object',
-    required: ['id', 'slug', 'name', 'description', 'visibility', 'createdBy', 'createdAt', 'updatedAt'],
+    required: ['id', 'slug', 'name', 'description', 'visibility', 'createdBy', 'createdAt'],
     properties: {
       id: { type: 'string', format: 'uuid' },
       slug: { type: 'string' },
@@ -1027,7 +1027,24 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       visibility: { type: 'string', enum: ['public', 'private'] },
       createdBy: { type: 'string', format: 'uuid' },
       createdAt: dateTime,
-      updatedAt: dateTime,
+    },
+  },
+
+  // The team detail route adds the viewer's own role, because the client cannot derive it reliably:
+  // the member list is paginated and sorted owner → admin → member, so an ordinary member of a large
+  // team is simply not on the page the client reads. Null for a signed-out viewer or a non-member.
+  TeamDetailView: {
+    type: 'object',
+    required: ['id', 'slug', 'name', 'description', 'visibility', 'createdBy', 'createdAt', 'viewerRole'],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      slug: { type: 'string' },
+      name: { type: 'string' },
+      description: { type: 'string' },
+      visibility: { type: 'string', enum: ['public', 'private'] },
+      createdBy: { type: 'string', format: 'uuid' },
+      createdAt: dateTime,
+      viewerRole: { type: 'string', enum: ['owner', 'admin', 'member'], nullable: true },
     },
   },
 

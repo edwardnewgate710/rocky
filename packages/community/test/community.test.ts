@@ -285,4 +285,32 @@ test('InMemoryCommunityRepository unit tests', async (t) => {
     assert.equal(nanPage.total, 3);
     assert.equal(nanPage.items.length, 0); // limit NaN => 0 items
   });
+
+  await t.test('9. listJoinRequests status filtering before pagination', async () => {
+    await repo.clear();
+    await repo.createTeam('t1', 'team-1', 'Team 1', '', 'private', alice, t0);
+    // Create requests: r1 (accepted, t0), r2 (accepted, t1), r3 (pending, t2)
+    await repo.createJoinRequest('req-1', 't1', bob, t0);
+    await repo.respondToJoinRequest('req-1', alice, 'accepted', t1);
+    await repo.createJoinRequest('req-2', 't1', charlie, t1);
+    await repo.respondToJoinRequest('req-2', alice, 'accepted', t2);
+    await repo.createJoinRequest('req-3', 't1', dave, t2);
+
+    // Omitting status returns all 3 requests
+    const allReqs = await repo.listJoinRequests('t1', alice);
+    assert.equal(allReqs.total, 3);
+    assert.equal(allReqs.items.length, 3);
+
+    // Filtering by status 'pending' before pagination:
+    // Total matching pending requests is 1 (r3).
+    const pendingPage = await repo.listJoinRequests('t1', alice, { status: 'pending', limit: 1, offset: 0 });
+    assert.equal(pendingPage.total, 1);
+    assert.equal(pendingPage.items.length, 1);
+    assert.equal(pendingPage.items[0].id, 'req-3');
+
+    // Page offset 1 returns 0 items because total matching pending requests is 1
+    const emptyPage = await repo.listJoinRequests('t1', alice, { status: 'pending', limit: 1, offset: 1 });
+    assert.equal(emptyPage.total, 1);
+    assert.equal(emptyPage.items.length, 0);
+  });
 });

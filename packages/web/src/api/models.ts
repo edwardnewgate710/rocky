@@ -441,6 +441,15 @@ export interface TeamView {
   readonly createdAt: string;
 }
 
+/**
+ * The team detail response. `viewerRole` is the viewer's own role, sent by the server because the
+ * client cannot derive it: the member list is paginated and sorted owner → admin → member, so an
+ * ordinary member of a large team is not on the page the client reads.
+ */
+export interface TeamDetailView extends TeamView {
+  readonly viewerRole: 'owner' | 'admin' | 'member' | null;
+}
+
 export interface TeamList {
   readonly total: number;
   readonly items: readonly TeamView[];
@@ -456,6 +465,20 @@ export interface TeamMembership {
 export interface TeamMemberList {
   readonly total: number;
   readonly items: readonly TeamMembership[];
+}
+
+export interface JoinRequestView {
+  readonly id: string;
+  readonly teamId: string;
+  readonly playerId: string;
+  readonly status: 'pending' | 'accepted' | 'declined' | 'cancelled';
+  readonly createdAt: string;
+  readonly respondedAt: string | null;
+}
+
+export interface JoinRequestList {
+  readonly total: number;
+  readonly items: readonly JoinRequestView[];
 }
 
 // --- Team forums (M14 inc 21) --------------------------------------------------

@@ -5031,11 +5031,11 @@
         "operationId": "get_v1_teams_by_id",
         "responses": {
           "200": {
-            "description": "Team details",
+            "description": "Team details, including the role of the viewer",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TeamView"
+                  "$ref": "#/components/schemas/TeamDetailView"
                 }
               }
             }
@@ -5814,6 +5814,21 @@
             "description": "Team ID (UUID)",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Filter by join request status.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "accepted",
+                "declined",
+                "cancelled"
+              ]
             }
           },
           {
@@ -13627,8 +13642,50 @@
           "description",
           "visibility",
           "createdBy",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "public",
+              "private"
+            ]
+          },
+          "createdBy": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "TeamDetailView": {
+        "type": "object",
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "description",
+          "visibility",
+          "createdBy",
           "createdAt",
-          "updatedAt"
+          "viewerRole"
         ],
         "properties": {
           "id": {
@@ -13659,9 +13716,14 @@
             "type": "string",
             "format": "date-time"
           },
-          "updatedAt": {
+          "viewerRole": {
             "type": "string",
-            "format": "date-time"
+            "enum": [
+              "owner",
+              "admin",
+              "member"
+            ],
+            "nullable": true
           }
         }
       },

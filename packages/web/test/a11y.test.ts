@@ -231,6 +231,12 @@ test('every teams section carries an aria-label', () => {
   assert.ok(HTML_TEMPLATE.includes('aria-label="Teams"'));
   assert.ok(HTML_TEMPLATE.includes('aria-label="Team"'));
   assert.ok(HTML_TEMPLATE.includes('aria-label="Team members"'));
+  assert.ok(HTML_TEMPLATE.includes('aria-label="Pending join requests"'));
+});
+
+test('join requests panel list starts hidden', () => {
+  assert.match(HTML_TEMPLATE, /id="join-requests-heading"[^>]*hidden/);
+  assert.match(HTML_TEMPLATE, /id="join-requests"[^>]*hidden/);
 });
 
 test('teams error regions have role=alert', () => {

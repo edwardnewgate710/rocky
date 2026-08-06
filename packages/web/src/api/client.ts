@@ -62,6 +62,9 @@ import type {
   TeamMemberList,
   TeamMembership,
   TeamView,
+  TeamDetailView,
+  JoinRequestList,
+  JoinRequestView,
   ForumThread,
   ForumThreadList,
   ForumPost,
@@ -526,8 +529,8 @@ export class TeamsApi {
     });
   }
 
-  byId(idOrSlug: string): Promise<TeamView> {
-    return this.execute<TeamView>({
+  byId(idOrSlug: string): Promise<TeamDetailView> {
+    return this.execute<TeamDetailView>({
       method: 'GET',
       path: `/v1/teams/${encodeURIComponent(idOrSlug)}`,
       auth: 'optional',
@@ -563,6 +566,39 @@ export class TeamsApi {
       method: 'DELETE',
       path: `/v1/teams/${encodeURIComponent(id)}/members/${encodeURIComponent(playerId)}`,
       auth: true,
+    });
+  }
+
+  joinRequests(
+    teamId: string,
+    opts?: { status?: string; limit?: number; offset?: number },
+  ): Promise<JoinRequestList> {
+    return this.execute<JoinRequestList>({
+      method: 'GET',
+      path: `/v1/teams/${encodeURIComponent(teamId)}/join-requests`,
+      auth: true,
+      ...(opts?.status !== undefined || opts?.limit !== undefined || opts?.offset !== undefined
+        ? {
+            query: {
+              ...(opts.status !== undefined ? { status: opts.status } : {}),
+              ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+              ...(opts.offset !== undefined ? { offset: opts.offset } : {}),
+            },
+          }
+        : {}),
+    });
+  }
+
+  respondToJoinRequest(
+    teamId: string,
+    requestId: string,
+    status: 'accepted' | 'declined',
+  ): Promise<JoinRequestView> {
+    return this.execute<JoinRequestView>({
+      method: 'POST',
+      path: `/v1/teams/${encodeURIComponent(teamId)}/join-requests/${encodeURIComponent(requestId)}/respond`,
+      auth: true,
+      body: { status },
     });
   }
 

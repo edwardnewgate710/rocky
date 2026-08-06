@@ -9,6 +9,7 @@ import type {
   ForumThread,
   JoinRequest,
   JoinRequestId,
+  JoinRequestStatus,
   Membership,
   Page,
   PageOptions,
@@ -808,7 +809,7 @@ export class PgCommunityRepository implements CommunityRepository {
   async listJoinRequests(
     teamId: TeamId,
     actorId: PlayerId,
-    options?: PageOptions
+    options?: PageOptions & { status?: JoinRequestStatus }
   ): Promise<Page<JoinRequest>> {
     const team = await this.findVisibleTeam(this.pool, teamId, actorId);
     const actorMem = await this.getMembershipInternal(this.pool, team.id, actorId);
@@ -816,19 +817,27 @@ export class PgCommunityRepository implements CommunityRepository {
       throw new CommunityRuleError('not_authorized', 'Only admins and owners can view join requests');
     }
 
+    const countParams: unknown[] = [teamId];
+    const whereClauses = ['team_id = $1'];
+    if (options?.status) {
+      countParams.push(options.status);
+      whereClauses.push(`status = $${countParams.length}`);
+    }
+    const whereSql = whereClauses.join(' AND ');
+
     const countRes = await this.pool.query<{ count: string }>(
-      `SELECT count(*)::text AS count FROM community_join_requests WHERE team_id = $1`,
-      [teamId]
+      `SELECT count(*)::text AS count FROM community_join_requests WHERE ${whereSql}`,
+      countParams
     );
     const total = Number(countRes.rows[0]?.count ?? '0');
 
-    const params: unknown[] = [teamId];
+    const params: unknown[] = [...countParams];
     const pagination = paginationClause(params, options);
 
     const res = await this.pool.query<JoinRequestRow>(
       `SELECT id, team_id, player_id, status, created_at, responded_at
        FROM community_join_requests
-       WHERE team_id = $1
+       WHERE ${whereSql}
        ORDER BY created_at DESC, id ASC
        ${pagination}`,
       params

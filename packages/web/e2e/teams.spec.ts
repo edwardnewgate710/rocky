@@ -87,3 +87,165 @@ test('a second player finds a public team, joins it, and appears in the member l
     await joinerCtx?.close();
   }
 });
+
+test('private team owner sees pending join request, accepts it, and requester appears in member list', async ({ browser, request }) => {
+  let ownerCtx: BrowserContext | undefined;
+  let reqCtx: BrowserContext | undefined;
+
+  try {
+    ownerCtx = await browser.newContext();
+    reqCtx = await browser.newContext();
+    const ownerPage = await ownerCtx.newPage();
+
+    const suffix = randomUUID().replaceAll('-', '').slice(0, 8);
+    const ownerHandle = `tm-mod-o-${suffix}`;
+    const reqHandle = `tm-mod-r-${suffix}`;
+    const password = 'test-password-teams-456';
+
+    const regOwner = await request.post('/v1/auth/register', { data: { handle: ownerHandle, password } });
+    expect(regOwner.ok()).toBeTruthy();
+    const ownerAuth = await regOwner.json();
+
+    const regReq = await request.post('/v1/auth/register', { data: { handle: reqHandle, password } });
+    expect(regReq.ok()).toBeTruthy();
+    const reqAuth = await regReq.json();
+
+    const teamSlug = `priv-team-${suffix}`;
+    const createResp = await request.post('/v1/teams', {
+      data: { name: `Priv Team ${suffix}`, slug: teamSlug, description: 'Private e2e team', visibility: 'private' },
+      headers: { Authorization: `Bearer ${ownerAuth.tokens.accessToken}` },
+    });
+    expect(createResp.ok()).toBeTruthy();
+    const team = await createResp.json();
+
+    // Requester posts a join request to the private team
+    const joinReqResp = await request.post(`/v1/teams/${team.id}/join-requests`, {
+      headers: { Authorization: `Bearer ${reqAuth.tokens.accessToken}` },
+    });
+    expect(joinReqResp.ok()).toBeTruthy();
+
+    await ownerCtx.addCookies([{
+      name: 'gambit_refresh',
+      value: ownerAuth.tokens.refreshToken,
+      domain: 'localhost',
+      path: '/v1/auth',
+      httpOnly: true,
+      secure: false,
+      sameSite: 'Strict' as const,
+    }]);
+    await ownerPage.addInitScript(
+      ({ handle, uid }) => {
+        localStorage.setItem('gambit-session', JSON.stringify({ handle, userId: uid }));
+      },
+      { handle: ownerHandle, uid: ownerAuth.user.id },
+    );
+
+    // 1. Owner navigates to the team detail page
+    await ownerPage.goto(`/teams/${teamSlug}`);
+    await expect(ownerPage.locator('#team-name')).toHaveText(`Priv Team ${suffix}`, { timeout: 15_000 });
+    await expect(ownerPage.locator('#join-requests-heading')).toBeVisible({ timeout: 15_000 });
+    await expect(ownerPage.locator('#join-requests')).toBeVisible({ timeout: 15_000 });
+    await expect(ownerPage.locator('#join-requests')).toContainText(reqHandle, { timeout: 15_000 });
+
+    // 2. Owner accepts the join request
+    const acceptBtn = ownerPage.locator('#join-requests button', { hasText: 'Accept' });
+    await expect(acceptBtn).toBeVisible({ timeout: 15_000 });
+    await acceptBtn.click();
+
+    // 3. Queue loses the request, and requester appears in the Members list
+    await expect(ownerPage.locator('#team-members')).toContainText(reqHandle, { timeout: 15_000 });
+    await expect(ownerPage.locator('#join-requests')).not.toContainText(reqHandle, { timeout: 15_000 });
+  } finally {
+    await ownerCtx?.close();
+    await reqCtx?.close();
+  }
+});
+
+/**
+ * The failure path, which the happy-path test above cannot reach.
+ *
+ * `respondToJoinRequest` reports failure by returning false rather than throwing — the controller
+ * catches and surfaces the error itself — so a queue that only repaints on success leaves every
+ * button disabled and the moderator stuck. `createJoinRequestQueue` exists to prevent that, and its
+ * unit tests pin the rule; nothing pinned that `bootstrap` still *uses* it. Verified: replacing the
+ * factory call with an inline handler that never repaints on failure left all 455 web unit tests
+ * green.
+ *
+ * 409 is the realistic trigger. The respond route answers it when the request is no longer pending,
+ * which is what a second admin answering first looks like — routine on a moderation queue.
+ */
+test('a rejected join-request response leaves the queue interactive', async ({ browser, request }) => {
+  let ownerCtx: BrowserContext | undefined;
+
+  try {
+    ownerCtx = await browser.newContext();
+    const ownerPage = await ownerCtx.newPage();
+
+    const suffix = randomUUID().replaceAll('-', '').slice(0, 8);
+    const ownerHandle = `tm-409-o-${suffix}`;
+    const reqHandle = `tm-409-r-${suffix}`;
+    const password = 'test-password-teams-456';
+
+    const regOwner = await request.post('/v1/auth/register', { data: { handle: ownerHandle, password } });
+    expect(regOwner.ok()).toBeTruthy();
+    const ownerAuth = await regOwner.json();
+
+    const regReq = await request.post('/v1/auth/register', { data: { handle: reqHandle, password } });
+    expect(regReq.ok()).toBeTruthy();
+    const reqAuth = await regReq.json();
+
+    const teamSlug = `priv-409-${suffix}`;
+    const createResp = await request.post('/v1/teams', {
+      data: { name: `Priv 409 ${suffix}`, slug: teamSlug, description: 'Private e2e team', visibility: 'private' },
+      headers: { Authorization: `Bearer ${ownerAuth.tokens.accessToken}` },
+    });
+    expect(createResp.ok()).toBeTruthy();
+    const team = await createResp.json();
+
+    const joinReqResp = await request.post(`/v1/teams/${team.id}/join-requests`, {
+      headers: { Authorization: `Bearer ${reqAuth.tokens.accessToken}` },
+    });
+    expect(joinReqResp.ok()).toBeTruthy();
+
+    await ownerCtx.addCookies([{
+      name: 'gambit_refresh',
+      value: ownerAuth.tokens.refreshToken,
+      domain: 'localhost',
+      path: '/v1/auth',
+      httpOnly: true,
+      secure: false,
+      sameSite: 'Strict' as const,
+    }]);
+    await ownerPage.addInitScript(
+      ({ handle, uid }) => {
+        localStorage.setItem('gambit-session', JSON.stringify({ handle, userId: uid }));
+      },
+      { handle: ownerHandle, uid: ownerAuth.user.id },
+    );
+
+    // Stands in for the admin who answered first. Only the respond call is intercepted, so the queue
+    // still loads for real and the row under test is a genuine pending request.
+    await ownerPage.route('**/join-requests/*/respond', async (route) => {
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'invalid_transition', message: 'Join request is not pending' }),
+      });
+    });
+
+    await ownerPage.goto(`/teams/${teamSlug}`);
+    await expect(ownerPage.locator('#join-requests')).toContainText(reqHandle, { timeout: 15_000 });
+
+    const acceptBtn = ownerPage.locator('#join-requests button', { hasText: 'Accept' });
+    await acceptBtn.click();
+
+    // The error is reported, and the queue is still usable: the row stays and its buttons come back
+    // enabled, so the moderator can retry or decline instead of being stranded.
+    await expect(ownerPage.locator('#team-error')).not.toBeEmpty({ timeout: 15_000 });
+    await expect(ownerPage.locator('#join-requests')).toContainText(reqHandle);
+    await expect(acceptBtn).toBeEnabled({ timeout: 15_000 });
+    await expect(ownerPage.locator('#join-requests button', { hasText: 'Decline' })).toBeEnabled();
+  } finally {
+    await ownerCtx?.close();
+  }
+});

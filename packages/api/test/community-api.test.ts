@@ -304,4 +304,54 @@ describe('/v1/teams and /v1/forum REST API endpoints', () => {
       await harness.close();
     }
   });
+
+  it('GET /v1/teams/:id/join-requests status query parameter filtering', async () => {
+    const harness = await startHarness();
+    try {
+      const alice = await harness.makeUser('AliceFilter');
+      const bob = await harness.makeUser('BobFilter');
+      const charlie = await harness.makeUser('CharlieFilter');
+
+      const teamRes = await harness.json('POST', '/v1/teams', {
+        token: alice.token,
+        body: { slug: 'filter-team', name: 'Filter Team', visibility: 'private' },
+      });
+      const teamId = teamRes.body.id;
+
+      const reqBob = await harness.json('POST', `/v1/teams/${teamId}/join-requests`, { token: bob.token });
+      const reqCharlie = await harness.json('POST', `/v1/teams/${teamId}/join-requests`, { token: charlie.token });
+
+      // Accept Bob's request
+      await harness.json('POST', `/v1/teams/${teamId}/join-requests/${reqBob.body.id}/respond`, {
+        token: alice.token,
+        body: { status: 'accepted' },
+      });
+
+      // Omitting status returns all requests (1 accepted, 1 pending)
+      const allRes = await harness.json('GET', `/v1/teams/${teamId}/join-requests`, { token: alice.token });
+      assert.equal(allRes.status, 200);
+      assert.equal(allRes.body.total, 2);
+      assert.equal(allRes.body.items.length, 2);
+
+      // Filtering with ?status=pending returns only Charlie's pending request
+      const pendingRes = await harness.json('GET', `/v1/teams/${teamId}/join-requests?status=pending`, { token: alice.token });
+      assert.equal(pendingRes.status, 200);
+      assert.equal(pendingRes.body.total, 1);
+      assert.equal(pendingRes.body.items.length, 1);
+      assert.equal(pendingRes.body.items[0].id, reqCharlie.body.id);
+      assert.equal(pendingRes.body.items[0].status, 'pending');
+
+      // Invalid status returns 422
+      const invalidRes = await harness.json('GET', `/v1/teams/${teamId}/join-requests?status=unknown`, { token: alice.token });
+      assert.equal(invalidRes.status, 422);
+
+      // `?status=` is 422 too. Reading the parameter with truthiness rather than presence made an
+      // empty value fall back to "no filter", so a caller asking for a filtered list got the whole
+      // list back with a 200 and no way to tell. Found in the review of PR #93.
+      const emptyRes = await harness.json('GET', `/v1/teams/${teamId}/join-requests?status=`, { token: alice.token });
+      assert.equal(emptyRes.status, 422, 'an empty status is a value the caller got wrong, not an absent filter');
+    } finally {
+      await harness.close();
+    }
+  });
 });

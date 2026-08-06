@@ -186,6 +186,30 @@ test('pg community repository integration tests', { skip }, async () => {
       async () => repo.getTeam(cascadeTeamId, alice),
       (err: any) => err instanceof CommunityRuleError && err.code === 'not_found'
     );
+
+    // 7. listJoinRequests status filtering before pagination in PgCommunityRepository
+    const filterTeamId = uuidv7();
+    await repo.createTeam(filterTeamId, 'pg-filter-team', 'Filter Team', 'Desc', 'private', alice, t0);
+    const r1Id = uuidv7();
+    const r2Id = uuidv7();
+    const r3Id = uuidv7();
+    await repo.createJoinRequest(r1Id, filterTeamId, bob, t0);
+    await repo.respondToJoinRequest(r1Id, alice, 'accepted', t1);
+    await repo.createJoinRequest(r2Id, filterTeamId, charlie, t1);
+    await repo.respondToJoinRequest(r2Id, alice, 'accepted', t2);
+    await repo.createJoinRequest(r3Id, filterTeamId, await createUser('Dave'), t2);
+
+    const filterAll = await repo.listJoinRequests(filterTeamId, alice);
+    assert.equal(filterAll.total, 3);
+
+    const filterPending = await repo.listJoinRequests(filterTeamId, alice, { status: 'pending', limit: 1, offset: 0 });
+    assert.equal(filterPending.total, 1);
+    assert.equal(filterPending.items.length, 1);
+    assert.equal(filterPending.items[0].id, r3Id);
+
+    const filterPendingEmpty = await repo.listJoinRequests(filterTeamId, alice, { status: 'pending', limit: 1, offset: 1 });
+    assert.equal(filterPendingEmpty.total, 1);
+    assert.equal(filterPendingEmpty.items.length, 0);
   } finally {
     // Cleanup created users
     if (createdUserIds.length > 0) {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { teamAction, membershipOf, actionExplanation } from '../src/app/teams-helpers.js';
+import { teamAction, membershipOf, actionExplanation, createJoinRequestQueue } from '../src/app/teams-helpers.js';
 import type { TeamMembership, TeamView } from '../src/api/models.js';
 
 function team(visibility: 'public' | 'private'): TeamView {
@@ -22,45 +22,57 @@ function member(playerId: string, role: 'owner' | 'admin' | 'member'): TeamMembe
 }
 
 test('a signed-out viewer is offered nothing and told why', () => {
-  const action = teamAction(team('public'), [], null);
+  const action = teamAction(team('public'), null, null);
   assert.deepEqual(action, { kind: 'none', reason: 'signed-out' });
   assert.match(actionExplanation('signed-out'), /sign in/i);
 });
 
 test('a non-member can join a public team', () => {
-  assert.deepEqual(teamAction(team('public'), [member('u-other', 'owner')], 'u-me'), { kind: 'join' });
+  assert.deepEqual(teamAction(team('public'), null, 'u-me'), { kind: 'join' });
 });
 
 test('a non-member is not offered join on a private team', () => {
   // POST /v1/teams/:id/members answers 403 for a private team, so a Join button here would
   // always fail. Join requests are a separate feature that does not exist yet.
-  const action = teamAction(team('private'), [member('u-other', 'owner')], 'u-me');
+  const action = teamAction(team('private'), null, 'u-me');
   assert.deepEqual(action, { kind: 'none', reason: 'by-request' });
   assert.match(actionExplanation('by-request'), /request/i);
 });
 
 test('an ordinary member can leave, on a public or a private team', () => {
   const members = [member('u-other', 'owner'), member('u-me', 'member')];
-  assert.deepEqual(teamAction(team('public'), members, 'u-me'), { kind: 'leave' });
+  assert.deepEqual(teamAction(team('public'), 'member', 'u-me'), { kind: 'leave' });
   // Membership is checked before visibility: being in a private team still lets you out of it.
-  assert.deepEqual(teamAction(team('private'), members, 'u-me'), { kind: 'leave' });
+  assert.deepEqual(teamAction(team('private'), 'member', 'u-me'), { kind: 'leave' });
 });
 
 test('an admin can leave like any other member', () => {
-  const members = [member('u-other', 'owner'), member('u-me', 'admin')];
-  assert.deepEqual(teamAction(team('public'), members, 'u-me'), { kind: 'leave' });
+  assert.deepEqual(teamAction(team('public'), 'admin', 'u-me'), { kind: 'leave' });
 });
 
-test('the owner is not offered leave, and ownership is read from the membership not createdBy', () => {
+test('the owner is not offered leave, and ownership is read from the role not createdBy', () => {
   // DELETE answers 409 for the owner until ownership is transferred. `createdBy` is 'u-founder'
-  // here while the actual owner is 'u-me', so a check against createdBy would offer Leave to the
-  // one person the server refuses.
-  const members = [member('u-me', 'owner'), member('u-founder', 'member')];
-  assert.deepEqual(teamAction(team('public'), members, 'u-me'), { kind: 'none', reason: 'owner' });
+  // here while the viewer is the actual owner, so a check against createdBy would offer Leave to
+  // the one person the server refuses.
+  assert.deepEqual(teamAction(team('public'), 'owner', 'u-me'), { kind: 'none', reason: 'owner' });
   assert.match(actionExplanation('owner'), /transfer/i);
 
   // And the founder, now a plain member, can leave.
-  assert.deepEqual(teamAction(team('public'), members, 'u-founder'), { kind: 'leave' });
+  assert.deepEqual(teamAction(team('public'), 'member', 'u-founder'), { kind: 'leave' });
+});
+
+/**
+ * The regression this signature change exists for. `teamAction` used to search the member list the
+ * page had fetched, which is capped at 50 and sorted owner → admin → member — so an ordinary member
+ * of a team with more than a page of members was not in it, and the page offered them a Join button
+ * for a team they were already in. Found in the review of PR #93.
+ *
+ * The role now arrives from the server on the team detail response, so the answer no longer depends
+ * on whether the viewer happened to land on the page the client read.
+ */
+test('a member of a team larger than one page is still offered leave, not join', () => {
+  assert.deepEqual(teamAction(team('public'), 'member', 'u-me-on-page-2'), { kind: 'leave' });
+  assert.deepEqual(teamAction(team('private'), 'admin', 'u-me-on-page-2'), { kind: 'leave' });
 });
 
 test('membershipOf finds the viewer and returns null when absent or signed out', () => {
@@ -68,4 +80,53 @@ test('membershipOf finds the viewer and returns null when absent or signed out',
   assert.equal(membershipOf(members, 'u-b')?.role, 'member');
   assert.equal(membershipOf(members, 'u-c'), null);
   assert.equal(membershipOf(members, null), null);
+});
+
+test('createJoinRequestQueue: render() renders queue not busy', () => {
+  const sequence: boolean[] = [];
+  const queue = createJoinRequestQueue({
+    renderQueue: (busy) => sequence.push(busy),
+    respond: async () => true,
+  });
+
+  queue.render();
+  assert.deepEqual(sequence, [false]);
+});
+
+test('createJoinRequestQueue: respond resolving true renders busy once and does not render not-busy afterwards', async () => {
+  const sequence: boolean[] = [];
+  const queue = createJoinRequestQueue({
+    renderQueue: (busy) => sequence.push(busy),
+    respond: async () => true,
+  });
+
+  await queue.respond('r1', 'accepted');
+  assert.deepEqual(sequence, [true], 'Successful response must render busy=true and not repaint not-busy');
+});
+
+test('createJoinRequestQueue: respond resolving false renders busy, then not-busy', async () => {
+  const sequence: boolean[] = [];
+  const queue = createJoinRequestQueue({
+    renderQueue: (busy) => sequence.push(busy),
+    respond: async () => false,
+  });
+
+  await queue.respond('r1', 'accepted');
+  assert.deepEqual(sequence, [true, false], 'Failed response must render busy=true then busy=false');
+});
+
+test('createJoinRequestQueue: respond rejecting renders busy, then not-busy, and rethrows error', async () => {
+  const sequence: boolean[] = [];
+  const queue = createJoinRequestQueue({
+    renderQueue: (busy) => sequence.push(busy),
+    respond: async () => {
+      throw new Error('API failure');
+    },
+  });
+
+  await assert.rejects(
+    async () => queue.respond('r1', 'accepted'),
+    { message: 'API failure' },
+  );
+  assert.deepEqual(sequence, [true, false], 'Rejection must render busy=true then busy=false');
 });

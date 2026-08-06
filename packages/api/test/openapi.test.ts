@@ -1,8 +1,8 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { startHarness } from './helpers';
-import { joinRequestView, learnerStepView } from '../src/presenters';
-import type { JoinRequest } from '@chess-platform/community';
+import { joinRequestView, learnerStepView, teamView, teamDetailView } from '../src/presenters';
+import type { JoinRequest, Team } from '@chess-platform/community';
 import type { LessonStep } from '@chess-platform/learning';
 
 function collectRefs(node: unknown, acc: string[]): void {
@@ -233,6 +233,50 @@ test('LearnerStepView: the served schema describes exactly what the presenter em
     const schemaDeclaredKeys = Object.keys(schema.properties).sort();
 
     assert.deepEqual(emittedKeys, schemaDeclaredKeys);
+  } finally {
+    await h.close();
+  }
+});
+
+/**
+ * `TeamView` listed `updatedAt` in its `required` array. The `Team` domain type has no such field
+ * and `teamView` has never emitted one, so the published contract promised every client a timestamp
+ * the server does not send — the third instance of the drift ADR-0088 fixed for `ForumPostView` and
+ * M14 increment 28 fixed for `JoinRequestView`, and it survived just as long for the same reason:
+ * every route test reads the response, and none read the schema.
+ *
+ * `TeamDetailView` is pinned alongside it because it is new, and a contract is cheapest to hold
+ * still from the day it is published.
+ */
+test('TeamView and TeamDetailView describe exactly what their presenters emit', async () => {
+  const h = await startHarness();
+  try {
+    const schemas = (h.server.openapiDocument() as any).components.schemas;
+
+    const team: Team = {
+      id: 'e6f0b1a2-0000-4000-8000-000000000001',
+      slug: 'a-team',
+      name: 'A Team',
+      description: 'Description',
+      visibility: 'public',
+      createdBy: 'e6f0b1a2-0000-4000-8000-000000000002',
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    };
+
+    const listed = Object.keys(teamView(team)).sort();
+    assert.deepEqual(listed, Object.keys(schemas.TeamView.properties).sort());
+    assert.deepEqual(listed, [...schemas.TeamView.required].sort());
+
+    // Both branches of the viewer's role: `required` lists presence, and a non-member is sent an
+    // explicit null rather than having the key omitted.
+    const asMember = teamDetailView(team, 'admin');
+    const asStranger = teamDetailView(team, null);
+    const detailKeys = Object.keys(asMember).sort();
+
+    assert.deepEqual(detailKeys, Object.keys(schemas.TeamDetailView.properties).sort());
+    assert.deepEqual(detailKeys, Object.keys(asStranger).sort());
+    assert.deepEqual(detailKeys, [...schemas.TeamDetailView.required].sort());
+    assert.equal(asStranger.viewerRole, null);
   } finally {
     await h.close();
   }

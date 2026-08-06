@@ -456,6 +456,26 @@ export function teamView(t: import('@chess-platform/community').Team): TeamView 
   };
 }
 
+export interface TeamDetailView extends TeamView {
+  readonly viewerRole: 'owner' | 'admin' | 'member' | null;
+}
+
+/**
+ * The team plus the viewer's own role in it.
+ *
+ * The client used to answer "what may I do here" by searching the member list it had already
+ * fetched, which is wrong in a way that only shows up on large teams: that list is paginated and
+ * sorted owner → admin → member, so an ordinary member of a 60-person team is not on the page the
+ * client reads, and the UI offers them a Join button for a team they are already in. Membership is a
+ * fact about the viewer, not something to infer from a page of other people.
+ */
+export function teamDetailView(
+  t: import('@chess-platform/community').Team,
+  viewerRole: 'owner' | 'admin' | 'member' | null
+): TeamDetailView {
+  return { ...teamView(t), viewerRole };
+}
+
 export interface MembershipView {
   readonly teamId: string;
   readonly playerId: string;
