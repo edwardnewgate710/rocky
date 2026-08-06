@@ -95,3 +95,90 @@ test('the promotion tile sizes and centres its piece artwork', () => {
     assert.ok(rule!.body.includes(declaration), `.cb-promo-choice must set ${declaration}`);
   }
 });
+
+/**
+ * `class="auth"` sat in `index.html` with not one rule matching it anywhere in the stylesheet, so
+ * the app's front door rendered as raw browser chrome in the page's top-left corner. Nothing caught
+ * it: the markup was valid, the classes were spelled correctly, and every test was green — the only
+ * evidence was on screen.
+ *
+ * This asserts the property that was actually violated: a class the markup carries has a rule.
+ * Scoped to the surfaces this increment styled rather than every class in the document, because
+ * some classes are behavioural hooks with nothing to style; growing the list is how a future
+ * surface joins the guarantee.
+ */
+const STYLED_CLASSES = ['auth', 'auth-form', 'auth-field', 'auth-actions'];
+
+test('every class the auth surface carries is matched by a rule', () => {
+  const HTML = readFileSync(resolve(PACKAGE_ROOT, 'index.html'), 'utf8');
+  const all = rules();
+  for (const name of STYLED_CLASSES) {
+    const usedInMarkup = new RegExp('class="[^"]*\\b' + name + '\\b');
+    const namesTheClass = new RegExp('\\.' + name + '(?![\\w-])');
+    assert.ok(
+      usedInMarkup.test(HTML),
+      `\`${name}\` is no longer used in index.html — drop it from STYLED_CLASSES`,
+    );
+    // The *last* compound, not anywhere in the selector: `.auth h2` mentions `.auth` while styling
+    // the heading inside it, and would have let this test pass with the container itself unstyled.
+    // Verified by deleting the `.auth` rule and watching this test go red.
+    const stylesTheElement = all.some((rule) =>
+      rule.selectors.some((s) => namesTheClass.test(s.split(/\s+|>|\+|~/).filter(Boolean).pop() ?? '')));
+    assert.ok(
+      stylesTheElement,
+      `\`.${name}\` is in the markup but no rule targets the element itself — it renders as browser default`,
+    );
+  }
+});
+
+/**
+ * The design system has exactly one form-control treatment, and the way a second one appears is
+ * someone styling a new input beside the shared rule instead of joining it. The auth inputs must
+ * ride the same selector list as the nav search and the create-game fields.
+ */
+test('the auth inputs join the one shared form-control rule', () => {
+  const shared = rules().find((r) =>
+    r.selectors.includes('.nav-search input[type=\'search\']') && r.body.includes('border-radius'));
+  assert.ok(shared, 'could not find the shared form-control rule to check against');
+  assert.ok(
+    shared.selectors.includes('.auth-field input'),
+    'auth inputs must join the shared form-control rule, not carry a private treatment',
+  );
+});
+
+/**
+ * The board's height cap must come from the space actually left over, never from a number someone
+ * wrote down for the chrome. The first version subtracted a hard-coded 96px and was wrong twice
+ * over: `.topbar` carries `flex-wrap: wrap`, so a narrow window makes it two rows and the board
+ * overflowed again on the screens with the least room; and on a short viewport the subtraction went
+ * negative, which makes `max-width` invalid, so the cap was dropped entirely. Both found in the
+ * review of PR #101.
+ *
+ * Asserting the absence of the estimate is the point — a future "let me just bump it to 120px" is
+ * exactly the edit this is here to stop.
+ */
+test('the board fits the window without estimating the chrome height', () => {
+  const board = rules().find((r) => r.selectors.includes('.cb-board'));
+  assert.ok(board, 'no .cb-board rule');
+
+  assert.ok(
+    !/calc\(\s*100d?vh\s*-/.test(board.body),
+    'the board cap must not subtract a fixed chrome height from the viewport — ' +
+      'that estimate goes stale the moment the topbar wraps, and goes negative on a short window',
+  );
+  assert.ok(
+    /max-height:\s*100%/.test(board.body),
+    'the board caps at 100% of the box it is given; aspect-ratio derives the width from there',
+  );
+
+  // The cap only binds if the ancestors actually hand it a bounded height.
+  const body = rules().find((r) => r.selectors.includes('body'));
+  assert.ok(body && /min-height:\s*100d?vh/.test(body.body), 'body must be one viewport tall');
+  assert.ok(body && /flex-direction:\s*column/.test(body.body), 'body must be a column');
+  const game = rules().find((r) => r.selectors.includes('.game') && r.body.includes('flex:'));
+  assert.ok(game, '.game must take the height the topbar leaves');
+  assert.ok(
+    /min-height:\s*0/.test(game.body),
+    'without min-height:0 a flex item will not shrink below its content, and the cap never binds',
+  );
+});

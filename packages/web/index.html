@@ -111,14 +111,24 @@
         </div>
       </aside>
     </main>
-    <section id="auth" class="auth" aria-label="Sign in">
-      <form id="auth-form" onsubmit="return false">
-        <label for="auth-handle">Handle</label>
-        <input id="auth-handle" type="text" autocomplete="username" required />
-        <label for="auth-password">Password</label>
-        <input id="auth-password" type="password" autocomplete="current-password" required />
-        <button id="auth-submit" type="button">Sign in</button>
-        <button id="auth-register" type="button">Register</button>
+    <section id="auth" class="auth" aria-labelledby="auth-heading">
+      <h2 id="auth-heading">Sign in</h2>
+      <!-- `auth-submit` is type="submit" so Enter in either field signs in, the way every other
+           form in this app already behaves. `auth-register` stays type="button": it is the second
+           action on a form that has one default. -->
+      <form id="auth-form" class="auth-form">
+        <div class="auth-field">
+          <label for="auth-handle">Handle</label>
+          <input id="auth-handle" type="text" autocomplete="username" required />
+        </div>
+        <div class="auth-field">
+          <label for="auth-password">Password</label>
+          <input id="auth-password" type="password" autocomplete="current-password" required />
+        </div>
+        <div class="auth-actions">
+          <button id="auth-submit" type="submit">Sign in</button>
+          <button id="auth-register" type="button">Register</button>
+        </div>
       </form>
       <p id="auth-error" class="error" role="alert"></p>
     </section>

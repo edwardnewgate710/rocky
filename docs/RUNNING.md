@@ -164,6 +164,40 @@ docker compose down          # stop containers
 docker compose down -v       # stop + delete the Postgres data volume
 ```
 
+## Running the CI checks locally
+
+`npm run ci:local` runs what `.github/workflows/ci.yml` runs — build, typecheck, test, and the
+check scripts — on your machine. It exists for when Actions is unavailable (an outage, an exhausted
+minutes quota, a fork without Actions, no network), and `npm run check:ci-parity` fails the build
+if the runner and the workflow ever disagree, so it stays a preview of CI rather than a second
+suite of its own.
+
+```bash
+npm run ci:local --quick     # everything that needs no services
+```
+
+The two service-backed jobs need a real Postgres and Redis, the same way CI gives them containers:
+
+```bash
+docker compose up -d postgres redis
+
+# One-time: a disposable database. These suites assume they are alone in it, so a second run
+# against a dirty database fails on rows the first one inserted — which looks exactly like a
+# regression and is not one. The runner insists the name contain `test` and never drops anything
+# itself.
+docker exec shatarang-postgres-1 psql -U gambit -d postgres \
+  -c "CREATE ROLE chess LOGIN PASSWORD 'chess' SUPERUSER" -c "CREATE DATABASE chess_test OWNER chess"
+
+DATABASE_URL=postgres://chess:chess@localhost:5432/chess_test \
+REDIS_URL=redis://localhost:6379 \
+  npm run ci:local
+```
+
+A job that cannot run is reported as `SKIPPED` with the reason, and the closing summary says how
+many did not run. Skipped is never counted as passed. Two jobs stay CI-only by decision — the
+Playwright e2e run and the Lighthouse a11y audit — and the runner names them every time. See
+ADR-0105.
+
 ## Architecture notes
 
 - **Durable authority + multi-node fanout:** The gateway persists the

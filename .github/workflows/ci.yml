@@ -116,6 +116,13 @@ jobs:
       - name: ADR claim check
         run: npm run check:adr-claims
 
+      # `scripts/ci-local.mjs` lets a developer run this workflow's checks on their own machine —
+      # which matters when Actions is unavailable, as it was for the whole of 2026-08-06. A local
+      # runner is only worth trusting while it still matches this file, and the way it stops
+      # matching is a new job landing here that nobody mirrors. This is the guard for that.
+      - name: CI parity check (scripts/ci-local.mjs vs this file)
+        run: npm run check:ci-parity
+
   # Runs the Postgres-gated integration tests (persistence event store +
   # repositories against a real database). Everything else is hermetic.
   postgres-integration:

@@ -90,8 +90,22 @@ test('all interactive elements are buttons or links (no div onclick)', () => {
 });
 
 // Auth form a11y checks (R5#2)
-test('auth section has aria-label', () => {
-  assert.ok(HTML_TEMPLATE.includes('aria-label="Sign in"'));
+/**
+ * The section is still named; the name now comes from the visible `<h2>` rather than an
+ * `aria-label` only a screen reader could hear. That is the stronger contract, not a relaxed one:
+ * an invisible label can drift away from the visible heading beside it, and this one cannot —
+ * the section had no visible heading at all while every other section (`Open seeks`, `Profile`)
+ * had one. Asserting the wiring rather than a literal string is what makes it stronger.
+ */
+test('the auth section is named by its visible heading', () => {
+  assert.ok(
+    HTML_TEMPLATE.includes('aria-labelledby="auth-heading"'),
+    'the auth section must take its accessible name from an element, not a hidden string',
+  );
+  assert.ok(
+    /<h2 id="auth-heading">[^<]+<\/h2>/.test(HTML_TEMPLATE),
+    'the element it points at must be a visible heading with text',
+  );
 });
 
 test('auth form inputs have associated labels', () => {

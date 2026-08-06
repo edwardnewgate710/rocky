@@ -336,6 +336,7 @@ export function bootstrap(
   const authRegisterEl = doc.getElementById('auth-register');
   const authLogoutEl = doc.getElementById('auth-logout');
   const authStatusEl = doc.getElementById('auth-status');
+  const authSectionEl = doc.getElementById('auth');
 
   let selfProfileSessionHandler: ((session: AuthSession | null) => void) | null = null;
   let playBotDialog: PlayBotDialog | null = null;
@@ -346,8 +347,11 @@ export function bootstrap(
         if (authStatusEl) {
           authStatusEl.textContent = session ? `Signed in as ${session.handle}` : 'Not signed in';
         }
-        // Show/hide auth form vs logout button.
-        if (authFormEl) authFormEl.hidden = session !== null;
+        // Show/hide the sign-in surface vs the logout button. The *section* is what hides, not just
+        // the form inside it: the section carries the heading and the panel, so hiding only the
+        // form left a signed-in visitor looking at an empty box titled "Sign in". That was
+        // invisible while the section had no styling and obvious the moment it got some.
+        if (authSectionEl) authSectionEl.hidden = session !== null;
         if (authLogoutEl) authLogoutEl.hidden = session === null;
         // Update create-seek button state (M2 gating).
         const createBtn = doc.getElementById('create-seek');
@@ -378,15 +382,23 @@ export function bootstrap(
     ...(deps?.storage !== undefined ? { storage: deps.storage } : typeof localStorage !== 'undefined' ? { storage: localStorage } : {}),
   });
 
-  // Wire auth form submit (sign in).
-  if (authSubmitEl instanceof HTMLButtonElement) {
-    authSubmitEl.addEventListener('click', () => {
-      const handle = authHandleEl?.value ?? '';
-      const password = authPasswordEl?.value ?? '';
-      if (handle && password) {
-        void auth.login(handle, password);
-      }
-    });
+  // Wire auth form submit (sign in). Bound on the *form*, not on the button's click: the markup
+  // used to carry `onsubmit="return false"` with both buttons `type="button"`, so pressing Enter
+  // in the password field did nothing at all and signing in required reaching for the mouse. Every
+  // other form in this file already binds `onsubmit` and calls `preventDefault()`; this one now
+  // does too, and `auth-submit` is `type="submit"` so the click arrives through the same path.
+  const submitSignIn = (): void => {
+    const handle = authHandleEl?.value ?? '';
+    const password = authPasswordEl?.value ?? '';
+    if (handle && password) {
+      void auth.login(handle, password);
+    }
+  };
+  if (authFormEl instanceof HTMLFormElement) {
+    authFormEl.onsubmit = (e): void => {
+      e.preventDefault();
+      submitSignIn();
+    };
   }
 
   // Wire register button (create a new account). Both buttons are

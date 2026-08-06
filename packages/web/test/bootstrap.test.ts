@@ -40,6 +40,39 @@ class FakeHTMLButtonElement {
 }
 (globalThis as any).HTMLButtonElement = FakeHTMLButtonElement;
 
+/**
+ * The auth form is a real form now, not a `<div>` with two click handlers, because pressing Enter
+ * in the password field has to sign you in. `bootstrap` binds `onsubmit`, so the shim needs a
+ * dispatchable one — and `instanceof HTMLFormElement` has to hold, the same trick already used for
+ * buttons above.
+ */
+class FakeHTMLFormElement {
+  id = '';
+  hidden = false;
+  onsubmit: ((e: Event) => void) | null = null;
+  addEventListener = () => {};
+  removeEventListener = () => {};
+  setAttribute = () => {};
+  getAttribute = () => null;
+  appendChild = () => null;
+  removeChild = () => null;
+  querySelectorAll = () => [];
+  focus = () => {};
+  style: Record<string, string> = {};
+  dataset: Record<string, string> = {};
+  classList = new Set<string>();
+  textContent = '';
+
+  /** Always valid: `required` enforcement is the browser's, not this shim's. */
+  reportValidity = (): boolean => true;
+
+  /** What pressing Enter in a field does. */
+  submit(): void {
+    this.onsubmit?.({ preventDefault: () => {} } as Event);
+  }
+}
+(globalThis as any).HTMLFormElement = FakeHTMLFormElement;
+
 /** IDs that should be treated as HTMLButtonElement instances. */
 const BUTTON_IDS = new Set([
   'auth-submit', 'auth-logout', 'create-seek', 'flip', 'theme-toggle',
@@ -55,6 +88,11 @@ const BUTTON_IDS = new Set([
  */
 function makeFakeEl(id?: string): HTMLElement {
   const isHidden = id === 'game-actions' || id === 'action-error' || id === 'confirm-resign' || id === 'confirm-abort' || id === 'draw-offer-received';
+  if (id === 'auth-form') {
+    const form = new FakeHTMLFormElement();
+    form.id = id;
+    return form as unknown as HTMLElement;
+  }
   if (id && BUTTON_IDS.has(id)) {
     const btn = new FakeHTMLButtonElement();
     btn.id = id;
@@ -86,7 +124,7 @@ function makeFakeEl(id?: string): HTMLElement {
   } as unknown as HTMLElement;
 }
 
-function makeDoc(ids: string[] = ['board', 'status', 'flip', 'theme-toggle', 'auth-status', 'auth-logout', 'auth-submit', 'auth-error', 'auth-form', 'auth-handle', 'auth-password', 'create-seek', 'game-actions', 'action-error', 'action-offer-draw', 'action-claim-flag', 'action-resign', 'action-abort', 'confirm-resign', 'confirm-resign-yes', 'confirm-resign-no', 'confirm-abort', 'confirm-abort-yes', 'confirm-abort-no', 'draw-offer-received', 'action-accept-draw', 'action-decline-draw', 'meta-connection', 'meta-role', 'meta-white', 'meta-white-name', 'meta-black', 'meta-black-name', 'meta-spectators', 'meta-variant', 'meta-time', 'meta-live-status']): Document {
+function makeDoc(ids: string[] = ['board', 'status', 'flip', 'theme-toggle', 'auth', 'auth-status', 'auth-logout', 'auth-submit', 'auth-error', 'auth-form', 'auth-handle', 'auth-password', 'create-seek', 'game-actions', 'action-error', 'action-offer-draw', 'action-claim-flag', 'action-resign', 'action-abort', 'confirm-resign', 'confirm-resign-yes', 'confirm-resign-no', 'confirm-abort', 'confirm-abort-yes', 'confirm-abort-no', 'draw-offer-received', 'action-accept-draw', 'action-decline-draw', 'meta-connection', 'meta-role', 'meta-white', 'meta-white-name', 'meta-black', 'meta-black-name', 'meta-spectators', 'meta-variant', 'meta-time', 'meta-live-status']): Document {
   const elements = new Map<string, HTMLElement>();
   for (const id of ids) {
     elements.set(id, makeFakeEl(id));
@@ -116,7 +154,7 @@ function makeDoc(ids: string[] = ['board', 'status', 'flip', 'theme-toggle', 'au
   } as unknown as Document;
 }
 
-function makeDocWithBoard(boardEl: HTMLElement, ids: string[] = ['status', 'flip', 'theme-toggle', 'auth-status', 'auth-logout', 'auth-submit', 'auth-error', 'auth-form', 'auth-handle', 'auth-password', 'create-seek', 'game-actions', 'action-error', 'action-offer-draw', 'action-claim-flag', 'action-resign', 'action-abort', 'confirm-resign', 'confirm-resign-yes', 'confirm-resign-no', 'confirm-abort', 'confirm-abort-yes', 'confirm-abort-no', 'draw-offer-received', 'action-accept-draw', 'action-decline-draw']): Document {
+function makeDocWithBoard(boardEl: HTMLElement, ids: string[] = ['status', 'flip', 'theme-toggle', 'auth', 'auth-status', 'auth-logout', 'auth-submit', 'auth-error', 'auth-form', 'auth-handle', 'auth-password', 'create-seek', 'game-actions', 'action-error', 'action-offer-draw', 'action-claim-flag', 'action-resign', 'action-abort', 'confirm-resign', 'confirm-resign-yes', 'confirm-resign-no', 'confirm-abort', 'confirm-abort-yes', 'confirm-abort-no', 'draw-offer-received', 'action-accept-draw', 'action-decline-draw']): Document {
   const elements = new Map<string, HTMLElement>();
   elements.set('board', boardEl);
   for (const id of ids) {
@@ -700,4 +738,44 @@ test('game metadata: populates elements correctly', () => {
   socket.serverClose();
   assert.equal(metaConnectionEl.textContent, 'Reconnecting…');
   assert.equal(metaWhiteTxt.textContent, 'Unknown');
+});
+
+// ── Sign-in form ────────────────────────────────────────────────────────────
+
+/**
+ * Signing in used to require the mouse. The markup carried `onsubmit="return false"` with both
+ * buttons `type="button"`, and nothing bound Enter — so on the app's front door, filling in the
+ * password and pressing Enter did nothing at all, with no feedback to say why. Every other form in
+ * `bootstrap.ts` binds `onsubmit`; this asserts that this one does too.
+ */
+test('pressing Enter in the sign-in form logs in, without reaching for the mouse', () => {
+  const doc = makeDoc();
+  const transport = new FakeTransport().onEach(() => json(200, { accessToken: 't', handle: 'alice' }));
+  bootstrap(doc, { ...makeDeps(), httpTransport: transport });
+
+  (doc.getElementById('auth-handle') as unknown as { value: string }).value = 'alice';
+  (doc.getElementById('auth-password') as unknown as { value: string }).value = 'hunter2';
+
+  const form = doc.getElementById('auth-form') as unknown as { submit(): void };
+  form.submit();
+
+  const urls = transport.calls.map((c) => c.url);
+  assert.ok(
+    urls.some((u) => u.includes('login')),
+    `submitting the form must call the login endpoint; saw ${JSON.stringify(urls)}`,
+  );
+});
+
+/** An empty field must not fire a request the server can only reject. */
+test('submitting the sign-in form with an empty password sends nothing', () => {
+  const doc = makeDoc();
+  const transport = new FakeTransport().onEach(() => json(200, {}));
+  bootstrap(doc, { ...makeDeps(), httpTransport: transport });
+
+  (doc.getElementById('auth-handle') as unknown as { value: string }).value = 'alice';
+  (doc.getElementById('auth-password') as unknown as { value: string }).value = '';
+
+  const before = transport.calls.length;
+  (doc.getElementById('auth-form') as unknown as { submit(): void }).submit();
+  assert.equal(transport.calls.length, before);
 });
