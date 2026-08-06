@@ -13733,7 +13733,7 @@
           "playerId",
           "status",
           "createdAt",
-          "updatedAt"
+          "respondedAt"
         ],
         "properties": {
           "id": {
@@ -13761,9 +13761,10 @@
             "type": "string",
             "format": "date-time"
           },
-          "updatedAt": {
+          "respondedAt": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "nullable": true
           }
         }
       },

@@ -61,6 +61,7 @@ The reads are public, but *who the viewer is* decides which composer appears, an
 ## Consequences
 
 - `TeamsApi` in `packages/web/src/api/client.ts` gains `threads`, `thread`, `createThread`, `posts`, `createPost` — the forum routes are nested under a team, so they live on the existing class rather than a second one.
+- `JoinRequestView` in `packages/api/src/openapi/schemas.ts` was the second instance of this exact defect class (declaring `updatedAt` instead of `respondedAt`), resolved in Increment 28.
 - `/teams/:slug/forum` and `/teams/:slug/forum/:threadId` added to `packages/web/src/app/router.ts`. Any other path under a team slug now resolves to `not-found` instead of falling through to the team page.
 - `ForumController` (`packages/web/src/app/forum-controller.ts`) loads thread, posts and members together, because the reply decision needs all three, and resolves every author id in one batched `resolvePlayers` per render.
 - Pure views in `packages/web/src/app/forum-view.ts`; disposal wired in `packages/web/src/main.ts`.

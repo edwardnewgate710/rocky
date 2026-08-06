@@ -1078,14 +1078,14 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
 
   JoinRequestView: {
     type: 'object',
-    required: ['id', 'teamId', 'playerId', 'status', 'createdAt', 'updatedAt'],
+    required: ['id', 'teamId', 'playerId', 'status', 'createdAt', 'respondedAt'],
     properties: {
       id: { type: 'string', format: 'uuid' },
       teamId: { type: 'string', format: 'uuid' },
       playerId: { type: 'string', format: 'uuid' },
       status: { type: 'string', enum: ['pending', 'accepted', 'declined', 'cancelled'] },
       createdAt: dateTime,
-      updatedAt: dateTime,
+      respondedAt: { ...dateTime, nullable: true },
     },
   },
 

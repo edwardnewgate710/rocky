@@ -1,6 +1,8 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { startHarness } from './helpers';
+import { joinRequestView } from '../src/presenters';
+import type { JoinRequest } from '@chess-platform/community';
 
 function collectRefs(node: unknown, acc: string[]): void {
   if (Array.isArray(node)) {
@@ -74,6 +76,54 @@ test('the spec is served at GET /v1/openapi.json', async () => {
     assert.equal(res.status, 200);
     assert.equal(res.body.openapi, '3.1.0');
     assert.ok(res.body.paths['/v1/auth/login']);
+  } finally {
+    await h.close();
+  }
+});
+
+/**
+ * The published schema and the presenter that fills it are two separate declarations of one
+ * contract, and nothing made them agree. `JoinRequestView` required an `updatedAt` the presenter
+ * never emitted and omitted the `respondedAt` it always did, from M10 increment 4 until M14
+ * increment 28 — the same drift ADR-0088 fixed for `ForumPostView`. Every route test passed
+ * throughout, because they all read the response and none read the schema.
+ *
+ * Asserting the presenter's real output against the served document is what closes that: correcting
+ * one side without the other now fails here.
+ */
+test('JoinRequestView: the served schema describes exactly what the presenter emits', async () => {
+  const h = await startHarness();
+  try {
+    const schema = (h.server.openapiDocument() as any).components.schemas.JoinRequestView;
+
+    // Both branches of `respondedAt: j.respondedAt ? ... : null` — the key set must not depend on
+    // whether the request has been responded to, since the schema declares it required either way.
+    // Typed as `JoinRequest` rather than asserted: a test that exists to catch contract drift has
+    // no business opting out of the check that catches it. A new required field on the domain type
+    // fails to compile here.
+    const base = {
+      id: 'e6f0b1a2-0000-4000-8000-000000000001',
+      teamId: 'e6f0b1a2-0000-4000-8000-000000000002',
+      playerId: 'e6f0b1a2-0000-4000-8000-000000000003',
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    };
+    const pendingRequest: JoinRequest = { ...base, status: 'pending' };
+    const respondedRequest: JoinRequest = {
+      ...base,
+      status: 'accepted',
+      respondedAt: new Date('2026-01-02T00:00:00.000Z'),
+    };
+    const pending = joinRequestView(pendingRequest);
+    const responded = joinRequestView(respondedRequest);
+
+    const declared = Object.keys(schema.properties).sort();
+    assert.deepEqual(Object.keys(pending).sort(), declared);
+    assert.deepEqual(Object.keys(responded).sort(), declared);
+
+    // Required lists presence, not non-nullness: a pending request sends `respondedAt: null`.
+    assert.deepEqual([...schema.required].sort(), declared);
+    assert.equal(pending.respondedAt, null);
+    assert.equal(typeof responded.respondedAt, 'string');
   } finally {
     await h.close();
   }

@@ -4,14 +4,22 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-05 - M14 Increment 27: Search hits carry their own display metadata (ADR-0094)._
+_Last updated: 2026-08-05 - M14 Increment 28: Fix JoinRequestView OpenAPI contract (ADR-0088)._
+
+## M14 Increment 28 - Fix JoinRequestView OpenAPI contract (ADR-0088)
+
+Corrects the published `JoinRequestView` OpenAPI schema in `packages/api/src/openapi/schemas.ts` to match `joinRequestView` presenter output and `FriendRequestView` schema pattern.
+
+- **OpenAPI Schema & Spec (`packages/api/src/openapi/schemas.ts`, `packages/api/openapi.json`)**: Replaced `updatedAt` with `respondedAt` (nullable `dateTime`, retained in `required` array) in `JoinRequestView` schema. Regenerated `packages/api/openapi.json` using `npm run openapi`.
+- **Contract Tests (`packages/api/test/community-api.test.ts`, `packages/api/test/openapi.test.ts`)**: One response-shape test across all three routes that return a join request, plus a test asserting the served schema declares exactly the keys the presenter emits. The second is the one that pins the defect: with only response-shape tests, reverting the schema alone left the whole suite green.
+- Closes the tracked roadmap debt for `JoinRequestView` OpenAPI divergence.
 
 ## M14 Increment 27 - Search hits carry their own display metadata (ADR-0094)
 
 Removes the search N+1: a page of ten results cost up to **12 requests** (one query, up to ten per-result entity fetches, one batched player resolve) and painted only after every one of them settled. Now one request, one pass.
 
 - **Domain (`packages/search`)**: `SearchableDocument` and `SearchResult` gain optional `display` (`type`, `title`, `subtitle`) — separate from `fields`, whose values are canonicalized lowercase for exact-match filtering, and from `text`, which is a recall-tuned match corpus.
-- **Security asserted, not restated**: `display` reuses only fields each projection already indexed. A test checks the serialized player document carries no `email`, `hash`, `flag` or `@`, holding the SECURITY note in `projections.ts` to account.
+- **Security asserted, not restated**: `display` reuses only fields each projection already indexed. A test pins the whole serialized player document, so a leak under any field name fails it — holding the SECURITY note in `projections.ts` to account. (A first version scanned for forbidden substrings; a handle may legitimately contain `hash` or `flag`, so it was replaced during PR review.)
 - **API**: the OpenAPI `SearchResult` exposes `display` as optional, because a document indexed before the field existed still matches and must still be returned.
 - **Web**: hydration deleted; `HydratedHit` renamed `SearchRow`. A controller test pins the change with a client whose `tournaments.byId` / `games.byId` / `resolvePlayers` throw on contact — a request count, since the rendered output looks the same either way.
 - **Frontend (Impeccable audit, 16/20, detector clean)**: removed the counterfeit `.panel-row` "Loading…" placeholder in favour of the already-wired `aria-busy`, and renamed `.tournament-link` → `.row-link` across six call sites. Both recorded in `packages/web/DESIGN.md`.

@@ -248,4 +248,60 @@ describe('/v1/teams and /v1/forum REST API endpoints', () => {
       await harness.close();
     }
   });
+
+  // Pins the JoinRequestView wire contract against its OpenAPI schema. The schema declared a
+  // required `updatedAt` the presenter never emitted and omitted the `respondedAt` it always did
+  // (M10 inc 4 through M14 inc 28) — the same drift ADR-0088 fixed for ForumPostView. Nothing
+  // failed, because no test read the shape. Every route that returns a join request is checked, so
+  // re-introducing the drift on any one of them breaks a test instead of shipping.
+  it('a join request is serialized with respondedAt, and never updatedAt, on every route that returns one', async () => {
+    const harness = await startHarness();
+    try {
+      const alice = await harness.makeUser('Alice');
+      const bob = await harness.makeUser('Bob');
+
+      const teamRes = await harness.json('POST', '/v1/teams', {
+        token: alice.token,
+        body: { slug: 'contract-test-team', name: 'Contract Test Team', visibility: 'private' },
+      });
+      assert.equal(teamRes.status, 201);
+      const teamId = teamRes.body.id;
+
+      const assertShape = (body: Record<string, unknown>, where: string): void => {
+        assert.equal('respondedAt' in body, true, `${where}: respondedAt must be present`);
+        assert.equal('updatedAt' in body, false, `${where}: updatedAt is not part of the contract`);
+      };
+
+      // Pending, from the create route: the field is present and its *value* is null. Presence is
+      // what the schema requires; nullability is what `respondedAt` being unset looks like.
+      const createRes = await harness.json('POST', `/v1/teams/${teamId}/join-requests`, {
+        token: bob.token,
+      });
+      assert.equal(createRes.status, 201);
+      assertShape(createRes.body, 'POST /join-requests');
+      assert.equal(createRes.body.respondedAt, null);
+
+      // Pending, from the list route — a separate serialization path from the create response.
+      const listRes = await harness.json('GET', `/v1/teams/${teamId}/join-requests`, {
+        token: alice.token,
+      });
+      assert.equal(listRes.status, 200);
+      assert.equal(listRes.body.total, 1);
+      assertShape(listRes.body.items[0], 'GET /join-requests');
+      assert.equal(listRes.body.items[0].respondedAt, null);
+
+      // Responded: the other branch of `j.respondedAt ? j.respondedAt.toISOString() : null`.
+      const respondRes = await harness.json(
+        'POST',
+        `/v1/teams/${teamId}/join-requests/${createRes.body.id}/respond`,
+        { token: alice.token, body: { status: 'declined' } }
+      );
+      assert.equal(respondRes.status, 200);
+      assertShape(respondRes.body, 'POST /respond');
+      assert.equal(typeof respondRes.body.respondedAt, 'string');
+      assert.ok(!Number.isNaN(Date.parse(respondRes.body.respondedAt)));
+    } finally {
+      await harness.close();
+    }
+  });
 });

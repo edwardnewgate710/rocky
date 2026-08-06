@@ -962,6 +962,14 @@ Exposes the M10 studies backend (21 routes under `/v1/studies`, previously no UI
 - **Harness & Bridge Route (`packages/e2e-harness/src/harness.ts`)**: Wired `studiesRepository` in `packages/e2e-harness` (`ApiDependencies`) and added bridge route `POST /e2e/studies` to seed public studies with chapters, mainline >= 4 moves, 1 variation, 1 comment, and 1 NAG in 1–6 range.
 - **Tests & ADR**: Unit tests in `studies-helpers.test.ts`, `studies-controller.test.ts`, and domain test `studies.test.ts`, Playwright E2E spec in `studies.spec.ts`. Documented in `docs/adr/0091-studies-viewer.md`.
 
+### Increment 28: Fix JoinRequestView OpenAPI contract (ADR-0088) ✅
+
+Corrects `JoinRequestView` schema in `packages/api/src/openapi/schemas.ts` to match `joinRequestView` presenter output and `FriendRequestView` schema pattern: replaces `updatedAt` with `respondedAt` (`nullable: true`, in `required` array).
+
+- **OpenAPI Schema & Spec (`packages/api/src/openapi/schemas.ts`, `packages/api/openapi.json`)**: Updated `JoinRequestView` schema replacing `updatedAt` with `respondedAt` (`{ ...dateTime, nullable: true }`) in `required` list and properties. Regenerated `packages/api/openapi.json` via `npm run openapi`.
+- **Contract Tests (`packages/api/test/community-api.test.ts`)**: One test covering every route that returns a join request — create, list and respond — asserting `respondedAt` is present (null when pending, ISO string once responded) and `updatedAt` is absent.
+- **Schema/presenter coupling (`packages/api/test/openapi.test.ts`)**: Asserts the *served* `JoinRequestView` schema declares exactly the keys `joinRequestView` emits. Response-shape tests alone would not have caught this bug: reverting the schema while leaving the presenter correct kept all 356 tests green. Presenter-side drift is already blocked by the `JoinRequestView` TypeScript interface, so the two together pin both halves of the contract.
+
 ### Increment 27: Search hits carry their own display metadata (ADR-0094) ✅
 
 Removes the search N+1. A page of ten cost up to **12 requests** — one query, up to ten per-result
@@ -973,8 +981,10 @@ Now **one**.
   exact-match filtering, so a title's casing would be destroyed) and not in `text` (a match corpus,
   not something a person reads).
 - **Security held, and asserted**: `display` reuses only what each projection already indexed — the
-  player projection's SECURITY note still holds, with a test checking the serialized document carries
-  no `email`, `hash`, `flag` or `@` rather than restating the rule.
+  player projection's SECURITY note still holds, with a test pinning the whole serialized document
+  rather than restating the rule, so a leak under any field name fails it. (The first version scanned
+  for forbidden substrings and would have failed on a handle like `HashMaster`; replaced during PR
+  review.)
 - **API**: `SearchResult` schema exposes `display`, optional — a document indexed before the field
   existed still matches and must still be returned. Declaring it required would repeat the
   `ForumPostView` defect (ADR-0088).
@@ -1060,7 +1070,7 @@ Debt observed during M14. Each states what is known, not what is planned; items 
   player document still carries no email, hash or flag. One request per query; the per-row hydration
   failure mode is gone with the fetches.
 - **Private-team join requests are unreachable through discovery, so the 4 routes cannot get a UI as they stand.** Found while scoping Increment 22, which originally intended to build them. `listTeams` skips private teams for non-members and `GET /v1/teams/:id` answers 404 for them (`findVisibleTeam`, `packages/community/src/repository.ts`) — deliberately, as ADR-0069's Existence Oracle protection. `POST /v1/teams/:id/join-requests` does *not* apply that check, so the route works for any team id, but a non-member has no way to reach the team page the button would live on, and no way to learn the id. A second gap compounds it: `GET /v1/teams/:id/join-requests` is admin/owner-only and there is no "my join requests" route, so a requester who reloads cannot discover their own pending request in order to cancel it. Building the requester half needs an API decision first — a reduced public view of a private team, or a self-scoped requests route — each of which trades against ADR-0069 and is its own increment with its own ADR. **The contract is deliberately unchanged for now.** The owner/admin moderation half is reachable today and could ship alone.
-- **`JoinRequestView` in the OpenAPI spec declares a field the server never sends.** `packages/api/src/openapi/schemas.ts` puts `updatedAt` in the `required` list and never mentions `respondedAt`; `joinRequestView` in `packages/api/src/presenters.ts` has always emitted `createdAt` and `respondedAt`. `FriendRequestView`, the same shape in the same file, has it right — which is what makes the divergence visible. This is the identical defect class fixed for `ForumPostView` in Increment 21 (ADR-0088), and dates to M10 increment 4 (#64). Not fixed here: Increment 22 does not consume this shape, and ADR-0088's precedent was to correct a contract *in the increment that first consumes it*, so it lands with whichever increment builds join requests.
+- **`JoinRequestView` in the OpenAPI spec declares a field the server never sends (RESOLVED in Increment 28 / ADR-0088).** `packages/api/src/openapi/schemas.ts` puts `updatedAt` in the `required` list and never mentions `respondedAt`; `joinRequestView` in `packages/api/src/presenters.ts` has always emitted `createdAt` and `respondedAt`. `FriendRequestView`, the same shape in the same file, has it right — which is what makes the divergence visible. This is the identical defect class fixed for `ForumPostView` in Increment 21 (ADR-0088), and dates to M10 increment 4 (#64). **Resolved in Increment 28 (ADR-0088):** `JoinRequestView` schema corrected in `packages/api/src/openapi/schemas.ts` by replacing `updatedAt` with `respondedAt` (nullable `dateTime`), regenerated `packages/api/openapi.json` via `npm run openapi`, and added contract assertions in `packages/api/test/community-api.test.ts` plus a schema/presenter coupling test in `packages/api/test/openapi.test.ts` — the latter because response-shape assertions alone left the whole suite green when the schema was reverted.
 - **The E2E environment indexes no documents, so no test asserts a query returns hits (RESOLVED in Increment 19 / ADR-0086).** ADR-0083 §7 records this. `packages/web/e2e/search.spec.ts` covers navigation, deep links, prompt state and history behaviour — all reachable without an index. Resolved in Increment 19 by wiring an `InMemorySearchRepository` into `e2e-harness` and exposing `POST /e2e/search-index` to seed fixture documents in E2E tests.
 
 ---
