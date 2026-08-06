@@ -23,9 +23,26 @@ The correctness-critical foundation everything else depends on.
   positions (startpos d4=197,281; Kiwipete d3=97,862; +3 edge cases). 14/14 tests
   pass; strict TypeScript with zero errors.
 
-**Known follow-ups (tracked):** perft suites for each variant; Chess960
-castling-by-file; PGN parser. (Threefold repetition: ✅ implemented in the
-M2 `Game` aggregate — see Milestone 2.)
+**Known follow-ups (tracked):**
+
+- **Perft suites for each variant (MOSTLY RESOLVED in Increment 32 / ADR-0098).** Six of eight
+  variants are covered: `chess960`, `kingofthehill` and `threecheck` are pinned by equality against
+  the published standard counts (their move generation is unchanged), and `atomic` and `crazyhouse`
+  are pinned by the divergence they must show. **Still open:** `horde` and `racingkings`, which need
+  perft values sourced from an independent implementation — ADR-0098 §4 records why inventing them
+  was refused.
+- **Chess960 castling-by-file is broken, not merely missing.** `packages/chess-core/src/fen.ts`
+  parses only `KQkq` and silently discards file-letter (Shredder-FEN) castling rights via its
+  `default: break;`, and the comment there points at a "960 module" that does not exist in
+  `packages/chess-core/src/`. Demonstrated on kiwipete: rights of `HAha` give `perft(1) = 46`,
+  identical to no castling rights at all, against `48` for `KQkq` — so a real Chess960 position
+  loaded from a Shredder FEN silently loses the ability to castle. Same class as the PGN suffix loss
+  fixed in Increment 26 (ADR-0093): a parser dropping input without erroring. Found while scoping
+  Increment 32 and left alone there, since it is a source fix with its own tests.
+- **PGN parser (RESOLVED).** Shipped in M10 as `packages/studies/src/pgn-parse.ts` and extended in
+  Increment 26 (ADR-0093) to carry suffix annotations.
+
+(Threefold repetition: ✅ implemented in the M2 `Game` aggregate — see Milestone 2.)
 
 ---
 
@@ -962,6 +979,16 @@ Exposes the M10 studies backend (21 routes under `/v1/studies`, previously no UI
 - **Harness & Bridge Route (`packages/e2e-harness/src/harness.ts`)**: Wired `studiesRepository` in `packages/e2e-harness` (`ApiDependencies`) and added bridge route `POST /e2e/studies` to seed public studies with chapters, mainline >= 4 moves, 1 variation, 1 comment, and 1 NAG in 1–6 range.
 - **Tests & ADR**: Unit tests in `studies-helpers.test.ts`, `studies-controller.test.ts`, and domain test `studies.test.ts`, Playwright E2E spec in `studies.spec.ts`. Documented in `docs/adr/0091-studies-viewer.md`.
 
+### Increment 32: Perft coverage for the chess variants (ADR-0098) ✅
+
+Perft is the definitive correctness test for a move generator, and all five cases in `packages/chess-core/test/perft.test.ts` ran the `standard` variant while `packages/chess-core/src/movegen.ts` branches on the variant in six places. Seven rule sets had no perft verification at all.
+
+- **No value recorded from this implementation.** Pasting in what the engine currently prints would be a golden master: it locks in present bugs and passes forever. Every added figure traces to the published reference counts already in the file, or to arithmetic over the board.
+- **Equality where movegen is unchanged**: `chess960`, `kingofthehill` and `threecheck` must match the published standard counts exactly on the opening position and kiwipete, since they alter only castling or the terminal condition.
+- **Divergence where it is not**: `atomic` must stop matching at depth 4, where the first captures explode; `crazyhouse` with a pawn in hand must give `perft(1) = 52` — 20 ordinary moves plus one drop per empty square on ranks 3-6. Equality alone would pass on an implementation that had forgotten a variant entirely.
+- **Mutation-verified**: adding `kingofthehill` to the no-castling list fails the kiwipete equality test; disabling crazyhouse drops fails the drop-count test.
+- **Cost**: the first version compared `perft(5)` totals and took 12 seconds of the package’s 15. The pocket FEN gives an exact figure instead of a `>` comparison, in 2.4 seconds total.
+- **Left open, with the reason stated**: `horde` and `racingkings` need published values from an independent implementation; and Chess960 castling-by-file was found genuinely broken (see the Milestone 1 follow-ups) and left for its own increment.
 ### Increment 31: Delete the speculative `AttemptResult.message` (ADR-0097) ✅
 
 Removes `readonly message?: string` from `AttemptResult` in `packages/learning/src/model.ts`. No implementation ever set it — the declaration was the only occurrence of the field in the repository — so the presenter omitting it dropped nothing, and populating it would have meant inventing the wording of a feedback feature that has never existed.

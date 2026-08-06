@@ -4,7 +4,18 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-06 - M14 Increment 31: Delete the speculative AttemptResult.message (ADR-0097)._
+_Last updated: 2026-08-06 - M14 Increment 32: Perft coverage for the chess variants (ADR-0098)._
+
+## M14 Increment 32 - Perft coverage for the chess variants (ADR-0098)
+
+All five perft cases in `packages/chess-core/test/perft.test.ts` ran `standard`, while `packages/chess-core/src/movegen.ts` branches on the variant in six places — seven rule sets had no perft verification.
+
+- **Discipline (ADR-0098 §1)**: no expected value was taken by running this implementation. Recording current output as `expected` is a golden master — it captures the bugs of the day it was written and passes forever. Values trace to the published Chess Programming Wiki counts already in the file, or to arithmetic over the starting array.
+- **Equality invariant**: `chess960`, `kingofthehill`, `threecheck` match the published standard counts exactly (movegen unchanged; only castling arrangement or terminal condition differs), bounded to depths where the variant cannot terminate early.
+- **Divergence assertions**: `atomic` must differ at depth 4 (captures explode); `crazyhouse` with a pawn in hand must give `perft(1) = 52` = 20 moves + 32 drops on the empty squares of ranks 3-6.
+- **Mutation-verified**: adding `kingofthehill` to the no-castling list, and disabling crazyhouse drops, each fail a test. Suite 16 → 24 tests, 2.4s.
+- **Found and left open**: Chess960 castling-by-file is broken — `packages/chess-core/src/fen.ts` silently discards Shredder-FEN rights (`HAha` on kiwipete gives `perft(1) = 46`, the same as no rights, vs 48 for `KQkq`). Recorded under the Milestone 1 follow-ups; it is a source fix with its own tests.
+- **Still uncovered**: `horde` and `racingkings`, pending published reference values. Inventing them was refused.
 
 ## M14 Increment 31 - Delete the speculative `AttemptResult.message` (ADR-0097)
 
