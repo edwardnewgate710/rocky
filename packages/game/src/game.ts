@@ -282,7 +282,7 @@ export class Game {
   private endByTimeout(flagged: Color, at: number): { game: Game; events: GameEvent[] } {
     const winner = opposite(flagged);
     // If the side that would win on time cannot possibly mate, it is a draw.
-    const drawByInsufficient = !canMate(this.state.position.fen(), winner);
+    const drawByInsufficient = !canMate(this.state.position.fen(), winner, this.state.variant);
     const events: GameEvent[] = [{
       type: 'GameEnded',
       result: drawByInsufficient ? '1/2-1/2' : winner === 'w' ? '1-0' : '0-1',
@@ -396,14 +396,27 @@ export class Game {
 }
 
 /**
- * Whether `color` retains enough material to deliver checkmate. Used to convert
- * a timeout into a draw when the opponent cannot possibly win. Conservative:
- * lone king, K+N, or K+B cannot force mate.
+ * Whether `color` could still win, used to convert a timeout into a draw when the opponent could
+ * not possibly have won anyway.
+ *
+ * The question is variant-specific, and asking the standard one everywhere is wrong in a way that
+ * costs players games. "Enough material to deliver checkmate" only means anything in a variant whose
+ * win condition *is* checkmate. King of the Hill is won by walking a king to the centre; Racing
+ * Kings by reaching the eighth rank; Three-check by giving three checks; Atomic by exploding the
+ * enemy king; Crazyhouse by dropping the pieces in hand, which the board position does not show at
+ * all. Treating those as standard chess turned a win into a draw whenever the loser flagged.
+ *
+ * Conservative in one direction on purpose: it answers "could this side possibly win", so where the
+ * honest answer is unclear it says yes. Awarding a draw the winner did not deserve is the failure
+ * mode worth avoiding; the guard exists only to spare someone a loss they could never have converted.
  */
-export function canMate(fen: string, color: Color): boolean {
-  const st = parseFen(fen);
+export function canMate(fen: string, color: Color, variant: Variant = 'standard'): boolean {
+  const st = parseFen(fen, variant);
+
   let bishops = 0;
   let knights = 0;
+  let majorOrPawn = false;
+  let anyPiece = false;
   for (let sq = 0; sq < 128; sq++) {
     if ((sq & 0x88) !== 0) continue;
     const p = st.board[sq];
@@ -411,10 +424,49 @@ export function canMate(fen: string, color: Color): boolean {
     const isWhite = p === p.toUpperCase();
     if ((isWhite && color !== 'w') || (!isWhite && color !== 'b')) continue;
     const t = typeOf(p);
-    if (t === 'p' || t === 'r' || t === 'q') return true;
-    if (t === 'b') bishops++;
+    if (t === 'k') continue;
+    anyPiece = true;
+    if (t === 'p' || t === 'r' || t === 'q') majorOrPawn = true;
+    else if (t === 'b') bishops++;
     else if (t === 'n') knights++;
   }
-  // Two bishops, or bishop+knight, or two knights (rarely) — treat >=2 minors as sufficient.
-  return bishops + knights >= 2;
+
+  switch (variant) {
+    case 'kingofthehill':
+    case 'racingkings':
+      // Both are won by walking a king somewhere. A player reduced to a bare king still has the only
+      // piece the win condition needs, so material can never rule the win out.
+      return true;
+
+    case 'crazyhouse':
+      // Anything in hand can be dropped, and the board alone never shows it — but the deciding point
+      // is that a king captures like any other piece, so even a bare king with an empty pocket can
+      // take something and drop it back. There is no material configuration from which winning is
+      // impossible, which makes the guard inapplicable rather than merely generous.
+      return true;
+
+    case 'threecheck':
+      // Won by giving three checks rather than by mating, so the two-minor threshold does not apply:
+      // a lone knight can check. Only a bare king can never give check.
+      return anyPiece;
+
+    case 'atomic':
+      // Won by exploding the enemy king. A king may not capture — it would explode itself — so a bare
+      // king cannot win, but any other piece can deliver the capture that ends it.
+      return anyPiece;
+
+    case 'horde':
+      // White is an army of pawns with no king and wins by mating Black; Black wins by capturing
+      // every white piece, and a king captures perfectly well on its own. Neither side reaches a
+      // material state that rules the win out, so as in Crazyhouse the guard does not apply.
+      return true;
+
+    case 'standard':
+    case 'chess960':
+    default:
+      // Checkmate is the win condition, so the classical material test applies: a lone king, K+N and
+      // K+B cannot force mate; two minors can.
+      if (majorOrPawn) return true;
+      return bishops + knights >= 2;
+  }
 }

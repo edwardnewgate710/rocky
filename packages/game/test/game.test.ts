@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { Game, repetitionKey } from '../src/game';
+import { Game, repetitionKey, canMate } from '../src/game';
 import { Position } from '@chess-platform/core';
 import type { GameEvent } from '../src/events';
 import type { TimeControl } from '../src/clock';
@@ -279,4 +279,100 @@ test('threefold: a game that ends by threefold rejects further commands', () => 
   assert.throws(() => game.resign('w', (t += 1_000)), /already over/);
   // Draw offer is rejected.
   assert.throws(() => game.offerDraw('w', (t += 1_000)), /already over/);
+});
+
+/**
+ * Timeout material rules were the standard ones in every variant, which is the wrong question
+ * wherever checkmate is not the win condition. The tracked follow-up sat under Milestone 2 as
+ * "per-variant timeout material rules"; the cost is a player who was winning being handed a draw
+ * because their opponent ran out of time.
+ *
+ * King of the Hill is the sharpest case and needs no exotic position: a king alone is exactly the
+ * piece the win condition wants, and it was being told it could not win.
+ */
+test('a lone king wins on time in King of the Hill, where walking to the centre is the win condition', () => {
+  const short: TimeControl = { initialMs: 5_000, incrementMs: 0, delayMs: 0, kind: 'sudden_death' };
+  // White has only a king; Black has a king and a rook and is to move.
+  let { game } = Game.create({
+    gameId: 'koth-flag',
+    timeControl: short,
+    players: { white: 'a', black: 'b' },
+    variant: 'kingofthehill',
+    initialFen: '3rk3/8/8/8/8/8/8/4K3 b - - 0 1',
+    at: 0,
+  });
+
+  const res = game.claimFlag(11_000);
+  game = res.game;
+  assert.equal(game.status.over, true);
+  if (game.status.over) {
+    assert.equal(game.status.termination, 'timeout', 'a bare king can still reach the hill, so this is a win');
+    assert.equal(game.status.result, '1-0');
+  }
+});
+
+test('a lone king still draws on time in standard chess, where it genuinely cannot mate', () => {
+  const short: TimeControl = { initialMs: 5_000, incrementMs: 0, delayMs: 0, kind: 'sudden_death' };
+  let { game } = Game.create({
+    gameId: 'std-flag',
+    timeControl: short,
+    players: { white: 'a', black: 'b' },
+    initialFen: '3rk3/8/8/8/8/8/8/4K3 b - - 0 1',
+    at: 0,
+  });
+
+  const res = game.claimFlag(11_000);
+  game = res.game;
+  assert.equal(game.status.over, true);
+  if (game.status.over) {
+    assert.equal(game.status.termination, 'insufficient_material');
+    assert.equal(game.status.result, '1/2-1/2');
+  }
+});
+
+/**
+ * Crazyhouse is the case the board cannot show. A player holding a queen is one drop from mate, and
+ * `parseFen` was being called without the variant, so the pocket was never even consulted.
+ *
+ * The bare-king case is the one this test originally got wrong, asserting a draw. A king captures
+ * like any other piece, so even with an empty pocket it can take something and drop it back —
+ * there is no material state in Crazyhouse from which winning is impossible. Caught in the review of
+ * PR #97.
+ */
+test('no material state in Crazyhouse rules out a win on timeout', () => {
+  assert.equal(canMate('4k3/8/8/8/8/8/8/4K3[Q] w - - 0 1', 'w', 'crazyhouse'), true);
+  assert.equal(
+    canMate('4k3/8/8/8/8/8/8/4K3 w - - 0 1', 'w', 'crazyhouse'),
+    true,
+    'a bare king can still capture and drop what it takes',
+  );
+});
+
+/**
+ * Three-check and Atomic win by checking and by exploding, not by mating, so the two-minor threshold
+ * that standard chess uses does not apply: a single knight is enough in both.
+ */
+test('one minor piece is enough on timeout in Three-check and Atomic, but a bare king is not', () => {
+  for (const variant of ['threecheck', 'atomic'] as const) {
+    assert.equal(canMate('4k3/8/8/8/8/8/8/4KN2 w - - 0 1', 'w', variant), true, `${variant}: K+N can still win`);
+    assert.equal(canMate('4k3/8/8/8/8/8/8/4K3 w - - 0 1', 'w', variant), false, `${variant}: a bare king cannot`);
+  }
+  // The same K+N is correctly a draw in standard chess, which is the rule being varied from.
+  assert.equal(canMate('4k3/8/8/8/8/8/8/4KN2 w - - 0 1', 'w', 'standard'), false);
+});
+
+/**
+ * Horde alongside Crazyhouse: Black wins by capturing every white piece, and a king captures on its
+ * own, so a bare black king is not a material state that rules the win out either.
+ *
+ * The contrast with Three-check and Atomic is the point, and it is not arbitrary. A king's capture
+ * makes progress toward the win in Crazyhouse and Horde; in Three-check it cannot, because capturing
+ * never turns a king into something that gives check, and in Atomic the king may not capture at all
+ * without exploding itself. So those two stay strict while these two do not.
+ */
+test('a bare king can still win on time in Horde, but not in Three-check or Atomic', () => {
+  assert.equal(canMate('4k3/8/8/8/8/8/8/4K3 w - - 0 1', 'b', 'horde'), true, 'a black king captures pawns on its own');
+
+  assert.equal(canMate('4k3/8/8/8/8/8/8/4K3 w - - 0 1', 'w', 'threecheck'), false, 'a king can never give check');
+  assert.equal(canMate('4k3/8/8/8/8/8/8/4K3 w - - 0 1', 'w', 'atomic'), false, 'an atomic king may not capture at all');
 });

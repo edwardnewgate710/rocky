@@ -4,7 +4,16 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-06 - M14 Increment 33: Chess960 withheld from the lobby (ADR-0099)._
+_Last updated: 2026-08-06 - M14 Increment 34: Per-variant timeout material rules (ADR-0100)._
+
+## M14 Increment 34 - Per-variant timeout material rules (ADR-0100)
+
+`endByTimeout` in `packages/game/src/game.ts` called `canMate(fen, winner)` without the variant, so `parseFen` defaulted to `standard` and the classical lone-king / K+N / K+B material test was applied to every variant — including the ones where checkmate is not the win condition.
+
+- **Live on variants the lobby offers**: a bare king in King of the Hill or Racing Kings, a queen held in a Crazyhouse pocket, and K+N in Three-check or Atomic were all reported as unable to win, so a timeout win became a draw.
+- **Fix**: `canMate(fen, color, variant)`; each variant answers its own question, with the reasoning recorded per variant in ADR-0100 §1. Standard and Chess960 unchanged; the default argument keeps existing callers correct.
+- **Mutation-verified**: dropping the `variant` argument fails the King of the Hill timeout test.
+- **Untouched**: `Position.hasInsufficientMaterial` already guarded itself to `standard` and `chess960`, so in-play draws were never affected.
 
 ## M14 Increment 33 - Chess960 withheld from the lobby, and a variant audit (ADR-0099)
 

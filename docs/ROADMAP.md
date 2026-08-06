@@ -57,7 +57,7 @@ The correctness-critical foundation everything else depends on.
   2,000-game reconstruction runs at ~1.17ms/game (headroom for high
   concurrency). Strict TypeScript, zero errors.
 
-**Follow-ups (tracked):** per-variant timeout material rules.
+**Follow-ups (tracked):** per-variant timeout material rules (RESOLVED in Increment 34 / ADR-0100). `endByTimeout` called `canMate(fen, winner)` without the variant, so `parseFen` defaulted to `standard` and the classical lone-king / K+N / K+B test was applied to variants where checkmate is not the win condition — a bare king in King of the Hill or Racing Kings, a queen held in a Crazyhouse pocket, and K+N in Three-check or Atomic were all told they could not win, turning a timeout win into a draw. **Resolved in Increment 34 (ADR-0100):** `canMate` takes the variant and answers that variant own question.
 
 **✅ Threefold repetition (implemented):** Position-hash history in the `Game`
 aggregate (the aggregate owns history; `core` stays stateless), emitting
@@ -973,6 +973,15 @@ Exposes the M10 studies backend (21 routes under `/v1/studies`, previously no UI
 - **Harness & Bridge Route (`packages/e2e-harness/src/harness.ts`)**: Wired `studiesRepository` in `packages/e2e-harness` (`ApiDependencies`) and added bridge route `POST /e2e/studies` to seed public studies with chapters, mainline >= 4 moves, 1 variation, 1 comment, and 1 NAG in 1–6 range.
 - **Tests & ADR**: Unit tests in `studies-helpers.test.ts`, `studies-controller.test.ts`, and domain test `studies.test.ts`, Playwright E2E spec in `studies.spec.ts`. Documented in `docs/adr/0091-studies-viewer.md`.
 
+### Increment 34: Per-variant timeout material rules (ADR-0100) ✅
+
+A timeout win was downgraded to a draw using standard chess material rules in every variant. `endByTimeout` passed only the FEN and colour to `canMate`, so `parseFen` defaulted to `standard` and the lone-king / K+N / K+B test was applied where checkmate is not the win condition at all.
+
+- **Live on offered variants**: a bare king in King of the Hill or Racing Kings (both won by walking a king somewhere), a queen held in a Crazyhouse pocket (which the board does not show), and K+N in Three-check or Atomic all reported that they could not win — so the player who was winning got a draw when their opponent flagged.
+- **Fix (`packages/game/src/game.ts`)**: `canMate(fen, color, variant)` answers each variant own question, with the reasoning per variant recorded in ADR-0100 §1. Standard and Chess960 behaviour is unchanged and the default argument keeps existing callers correct.
+- **Conservative in one direction on purpose**: where the honest answer is unclear it says the side can win. The failure modes are not symmetric — handing a draw to a player who was winning takes something from them; the guard only spares an opponent a loss they could never have converted.
+- **The bias had to be applied to Crazyhouse and Horde too, and was not at first**: both returned "cannot win" for a bare king, and a test asserted that draw as correct. A king captures like any other piece, so in Crazyhouse it can seed its own pocket and in Horde it can take the pawns — no material state rules the win out in either. Caught in the review of PR #97. Three-check and Atomic stay strict for a real reason: no capture turns a king into a checking piece, and an atomic king may not capture at all.
+- **Mutation-verified**: dropping the `variant` argument at the call site fails the King of the Hill timeout test.
 ### Increment 33: Chess960 withheld from the lobby, and a variant audit (ADR-0099) ✅
 
 Chess960 was selectable while nothing behind it existed: `Position.initial('chess960')` returns the standard array, and castling in `packages/chess-core/src/movegen.ts` is hardcoded to e1/a1/h1 — 0 castling moves generated from any Chess960 arrangement whose king is not on e1. Picking it produced an ordinary game with a different label.
