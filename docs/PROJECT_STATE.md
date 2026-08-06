@@ -4,7 +4,17 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-06 - M14 Increment 35: The promotion picker rendered blank tiles (ADR-0101)._
+_Last updated: 2026-08-06 - M14 Increment 36: Dev-server API proxy and the engine bot (ADR-0102)._
+
+## M14 Increment 36 - The dev server had no API proxy, and the bot had no engine (ADR-0102)
+
+Two defects from running the platform locally: registering answered `HTTP 404`, and the computer opponent never moved. Unrelated causes; each reproduced before being fixed.
+
+- **Dev proxy (`packages/web/vite.config.ts`)**: `resolveEndpoints` derives the API origin from `location.origin`, so under `vite dev` the app called `/v1/...` on the dev server, which served nothing. `preview` already had a proxy for e2e; `server` had none. Added for `/v1` and `/ws`, defaulting to the Compose ports, overridable with `GAMBIT_DEV_API_URL` / `GAMBIT_DEV_WS_URL`.
+- **Engine bot (`Dockerfile.gateway`, `docker-compose.yml`)**: `serve.ts` requires `ENGINE_BOT=1` **and** a binary at `STOCKFISH_PATH`. Compose set neither and the image installed no engine, and the failure is a log warning rather than a crash. The image now installs Stockfish at `/usr/games/stockfish`; Compose sets `ENGINE_BOT` by default.
+- **Variant routing (`packages/engine/src/plugin.ts`, `pool.ts`)**: the platform calls ordinary chess `standard`, UCI calls it `chess`. `variantSetup` accepted `standard` all along, but `expectedVariants` omitted it and `supportsVariant` consulted only discovered capabilities when warm — so a bot game threw `NoEngineForVariantError`. Both plugins now declare `standard`, and `supportsVariant` returns the union of declared and discovered names.
+- **Why the suite missed it**: all 50 engine tests routed by `variant: 'chess'`, the engine's vocabulary rather than the platform's. New tests route `standard` warm and cold; both fail against the unfixed code. `packages/web/test/dev-proxy.test.ts` pins server/preview proxy parity, since nothing tested `vite.config.ts` at all.
+- **Documented** in `docs/RUNNING.md`: a front-end dev-server section, and the two requirements for Play vs Computer with the `EngineBotMover is enabled` log line that confirms them.
 
 ## M14 Increment 35 - The promotion picker rendered blank tiles (ADR-0101)
 

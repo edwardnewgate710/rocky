@@ -79,6 +79,10 @@ services:
       # and arena results from ended-game broadcasts. Single gateway node in
       # compose, so exactly one reporter instance runs.
       TOURNAMENT_REPORTER: ${TOURNAMENT_REPORTER:-1}
+      # "Play vs Computer" (M14 inc 13, ADR-0080). The gateway builds an EngineBotMover only when
+      # this is "1" and STOCKFISH_PATH points at a real binary — the image installs Stockfish and
+      # sets that path. Without this the lobby offers the mode and the opponent never moves.
+      ENGINE_BOT: ${ENGINE_BOT:-1}
     ports:
       - "${GATEWAY_PORT:-4175}:4175"
     healthcheck:

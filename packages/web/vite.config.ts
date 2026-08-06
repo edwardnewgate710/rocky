@@ -10,6 +10,25 @@ export default defineConfig({
     outDir: 'dist',
     sourcemap: true,
   },
+  // The dev server needs the same proxy as `preview` below, for the same reason.
+  // `resolveEndpoints` in src/app/config.ts derives the API origin from `location.origin`, so on
+  // `vite dev` the app posts to http://localhost:5173/v1/auth/register — a path the dev server does
+  // not serve. Registering answered 404, which reads as a broken backend rather than a missing
+  // proxy. Defaults match `docker compose up` (API on 8080, gateway on 4175); override with
+  // GAMBIT_DEV_API_URL / GAMBIT_DEV_WS_URL to point at a backend running elsewhere.
+  server: {
+    proxy: {
+      '/v1': {
+        target: process.env['GAMBIT_DEV_API_URL'] ?? 'http://127.0.0.1:8080',
+        changeOrigin: true,
+      },
+      '/ws': {
+        target: process.env['GAMBIT_DEV_WS_URL'] ?? 'ws://127.0.0.1:4175',
+        ws: true,
+        changeOrigin: true,
+      },
+    },
+  },
   preview: {
     proxy: {
       // Proxy REST API requests to the e2e harness

@@ -80,6 +80,17 @@ See ADR-0007 (local stack/durability) and ADR-0008 (Redis fanout).
 Health check: `GET :4176/health` returns `{ status: "ok" }` (health runs on
 port+1, separate from the WebSocket port).
 
+**Play vs Computer** needs two things and fails quietly without either: `ENGINE_BOT=1`, and an
+engine binary at `STOCKFISH_PATH`. The gateway image installs Stockfish at
+`/usr/games/stockfish` and Compose sets `ENGINE_BOT` by default, so `docker compose up` gives
+you a working opponent. If neither is present the gateway logs
+`ENGINE_BOT requires an engine binary (set STOCKFISH_PATH)` and the lobby still offers the mode
+while the opponent never moves. Confirm with:
+
+```bash
+docker compose logs gateway | grep "EngineBotMover is enabled"
+```
+
 ### Web service
 
 The web container builds the SPA with `vite build` and serves the static output
@@ -89,6 +100,26 @@ via nginx. Nginx proxies:
 
 The frontend's `resolveConfig()` derives API and WS URLs from the page origin,
 so it works automatically when served from the same host.
+
+### Front-end dev server
+
+For UI work you can run Vite directly instead of rebuilding the container:
+
+```bash
+npm run dev --workspace @chess-platform/web   # http://127.0.0.1:5173
+```
+
+Because `resolveConfig()` uses the page origin, the app calls `/v1/...` on the dev server itself,
+so the dev server proxies `/v1` and `/ws` to a backend you are already running — by default the
+Compose one (`api` on 8080, `gateway` on 4175). Start the backend first:
+
+```bash
+docker compose up -d postgres redis api gateway
+```
+
+Point elsewhere with `GAMBIT_DEV_API_URL` / `GAMBIT_DEV_WS_URL`. Without the proxy every API call
+returns 404 from Vite — registering an account answers `HTTP 404`, which looks like a broken backend
+rather than a missing proxy.
 
 ## Smoke test
 

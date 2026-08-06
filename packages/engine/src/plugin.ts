@@ -24,6 +24,19 @@ export interface EnginePlugin {
   readonly minVersion: string;
   /** Variants this engine is expected to serve, for routing before a worker has warmed up. */
   readonly expectedVariants: readonly string[];
+  /**
+   * This engine's own name for a platform variant, where the two differ.
+   *
+   * The platform and UCI do not share a vocabulary: `@chess-platform/core` says `standard` and
+   * `threecheck`, while engines answer `chess` and `3check`. A warm pool checks the variant against
+   * the capabilities the engine reported *about itself*, so routing has to ask under the engine's
+   * name — otherwise a game the engine can play is refused because it was asked for in the wrong
+   * language.
+   *
+   * Resolving the name is not the same as widening the check: capabilities stay authoritative, so an
+   * engine that genuinely lacks a variant is still not routed one.
+   */
+  engineVariantName?(variant: string): string;
   /** The `setoption` commands that select `variant` on this engine. */
   variantSetup(variant: string): readonly EngineOption[];
   /** Construct (but do not `init`) one worker over `transport`. */
@@ -48,6 +61,11 @@ export const stockfishPlugin: EnginePlugin = {
   displayName: 'Stockfish',
   minVersion: '15',
   expectedVariants: ['chess', 'chess960'],
+  // UCI's name for ordinary chess is `chess`; the platform calls it `standard`. Routing resolves
+  // through here so a warm pool can match the capabilities the engine actually reported.
+  engineVariantName(variant: string): string {
+    return variant === 'standard' ? 'chess' : variant;
+  },
   variantSetup(variant: string): readonly EngineOption[] {
     if (variant === 'chess960') return [{ name: 'UCI_Chess960', value: true }];
     if (variant === 'chess' || variant === 'standard') return [{ name: 'UCI_Chess960', value: false }];
@@ -85,6 +103,11 @@ export const fairyStockfishPlugin: EnginePlugin = {
     'horde',
     'racingkings',
   ],
+  // The map below is exactly the platform-to-engine translation routing needs, so expose it rather
+  // than duplicating the knowledge: a warm Fairy reports `3check`, not the platform's `threecheck`.
+  engineVariantName(variant: string): string {
+    return FAIRY_VARIANT_NAMES[variant] ?? variant;
+  },
   variantSetup(variant: string): readonly EngineOption[] {
     if (variant === 'chess960') {
       return [

@@ -117,10 +117,26 @@ export class EnginePool {
     return this.capabilitiesValue;
   }
 
-  /** Whether this pool can serve `variant` (discovered caps if warm, else the plugin hint). */
+  /**
+   * Whether this pool can serve `variant`, asked under both the platform's name and the engine's.
+   *
+   * The two vocabularies differ: `@chess-platform/core` says `standard` and `threecheck` where
+   * engines answer `chess` and `3check`. Discovered capabilities are the engine describing itself,
+   * so they arrive in the engine's language — checking the platform's name against them refused
+   * games the engine could play, which is how a real bot game died on
+   * `NoEngineForVariantError: ... "standard"`.
+   *
+   * Capabilities stay authoritative once discovered. Translating the name is not the same as
+   * widening the check: an engine build that genuinely lacks `chess960` must still not be routed it,
+   * or the manager will pick this pool over one that can actually play the game and fail later.
+   * Only before warmup, with nothing discovered, does the plugin's declared list stand in.
+   */
   supportsVariant(variant: string): boolean {
-    if (this.capabilitiesValue) return this.capabilitiesValue.variants.has(variant);
-    return this.plugin.expectedVariants.includes(variant);
+    const engineName = this.plugin.engineVariantName?.(variant) ?? variant;
+    if (this.capabilitiesValue) {
+      return this.capabilitiesValue.variants.has(variant) || this.capabilitiesValue.variants.has(engineName);
+    }
+    return this.plugin.expectedVariants.includes(variant) || this.plugin.expectedVariants.includes(engineName);
   }
 
   /** Warm to the minimum worker count and return the discovered capabilities. */
