@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { startHarness } from './helpers';
-import { joinRequestView, learnerStepView, teamView, teamDetailView, attemptResultView } from '../src/presenters';
+import { joinRequestView, learnerStepView, teamView, teamDetailView, attemptResultView, capabilitiesView } from '../src/presenters';
 import type { JoinRequest, Team } from '@chess-platform/community';
 import type { AttemptResult, LessonStep } from '@chess-platform/learning';
 
@@ -320,3 +320,34 @@ test('AttemptResultView: the served schema describes exactly what the presenter 
     await h.close();
   }
 });
+
+/**
+ * Pin the `Capabilities` schema against `capabilitiesView` presenter output so they cannot drift.
+ * Adding or removing a capability key from the presenter without updating `Capabilities` in `schemas.ts`
+ * (or vice versa) fails this test.
+ */
+test('Capabilities: the served schema describes exactly what the presenter emits', async () => {
+  const h = await startHarness();
+  try {
+    const schema = (h.server.openapiDocument() as any).components.schemas.Capabilities;
+    const view = capabilitiesView({
+      learningRepository: h.learningRepository,
+      studiesRepository: h.studiesRepository,
+      achievementsRepository: h.achievementsRepository,
+      searchRepository: h.searchRepository,
+      socialGraphRepository: h.socialGraphRepository,
+      messagingRepository: h.messagingRepository,
+      communityRepository: h.communityRepository,
+    });
+
+    const presenterKeys = Object.keys(view.capabilities).sort();
+    const schemaDeclaredKeys = Object.keys(schema.properties.capabilities.properties).sort();
+    const schemaRequiredKeys = [...schema.properties.capabilities.required].sort();
+
+    assert.deepEqual(presenterKeys, schemaDeclaredKeys);
+    assert.deepEqual(presenterKeys, schemaRequiredKeys);
+  } finally {
+    await h.close();
+  }
+});
+

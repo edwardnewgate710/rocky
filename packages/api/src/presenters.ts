@@ -875,6 +875,55 @@ export function attemptResultView(r: import('@chess-platform/learning').AttemptR
   };
 }
 
+export interface CapabilitiesFlags {
+  readonly learning: boolean;
+  readonly studies: boolean;
+  readonly achievements: boolean;
+  readonly search: boolean;
+  readonly social: boolean;
+  readonly messaging: boolean;
+  readonly community: boolean;
+}
+
+export interface CapabilitiesView {
+  readonly capabilities: CapabilitiesFlags;
+}
+
+/**
+ * What this deployment can actually serve, read off the dependencies it was built with.
+ *
+ * The parameter is the real `ApiDependencies`, not a structural type restating the seven property
+ * names. Restating them compiles just as well and is a second copy of the configuration wearing a
+ * disguise: rename `learningRepository` in `deps.ts` and a structural parameter keeps matching
+ * nothing, so this reports `learning: false` forever, on a deployment that has learning switched
+ * on, and no test fails. Naming the real type makes that rename a compile error.
+ */
+export function capabilitiesView(
+  deps: Pick<
+    import('./deps.js').ApiDependencies,
+    | 'learningRepository'
+    | 'studiesRepository'
+    | 'achievementsRepository'
+    | 'searchRepository'
+    | 'socialGraphRepository'
+    | 'messagingRepository'
+    | 'communityRepository'
+  >,
+): CapabilitiesView {
+  return {
+    capabilities: {
+      learning: deps.learningRepository !== undefined,
+      studies: deps.studiesRepository !== undefined,
+      achievements: deps.achievementsRepository !== undefined,
+      search: deps.searchRepository !== undefined,
+      social: deps.socialGraphRepository !== undefined,
+      messaging: deps.messagingRepository !== undefined,
+      community: deps.communityRepository !== undefined,
+    },
+  };
+}
+
+
 
 
 

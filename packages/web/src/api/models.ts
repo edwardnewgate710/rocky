@@ -188,6 +188,20 @@ export interface Health {
   readonly version: string;
 }
 
+export interface SystemCapabilities {
+  readonly learning: boolean;
+  readonly studies: boolean;
+  readonly achievements: boolean;
+  readonly search: boolean;
+  readonly social: boolean;
+  readonly messaging: boolean;
+  readonly community: boolean;
+}
+
+export interface CapabilitiesResponse {
+  readonly capabilities: SystemCapabilities;
+}
+
 /** A seek (open game offer) in the lobby. */
 export interface SeekView {
   readonly id: string;

@@ -1116,6 +1116,14 @@ Connects existing unit-tested pure latency interpolation helpers (`estimateSkewM
 - **GameController Timer (`game-controller.ts`)**: Ticks an injectable timer on live games to emit interpolated remaining time for the side to move using `interpolateRemaining`. Suppresses `onClock` callbacks unless second boundary changes (reducing DOM writes by ~90%), while authoritative updates emit instantly.
 - **Container Build Chain & Build-Order Gate (`package.json`, `Dockerfile.web`, `check-docker-build-order.mjs`)**: Moved `@chess-platform/realtime-gateway` to `dependencies` in web's manifest, added root `build:web` script, updated `Dockerfile.web` to delegate to `build:web`, and extended `scripts/check-docker-build-order.mjs` into a parameterized gate guarding both server and web container builds. Documented in `docs/adr/0103-live-clock-countdown.md`.
 
+### Increment 39 (M14 Inc 39): Capabilities-driven navigation (ADR-0106) ✅
+
+Removes top-level navigation links when their underlying optional subsystem is not configured in the current deployment, adhering to DESIGN.md's retryability principle.
+
+- **Backend Capabilities Endpoint (`routes.ts`, `schemas.ts`, `presenters.ts`)**: Added public `GET /v1/capabilities` reporting boolean status for all opt-in repositories (`learning`, `studies`, `achievements`, `search`, `social`, `messaging`, `community`), derived strictly from `deps` (never `process.env`). Added `Capabilities` component schema and presenter-schema coupling test in `openapi.test.ts`.
+- **Client & Navigation Logic (`client.ts`, `models.ts`, `capabilities-nav.ts`, `index.html`, `bootstrap.ts`)**: Optional nav links start `hidden` in `index.html`. `bootstrap` fetches capabilities once; enabled capabilities have `hidden` removed, while disabled capabilities are removed from the DOM. Implemented fail-open policy (reveals all links if `GET /v1/capabilities` fails) to protect against transient network errors.
+- **Tests & Documentation (`capabilities.test.ts`, `capabilities-nav.test.ts`, `0106-capabilities-driven-navigation.md`)**: Added unit tests verifying dependency-driven capability reporting in API, nav DOM removal/revelation, fail-open behavior, and schema coupling. Documented in `docs/adr/0106-capabilities-driven-navigation.md`.
+
 ## ✅ Verification hygiene — ADR claim drift guard (ADR-0079)
 
 Cross-cutting, not tied to one milestone. Increment 11 found ADR-0010 §7 specifying six ownership

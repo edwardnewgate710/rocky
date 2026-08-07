@@ -38,6 +38,7 @@ import type {
   CreateSeekRequest,
   GameSummary,
   Health,
+  CapabilitiesResponse,
   LeaderboardEntry,
   LoginRequest,
   ConversationList,
@@ -168,6 +169,10 @@ export class GambitClient {
 
   health(): Promise<Health> {
     return this.execute<Health>({ method: 'GET', path: '/v1/health' });
+  }
+
+  capabilities(): Promise<CapabilitiesResponse> {
+    return this.execute<CapabilitiesResponse>({ method: 'GET', path: '/v1/capabilities' });
   }
 
   leaderboard(variant: Variant, opts: { limit?: number } = {}): Promise<LeaderboardEntry[]> {

@@ -187,6 +187,28 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     },
   },
 
+  Capabilities: {
+    type: 'object',
+    required: ['capabilities'],
+    properties: {
+      capabilities: {
+        type: 'object',
+        required: ['learning', 'studies', 'achievements', 'search', 'social', 'messaging', 'community'],
+        properties: {
+          learning: { type: 'boolean' },
+          studies: { type: 'boolean' },
+          achievements: { type: 'boolean' },
+          search: { type: 'boolean' },
+          social: { type: 'boolean' },
+          messaging: { type: 'boolean' },
+          community: { type: 'boolean' },
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+
   UserProfile: {
     type: 'object',
     required: ['user', 'ratings'],

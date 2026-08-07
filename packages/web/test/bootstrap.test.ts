@@ -150,6 +150,7 @@ function makeDoc(ids: string[] = ['board', 'status', 'flip', 'theme-toggle', 'au
   const docEl = makeFakeEl('documentElement');
   return {
     getElementById: (id: string) => elements.get(id) ?? null,
+    querySelectorAll: () => [],
     documentElement: docEl,
   } as unknown as Document;
 }
@@ -163,6 +164,7 @@ function makeDocWithBoard(boardEl: HTMLElement, ids: string[] = ['status', 'flip
   const docEl = makeFakeEl('documentElement');
   return {
     getElementById: (id: string) => elements.get(id) ?? null,
+    querySelectorAll: () => [],
     documentElement: docEl,
   } as unknown as Document;
 }

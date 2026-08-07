@@ -15,6 +15,7 @@
  */
 import { createApp } from './composition.js';
 import type { App, AppDependencies } from './composition.js';
+import { applyNavCapabilities } from './capabilities-nav.js';
 import { resolveConfig } from './config.js';
 import { mountBoard } from './board.js';
 import type { MountedBoard } from './board.js';
@@ -303,6 +304,9 @@ export function bootstrap(
     ...(deps?.storage !== undefined ? { storage: deps.storage } : {}),
   };
   const app = createApp(appDeps);
+
+  // --- Capabilities-driven navigation ---
+  void applyNavCapabilities(doc, app.api);
 
   // --- Theme toggle (always wired) ---
   const themeButtonEl = doc.getElementById('theme-toggle');

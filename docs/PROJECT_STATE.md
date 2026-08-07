@@ -4,7 +4,16 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-06 - M14 Increment 37: Live clock countdown UI interpolation and web container build chain (ADR-0103)._
+_Last updated: 2026-08-07 - M14 Increment 39: Capabilities-driven navigation (ADR-0106)._
+
+## M14 Increment 39 - Capabilities-driven navigation (ADR-0106)
+
+Top-level navigation links in `packages/web/index.html` advertised optional features (`/courses`, `/studies`) regardless of whether the subsystem was configured in the current deployment. Clicking "Learn" yielded a 503 error ("Learning service unavailable.") — violating `DESIGN.md`'s retryability principle (*"An explanation is the state; a disabled button that can never enable is not"*).
+
+- **Backend Capabilities Endpoint (`packages/api/src/routes.ts`, `schemas.ts`, `presenters.ts`)**: Added public `GET /v1/capabilities` reporting boolean status for all optional repositories (`learning`, `studies`, `achievements`, `search`, `social`, `messaging`, `community`), derived strictly from `deps` (never `process.env`). Added `Capabilities` component schema to OpenAPI and presenter-schema coupling test in `openapi.test.ts`.
+- **Frontend Navigation & Flash Prevention (`packages/web/index.html`, `packages/web/src/app/capabilities-nav.ts`, `bootstrap.ts`, `client.ts`, `models.ts`)**: Optional nav links start `hidden` in static HTML (`index.html`). `bootstrap` fetches capabilities once (`GambitClient.capabilities()`). Mapped links with `true` capability have `hidden` removed; links with `false` capability are removed from the DOM.
+- **Fail-Open Policy**: If `GET /v1/capabilities` fails (network error, 500, timeout), all mapped links are revealed (`hidden` removed) so a transient network issue never permanently strips navigation affordances.
+- **Tests & Documentation (`packages/api/test/capabilities.test.ts`, `packages/web/test/capabilities-nav.test.ts`, `docs/adr/0106-capabilities-driven-navigation.md`)**: Unit tests verify dependency-driven capability reporting in API, nav DOM removal/revelation, fail-open behavior, and OpenAPI schema coupling. Documented in `docs/adr/0106-capabilities-driven-navigation.md`.
 
 ## M14 Increment 37 - Live clock countdown UI interpolation and web container build chain (ADR-0103)
 

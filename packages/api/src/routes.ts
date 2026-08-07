@@ -84,6 +84,7 @@ import {
   progressView,
   courseProgressSummaryView,
   attemptResultView,
+  capabilitiesView,
 } from './presenters';
 import { TournamentService } from './tournament/service';
 import { ArenaService } from './tournament/arena.service';
@@ -187,6 +188,17 @@ export function buildRouter(deps: RouteDeps): Router {
       }
       return json(200, { status: 'ok', name: info.title, version: info.version });
     },
+  );
+
+  router.get(
+    '/v1/capabilities',
+    doc({
+      summary: 'System capabilities',
+      tags: ['meta'],
+      responses: { 200: ['Capabilities', 'Subsystem capability flags'] },
+    }),
+    PUBLIC,
+    () => json(200, capabilitiesView(deps)),
   );
 
   router.get(
