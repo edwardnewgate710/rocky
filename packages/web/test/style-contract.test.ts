@@ -182,3 +182,52 @@ test('the board fits the window without estimating the chrome height', () => {
     'without min-height:0 a flex item will not shrink below its content, and the cap never binds',
   );
 });
+
+/**
+ * `body` became a flex column in ADR-0104 so the board could be bounded by the height the topbar
+ * leaves. That silently narrowed every centred content column in the app: a flex item with
+ * `margin-inline: auto` loses the default stretch and falls back to shrink-to-fit, so a rule
+ * reading `max-width: 600px` produced a column as wide as whatever happened to be inside it — the
+ * lobby measured 389px. Nothing looked broken enough to name. The app just read as cramped, with
+ * every section on its own width and nothing sharing a left edge.
+ *
+ * So the invariant is not "the lobby is 600px" but the property that failed: a rule that centres
+ * itself with `margin: 0 auto` and caps itself with `max-width` must also claim the line with
+ * `width`. Asserted across the stylesheet rather than for a list of known sections, because the way
+ * this returns is a *new* section written in the old shape.
+ *
+ * The first version exempted any rule declaring `display: grid|flex`, on the reasoning that such a
+ * rule sizes its own children. That is the wrong question, and it hid a live instance: `.game` is a
+ * grid *and* a flex item of `body`, and measured 628px against its own 1100px cap on a 1482px
+ * viewport. What a rule does to its children says nothing about whether the rule's own element
+ * keeps its width. Raised in the review of PR #103; there is no exemption now.
+ */
+test('every centred content column claims its width, so flex layout cannot shrink it', () => {
+  const all = rules();
+
+  /**
+   * Selectors reached by a rule that sets a width — including the shared rule several sections
+   * join, which is why this is a set over every rule rather than a per-rule re-scan. Tolerant of
+   * spacing (`width:100%`, a newline before the value) so a formatting change cannot turn the guard
+   * red or, worse, green.
+   */
+  const DECLARES_WIDTH = /(^|[;{\s])width\s*:/;
+  const widthBearingSelectors = new Set(
+    all.filter((rule) => DECLARES_WIDTH.test(rule.body)).flatMap((rule) => rule.selectors),
+  );
+
+  const offenders = all
+    .filter((rule) => {
+      const centresItself = /margin(-inline)?\s*:\s*[^;]*\bauto\b/.test(rule.body);
+      const capsItself = /max-width\s*:\s*\d/.test(rule.body);
+      if (!centresItself || !capsItself) return false;
+      return !rule.selectors.some((selector) => widthBearingSelectors.has(selector));
+    })
+    .map((rule) => rule.selectors.join(', '));
+
+  assert.deepEqual(
+    offenders,
+    [],
+    `these rules centre and cap themselves but never claim the line, so as flex items they collapse to their content: ${offenders.join(' | ')}`,
+  );
+});

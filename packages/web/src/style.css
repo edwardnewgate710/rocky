@@ -466,14 +466,22 @@ button:disabled {
 
 /* Section headings use the Title token (1.25rem/700) — the No-Hero Rule:
    nothing scales past this, so the board stays the largest element. */
+/* More space above a heading than below it, so it reads as belonging to what follows rather than
+ * to what precedes it. "Open seeks" sat flush against the "Play vs Computer" button above and a
+ * clear gap from the list it labels — the exact inversion, which is why the lobby read as three
+ * loose fragments instead of two groups. `:first-child` keeps the top of a section tight, where
+ * there is nothing above to separate from. */
 .auth h2,
 .lobby h2,
 .profile h2 {
-  margin: 0 0 12px;
+  margin: 24px 0 12px;
   font-size: 1.25rem;
   font-weight: 700;
   line-height: 1.2;
 }
+.auth h2:first-child,
+.lobby h2:first-child,
+.profile h2:first-child { margin-top: 0; }
 
 /* --- Sign in / register --- */
 /* The app's front door, and until this rule the one surface in the app with no CSS at all: the
@@ -514,6 +522,45 @@ button:disabled {
 }
 .auth .error {
   margin: 12px 0 0;
+}
+
+/* Every centred content column in the app, in one place.
+ *
+ * `body` became a flex column in ADR-0104 so the board could take the height the topbar leaves.
+ * That silently changed every one of these: a flex item with `margin-inline: auto` loses the
+ * default stretch and falls back to shrink-to-fit, so a rule reading `max-width: 600px` produced a
+ * column as narrow as whatever happened to be inside it — measured at 389px on the lobby. Nothing
+ * looked broken enough to name; the whole app just read as cramped and ragged, with each section
+ * on its own width and headings, buttons and rows no longer sharing an edge.
+ *
+ * `width: 100%` restores the intended behaviour: fill the line, then cap at `max-width`. Listed
+ * together rather than repeated at each site so the next centred section joins the guarantee
+ * instead of rediscovering this. `packages/web/test/style-contract.test.ts` asserts the membership.
+ *
+ * `.game` belongs here too, which the first version of that test missed by exempting any rule with
+ * `display: grid|flex` — on the reasoning that such a rule sizes its own children. That is the
+ * wrong question. What matters is whether the rule's *own element* is a flex item that loses
+ * stretch, and a grid container is as much a flex item of `body` as anything else. The board page
+ * measured 628px against its own 1100px cap on a 1482px viewport. Raised in the review of PR #103. */
+.auth,
+.game,
+.lobby,
+.profile,
+.tournaments,
+.tournament,
+.search,
+.messages,
+.conversation,
+.teams,
+.team,
+.forum,
+.thread,
+.course,
+.lesson,
+/* Same shape as `.game`: a grid that is also a flex item. Found by the guard below rather than by
+   anyone looking — which is the point of asserting the property instead of listing the sections. */
+.study-chapter-layout {
+  width: 100%;
 }
 
 /* --- Lobby --- */
