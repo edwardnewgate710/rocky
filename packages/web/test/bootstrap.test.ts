@@ -92,7 +92,7 @@ class FakeHTMLFormElement {
 
 /** IDs that should be treated as HTMLButtonElement instances. */
 const BUTTON_IDS = new Set([
-  'auth-submit', 'auth-logout', 'create-seek', 'flip', 'theme-toggle',
+  'auth-submit', 'auth-register', 'auth-logout', 'create-seek', 'flip', 'theme-toggle',
   'action-resign', 'confirm-resign-yes', 'confirm-resign-no',
   'action-abort', 'confirm-abort-yes', 'confirm-abort-no',
   'action-offer-draw', 'action-accept-draw', 'action-decline-draw', 'action-claim-flag',
@@ -948,6 +948,63 @@ test('SPA re-bootstrap keeps one passkey sign-in action per click', async () => 
 
   const optionsCalls = transport.calls.filter((call) => call.url.endsWith('/v1/auth/webauthn/login/options'));
   assert.equal(optionsCalls.length, 1);
+});
+
+test('SPA re-bootstrap keeps one registration action per click', async () => {
+  const doc = makeDoc([
+    'auth', 'auth-status', 'auth-logout', 'auth-submit', 'auth-register', 'auth-error',
+    'auth-form', 'auth-handle', 'auth-password', 'create-seek', 'theme-toggle',
+  ]);
+  const transport = new FakeTransport().onEach((request) => {
+    const path = new URL(request.url).pathname;
+    if (path === '/v1/capabilities') return json(200, { capabilities: {} });
+    if (path === '/v1/auth/register') {
+      return json(201, {
+        user: { id: 'u1', handle: 'alice', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] },
+        tokens: { accessToken: 'tok', tokenType: 'Bearer', expiresIn: 900, refreshExpiresAt: '2030-01-01T00:00:00Z' },
+      });
+    }
+    return json(404, {});
+  });
+  (doc.getElementById('auth-handle') as unknown as { value: string }).value = 'alice';
+  (doc.getElementById('auth-password') as unknown as { value: string }).value = 'password1';
+
+  bootstrap(doc, { ...makeDeps(), httpTransport: transport });
+  bootstrap(doc, { ...makeDeps(), httpTransport: transport });
+  (doc.getElementById('auth-register') as unknown as FakeHTMLButtonElement).click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const registerCalls = transport.calls.filter((call) => call.url.endsWith('/v1/auth/register'));
+  assert.equal(registerCalls.length, 1);
+});
+
+test('SPA re-bootstrap keeps one logout action per click', async () => {
+  const doc = makeDoc([
+    'auth', 'auth-status', 'auth-logout', 'auth-submit', 'auth-error',
+    'auth-form', 'auth-handle', 'auth-password', 'create-seek', 'theme-toggle',
+  ]);
+  const transport = new FakeTransport().onEach((request) => {
+    const path = new URL(request.url).pathname;
+    if (path === '/v1/capabilities') return json(200, { capabilities: {} });
+    if (path === '/v1/auth/login') {
+      return json(200, {
+        user: { id: 'u1', handle: 'alice', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] },
+        tokens: { accessToken: 'tok', tokenType: 'Bearer', expiresIn: 900, refreshExpiresAt: '2030-01-01T00:00:00Z' },
+      });
+    }
+    if (path === '/v1/auth/logout') return json(200, {});
+    return json(404, {});
+  });
+
+  const first = bootstrap(doc, { ...makeDeps(), httpTransport: transport });
+  const second = bootstrap(doc, { ...makeDeps(), httpTransport: transport });
+  await first.auth.login('alice', 'password1');
+  await second.auth.login('alice', 'password1');
+  (doc.getElementById('auth-logout') as unknown as FakeHTMLButtonElement).click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const logoutCalls = transport.calls.filter((call) => call.url.endsWith('/v1/auth/logout'));
+  assert.equal(logoutCalls.length, 1);
 });
 
 test('self profile passkeys region visibility, failure independence, and teardown', async () => {

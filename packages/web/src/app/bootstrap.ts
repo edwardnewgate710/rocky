@@ -421,11 +421,10 @@ export function bootstrap(
     };
   }
 
-  // Wire register button (create a new account). Both buttons are
-  // type="button" (they share one form with two submit actions), so native
-  // `required` validation never fires on click — trigger it explicitly.
+  // Static auth controls survive SPA re-bootstrap, so property assignment keeps these bindings
+  // idempotent. The register button is type="button", so trigger native form validation explicitly.
   if (authRegisterEl instanceof HTMLButtonElement) {
-    authRegisterEl.addEventListener('click', () => {
+    authRegisterEl.onclick = () => {
       if (authFormEl instanceof HTMLFormElement && !authFormEl.reportValidity()) {
         return;
       }
@@ -434,10 +433,9 @@ export function bootstrap(
       if (handle && password) {
         void auth.register(handle, password);
       }
-    });
+    };
   }
 
-  // Static auth controls survive SPA re-bootstrap, so property assignment keeps this binding idempotent.
   if (authPasskeyEl instanceof HTMLButtonElement) {
     authPasskeyEl.onclick = () => {
       const handle = authHandleEl?.value ?? '';
@@ -445,11 +443,10 @@ export function bootstrap(
     };
   }
 
-  // Wire logout button.
   if (authLogoutEl instanceof HTMLButtonElement) {
-    authLogoutEl.addEventListener('click', () => {
+    authLogoutEl.onclick = () => {
       void auth.logout();
-    });
+    };
   }
 
   // The header search form lives in the nav, outside every section this function replaces, so it
