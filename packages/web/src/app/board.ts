@@ -96,7 +96,7 @@ function premoveToUci(m: Premove): string {
 /**
  * The view currently mounted on each element, so a remount can detach the previous one.
  *
- * `BoardView` binds its click and pointerdown handlers to the *element*, and the board elements
+ * `BoardView` binds its click, pointer, and keyboard handlers to the *element*, and the board elements
  * (`#board`, `#chapter-board`) live in `index.html` — they outlive any route, while `bootstrap`
  * re-runs on every SPA navigation. Making the mount itself idempotent is what keeps that safe:
  * relying on each caller to destroy its previous board means one route that forgets reintroduces

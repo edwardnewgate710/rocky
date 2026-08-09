@@ -196,6 +196,14 @@ body {
   outline-offset: -1px;
   box-shadow: inset 0 0 0 3px var(--sel);
 }
+/* Roving keyboard focus uses the same two-tone, board-safe contrast treatment as selection, with a
+   wider footprint so focus remains distinct when the focused square is also selected. */
+.cb-sq:focus-visible {
+  outline: 1px solid var(--sel-edge);
+  outline-offset: -1px;
+  box-shadow: inset 0 0 0 4px var(--sel);
+  z-index: var(--z-board-cue);
+}
 /* Last-move and premove are separated by LIGHTNESS, not hue alone: composited
    over the board they measure 1.88:1 (light square) and 2.13:1 (dark square)
    apart, so they stay tellable under red-green CVD. Keep that separation if
@@ -219,7 +227,9 @@ body {
    band and would mute it. Inset them by the ring width in that overlap so the
    ring stays crisp and selection is never ambiguous. */
 .cb-selected.cb-last::before,
-.cb-selected.cb-premove::before {
+.cb-selected.cb-premove::before,
+.cb-sq:focus-visible.cb-last::before,
+.cb-sq:focus-visible.cb-premove::before {
   inset: 3px;
 }
 /* Legal destination: a dot for empty squares, a ring for captures. */

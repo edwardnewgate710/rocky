@@ -1,5 +1,5 @@
 /**
- * BoardView — DOM rendering + pointer input for the chess board.
+ * BoardView — DOM rendering plus pointer and keyboard input for the chess board.
  *
  * All decisions (selection, legality-driven highlights, promotion, premoves)
  * live in the injected {@link BoardInteraction}; this class only turns state into
@@ -16,6 +16,7 @@ import {
   squareShade,
   rankIndex,
   pixelToSquare,
+  isSquare,
 } from '../core/board.js';
 import { parsePlacement, type Piece } from '../core/position.js';
 import type { BoardInteraction, GestureResult, PromotionRole } from '../core/interaction.js';
@@ -58,9 +59,11 @@ export class BoardView {
   private floatEl: HTMLElement | null = null;
   private suppressClick = false;
   private overlay: HTMLElement | null = null;
+  private focusedSquare: Square | null = null;
   // Held as fields so `destroy` can remove the very same references `addEventListener` received.
   private readonly onClick = (e: MouseEvent): void => this.handleClick(e);
   private readonly onPointerDown = (e: PointerEvent): void => this.handlePointerDown(e);
+  private readonly onKeyDown = (e: KeyboardEvent): void => this.handleKeyDown(e);
 
   constructor(root: HTMLElement, options: BoardViewOptions) {
     this.root = root;
@@ -72,13 +75,14 @@ export class BoardView {
     this.root.setAttribute('aria-label', 'Chess board');
     this.root.addEventListener('click', this.onClick);
     this.root.addEventListener('pointerdown', this.onPointerDown);
+    this.root.addEventListener('keydown', this.onKeyDown);
     this.render();
   }
 
   /**
    * Detach from the root element.
    *
-   * Mounting is not idempotent: the two listeners above are bound to the element, not to this
+   * Mounting is not idempotent: the listeners above are bound to the element, not to this
    * instance, so mounting a second view onto the same element leaves the first one's listeners
    * attached and every gesture is handled twice. Sections whose board element outlives the view —
    * anything rendered into markup that `bootstrap` re-runs over — must call this before remounting.
@@ -86,6 +90,7 @@ export class BoardView {
   destroy(): void {
     this.root.removeEventListener('click', this.onClick);
     this.root.removeEventListener('pointerdown', this.onPointerDown);
+    this.root.removeEventListener('keydown', this.onKeyDown);
   }
 
   /** Set the position: updates both the rendered pieces and the interaction. */
@@ -132,7 +137,47 @@ export class BoardView {
     if (this.overlay) return;
     const sq = this.squareAt(event.clientX, event.clientY);
     if (!sq) return;
+    this.focusedSquare = sq;
     this.dispatch(this.interaction.tap(sq));
+  }
+
+  private handleKeyDown(event: KeyboardEvent): void {
+    if (this.overlay || !(event.target instanceof Element)) return;
+    const cell = event.target.closest<HTMLElement>('.cb-sq[data-square]');
+    if (!cell || !this.root.contains(cell)) return;
+    const square = cell.dataset['square'];
+    if (square === undefined || !isSquare(square)) return;
+
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      this.focusedSquare = square;
+      this.dispatch(this.interaction.tap(square));
+      return;
+    }
+
+    const cells = Array.from(this.root.querySelectorAll<HTMLElement>('.cb-sq[data-square]'));
+    const currentIndex = cells.indexOf(cell);
+    if (currentIndex === -1) return;
+    const row = Math.floor(currentIndex / 8);
+    const column = currentIndex % 8;
+    let nextRow = row;
+    let nextColumn = column;
+    switch (event.key) {
+      case 'ArrowUp': nextRow -= 1; break;
+      case 'ArrowDown': nextRow += 1; break;
+      case 'ArrowLeft': nextColumn -= 1; break;
+      case 'ArrowRight': nextColumn += 1; break;
+      default: return;
+    }
+
+    event.preventDefault();
+    if (nextRow < 0 || nextRow > 7 || nextColumn < 0 || nextColumn > 7) return;
+    const nextCell = cells[(nextRow * 8) + nextColumn];
+    const nextSquare = nextCell?.dataset['square'];
+    if (!nextCell || nextSquare === undefined || !isSquare(nextSquare)) return;
+    this.focusedSquare = nextSquare;
+    for (const candidate of cells) candidate.tabIndex = candidate === nextCell ? 0 : -1;
+    nextCell.focus();
   }
 
   private handlePointerDown(event: PointerEvent): void {
@@ -289,6 +334,13 @@ export class BoardView {
     const last = new Set<Square>(hl.lastMove ?? []);
     const ranks = ranksForOrientation(this.orientation);
     const files = filesForOrientation(this.orientation);
+    this.focusedSquare ??= toSquare(files[0]!, ranks[0]!);
+    const activeElement = this.root.ownerDocument?.activeElement;
+    const restoreSquareFocus = activeElement !== undefined
+      && activeElement !== null
+      && activeElement instanceof HTMLElement
+      && this.root.contains(activeElement)
+      && activeElement.matches('.cb-sq[data-square]');
 
     const cells: string[] = [];
     for (const rank of ranks) {
@@ -306,12 +358,15 @@ export class BoardView {
           ? `<span class="cb-piece ${pieceClass(piece.color, piece.role)}${dragged}" aria-hidden="true"></span>`
           : '';
         cells.push(
-          `<div class="${classes.join(' ')}" role="gridcell" data-square="${sq}" aria-label="${label}">${inner}</div>`,
+          `<div class="${classes.join(' ')}" role="gridcell" data-square="${sq}" aria-label="${label}" aria-selected="${sq === hl.selected}" tabindex="${sq === this.focusedSquare ? '0' : '-1'}">${inner}</div>`,
         );
       }
     }
     // Preserve the overlay across re-renders.
     this.root.innerHTML = cells.join('');
     if (this.overlay) this.root.appendChild(this.overlay);
+    if (restoreSquareFocus) {
+      this.root.querySelector<HTMLElement>(`[data-square="${this.focusedSquare}"]`)?.focus();
+    }
   }
 }

@@ -239,6 +239,13 @@ test('the board fits the window without estimating the chrome height', () => {
   );
 });
 
+test('keyboard focus on a board square has a visible board-safe indicator', () => {
+  const focus = rules().find((rule) => rule.selectors.includes('.cb-sq:focus-visible'));
+  assert.ok(focus, 'board squares need an explicit focus-visible treatment');
+  assert.match(focus.body, /outline\s*:/);
+  assert.match(focus.body, /box-shadow\s*:/);
+});
+
 /**
  * `body` became a flex column in ADR-0104 so the board could be bounded by the height the topbar
  * leaves. That silently narrowed every centred content column in the app: a flex item with
