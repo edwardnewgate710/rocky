@@ -819,20 +819,21 @@ export function bootstrap(
     // reconnect flow immediately (a browser going offline should show
     // "Reconnecting…" now, not after a full heartbeat interval); on `online`,
     // retry at once instead of waiting out the backoff.
-    let connectivity: { dispose: () => void } | null = null;
-    if (typeof window !== 'undefined') {
-      const connectivityTarget = window;
-      const onOffline = (): void => gameSync.networkOffline();
-      const onOnline = (): void => gameSync.networkOnline();
+    let gameRouteActive = true;
+    const connectivityTarget = typeof window !== 'undefined' ? window : null;
+    const onOffline = (): void => gameSync.networkOffline();
+    const onOnline = (): void => gameSync.networkOnline();
+    if (connectivityTarget) {
       connectivityTarget.addEventListener('offline', onOffline);
       connectivityTarget.addEventListener('online', onOnline);
-      connectivity = {
-        dispose: (): void => {
-          connectivityTarget.removeEventListener('offline', onOffline);
-          connectivityTarget.removeEventListener('online', onOnline);
-        },
-      };
     }
+    const connectivity = {
+      dispose: (): void => {
+        gameRouteActive = false;
+        connectivityTarget?.removeEventListener('offline', onOffline);
+        connectivityTarget?.removeEventListener('online', onOnline);
+      },
+    };
 
     if (token !== undefined) {
       gameSync.start();
@@ -846,7 +847,9 @@ export function bootstrap(
           if (t !== undefined) gameSync.setToken(t);
         })
         .catch(() => undefined)
-        .finally(() => gameSync.start());
+        .finally(() => {
+          if (gameRouteActive) gameSync.start();
+        });
     }
 
     return { app, board, controller, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, connectivity, auth, theme };

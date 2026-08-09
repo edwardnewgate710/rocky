@@ -53,7 +53,7 @@ All disposables carried by `BootstrappedDisposables` now implement `dispose(): v
 
 ### 5. Dispose route-owned browser connectivity resources
 
-Each bootstrap creates its own `App` and therefore owns that app's `WsClient`. `App.dispose()` closes the realtime connection and cancels its reconnect and heartbeat timers. Game routes also return a connectivity disposable that removes their named `online` and `offline` listeners. The teardown map disposes the game controller and connectivity listeners before disposing the app, so a navigation cannot leave a socket or browser listener behind.
+Each bootstrap creates its own `App` and therefore owns that app's `WsClient`. `App.dispose()` closes the realtime connection and cancels its reconnect and heartbeat timers. Game routes also return a connectivity disposable that removes their named `online` and `offline` listeners and invalidates any deferred socket start still waiting for authentication restoration. The teardown map disposes the game controller and connectivity listener/guard before disposing the app, so a navigation cannot leave or later reopen a socket or browser listener.
 
 ## Consequences
 

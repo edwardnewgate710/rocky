@@ -6,6 +6,7 @@ import { createLifecycle } from '../src/app/lifecycle.js';
 import { GameController } from '../src/app/game-controller.js';
 import { FakeTransport, json } from './support/fake-transport.js';
 import { FakeSocketFactory } from './support/fake-socket.js';
+import type { HttpResponse, HttpTransport } from '../src/ports/http.js';
 import { MemoryTokenStore } from '../src/net/session.js';
 import type { ServerMessage, StateView } from '../src/net/ws-protocol.js';
 import type { WebAuthnAdapter } from '../src/ports/webauthn.js';
@@ -401,6 +402,48 @@ test('route teardown closes the app socket and removes browser connectivity list
     if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
     else delete (globalThis as { window?: unknown }).window;
   }
+});
+
+test('route teardown prevents a delayed auth restore from reopening the game socket', async () => {
+  let resolveRefresh: ((response: HttpResponse) => void) | undefined;
+  let refreshRequests = 0;
+  const refreshResponse = new Promise<HttpResponse>((resolve) => {
+    resolveRefresh = resolve;
+  });
+  const transport: HttpTransport = {
+    send: (request) => {
+      if (new URL(request.url).pathname === '/v1/auth/refresh') {
+        refreshRequests += 1;
+        return refreshResponse;
+      }
+      return Promise.resolve(json(200, {}));
+    },
+  };
+  const storage = {
+    getItem: () => JSON.stringify({ handle: 'alice', userId: 'u1' }),
+    setItem: () => undefined,
+    removeItem: () => undefined,
+  };
+  const sockets = new FakeSocketFactory();
+  const lifecycle = createLifecycle(() => bootstrap(makeDoc(), {
+    ...makeDeps(sockets),
+    gameId: 'g1',
+    httpTransport: transport,
+    storage,
+  }));
+
+  lifecycle.run();
+  assert.equal(refreshRequests, 1, 'auth restoration must be pending for the race to be exercised');
+  assert.equal(sockets.sockets.length, 0, 'the socket waits for auth restoration');
+  lifecycle.teardown();
+  if (!resolveRefresh) throw new Error('refresh resolver was not initialized');
+  resolveRefresh(json(200, {
+    user: { id: 'u1', handle: 'alice', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] },
+    tokens: { accessToken: 'restored-token', tokenType: 'Bearer', expiresIn: 900, refreshExpiresAt: '2030-01-01T00:00:00Z' },
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(sockets.sockets.length, 0, 'a torn-down route must not reconnect after auth settles');
 });
 
 test('bootstrap wires onPosition callback to board.setPosition', () => {
