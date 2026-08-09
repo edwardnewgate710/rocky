@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bootstrap, extractGameId, formatClock, formatTimeControl } from '../src/app/bootstrap.js';
 import type { BootstrapDependencies } from '../src/app/bootstrap.js';
+import { createLifecycle } from '../src/app/lifecycle.js';
 import { GameController } from '../src/app/game-controller.js';
 import { FakeTransport, json } from './support/fake-transport.js';
 import { FakeSocketFactory } from './support/fake-socket.js';
@@ -89,6 +90,24 @@ class FakeHTMLFormElement {
   }
 }
 (globalThis as any).HTMLFormElement = FakeHTMLFormElement;
+
+class FakeWindowEvents {
+  private readonly listeners = new Map<string, Set<EventListener>>();
+
+  addEventListener(type: string, listener: EventListener): void {
+    const listeners = this.listeners.get(type) ?? new Set<EventListener>();
+    listeners.add(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  removeEventListener(type: string, listener: EventListener): void {
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  listenerCount(type: string): number {
+    return this.listeners.get(type)?.size ?? 0;
+  }
+}
 
 /** IDs that should be treated as HTMLButtonElement instances. */
 const BUTTON_IDS = new Set([
@@ -352,6 +371,36 @@ test('bootstrap with game ID opens a connection via gameSync.start()', () => {
   // C3: bootstrap now calls gameSync.start(), which opens the WebSocket.
   assert.equal(sockets.sockets.length, 1, 'a socket should be opened for a game view');
   assert.ok(result.controller);
+});
+
+test('route teardown closes the app socket and removes browser connectivity listeners', () => {
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  const browserEvents = new FakeWindowEvents();
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: browserEvents });
+
+  try {
+    const doc = makeDoc();
+    const sockets = new FakeSocketFactory();
+    const lifecycle = createLifecycle(() => bootstrap(doc, {
+      ...makeDeps(sockets),
+      gameId: 'g1',
+      token: 'token-u1',
+    }));
+
+    lifecycle.run();
+    sockets.last.open();
+    assert.equal(browserEvents.listenerCount('offline'), 1);
+    assert.equal(browserEvents.listenerCount('online'), 1);
+
+    lifecycle.teardown();
+
+    assert.deepEqual(sockets.last.closed, { code: 1000, reason: 'app-disposed' });
+    assert.equal(browserEvents.listenerCount('offline'), 0);
+    assert.equal(browserEvents.listenerCount('online'), 0);
+  } finally {
+    if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
+    else delete (globalThis as { window?: unknown }).window;
+  }
 });
 
 test('bootstrap wires onPosition callback to board.setPosition', () => {

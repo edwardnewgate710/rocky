@@ -39,6 +39,18 @@ test('createApp opens no connection and makes no request on construction', () =>
   assert.equal(app.ws.state, 'idle');
 });
 
+test('disposing the app closes its owned realtime connection', () => {
+  const { app, sockets } = make();
+  const sync = app.createGameSync({ gameId: 'g1', token: 'token-u1' });
+  sync.start();
+  sockets.last.open();
+
+  app.dispose();
+
+  assert.deepEqual(sockets.last.closed, { code: 1000, reason: 'app-disposed' });
+  assert.equal(app.ws.state, 'closed');
+});
+
 test('createGameSync builds a GameSync bound to the shared realtime client', () => {
   const { app } = make();
   const sync = app.createGameSync({ gameId: 'g1', token: 'token-u1' });

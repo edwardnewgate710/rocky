@@ -45,6 +45,8 @@ export interface App {
   readonly api: GambitClient;
   /** Realtime client (connection lifecycle, reconnect, heartbeat). Not yet connected. */
   readonly ws: WsClient;
+  /** Release the app-owned realtime connection and its timers. */
+  dispose(): void;
   /** Build a per-game synchronization layer over the shared realtime client. */
   createGameSync(options: GameSyncOptions): GameSync;
   /**
@@ -85,6 +87,7 @@ export function createApp(deps: AppDependencies): App {
     config: deps.config,
     api,
     ws,
+    dispose: (): void => ws.close(1000, 'app-disposed'),
     createGameSync: (options: GameSyncOptions): GameSync => new GameSync(ws, options),
     createGameOracle: (gameSync: GameSync): AuthoritativeMoveOracle =>
       new AuthoritativeMoveOracle({

@@ -22,7 +22,7 @@ function createMockBootstrapped(
   }
 
   return {
-    app: {} as unknown as App,
+    app: disposables.app as App,
     auth: {} as unknown as AuthController,
     theme: { toggle: () => {} } as unknown as ThemeToggle,
     controller: disposables.controller as Bootstrapped['controller'],
@@ -38,6 +38,7 @@ function createMockBootstrapped(
     learning: disposables.learning as Bootstrapped['learning'],
     studies: disposables.studies as Bootstrapped['studies'],
     passkeys: disposables.passkeys as Bootstrapped['passkeys'],
+    connectivity: disposables.connectivity as Bootstrapped['connectivity'],
   };
 }
 
