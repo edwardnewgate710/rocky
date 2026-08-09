@@ -105,18 +105,19 @@ export function appendPanelRow(
   actions: readonly RowAction[],
   busy: boolean,
 ): void {
-  const row = document.createElement('div');
+  const doc = container.ownerDocument ?? document;
+  const row = doc.createElement('div');
   row.className = 'panel-row';
 
-  const name = document.createElement('span');
+  const name = doc.createElement('span');
   name.textContent = label;
   row.appendChild(name);
 
   if (actions.length > 0) {
-    const group = document.createElement('div');
+    const group = doc.createElement('div');
     group.className = 'panel-row-actions';
     for (const action of actions) {
-      const button = document.createElement('button');
+      const button = doc.createElement('button');
       button.type = 'button';
       button.textContent = action.label;
       button.disabled = busy;

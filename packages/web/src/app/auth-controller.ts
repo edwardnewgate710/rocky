@@ -22,6 +22,8 @@
  */
 import type { GambitClient } from '../api/client.js';
 import type { KeyValueStorage } from '../net/session.js';
+import { NativeWebAuthnAdapter } from '../ports/webauthn.js';
+import type { WebAuthnAdapter } from '../ports/webauthn.js';
 
 /** Callbacks the bootstrap wires to DOM elements. */
 export interface AuthCallbacks {
@@ -60,6 +62,8 @@ interface PersistedAuth {
 export interface AuthControllerOptions {
   readonly client: GambitClient;
   readonly callbacks: AuthCallbacks;
+  /** Injectable WebAuthn adapter (defaults to NativeWebAuthnAdapter). */
+  readonly webauthnAdapter?: WebAuthnAdapter;
   /** Injected storage for session persistence (defaults to localStorage). */
   readonly storage?: KeyValueStorage;
   /** Storage key for the persisted session. */
@@ -80,6 +84,7 @@ const DEFAULT_STORAGE_KEY = 'gambit-session';
 export class AuthController {
   private readonly client: GambitClient;
   private readonly callbacks: AuthCallbacks;
+  private readonly webauthnAdapter: WebAuthnAdapter;
   private readonly storage: KeyValueStorage | undefined;
   private readonly storageKey: string;
   private session: AuthSession | null = null;
@@ -88,6 +93,7 @@ export class AuthController {
   constructor(opts: AuthControllerOptions) {
     this.client = opts.client;
     this.callbacks = opts.callbacks;
+    this.webauthnAdapter = opts.webauthnAdapter ?? new NativeWebAuthnAdapter();
     this.storage = opts.storage;
     this.storageKey = opts.storageKey ?? DEFAULT_STORAGE_KEY;
   }
@@ -121,15 +127,7 @@ export class AuthController {
         // Try to get a fresh access token via the httpOnly cookie.
         try {
           const refreshed = await this.client.auth.refresh();
-          // localStorage is only a reload hint and is attacker-writable. The
-          // authenticated refresh response is the sole identity source.
-          this.session = {
-            handle: refreshed.user.handle,
-            userId: refreshed.user.id,
-          };
-          this.persist();
-          this.callbacks.onSessionChange(this.session);
-          return this.session;
+          return this.adoptSession(refreshed.user);
         } catch {
           // Cookie expired or absent — clear persisted state and return null.
           this.clearPersisted();
@@ -153,15 +151,36 @@ export class AuthController {
     this.callbacks.onPending(true);
     try {
       const result = await this.client.auth.login({ handle, password });
-      this.session = {
-        handle: result.user.handle,
-        userId: result.user.id,
-      };
-      this.persist();
-      this.callbacks.onSessionChange(this.session);
-      return this.session;
+      return this.adoptSession(result.user);
     } catch (err) {
       this.callbacks.onError(err instanceof Error ? err.message : String(err));
+      return null;
+    } finally {
+      this.callbacks.onPending(false);
+    }
+  }
+
+  /** Log in with passkey using the handle. Returns the session on success. */
+  async loginWithPasskey(handle: string): Promise<AuthSession | null> {
+    if (this.disposed) return null;
+    const trimmed = handle.trim();
+    if (!trimmed) {
+      this.callbacks.onError('Please enter your handle to sign in with a passkey.');
+      return null;
+    }
+    if (!this.webauthnAdapter.isSupported()) {
+      this.callbacks.onError('Passkey sign-in is not supported on this browser.');
+      return null;
+    }
+    this.callbacks.onPending(true);
+    try {
+      const options = await this.client.auth.loginPasskeyOptions({ handle: trimmed });
+      const assertion = await this.webauthnAdapter.getCredential(options);
+      const result = await this.client.auth.verifyPasskeyLogin(assertion);
+      return this.adoptSession(result.user);
+    } catch {
+      // Do not expose account-existence details in client error copy.
+      this.callbacks.onError('Sign in with passkey failed.');
       return null;
     } finally {
       this.callbacks.onPending(false);
@@ -174,13 +193,7 @@ export class AuthController {
     this.callbacks.onPending(true);
     try {
       const result = await this.client.auth.register({ handle, password });
-      this.session = {
-        handle: result.user.handle,
-        userId: result.user.id,
-      };
-      this.persist();
-      this.callbacks.onSessionChange(this.session);
-      return this.session;
+      return this.adoptSession(result.user);
     } catch (err) {
       this.callbacks.onError(err instanceof Error ? err.message : String(err));
       return null;
@@ -208,6 +221,16 @@ export class AuthController {
   /** Permanently dispose the controller. */
   dispose(): void {
     this.disposed = true;
+  }
+
+  private adoptSession(user: { handle: string; id: string }): AuthSession {
+    this.session = {
+      handle: user.handle,
+      userId: user.id,
+    };
+    this.persist();
+    this.callbacks.onSessionChange(this.session);
+    return this.session;
   }
 
   private persist(): void {

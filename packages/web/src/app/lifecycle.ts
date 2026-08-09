@@ -33,6 +33,7 @@ export const DISPOSABLE_TEARDOWN_MAP: Record<DisposableKey, true> = {
   forum: true,
   learning: true,
   studies: true,
+  passkeys: true,
 };
 
 /**

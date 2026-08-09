@@ -107,7 +107,7 @@ test('the promotion tile sizes and centres its piece artwork', () => {
  * some classes are behavioural hooks with nothing to style; growing the list is how a future
  * surface joins the guarantee.
  */
-const STYLED_CLASSES = ['auth', 'auth-form', 'auth-field', 'auth-actions'];
+const STYLED_CLASSES = ['auth', 'auth-form', 'auth-field', 'auth-actions', 'passkeys-actions'];
 
 test('every class the auth surface carries is matched by a rule', () => {
   const HTML = readFileSync(resolve(PACKAGE_ROOT, 'index.html'), 'utf8');
@@ -129,6 +129,18 @@ test('every class the auth surface carries is matched by a rule', () => {
       `\`.${name}\` is in the markup but no rule targets the element itself — it renders as browser default`,
     );
   }
+});
+
+test('auth actions wrap instead of squeezing button labels on narrow screens', () => {
+  const authActions = rules().find((rule) => rule.selectors.includes('.auth-actions'));
+  assert.ok(authActions, 'could not find the auth actions rule');
+  assert.match(authActions.body, /flex-wrap\s*:\s*wrap/);
+});
+
+test('passkey management action is separated from the credential list by one spacing step', () => {
+  const passkeysActions = rules().find((rule) => rule.selectors.includes('.passkeys-actions'));
+  assert.ok(passkeysActions, 'could not find the passkeys actions rule');
+  assert.match(passkeysActions.body, /margin-bottom\s*:\s*8px/);
 });
 
 /**

@@ -531,11 +531,13 @@ button:disabled {
   line-height: 1;
   color: var(--muted);
 }
-/* Sign in and Register are both the default button style — hierarchy comes from order and copy,
+/* Auth actions share the default button style — hierarchy comes from order and copy,
    not a primary variant, exactly as the profile's action bar does it. One more step of the spacing
-   scale separates the actions from the fields than separates the fields from each other. */
+   scale separates the actions from the fields than separates the fields from each other. The row
+   wraps before shrinking a label at narrow widths. */
 .auth-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 4px;
 }
@@ -655,6 +657,9 @@ button:disabled {
   margin: 16px 0 8px;
   font-size: 1rem;
   font-weight: 600;
+}
+.passkeys-actions {
+  margin-bottom: 8px;
 }
 .ratings {
   display: flex;

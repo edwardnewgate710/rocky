@@ -4,7 +4,16 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-09 - M14 Increment 43: SPA Leaderboard Page (ADR-0107)._
+_Last updated: 2026-08-09 - M14 Increment 44: WebAuthn Passkeys Real Browser Web Flow (ADR-0108)._
+
+## M14 Increment 44 - WebAuthn Passkeys Real Browser Web Flow (ADR-0108)
+
+Delivered full WebAuthn passkey authentication and management in `@chess-platform/web` over all six published server endpoints.
+- **Server Contract & OpenAPI Alignment (`packages/api/src/auth/service.ts`, `schemas.ts`)**: Changed registration options from `residentKey: 'preferred'` to `residentKey: 'required'` to ensure discoverable credentials for real browser flows. Updated OpenAPI schemas (`authenticatorSelection.residentKey` in registration, `allowCredentials` optional in login) and regenerated `packages/api/openapi.json` with 0 spec drift.
+- **Typed Web Client & Browser WebAuthn Adapter (`packages/web/src/api/client.ts`, `ports/webauthn.ts`)**: Added 6 typed methods to `AuthApi` (`listPasskeys`, `deletePasskey`, `registerPasskeyOptions`, `verifyPasskeyRegister`, `loginPasskeyOptions`, `verifyPasskeyLogin` with session adoption and `credentials: 'include'`). Built injectable `NativeWebAuthnAdapter` wrapping native WebAuthn L3 JSON APIs (`parseCreationOptionsFromJSON`, `create`, `parseRequestOptionsFromJSON`, `get`, `toJSON`).
+- **Global Sign-in Surface Integration**: Added `Sign in with passkey` button to `#auth-form` accepting handle alone, sharing session adoption logic with password auth and returning generic error copy to prevent handle enumeration.
+- **Self-Profile Account Security Surface**: Added `#passkeys-self` section under profile (`/profile` only) using standard `.panel-list`/`.panel-row` 2-child composition and compact row action (`padding: 2px 10px`, `Label` type). Managed by DOM-free `PasskeysController` with request generation counter, stale load guards, lifecycle teardown, and cleanup on logout.
+- **Next**: The documented next bounded web item is the password-recovery UI. Increment 44 does not implement it.
 
 ## M14 Increment 43 - SPA Leaderboard Page (ADR-0107)
 
@@ -1112,9 +1121,10 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
      for `EndedBroadcast`s missed between game end and first subscription, and
      a dedicated single-replica reporter Deployment instead of
      one-reporter-per-gateway-replica.
-- **Identity (M4 → hardening pass):** **WebAuthn/passkeys** are NOT implemented yet.
-  The `webauthn_credentials` table exists in the schema; add a `WebAuthnRepository`
-  + registration/assertion ceremonies. Password-reset + email verification flows are **IMPLEMENTED** (M4 identity hardening inc 1).
+- **Identity (M4 → M14):** WebAuthn/passkey storage, server ceremonies, and the real
+  browser registration/sign-in/management flow are implemented (ADR-0027, ADR-0108).
+  Password-reset + email verification APIs are implemented (M4 identity hardening
+  inc 1); their web UI is the next bounded roadmap item.
 - **API hardening (M12):** request rate limiting / quotas, CORS policy, security
   headers, and body-shape strictness (reject unknown fields — schemas already
   declare `additionalProperties: false`; validators currently ignore extras).
@@ -1166,9 +1176,9 @@ resources, OpenAPI self-consistency.
 needs no database — it runs against in-memory fakes.
 
 ### Files likely to change next
-- `packages/persistence/migrations/000X_*.sql` + a `WebAuthnRepository`
-  (passkeys), and pg impls, when identity hardening starts.
-- `packages/api/src/routes.ts` / `src/openapi/schemas.ts` when new endpoints land.
+- `packages/web/src/api/models.ts`, `packages/web/src/api/client.ts`, and the auth
+  controller/bootstrap/markup/tests when the password-recovery UI lands over the
+  already-published identity-recovery endpoints.
 - `packages/realtime-gateway/src/gateway.ts` + `services/gateway` when sticky
   per-game routing / sharded authority lands (unlocks gateway replicas > 1).
 - `deploy/helm/gambit/*` + `.github/workflows/ci.yml` as later M14 increments
@@ -1176,9 +1186,9 @@ needs no database — it runs against in-memory fakes.
   (The durable EventStore wiring and CI activation are done — see §6.)
 
 ### Open technical decisions
-- **Passkey library vs. hand-rolled WebAuthn.** Minimal-dependency philosophy vs.
-  the risk of hand-rolling attestation/assertion. Leaning toward a single, audited,
-  well-scoped dependency here (crypto correctness matters more than zero-deps).
+- **Passkey library vs. hand-rolled WebAuthn — resolved (ADR-0027, ADR-0108).**
+  The current server verification and native browser JSON adapter use no added
+  runtime dependency; any future replacement requires a new evidence-backed decision.
 - **Rate-limiting store.** In-process token bucket (simple, per-instance) vs. Redis
   (accurate across instances). Likely Redis, reusing the M3 pub/sub adapter seam.
 - **Refresh-rotation UX.** Chain-burn on reuse can log out a legitimate client that
@@ -1238,7 +1248,7 @@ analysis cache remains a future **ADR-0003** (would amend `DATABASE.md`).
 
 ### Exact next step for the next agent
 
-M14 Inc43 is complete; next is M14 Inc44, a real WebAuthn/passkey web flow over the published list/delete/register-options/register-verify/login-options/login-verify endpoints; password-recovery UI follows. Do not claim either UI is built.
+M14 Inc44 is complete: the real browser WebAuthn/passkey flow now covers the published list/delete/register-options/register-verify/login-options/login-verify endpoints. The next documented bounded item is the password-recovery web UI; do not claim it is built.
 
 ## 8. How to build & test today
 
@@ -1285,7 +1295,7 @@ Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
 ## M4 Identity Hardening — Increment 2: WebAuthn / Passkeys (ADR-0027)
 - **Storage**: Added `webauthn_login_challenges` to Postgres for stateless login challenge handling without fake user FKs.
 - **Security Primitives**: Hardened `decodeFirst` CBOR parser against trailing bytes, recursion limits, and duplicate map keys.
-- **Anti-Enumeration**: `allowCredentials` omitted from login options to prevent handle enumeration. Login flow uses decoy challenges (HMAC) for non-existent users.
+- **Anti-Enumeration**: `allowCredentials` is omitted from login options to avoid exposing a credential list and to enable discoverable credentials. Existing and unknown handles both receive random, stored single-use challenges, and verification failures use the same generic response path.
 - **Sign Counts**: Atomic concurrency control when updating sign counts via `WebAuthnCredentialsRepository.updateSignCount`.
 - **API Endpoints**: Rate-limited `POST /v1/auth/webauthn/*` endpoints with comprehensive tests validating ceremony and decoy behaviors.
 

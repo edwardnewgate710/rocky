@@ -750,4 +750,59 @@ export interface CollaboratorList {
   readonly items: readonly CollaboratorView[];
 }
 
+// --- WebAuthn / Passkeys (M14 inc 44) ---------------------------------------
 
+export interface PasskeyView {
+  readonly id: string;
+  readonly name: string;
+  readonly createdAt: string;
+  readonly lastUsedAt?: string | null;
+}
+
+export interface WebAuthnRegisterOptions {
+  readonly challenge: string;
+  readonly rp: { readonly name: string; readonly id: string };
+  readonly user: { readonly id: string; readonly name: string; readonly displayName: string };
+  readonly pubKeyCredParams: readonly { readonly type: string; readonly alg: number }[];
+  readonly timeout: number;
+  readonly attestation: string;
+  readonly authenticatorSelection: { readonly userVerification: string; readonly residentKey: string };
+}
+
+export interface WebAuthnRegisterVerifyRequest {
+  readonly id: string;
+  readonly rawId: string;
+  readonly type: string;
+  readonly response: {
+    readonly clientDataJSON: string;
+    readonly attestationObject: string;
+  };
+}
+
+export interface WebAuthnLoginOptionsRequest {
+  readonly handle: string;
+}
+
+export interface WebAuthnLoginOptions {
+  readonly challenge: string;
+  readonly timeout: number;
+  readonly rpId: string;
+  readonly userVerification: string;
+  readonly allowCredentials?: readonly {
+    readonly type: string;
+    readonly id: string;
+    readonly transports?: readonly string[];
+  }[];
+}
+
+export interface WebAuthnLoginVerifyRequest {
+  readonly id: string;
+  readonly rawId: string;
+  readonly type: string;
+  readonly response: {
+    readonly clientDataJSON: string;
+    readonly authenticatorData: string;
+    readonly signature: string;
+    readonly userHandle?: string;
+  };
+}

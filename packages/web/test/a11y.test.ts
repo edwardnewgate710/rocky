@@ -300,3 +300,21 @@ test('the achievements region starts hidden', () => {
   // reader would announce a section that never gets content.
   assert.match(HTML_TEMPLATE, /id="achievements"[^>]*hidden/);
 });
+
+// --- WebAuthn / Passkeys region (M14 inc 44) ---
+
+test('auth section has sign in with passkey button', () => {
+  assert.ok(HTML_TEMPLATE.includes('id="auth-passkey"'));
+});
+
+test('passkeys list region carries an aria-label', () => {
+  assert.ok(HTML_TEMPLATE.includes('aria-label="Passkeys"'));
+});
+
+test('passkeys status region has role=status and aria-live=polite', () => {
+  assert.match(HTML_TEMPLATE, /id="passkeys-note"[^>]*role="status"[^>]*aria-live="polite"/);
+});
+
+test('passkeys error region has role=alert', () => {
+  assert.match(HTML_TEMPLATE, /id="passkeys-error"[^>]*role="alert"/);
+});

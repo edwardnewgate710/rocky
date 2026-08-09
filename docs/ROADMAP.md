@@ -124,9 +124,9 @@ The database architecture is defined and approved in
 - ✅ Identity: **`PasswordHasher` abstraction with a scrypt default** (argon2id is
   a drop-in — the stored hash is self-describing), session + **refresh-token
   rotation with revocation and reuse (theft) detection**, RBAC
-  (user/coach/tournament-director/moderator/admin). *WebAuthn/passkeys deferred*
-  (the `webauthn_credentials` table exists; the flow lands in a later hardening
-  pass — see PROJECT_STATE §5).
+  (user/coach/tournament-director/moderator/admin). WebAuthn/passkeys were deferred
+  at this original M4 cut and later delivered as server ceremonies in the M4
+  hardening pass plus a real browser flow in M14 Inc 44 (ADR-0027, ADR-0108).
 - ✅ Users, profiles, seeks/lobby, **Glicko-2 ratings per variant**, leaderboards
   (rating math implemented in `persistence`, surfaced by `api`).
 - ✅ Durable **event store** for games so the M3 authority can persist and
@@ -1127,6 +1127,16 @@ Exposes the pre-existing typed leaderboard REST API (`GET /v1/leaderboard/:varia
 - **Controller & View (`leaderboard-controller.ts`, `leaderboard-view.ts`)**: Implemented DOM-free `LeaderboardController` with `requestGeneration` stale guard and `disposed` protection. Standardized variant selector populating options from `OFFERED_VARIANTS` (omitting `chess960` per ADR-0099). Reused `.panel-row` List Row treatment for leaderboard standings with rank, handle link, rating, and RD.
 - **Graceful Degradation & Fallback**: Calls `GambitClient.graphql.resolvePlayers(userIds)` as an optional read-layer path to convert player IDs to handles. If GraphQL resolution fails or leaves an ID unmapped, the page renders bare IDs via `shortId(userId)` plain text fallback without raising an error.
 - **Teardown & Accessibility**: Tests cover exact route parsing/serialization, request races, post-disposal callback suppression, listener unbinding, empty/results semantics, and labelled controls. The route composite is registered in `BootstrappedDisposables` and `DISPOSABLE_TEARDOWN_MAP`; results switch between status and list semantics without placing loading copy in a result row.
+
+### Increment 44 (M14 Inc 44): WebAuthn Passkeys Real Browser Web Flow (ADR-0108) ✅
+
+Delivers full WebAuthn passkey authentication and management in `@chess-platform/web` over all six published server endpoints.
+
+- **Server Contract & OpenAPI (`packages/api/src/auth/service.ts`, `schemas.ts`)**: Changed registration options `residentKey: 'preferred'` → `residentKey: 'required'` to ensure discoverable credentials for real browser flows. Updated OpenAPI schemas and regenerated `openapi.json` with 0 spec drift.
+- **Typed Web Client & Adapter (`packages/web/src/api/client.ts`, `ports/webauthn.ts`)**: Added typed API methods for list, delete, register-options, register-verify, login-options, and login-verify with session adoption. Created `NativeWebAuthnAdapter` wrapping native WebAuthn L3 JSON APIs (`parseCreationOptionsFromJSON`, `create`, `parseRequestOptionsFromJSON`, `get`, `toJSON`).
+- **Global Sign-in Surface**: Added `Sign in with passkey` button to `#auth-form` accepting handle alone, sharing session adoption with password auth and returning generic error copy to prevent handle enumeration.
+- **Self-Profile Account Security Surface**: Added `#passkeys-self` section under profile (`/profile` only) using standard `.panel-list`/`.panel-row` 2-child structure. Managed by DOM-free `PasskeysController` with request generation counter, stale load guards, lifecycle teardown, and reset on logout.
+- **Testing & Documentation**: Added unit and integration tests covering client endpoints, native WebAuthn adapter calls, session adoption, passkeys controller lifecycle/stale guards, and a11y markup. Documented in `docs/adr/0108-webauthn-passkeys-web-flow.md` and amended `docs/adr/0027-webauthn-passkeys.md`. Next item is password-recovery UI.
 
 ## ✅ Verification hygiene — ADR claim drift guard (ADR-0079)
 

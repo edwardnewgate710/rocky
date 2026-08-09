@@ -7,6 +7,13 @@ import { FakeTransport, json } from './support/fake-transport.js';
 import { FakeSocketFactory } from './support/fake-socket.js';
 import { MemoryTokenStore } from '../src/net/session.js';
 import type { ServerMessage, StateView } from '../src/net/ws-protocol.js';
+import type { WebAuthnAdapter } from '../src/ports/webauthn.js';
+import type {
+  WebAuthnLoginOptions,
+  WebAuthnLoginVerifyRequest,
+  WebAuthnRegisterOptions,
+  WebAuthnRegisterVerifyRequest,
+} from '../src/api/models.js';
 
 // Define HTMLButtonElement for Node.js test environment (m3: bootstrap uses instanceof checks).
 class FakeHTMLButtonElement {
@@ -14,18 +21,23 @@ class FakeHTMLButtonElement {
   classList = new Set<string>();
   disabled = false;
   hidden = false;
+  onclick: ((event: Event) => void) | null = null;
   listeners: Record<string, ((e: any) => void)[]> = {};
   addEventListener = (type: string, fn: any) => {
     if (!this.listeners[type]) this.listeners[type] = [];
     this.listeners[type].push(fn);
   };
-  removeEventListener = () => {};
+  removeEventListener = (type: string, fn: any) => {
+    if (!this.listeners[type]) return;
+    this.listeners[type] = this.listeners[type].filter(cb => cb !== fn);
+  };
   focus = () => {};
   setAttribute = () => {};
   getAttribute = () => null;
   appendChild = () => null;
   removeChild = () => null;
   querySelectorAll = () => [];
+  querySelector = () => null;
   style: Record<string, string> = {};
   dataset: Record<string, string> = {};
   id = '';
@@ -33,9 +45,14 @@ class FakeHTMLButtonElement {
   type = 'button';
 
   click() {
-    if (!this.disabled && this.listeners['click']) {
-      this.listeners['click'].forEach(fn => fn(new Event('click')));
-    }
+    if (this.disabled) return;
+    const event = new Event('click');
+    this.onclick?.(event);
+    this.listeners['click']?.forEach(fn => fn(event));
+  }
+
+  listenerCount(type: string): number {
+    return this.listeners[type]?.length ?? 0;
   }
 }
 (globalThis as any).HTMLButtonElement = FakeHTMLButtonElement;
@@ -78,7 +95,8 @@ const BUTTON_IDS = new Set([
   'auth-submit', 'auth-logout', 'create-seek', 'flip', 'theme-toggle',
   'action-resign', 'confirm-resign-yes', 'confirm-resign-no',
   'action-abort', 'confirm-abort-yes', 'confirm-abort-no',
-  'action-offer-draw', 'action-accept-draw', 'action-decline-draw', 'action-claim-flag'
+  'action-offer-draw', 'action-accept-draw', 'action-decline-draw', 'action-claim-flag',
+  'auth-passkey', 'passkey-register'
 ]);
 
 /**
@@ -87,7 +105,7 @@ const BUTTON_IDS = new Set([
  * Each element has enough surface area for BoardView to not crash.
  */
 function makeFakeEl(id?: string): HTMLElement {
-  const isHidden = id === 'game-actions' || id === 'action-error' || id === 'confirm-resign' || id === 'confirm-abort' || id === 'draw-offer-received';
+  const isHidden = id === 'game-actions' || id === 'action-error' || id === 'confirm-resign' || id === 'confirm-abort' || id === 'draw-offer-received' || id === 'passkeys-self';
   if (id === 'auth-form') {
     const form = new FakeHTMLFormElement();
     form.id = id;
@@ -122,6 +140,7 @@ function makeFakeEl(id?: string): HTMLElement {
     appendChild: () => null,
     removeChild: () => null,
     querySelectorAll: () => [],
+    querySelector: () => null,
     focus: () => {},
     style: {},
     dataset: {},
@@ -186,6 +205,40 @@ function makeDeps(sockets?: FakeSocketFactory): BootstrapDependencies {
     wsFactory: s.factory,
     tokenStore: new MemoryTokenStore(),
   };
+}
+
+class FakeWebAuthnAdapter implements WebAuthnAdapter {
+  createCalls = 0;
+  getCalls = 0;
+
+  isSupported(): boolean {
+    return true;
+  }
+
+  async createCredential(_options: WebAuthnRegisterOptions): Promise<WebAuthnRegisterVerifyRequest> {
+    this.createCalls++;
+    return {
+      id: 'new-credential',
+      rawId: 'new-credential',
+      type: 'public-key',
+      response: { clientDataJSON: 'client-data', attestationObject: 'attestation' },
+    };
+  }
+
+  async getCredential(_options: WebAuthnLoginOptions): Promise<WebAuthnLoginVerifyRequest> {
+    this.getCalls++;
+    return {
+      id: 'credential-1',
+      rawId: 'credential-1',
+      type: 'public-key',
+      response: {
+        clientDataJSON: 'client-data',
+        authenticatorData: 'authenticator-data',
+        signature: 'signature',
+        userHandle: 'u1',
+      },
+    };
+  }
 }
 
 // ── Shared valid StateView fixture ──────────────────────────────────────────
@@ -808,4 +861,169 @@ test('submitting the sign-in form with an empty password sends nothing', () => {
   const before = transport.calls.length;
   (doc.getElementById('auth-form') as unknown as { submit(): void }).submit();
   assert.equal(transport.calls.length, before);
+});
+
+test('passkey sign-in uses the handle without requiring a password and adopts the session', async () => {
+  const doc = makeDoc([
+    'auth', 'auth-status', 'auth-logout', 'auth-submit', 'auth-passkey', 'auth-error',
+    'auth-form', 'auth-handle', 'auth-password', 'create-seek', 'theme-toggle',
+  ]);
+  const adapter = new FakeWebAuthnAdapter();
+  const transport = new FakeTransport().onEach((req) => {
+    const path = new URL(req.url).pathname;
+    if (path === '/v1/capabilities') return json(200, { capabilities: {} });
+    if (path === '/v1/auth/webauthn/login/options') {
+      return json(200, {
+        challenge: 'challenge',
+        timeout: 60_000,
+        rpId: 'api.test',
+        userVerification: 'required',
+      });
+    }
+    if (path === '/v1/auth/webauthn/login/verify') {
+      return json(200, {
+        user: { id: 'u1', handle: 'alice', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] },
+        tokens: { accessToken: 'tok', tokenType: 'Bearer', expiresIn: 900, refreshExpiresAt: '2030-01-01T00:00:00Z' },
+      });
+    }
+    return json(404, {});
+  });
+  const handleEl = doc.getElementById('auth-handle') as unknown as { value: string };
+  const passwordEl = doc.getElementById('auth-password') as unknown as { value: string };
+  handleEl.value = '  alice  ';
+  passwordEl.value = '';
+
+  const result = bootstrap(doc, { ...makeDeps(), httpTransport: transport, webauthnAdapter: adapter });
+  (doc.getElementById('auth-passkey') as unknown as FakeHTMLButtonElement).click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const optionsCall = transport.calls.find((call) => call.url.endsWith('/v1/auth/webauthn/login/options'));
+  const verifyCall = transport.calls.find((call) => call.url.endsWith('/v1/auth/webauthn/login/verify'));
+  assert.deepEqual(JSON.parse(optionsCall?.body as string), { handle: 'alice' });
+  assert.deepEqual(JSON.parse(verifyCall?.body as string), {
+    id: 'credential-1',
+    rawId: 'credential-1',
+    type: 'public-key',
+    response: {
+      clientDataJSON: 'client-data',
+      authenticatorData: 'authenticator-data',
+      signature: 'signature',
+      userHandle: 'u1',
+    },
+  });
+  assert.equal(adapter.getCalls, 1);
+  assert.equal(result.auth.currentSession?.handle, 'alice');
+});
+
+test('SPA re-bootstrap keeps one passkey sign-in action per click', async () => {
+  const doc = makeDoc([
+    'auth', 'auth-status', 'auth-logout', 'auth-submit', 'auth-passkey', 'auth-error',
+    'auth-form', 'auth-handle', 'auth-password', 'create-seek', 'theme-toggle',
+  ]);
+  const transport = new FakeTransport().onEach((req) => {
+    const path = new URL(req.url).pathname;
+    if (path === '/v1/capabilities') return json(200, { capabilities: {} });
+    if (path === '/v1/auth/webauthn/login/options') {
+      return json(200, {
+        challenge: 'challenge',
+        timeout: 60_000,
+        rpId: 'api.test',
+        userVerification: 'required',
+      });
+    }
+    if (path === '/v1/auth/webauthn/login/verify') {
+      return json(200, {
+        user: { id: 'u1', handle: 'alice', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] },
+        tokens: { accessToken: 'tok', tokenType: 'Bearer', expiresIn: 900, refreshExpiresAt: '2030-01-01T00:00:00Z' },
+      });
+    }
+    return json(404, {});
+  });
+  (doc.getElementById('auth-handle') as unknown as { value: string }).value = 'alice';
+
+  bootstrap(doc, { ...makeDeps(), httpTransport: transport, webauthnAdapter: new FakeWebAuthnAdapter() });
+  bootstrap(doc, { ...makeDeps(), httpTransport: transport, webauthnAdapter: new FakeWebAuthnAdapter() });
+  (doc.getElementById('auth-passkey') as unknown as FakeHTMLButtonElement).click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const optionsCalls = transport.calls.filter((call) => call.url.endsWith('/v1/auth/webauthn/login/options'));
+  assert.equal(optionsCalls.length, 1);
+});
+
+test('self profile passkeys region visibility, failure independence, and teardown', async () => {
+  const doc = makeDoc([
+    'profile', 'passkeys-self', 'passkey-register', 'passkeys-list', 'passkeys-note', 'passkeys-error', 'passkeys-count', 'auth-status', 'auth-logout', 'auth-submit', 'auth-error', 'auth-form', 'auth-handle', 'auth-password', 'create-seek', 'theme-toggle'
+  ]);
+  const passkeysSelfEl = doc.getElementById('passkeys-self')!;
+  const passkeyRegisterEl = doc.getElementById('passkey-register') as unknown as typeof FakeHTMLButtonElement.prototype;
+
+  let listPasskeysCalled = 0;
+  let socialFailed = false;
+
+  const transport = new FakeTransport().onEach((req) => {
+    const path = new URL(req.url).pathname;
+    if (req.method === 'POST' && path === '/v1/auth/login') {
+      return json(200, {
+        user: { id: 'u1', handle: 'alice', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] },
+        tokens: { accessToken: 'tok', tokenType: 'Bearer', expiresIn: 900, refreshExpiresAt: '2030-01-01T00:00:00Z' }
+      });
+    }
+    if (req.method === 'POST' && path === '/v1/auth/logout') return json(200, {});
+    if (req.method === 'GET' && path === '/v1/users/me') return json(200, { id: 'u1', handle: 'alice', country: null, createdAt: '2026-01-01T00:00:00Z' });
+    if (req.method === 'GET' && path === '/v1/users/alice') {
+      return json(200, {
+        user: { id: 'u1', handle: 'alice', country: null, createdAt: '2026-01-01T00:00:00Z' },
+        ratings: [],
+      });
+    }
+    if (req.method === 'GET' && path === '/v1/users/alice/games') return json(200, []);
+    if (req.method === 'GET' && path === '/v1/social/players/u1/followers') {
+      socialFailed = true;
+      return json(500, { message: 'Social service down' });
+    }
+    if (req.method === 'GET' && path === '/v1/auth/webauthn/passkeys') {
+      listPasskeysCalled++;
+      return json(200, []);
+    }
+    return json(404, {});
+  });
+
+  const originalLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  Object.defineProperty(globalThis, 'location', { configurable: true, value: { pathname: '/profile' } });
+  Object.defineProperty(doc, 'createElement', { configurable: true, value: () => makeFakeEl() });
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: doc });
+
+  try {
+    const result = bootstrap(doc, {
+      ...makeDeps(),
+      httpTransport: transport,
+      webauthnAdapter: new FakeWebAuthnAdapter(),
+    });
+
+    await result.auth.login('alice', 'pw');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(passkeysSelfEl.hidden, false, 'Passkeys visible despite social failure');
+    assert.equal(listPasskeysCalled, 1, 'Passkeys loaded');
+    assert.equal(socialFailed, true, 'The independent social load actually failed');
+    assert.equal(passkeyRegisterEl.listenerCount('click'), 1);
+
+    result.passkeys!.dispose();
+    assert.equal(passkeyRegisterEl.listenerCount('click'), 0, 'Teardown removes the DOM listener');
+
+    await result.auth.logout();
+    assert.equal(passkeysSelfEl.hidden, true, 'Passkeys hidden on logout');
+  } finally {
+    if (originalLocation) {
+      Object.defineProperty(globalThis, 'location', originalLocation);
+    } else {
+      delete (globalThis as { location?: unknown }).location;
+    }
+    if (originalDocument) {
+      Object.defineProperty(globalThis, 'document', originalDocument);
+    } else {
+      delete (globalThis as { document?: unknown }).document;
+    }
+  }
 });

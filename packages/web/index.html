@@ -129,6 +129,7 @@
         <div class="auth-actions">
           <button id="auth-submit" type="submit">Sign in</button>
           <button id="auth-register" type="button">Register</button>
+          <button id="auth-passkey" type="button">Sign in with passkey</button>
         </div>
       </form>
       <p id="auth-error" class="error" role="alert"></p>
@@ -171,6 +172,17 @@
 
         <h3>Blocked</h3>
         <div id="social-blocked" class="panel-list" aria-label="Blocked players"></div>
+
+      </div>
+
+      <div id="passkeys-self" hidden>
+        <h3>Passkeys <span id="passkeys-count" class="count"></span></h3>
+        <div class="passkeys-actions">
+          <button id="passkey-register" type="button" class="button">Add passkey</button>
+        </div>
+        <div id="passkeys-list" class="panel-list" aria-label="Passkeys"></div>
+        <p id="passkeys-note" class="social-note" role="status" aria-live="polite"></p>
+        <p id="passkeys-error" class="error" role="alert"></p>
       </div>
 
       <p id="social-note" class="social-note"></p>

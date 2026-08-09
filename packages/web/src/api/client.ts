@@ -89,6 +89,12 @@ import type {
   StudyList,
   StudyView,
   TreeNodeView,
+  PasskeyView,
+  WebAuthnRegisterOptions,
+  WebAuthnRegisterVerifyRequest,
+  WebAuthnLoginOptionsRequest,
+  WebAuthnLoginOptions,
+  WebAuthnLoginVerifyRequest,
 } from './models.js';
 
 /** A request spec plus whether it requires authentication. */
@@ -297,6 +303,54 @@ export class AuthApi {
 
   sessions(): Promise<SessionView[]> {
     return this.execute<SessionView[]>({ method: 'GET', path: '/v1/auth/sessions', auth: true });
+  }
+
+  listPasskeys(): Promise<PasskeyView[]> {
+    return this.execute<PasskeyView[]>({ method: 'GET', path: '/v1/auth/webauthn/passkeys', auth: true });
+  }
+
+  deletePasskey(id: string): Promise<void> {
+    return this.execute<void>({
+      method: 'DELETE',
+      path: `/v1/auth/webauthn/passkeys/${encodeURIComponent(id)}`,
+      auth: true,
+    });
+  }
+
+  registerPasskeyOptions(): Promise<WebAuthnRegisterOptions> {
+    return this.execute<WebAuthnRegisterOptions>({
+      method: 'POST',
+      path: '/v1/auth/webauthn/register/options',
+      auth: true,
+    });
+  }
+
+  verifyPasskeyRegister(body: WebAuthnRegisterVerifyRequest): Promise<PasskeyView> {
+    return this.execute<PasskeyView>({
+      method: 'POST',
+      path: '/v1/auth/webauthn/register/verify',
+      body,
+      auth: true,
+    });
+  }
+
+  loginPasskeyOptions(body: WebAuthnLoginOptionsRequest): Promise<WebAuthnLoginOptions> {
+    return this.execute<WebAuthnLoginOptions>({
+      method: 'POST',
+      path: '/v1/auth/webauthn/login/options',
+      body,
+    });
+  }
+
+  async verifyPasskeyLogin(body: WebAuthnLoginVerifyRequest): Promise<AuthResponse> {
+    const auth = await this.execute<AuthResponse>({
+      method: 'POST',
+      path: '/v1/auth/webauthn/login/verify',
+      body,
+      credentials: 'include',
+    });
+    this.session.adopt(auth);
+    return auth;
   }
 }
 

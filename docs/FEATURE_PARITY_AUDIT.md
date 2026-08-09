@@ -25,7 +25,7 @@ Having a package in the monorepo does not imply that it is a product feature.
 | Password register/login/logout | Yes | Yes | Yes | Yes | Visible and exercised; refresh cookie restores the session. |
 | Session list/revocation | Yes | Yes | Partial (`sessions()` only) | No | No account/security screen. |
 | Password reset and email verification | Yes | Yes | No | No | Backend-only. Email sender is deployment-dependent. |
-| WebAuthn/passkeys | Yes | Yes | No | No | Registration/login/list/delete endpoints pass tests, but the website has no passkey flow. |
+| WebAuthn/passkeys | Yes | Yes | Yes | Yes | Current tree implements typed registration/login/list/delete wiring, an injectable native browser adapter, passkey sign-in, and self-profile management (ADR-0108). Automated browser-boundary tests cover the ceremony wiring; a deployed secure-context authenticator was not part of this older live audit. |
 | Profiles, ratings and recent games | Yes | Yes | Yes | Yes | Profile session race fixed; `/profile` now loads the signed-in user correctly. |
 | Leaderboard | Yes | Yes | Yes | Yes | `GET /v1/leaderboard/:variant` exposed as SPA page at `/leaderboard` with variant selector populated by an app-layer labels module, optional GraphQL handle resolution, shortId fallback, stale request protection, two-child row rendering, semantic loading/list behavior, and composite view disposal. |
 | Seek creation, cancellation, acceptance and atomic game provisioning | Yes | Yes | Yes | Yes | Creation and acceptance are verified end-to-end with two users and real PostgreSQL provisioning. Cancellation is API-tested but has no end-to-end cancellation test. |

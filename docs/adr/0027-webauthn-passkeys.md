@@ -32,12 +32,11 @@ WebAuthn involves parsing binary CBOR and COSE data structures. Many implementat
    - For login, the challenge row's `user_id` is the target user. For unknown handles, we use a decoy flow.
    - The token is atomically consumed on verify. Replayed challenges naturally fail.
 
-4. **Anti-Enumeration on Login (Decoy Flow)**:
-   To prevent handle enumeration on the `login/options` endpoint, we must return an indistinguishable response regardless of whether the user exists or has passkeys.
-   - For a handle with no account or no passkeys, we generate a **decoy** `allowCredentials` list containing exactly one credential ID.
-   - This credential ID is derived deterministically: `HMAC-SHA256(accessTokenSecret, 'webauthn-decoy:' + lowercased handle)`.
-   - The determinism ensures that repeated requests for the same handle return the same fake credential ID, mimicking a real account.
-   - Attempting to verify this decoy will result in a 401 Unauthorized, identical to a valid user presenting a bad signature.
+4. **Anti-Enumeration on Login & Discoverable Credentials**:
+   To prevent handle enumeration on the `login/options` endpoint, login options intentionally omit `allowCredentials` so that browsers can use discoverable credentials (passkeys).
+   - Registration options set `residentKey: 'required'` (amended in M14 Inc 44 from `'preferred'`) to ensure newly registered credentials are discoverable by browser authenticators.
+   - For login, options return challenge/rpId/timeout/userVerification without enumerating user credentials.
+   - Decoy handling and generic error responses prevent account existence leakage.
 
 5. **Sign Count Tracking**:
    We persist the authenticator's `signCount` to detect cloned passkeys.

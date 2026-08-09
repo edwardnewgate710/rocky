@@ -378,7 +378,7 @@ export class AuthService {
       ],
       timeout: 60000,
       attestation: 'none',
-      authenticatorSelection: { userVerification: 'required', residentKey: 'preferred' },
+      authenticatorSelection: { userVerification: 'required', residentKey: 'required' },
     };
   }
 

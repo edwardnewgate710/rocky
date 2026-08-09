@@ -37,6 +37,7 @@ function createMockBootstrapped(
     forum: disposables.forum as Bootstrapped['forum'],
     learning: disposables.learning as Bootstrapped['learning'],
     studies: disposables.studies as Bootstrapped['studies'],
+    passkeys: disposables.passkeys as Bootstrapped['passkeys'],
   };
 }
 

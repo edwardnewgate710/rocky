@@ -553,7 +553,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       pubKeyCredParams: { type: 'array', items: { type: 'object', required: ['type', 'alg'], properties: { type: { type: 'string' }, alg: { type: 'integer' } } } },
       timeout: { type: 'integer' },
       attestation: { type: 'string' },
-      authenticatorSelection: { type: 'object', properties: { userVerification: { type: 'string' }, requireResidentKey: { type: 'boolean' } } },
+      authenticatorSelection: { type: 'object', properties: { userVerification: { type: 'string' }, residentKey: { type: 'string' } } },
     },
   },
 
@@ -584,7 +584,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
 
   WebAuthnLoginOptions: {
     type: 'object',
-    required: ['challenge', 'timeout', 'rpId', 'allowCredentials', 'userVerification'],
+    required: ['challenge', 'timeout', 'rpId', 'userVerification'],
     properties: {
       challenge: { type: 'string' },
       timeout: { type: 'integer' },

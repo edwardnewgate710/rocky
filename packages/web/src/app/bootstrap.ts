@@ -79,6 +79,9 @@ import type { ThemeToggle as ThemeToggleType } from './theme-toggle.js';
 import { AuthController } from './auth-controller.js';
 import type { AuthController as AuthControllerType } from './auth-controller.js';
 import type { AuthSession } from './auth-controller.js';
+import { PasskeysController } from './passkeys-controller.js';
+import { renderPasskeys } from './passkeys-view.js';
+import type { WebAuthnAdapter } from '../ports/webauthn.js';
 import { parseRoute } from './router.js';
 import { shortId } from '../api/graphql.js';
 import type { SeekView } from '../api/models.js';
@@ -101,6 +104,7 @@ export interface BootstrappedDisposables {
   readonly forum: ForumControllerType | null;
   readonly learning: LearningControllerType | null;
   readonly studies: StudiesControllerType | null;
+  readonly passkeys: { dispose: () => void } | null;
 }
 
 /** Everything the bootstrap wired, returned for later increments and tests. */
@@ -128,6 +132,8 @@ export interface BootstrapDependencies extends Partial<AppDependencies> {
   readonly gameId?: string;
   /** Override the access token (for authenticated join). */
   readonly token?: string;
+  /** Override native WebAuthn ceremonies for tests or alternate browser hosts. */
+  readonly webauthnAdapter?: WebAuthnAdapter;
 }
 
 /**
@@ -343,6 +349,7 @@ export function bootstrap(
   const authPasswordEl = doc.getElementById('auth-password') as HTMLInputElement | null;
   const authSubmitEl = doc.getElementById('auth-submit');
   const authRegisterEl = doc.getElementById('auth-register');
+  const authPasskeyEl = doc.getElementById('auth-passkey');
   const authLogoutEl = doc.getElementById('auth-logout');
   const authStatusEl = doc.getElementById('auth-status');
   const authSectionEl = doc.getElementById('auth');
@@ -351,6 +358,7 @@ export function bootstrap(
   let playBotDialog: PlayBotDialog | null = null;
   const auth = new AuthController({
     client: app.api,
+    ...(deps?.webauthnAdapter !== undefined ? { webauthnAdapter: deps.webauthnAdapter } : {}),
     callbacks: {
       onSessionChange: (session) => {
         if (authStatusEl) {
@@ -382,6 +390,9 @@ export function bootstrap(
         }
         if (authRegisterEl instanceof HTMLButtonElement) {
           authRegisterEl.disabled = pending;
+        }
+        if (authPasskeyEl instanceof HTMLButtonElement) {
+          authPasskeyEl.disabled = pending;
         }
       },
       onError: (msg) => {
@@ -424,6 +435,14 @@ export function bootstrap(
         void auth.register(handle, password);
       }
     });
+  }
+
+  // Static auth controls survive SPA re-bootstrap, so property assignment keeps this binding idempotent.
+  if (authPasskeyEl instanceof HTMLButtonElement) {
+    authPasskeyEl.onclick = () => {
+      const handle = authHandleEl?.value ?? '';
+      void auth.loginWithPasskey(handle);
+    };
   }
 
   // Wire logout button.
@@ -822,7 +841,7 @@ export function bootstrap(
         .finally(() => gameSync.start());
     }
 
-    return { app, board, controller, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
+    return { app, board, controller, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, auth, theme };
   }
 
   // --- Lobby view ---
@@ -921,7 +940,7 @@ export function bootstrap(
 
     lobby.start();
 
-    return { app, board: null, controller: null, lobby, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, auth, theme };
   }
 
   // --- Profile view ---
@@ -953,9 +972,69 @@ export function bootstrap(
     const achievementsCountEl = doc.getElementById('achievements-count');
     const achievementsErrorEl = doc.getElementById('achievements-error');
 
+    // --- Passkeys region (M14 inc 44) ---
+    const passkeysSelfEl = doc.getElementById('passkeys-self');
+    const passkeysCountEl = doc.getElementById('passkeys-count');
+    const passkeysRegisterEl = doc.getElementById('passkey-register');
+    const passkeysListEl = doc.getElementById('passkeys-list');
+    const passkeysNoteEl = doc.getElementById('passkeys-note');
+    const passkeysErrorEl = doc.getElementById('passkeys-error');
+
     let socialBusy = false;
+    let passkeysBusy = false;
     let lastRelationship: Relationship | null = null;
     let lastSelfSocial: SelfSocial | null = null;
+    let passkeysCtrl: PasskeysController | null = null;
+    let passkeysUnbind = () => {};
+
+    const handle = route.name === 'profile' ? route.handle : null;
+    if (!handle) {
+      passkeysCtrl = new PasskeysController({
+        client: app.api,
+        ...(deps?.webauthnAdapter !== undefined ? { webauthnAdapter: deps.webauthnAdapter } : {}),
+        callbacks: {
+          onPasskeys: (items) => {
+            if (passkeysCountEl) passkeysCountEl.textContent = items.length > 0 ? `(${items.length})` : '';
+            if (passkeysListEl) {
+              renderPasskeys(
+                passkeysListEl,
+                items,
+                (id) => void passkeysCtrl?.deletePasskey(id),
+                passkeysBusy,
+              );
+            }
+          },
+          onPending: (pending) => {
+            passkeysBusy = pending;
+            if (passkeysRegisterEl instanceof HTMLButtonElement) {
+              passkeysRegisterEl.disabled = pending;
+            }
+            if (passkeysListEl) {
+              for (const btn of passkeysListEl.querySelectorAll('button')) {
+                btn.disabled = pending;
+              }
+            }
+          },
+          onError: (msg) => {
+            if (passkeysErrorEl) passkeysErrorEl.textContent = msg;
+          },
+          onStatus: (msg) => {
+            if (passkeysNoteEl) passkeysNoteEl.textContent = msg;
+            if (passkeysErrorEl) passkeysErrorEl.textContent = '';
+          },
+        },
+      });
+
+      if (passkeysRegisterEl instanceof HTMLButtonElement) {
+        const handler = () => {
+          if (passkeysNoteEl) passkeysNoteEl.textContent = '';
+          if (passkeysErrorEl) passkeysErrorEl.textContent = '';
+          void passkeysCtrl?.registerPasskey();
+        };
+        passkeysRegisterEl.addEventListener('click', handler);
+        passkeysUnbind = () => passkeysRegisterEl.removeEventListener('click', handler);
+      }
+    }
 
     const social = new SocialController({
       client: app.api,
@@ -1184,7 +1263,6 @@ export function bootstrap(
       },
     });
 
-    const handle = route.name === 'profile' ? route.handle : null;
     if (handle) {
       void profile.load(handle);
       // Another player's profile: the page itself does not change when the
@@ -1213,9 +1291,14 @@ export function bootstrap(
         // but leaving the previous account's row of unlocks under a blank handle still reads as
         // the next visitor's, so it goes with the rest.
         achievements.reset();
+        passkeysCtrl?.reset();
         if (achievementsEl) achievementsEl.hidden = true;
         if (achievementsCountEl) achievementsCountEl.textContent = '';
-        for (const el of [socialActionsEl, followersEl, followingEl, incomingEl, outgoingEl, friendsEl, blockedEl, achievementsListEl]) {
+        if (passkeysCountEl) passkeysCountEl.textContent = '';
+        if (passkeysNoteEl) passkeysNoteEl.textContent = '';
+        if (passkeysErrorEl) passkeysErrorEl.textContent = '';
+        if (passkeysSelfEl) passkeysSelfEl.hidden = true;
+        for (const el of [socialActionsEl, followersEl, followingEl, incomingEl, outgoingEl, friendsEl, blockedEl, achievementsListEl, passkeysListEl]) {
           if (el) el.innerHTML = '';
         }
         for (const el of [followerCountEl, followingCountEl, friendCountEl, socialNoteEl, socialErrorEl]) {
@@ -1238,6 +1321,8 @@ export function bootstrap(
         profile.reset();
         clearSelfProfile();
         void profile.loadSelf();
+        if (passkeysSelfEl) passkeysSelfEl.hidden = false;
+        void passkeysCtrl?.load();
       };
       if (auth.currentSession !== null) {
         selfProfileSessionHandler(auth.currentSession);
@@ -1246,7 +1331,15 @@ export function bootstrap(
       }
     }
 
-    return { app, board: null, controller: null, lobby: null, profile, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
+    const passkeys = passkeysCtrl
+      ? {
+          dispose: (): void => {
+            passkeysUnbind();
+            passkeysCtrl?.dispose();
+          },
+        }
+      : null;
+    return { app, board: null, controller: null, lobby: null, profile, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys, auth, theme };
   }
 
   // --- Leaderboard view ---
@@ -1308,7 +1401,7 @@ export function bootstrap(
           leaderboardCtrl.dispose();
         }
       },
-      tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme
+      tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, auth, theme
     };
   }
 
@@ -1349,7 +1442,7 @@ export function bootstrap(
     });
 
     void tournament.loadList();
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, auth, theme };
   }
 
   // --- Single tournament detail view ---
@@ -1401,7 +1494,7 @@ export function bootstrap(
     });
 
     void tournament.loadDetail(route.id);
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, auth, theme };
   }
 
   // --- Search view ---
@@ -1501,7 +1594,7 @@ export function bootstrap(
       if (resultsEl) renderSearchPrompt(resultsEl);
     }
 
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: searchCtrl, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: searchCtrl, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, auth, theme };
   }
 
   // --- Messages Inbox view (/messages) ---
@@ -1536,7 +1629,7 @@ export function bootstrap(
         .catch(() => undefined);
     }
 
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: messagesCtrl, teams: null, forum: null, learning: null, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: messagesCtrl, teams: null, forum: null, learning: null, studies: null, passkeys: null, auth, theme };
   }
 
   // --- Conversation Thread view (/messages/:id) ---
@@ -1607,7 +1700,7 @@ export function bootstrap(
         .catch(() => undefined);
     }
 
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: messagesCtrl, teams: null, forum: null, learning: null, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: messagesCtrl, teams: null, forum: null, learning: null, studies: null, passkeys: null, auth, theme };
   }
 
   // --- Teams list view (/teams) ---
@@ -1647,7 +1740,7 @@ export function bootstrap(
     }
 
     void teamsCtrl.loadList();
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: teamsCtrl, forum: null, learning: null, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: teamsCtrl, forum: null, learning: null, studies: null, passkeys: null, auth, theme };
   }
 
   // --- Team detail view (/teams/:slug) ---
@@ -1754,7 +1847,7 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: teamsCtrl, forum: null, learning: null, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: teamsCtrl, forum: null, learning: null, studies: null, passkeys: null, auth, theme };
   }
 
   // --- Forum thread list (/teams/:slug/forum) ---
@@ -1827,7 +1920,7 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: forumCtrl, learning: null, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: forumCtrl, learning: null, studies: null, passkeys: null, auth, theme };
   }
 
   // --- Forum thread (/teams/:slug/forum/:threadId) ---
@@ -1893,7 +1986,7 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: forumCtrl, learning: null, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: forumCtrl, learning: null, studies: null, passkeys: null, auth, theme };
   }
 
   // --- Courses list view (/courses) ---
@@ -1931,7 +2024,7 @@ export function bootstrap(
     });
 
     void learningCtrl.loadCourses();
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, studies: null, passkeys: null, auth, theme };
   }
 
   // --- Course detail view (/courses/:slug) ---
@@ -1973,7 +2066,7 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, studies: null, passkeys: null, auth, theme };
   }
 
   // --- Lesson detail view (/lessons/:id) ---
@@ -2034,7 +2127,7 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, studies: null, passkeys: null, auth, theme };
   }
 
   // --- Studies list view (/studies) ---
@@ -2084,7 +2177,7 @@ export function bootstrap(
     }
 
     void studiesCtrl.loadStudies();
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: studiesCtrl, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: studiesCtrl, passkeys: null, auth, theme };
   }
 
   // --- Study detail view (/studies/:id) ---
@@ -2135,7 +2228,7 @@ export function bootstrap(
     });
 
     void studiesCtrl.loadStudy(studyId);
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: studiesCtrl, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: studiesCtrl, passkeys: null, auth, theme };
   }
 
   // --- Study chapter detail view (/studies/:id/chapters/:chapterId) ---
@@ -2196,7 +2289,7 @@ export function bootstrap(
     });
 
     void studiesCtrl.loadChapter(studyId, chapterId);
-    return { app, board: chapterBoard, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: studiesCtrl, auth, theme };
+    return { app, board: chapterBoard, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: studiesCtrl, passkeys: null, auth, theme };
   }
 
   // --- Standalone board (no game ID, no lobby, no profile, no tournament, no search, no messages) ---
@@ -2204,5 +2297,5 @@ export function bootstrap(
     ? mountBoard({ boardEl, statusEl, flipEl })
     : null;
 
-  return { app, board, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
+  return { app, board, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, auth, theme };
 }

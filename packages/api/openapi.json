@@ -82,6 +82,37 @@
         }
       }
     },
+    "/v1/capabilities": {
+      "get": {
+        "summary": "System capabilities",
+        "tags": [
+          "meta"
+        ],
+        "operationId": "get_v1_capabilities",
+        "responses": {
+          "200": {
+            "description": "Subsystem capability flags",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Capabilities"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/openapi.json": {
       "get": {
         "summary": "OpenAPI specification",
@@ -11736,6 +11767,51 @@
           }
         }
       },
+      "Capabilities": {
+        "type": "object",
+        "required": [
+          "capabilities"
+        ],
+        "properties": {
+          "capabilities": {
+            "type": "object",
+            "required": [
+              "learning",
+              "studies",
+              "achievements",
+              "search",
+              "social",
+              "messaging",
+              "community"
+            ],
+            "properties": {
+              "learning": {
+                "type": "boolean"
+              },
+              "studies": {
+                "type": "boolean"
+              },
+              "achievements": {
+                "type": "boolean"
+              },
+              "search": {
+                "type": "boolean"
+              },
+              "social": {
+                "type": "boolean"
+              },
+              "messaging": {
+                "type": "boolean"
+              },
+              "community": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
       "UserProfile": {
         "type": "object",
         "required": [
@@ -12678,8 +12754,8 @@
               "userVerification": {
                 "type": "string"
               },
-              "requireResidentKey": {
-                "type": "boolean"
+              "residentKey": {
+                "type": "string"
               }
             }
           }
@@ -12738,7 +12814,6 @@
           "challenge",
           "timeout",
           "rpId",
-          "allowCredentials",
           "userVerification"
         ],
         "properties": {

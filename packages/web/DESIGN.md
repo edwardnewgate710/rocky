@@ -248,6 +248,15 @@ Flat at rest, everywhere. There is no `box-shadow` in the current implementation
 - **Link Policy**: Resolved handles render as links to the player profile (`.row-link`, `data-route="profile"`). Bare, unresolved user IDs render as plain text fallback without links to avoid broken profile navigations.
 - **Variant Selector**: The `<select id="leaderboard-variant-select">` uses the single `cg-select` form control treatment, declaring options from `OFFERED_VARIANTS` with human-readable `VARIANT_LABELS`.
 
+### Passkeys (account security profile section)
+
+- **Account security rows** reuse the single List Row treatment (`.panel-row` inside `.panel-list`).
+- **Row composition** follows the standard two-child rule used by `appendPanelRow`: passkey name and creation date share the leading label span; the compact `Delete` button trails inside `.panel-row-actions`. Its visible label stays concise, while the shared row helper gives it a contextual accessible name that includes the passkey label.
+- **Row actions**: Compact row action uses `padding: 2px 10px` and `Label` typography, matching the cancel/unblock action standard.
+- **Passkey register action**: Standalone button (`#passkey-register`, "Add passkey") uses the default button style and one 8px spacing step before the credential list.
+- **Passkey sign-in button**: `#auth-passkey` ("Sign in with passkey") sits beside the password auth buttons on `#auth-form` and uses the standard button style without a password field requirement. The `.auth-actions` row wraps at narrow widths rather than shrinking any action label onto multiple lines.
+- **Self-profile only**: the account security section stays hidden on public player profiles and is revealed only for the signed-in player's own profile.
+
 ### Notation Pane (studies viewer)
 - **Inline move text with indented variations.** Chess move trees render as inline wrapping move text (`1. e4 e5 2. Nf3 Nc6`) with indented blocks for variations, one step per nesting level, without bullets or list markers. This is the one place the app follows chess convention over its own list idiom — the same argument §1 makes for keeping classic board colours. Moves are not rendered as one per `.panel-row`.
 - **Mainline weight is unbolded.** `font-weight: 600` is strictly reserved for the clock's `Numeric` role. The mainline is distinguished from variations by indentation, structure, and muted voice, never by bold font weight.

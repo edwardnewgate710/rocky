@@ -130,6 +130,7 @@ test('WebAuthn registration and login', async (t) => {
     assert.strictEqual(optRes.status, 200);
     const options = optRes.body;
     assert.strictEqual(options.rp.id, rpId);
+    assert.strictEqual(options.authenticatorSelection.residentKey, 'required');
 
     const authenticator = new FakeAuthenticator();
     const clientData = {

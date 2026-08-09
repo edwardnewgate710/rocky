@@ -351,3 +351,34 @@ test('Capabilities: the served schema describes exactly what the presenter emits
   }
 });
 
+/**
+ * Pin `WebAuthnRegisterOptions` and `WebAuthnLoginOptions` schemas against service options output.
+ */
+test('WebAuthnOptions: served schemas match actual options emitted by service', async () => {
+  const h = await startHarness();
+  try {
+    const schemas = (h.server.openapiDocument() as any).components.schemas;
+    const { token } = await h.makeUser('optsuser');
+
+    const regRes = await h.json('POST', '/v1/auth/webauthn/register/options', { token });
+    assert.equal(regRes.status, 200);
+    const regOptions = regRes.body;
+
+    const regDeclaredKeys = Object.keys(schemas.WebAuthnRegisterOptions.properties).sort();
+    assert.deepEqual(Object.keys(regOptions).sort(), regDeclaredKeys);
+    assert.deepEqual([...schemas.WebAuthnRegisterOptions.required].sort(), regDeclaredKeys);
+    assert.equal(regOptions.authenticatorSelection.residentKey, 'required');
+    assert.equal('residentKey' in schemas.WebAuthnRegisterOptions.properties.authenticatorSelection.properties, true);
+    assert.equal('requireResidentKey' in schemas.WebAuthnRegisterOptions.properties.authenticatorSelection.properties, false);
+
+    const loginRes = await h.json('POST', '/v1/auth/webauthn/login/options', { body: { handle: 'optsuser' } });
+    assert.equal(loginRes.status, 200);
+    const loginOptions = loginRes.body;
+
+    const loginRequiredKeys = [...schemas.WebAuthnLoginOptions.required].sort();
+    assert.deepEqual(Object.keys(loginOptions).sort(), loginRequiredKeys);
+    assert.equal(schemas.WebAuthnLoginOptions.required.includes('allowCredentials'), false);
+  } finally {
+    await h.close();
+  }
+});
