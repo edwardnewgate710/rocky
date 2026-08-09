@@ -241,6 +241,13 @@ Flat at rest, everywhere. There is no `box-shadow` in the current implementation
 - **Attempt feedback** uses words (`Done`, `Try again`) in the muted `.count` voice, respecting the Single Accent Rule without adding secondary accent colors or gamification clutter. `Done` is driven by `completedAt`, never by whether the last attempt was correct — a completed step stays done even if the learner later answers it wrongly, which the domain permits.
 - **Service unavailability (503)** degrades quietly with a plain sentence (`Learning service unavailable.`) in muted text voice.
 
+### Leaderboard
+
+- **Leaderboard standings rows** reuse the single List Row treatment (`.panel-row`, `.row-main` and `.count`).
+- **Row composition** follows the standard two-child rule: rank (`#1`, `#2`) and the player handle or `shortId` travel together in `.row-main`; rating and rating deviation (`2100 (±35)`) trail in `.count`.
+- **Link Policy**: Resolved handles render as links to the player profile (`.row-link`, `data-route="profile"`). Bare, unresolved user IDs render as plain text fallback without links to avoid broken profile navigations.
+- **Variant Selector**: The `<select id="leaderboard-variant-select">` uses the single `cg-select` form control treatment, declaring options from `OFFERED_VARIANTS` with human-readable `VARIANT_LABELS`.
+
 ### Notation Pane (studies viewer)
 - **Inline move text with indented variations.** Chess move trees render as inline wrapping move text (`1. e4 e5 2. Nf3 Nc6`) with indented blocks for variations, one step per nesting level, without bullets or list markers. This is the one place the app follows chess convention over its own list idiom — the same argument §1 makes for keeping classic board colours. Moves are not rendered as one per `.panel-row`.
 - **Mainline weight is unbolded.** `font-weight: 600` is strictly reserved for the clock's `Numeric` role. The mainline is distinguished from variations by indentation, structure, and muted voice, never by bold font weight.

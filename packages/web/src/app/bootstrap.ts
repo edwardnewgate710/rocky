@@ -27,6 +27,10 @@ import { CreateGamePanel } from './create-game-panel.js';
 import { PlayBotDialog } from './play-bot-dialog.js';
 import { ProfileController } from './profile-controller.js';
 import type { ProfileController as ProfileControllerType } from './profile-controller.js';
+import { LeaderboardController } from './leaderboard-controller.js';
+import { renderLeaderboard, renderVariantSelector, bindVariantSelector } from './leaderboard-view.js';
+import { OFFERED_VARIANTS } from '../api/models.js';
+import type { Variant } from '../api/models.js';
 import { TournamentController } from './tournament-controller.js';
 import type { TournamentController as TournamentControllerType } from './tournament-controller.js';
 import {
@@ -89,6 +93,7 @@ export interface BootstrappedDisposables {
   readonly board: MountedBoard | null;
   readonly lobby: LobbyControllerType | null;
   readonly profile: ProfileControllerType | null;
+  readonly leaderboard: { dispose: () => void } | null;
   readonly tournament: TournamentControllerType | null;
   readonly search: SearchControllerType | null;
   readonly messages: MessagesControllerType | null;
@@ -451,6 +456,7 @@ export function bootstrap(
   const mainEl = doc.getElementById('game-main');
   const lobbySectionEl = doc.getElementById('lobby');
   const profileSectionEl = doc.getElementById('profile');
+  const leaderboardSectionEl = doc.getElementById('leaderboard');
   const tournamentsSectionEl = doc.getElementById('tournaments');
   const tournamentSectionEl = doc.getElementById('tournament');
   const searchSectionEl = doc.getElementById('search');
@@ -469,6 +475,7 @@ export function bootstrap(
   const showGame = route.name === 'game';
   const showLobby = route.name === 'lobby';
   const showProfile = route.name === 'profile';
+  const showLeaderboard = route.name === 'leaderboard';
   const showTournaments = route.name === 'tournaments';
   const showTournament = route.name === 'tournament';
   const showSearch = route.name === 'search';
@@ -488,6 +495,7 @@ export function bootstrap(
   if (mainEl) mainEl.hidden = !showGame;
   if (lobbySectionEl) lobbySectionEl.hidden = !showLobby;
   if (profileSectionEl) profileSectionEl.hidden = !showProfile;
+  if (leaderboardSectionEl) leaderboardSectionEl.hidden = !showLeaderboard;
   if (tournamentsSectionEl) tournamentsSectionEl.hidden = !showTournaments;
   if (tournamentSectionEl) tournamentSectionEl.hidden = !showTournament;
   if (searchSectionEl) searchSectionEl.hidden = !showSearch;
@@ -814,7 +822,7 @@ export function bootstrap(
         .finally(() => gameSync.start());
     }
 
-    return { app, board, controller, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
+    return { app, board, controller, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
   }
 
   // --- Lobby view ---
@@ -913,7 +921,7 @@ export function bootstrap(
 
     lobby.start();
 
-    return { app, board: null, controller: null, lobby, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
   }
 
   // --- Profile view ---
@@ -1238,7 +1246,70 @@ export function bootstrap(
       }
     }
 
-    return { app, board: null, controller: null, lobby: null, profile, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
+  }
+
+  // --- Leaderboard view ---
+  const leaderboardEl = doc.getElementById('leaderboard');
+  if (leaderboardEl && route.name === 'leaderboard') {
+    const selectEl = doc.getElementById('leaderboard-variant-select') as HTMLSelectElement | null;
+    const loadingEl = doc.getElementById('leaderboard-loading');
+    const resultsEl = doc.getElementById('leaderboard-results');
+    const errorEl = doc.getElementById('leaderboard-error');
+    let resultsRendered = false;
+
+    let activeVariant: Variant = 'standard';
+    if (selectEl) {
+      renderVariantSelector(selectEl, activeVariant);
+    }
+
+    const leaderboardCtrl = new LeaderboardController({
+      client: app.api,
+      callbacks: {
+        onResults: (entries, names, _variant) => {
+          resultsRendered = true;
+          if (errorEl) errorEl.textContent = '';
+          if (resultsEl) renderLeaderboard(resultsEl, entries, names);
+        },
+        onLoading: (loading) => {
+          if (!resultsEl || !loadingEl) return;
+          resultsEl.setAttribute('aria-busy', loading ? 'true' : 'false');
+          if (loading) {
+            resultsRendered = false;
+            if (errorEl) errorEl.textContent = '';
+            resultsEl.hidden = true;
+            loadingEl.hidden = false;
+            return;
+          }
+          loadingEl.hidden = true;
+          resultsEl.hidden = false;
+          if (!resultsRendered) resultsEl.innerHTML = '';
+        },
+        onError: (msg) => {
+          if (errorEl) errorEl.textContent = msg;
+        },
+      },
+    });
+
+    let unbind = () => {};
+    if (selectEl) {
+      unbind = bindVariantSelector(selectEl, (val) => {
+        activeVariant = val;
+        void leaderboardCtrl.loadLeaderboard(activeVariant);
+      });
+    }
+
+    void leaderboardCtrl.loadLeaderboard(activeVariant);
+    return {
+      app, board: null, controller: null, lobby: null, profile: null,
+      leaderboard: {
+        dispose: () => {
+          unbind();
+          leaderboardCtrl.dispose();
+        }
+      },
+      tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme
+    };
   }
 
   // --- Tournaments list view ---
@@ -1278,7 +1349,7 @@ export function bootstrap(
     });
 
     void tournament.loadList();
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
   }
 
   // --- Single tournament detail view ---
@@ -1330,7 +1401,7 @@ export function bootstrap(
     });
 
     void tournament.loadDetail(route.id);
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
   }
 
   // --- Search view ---
@@ -1430,7 +1501,7 @@ export function bootstrap(
       if (resultsEl) renderSearchPrompt(resultsEl);
     }
 
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: searchCtrl, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: searchCtrl, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
   }
 
   // --- Messages Inbox view (/messages) ---
@@ -1465,7 +1536,7 @@ export function bootstrap(
         .catch(() => undefined);
     }
 
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: messagesCtrl, teams: null, forum: null, learning: null, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: messagesCtrl, teams: null, forum: null, learning: null, studies: null, auth, theme };
   }
 
   // --- Conversation Thread view (/messages/:id) ---
@@ -1536,7 +1607,7 @@ export function bootstrap(
         .catch(() => undefined);
     }
 
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: messagesCtrl, teams: null, forum: null, learning: null, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: messagesCtrl, teams: null, forum: null, learning: null, studies: null, auth, theme };
   }
 
   // --- Teams list view (/teams) ---
@@ -1576,7 +1647,7 @@ export function bootstrap(
     }
 
     void teamsCtrl.loadList();
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: teamsCtrl, forum: null, learning: null, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: teamsCtrl, forum: null, learning: null, studies: null, auth, theme };
   }
 
   // --- Team detail view (/teams/:slug) ---
@@ -1683,7 +1754,7 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: teamsCtrl, forum: null, learning: null, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: teamsCtrl, forum: null, learning: null, studies: null, auth, theme };
   }
 
   // --- Forum thread list (/teams/:slug/forum) ---
@@ -1756,7 +1827,7 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: forumCtrl, learning: null, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: forumCtrl, learning: null, studies: null, auth, theme };
   }
 
   // --- Forum thread (/teams/:slug/forum/:threadId) ---
@@ -1822,7 +1893,7 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: forumCtrl, learning: null, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: forumCtrl, learning: null, studies: null, auth, theme };
   }
 
   // --- Courses list view (/courses) ---
@@ -1860,7 +1931,7 @@ export function bootstrap(
     });
 
     void learningCtrl.loadCourses();
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, studies: null, auth, theme };
   }
 
   // --- Course detail view (/courses/:slug) ---
@@ -1902,7 +1973,7 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, studies: null, auth, theme };
   }
 
   // --- Lesson detail view (/lessons/:id) ---
@@ -1963,7 +2034,7 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, studies: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, studies: null, auth, theme };
   }
 
   // --- Studies list view (/studies) ---
@@ -2013,7 +2084,7 @@ export function bootstrap(
     }
 
     void studiesCtrl.loadStudies();
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: studiesCtrl, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: studiesCtrl, auth, theme };
   }
 
   // --- Study detail view (/studies/:id) ---
@@ -2064,7 +2135,7 @@ export function bootstrap(
     });
 
     void studiesCtrl.loadStudy(studyId);
-    return { app, board: null, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: studiesCtrl, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: studiesCtrl, auth, theme };
   }
 
   // --- Study chapter detail view (/studies/:id/chapters/:chapterId) ---
@@ -2125,7 +2196,7 @@ export function bootstrap(
     });
 
     void studiesCtrl.loadChapter(studyId, chapterId);
-    return { app, board: chapterBoard, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: studiesCtrl, auth, theme };
+    return { app, board: chapterBoard, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: studiesCtrl, auth, theme };
   }
 
   // --- Standalone board (no game ID, no lobby, no profile, no tournament, no search, no messages) ---
@@ -2133,5 +2204,5 @@ export function bootstrap(
     ? mountBoard({ boardEl, statusEl, flipEl })
     : null;
 
-  return { app, board, controller: null, lobby: null, profile: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
+  return { app, board, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, auth, theme };
 }

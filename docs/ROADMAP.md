@@ -1119,6 +1119,15 @@ Removes top-level navigation links when their underlying optional subsystem is n
 - **Client & Navigation Logic (`client.ts`, `models.ts`, `capabilities-nav.ts`, `index.html`, `bootstrap.ts`)**: Optional nav links start `hidden` in `index.html`. `bootstrap` fetches capabilities once; enabled capabilities have `hidden` removed, while disabled capabilities are removed from the DOM. Implemented fail-open policy (reveals all links if `GET /v1/capabilities` fails) to protect against transient network errors.
 - **Tests & Documentation (`capabilities.test.ts`, `capabilities-nav.test.ts`, `0106-capabilities-driven-navigation.md`)**: Added unit tests verifying dependency-driven capability reporting in API, nav DOM removal/revelation, fail-open behavior, and schema coupling. Documented in `docs/adr/0106-capabilities-driven-navigation.md`.
 
+### Increment 43 (M14 Inc 43): SPA Leaderboard Page (ADR-0107) ✅
+
+Exposes the pre-existing typed leaderboard REST API (`GET /v1/leaderboard/:variant`, `GambitClient.leaderboard`) as a real, accessible SPA page in the web frontend.
+
+- **Routing & Client (`packages/web/src/app/router.ts`, `packages/web/src/api/client.ts`, `variant-labels.ts`)**: Added the exact `/leaderboard` route and topbar navigation while reusing the existing typed client. Centralized human-readable labels in the app layer so the API models remain contract-only.
+- **Controller & View (`leaderboard-controller.ts`, `leaderboard-view.ts`)**: Implemented DOM-free `LeaderboardController` with `requestGeneration` stale guard and `disposed` protection. Standardized variant selector populating options from `OFFERED_VARIANTS` (omitting `chess960` per ADR-0099). Reused `.panel-row` List Row treatment for leaderboard standings with rank, handle link, rating, and RD.
+- **Graceful Degradation & Fallback**: Calls `GambitClient.graphql.resolvePlayers(userIds)` as an optional read-layer path to convert player IDs to handles. If GraphQL resolution fails or leaves an ID unmapped, the page renders bare IDs via `shortId(userId)` plain text fallback without raising an error.
+- **Teardown & Accessibility**: Tests cover exact route parsing/serialization, request races, post-disposal callback suppression, listener unbinding, empty/results semantics, and labelled controls. The route composite is registered in `BootstrappedDisposables` and `DISPOSABLE_TEARDOWN_MAP`; results switch between status and list semantics without placing loading copy in a result row.
+
 ## ✅ Verification hygiene — ADR claim drift guard (ADR-0079)
 
 Cross-cutting, not tied to one milestone. Increment 11 found ADR-0010 §7 specifying six ownership

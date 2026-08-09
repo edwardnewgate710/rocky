@@ -47,29 +47,30 @@ export interface EmptyStateOptions {
  */
 export function renderEmpty(container: HTMLElement, opts: EmptyStateOptions): void {
   container.innerHTML = '';
-  const wrap = document.createElement('div');
+  const doc = container.ownerDocument ?? document;
+  const wrap = doc.createElement('div');
   wrap.className = opts.inline ? 'empty empty-inline' : 'empty';
 
   if (opts.mark && !opts.inline) {
-    const mark = document.createElement('div');
+    const mark = doc.createElement('div');
     mark.className = 'empty-mark';
     mark.setAttribute('aria-hidden', 'true');
     mark.textContent = opts.mark;
     wrap.appendChild(mark);
   }
 
-  const title = document.createElement('p');
+  const title = doc.createElement('p');
   title.className = 'empty-title';
   title.textContent = opts.title;
   wrap.appendChild(title);
 
-  const body = document.createElement('p');
+  const body = doc.createElement('p');
   body.className = 'empty-body';
   body.textContent = opts.body;
   wrap.appendChild(body);
 
   if (opts.cta) {
-    const link = document.createElement('a');
+    const link = doc.createElement('a');
     link.className = 'empty-cta';
     link.href = opts.cta.href;
     link.dataset.route = opts.cta.route;

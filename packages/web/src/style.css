@@ -565,6 +565,7 @@ button:disabled {
 .game,
 .lobby,
 .profile,
+.leaderboard,
 .tournaments,
 .tournament,
 .search,
@@ -1051,6 +1052,42 @@ button:disabled {
   background: color-mix(in srgb, var(--sel) 15%, var(--panel));
   font-size: 0.875rem;
   text-align: center;
+}
+
+/* --- Leaderboard (M14 inc 43) --- */
+.leaderboard {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 16px;
+}
+.leaderboard .section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.leaderboard .section-header h2 {
+  margin: 0;
+}
+.leaderboard-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.leaderboard-controls label {
+  font-size: 0.875rem;
+  color: var(--fg-muted);
+}
+.leaderboard-rank {
+  color: var(--fg-muted);
+  font-size: 0.875rem;
+  font-feature-settings: 'tnum';
+}
+.leaderboard-player-unresolved {
+  color: var(--fg-muted);
+  font-size: 0.875rem;
 }
 
 /* --- Tournaments (M14 inc 15) --- */

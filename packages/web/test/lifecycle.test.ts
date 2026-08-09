@@ -29,6 +29,7 @@ function createMockBootstrapped(
     board: disposables.board as Bootstrapped['board'],
     lobby: disposables.lobby as Bootstrapped['lobby'],
     profile: disposables.profile as Bootstrapped['profile'],
+    leaderboard: disposables.leaderboard as Bootstrapped['leaderboard'],
     tournament: disposables.tournament as Bootstrapped['tournament'],
     search: disposables.search as Bootstrapped['search'],
     messages: disposables.messages as Bootstrapped['messages'],

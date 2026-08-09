@@ -1,0 +1,84 @@
+/**
+ * Leaderboard view renderers — pure DOM helpers that take a container plus data
+ * and write DOM using `el()` and existing styling classes.
+ */
+import { el } from './dom.js';
+import { renderEmpty } from './render-helpers.js';
+import { shortId } from '../api/graphql.js';
+import { OFFERED_VARIANTS } from '../api/models.js';
+import { VARIANT_LABELS } from './variant-labels.js';
+import type { LeaderboardEntry, Variant, SocialPlayer } from '../api/models.js';
+
+export function renderLeaderboard(
+  container: HTMLElement,
+  entries: readonly LeaderboardEntry[],
+  names: ReadonlyMap<string, SocialPlayer>,
+): void {
+  container.innerHTML = '';
+  if (entries.length === 0) {
+    container.setAttribute('role', 'status');
+    renderEmpty(container, {
+      title: 'No leaderboard entries',
+      body: 'No ratings have been recorded for this variant yet.',
+    });
+    return;
+  }
+
+  container.setAttribute('role', 'list');
+
+  const doc = container.ownerDocument;
+  entries.forEach((entry, index) => {
+    const rank = index + 1;
+    const rankSpan = el(doc, 'span', { class: 'leaderboard-rank' }, `#${rank}`);
+
+    const resolved = names.get(entry.userId);
+    const playerNode = resolved
+      ? el(
+          doc,
+          'a',
+          {
+            href: `/profile/${encodeURIComponent(resolved.handle)}`,
+            'data-route': 'profile',
+            class: 'row-link',
+          },
+          resolved.handle,
+        )
+      : el(doc, 'span', { class: 'leaderboard-player-unresolved' }, shortId(entry.userId));
+
+    const rowMain = el(doc, 'span', { class: 'row-main' }, rankSpan, playerNode);
+    const statsSpan = el(doc, 'span', { class: 'count' }, `${entry.rating} (±${entry.rd})`);
+
+    const row = el(doc, 'div', { class: 'panel-row', role: 'listitem' }, rowMain, statsSpan);
+    container.appendChild(row);
+  });
+}
+
+export function renderVariantSelector(
+  selectEl: HTMLSelectElement,
+  selectedVariant: Variant,
+): void {
+  selectEl.innerHTML = '';
+  const doc = selectEl.ownerDocument;
+  for (const v of OFFERED_VARIANTS) {
+    const option = el(doc, 'option', { value: v }, VARIANT_LABELS[v]);
+    if (v === selectedVariant) {
+      option.selected = true;
+    }
+    selectEl.appendChild(option);
+  }
+}
+
+export function bindVariantSelector(
+  selectEl: HTMLSelectElement,
+  onChange: (variant: Variant) => void,
+): () => void {
+  const handler = (e: Event) => {
+    const target = e.target as HTMLSelectElement;
+    const variant = target.value as Variant;
+    if (OFFERED_VARIANTS.includes(variant)) {
+      onChange(variant);
+    }
+  };
+  selectEl.addEventListener('change', handler);
+  return () => selectEl.removeEventListener('change', handler);
+}

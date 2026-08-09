@@ -21,15 +21,15 @@ Having a package in the monorepo does not imply that it is a product feature.
 | Server-authoritative clocks and event-sourced games | Yes | Yes | Yes | Yes | Real matched game returned authoritative clocks and position over `/ws`. |
 | Click/drag, legal highlights, promotion, premove, board flip | Yes | Yes | Yes | Yes | Board renders 64 squares/32 pieces; `e2-e4` and server legal highlights verified. Promotion and premove remain covered by automated tests. |
 | Resign, draw offer/accept/decline, abort, claim flag | Yes | Yes (WebSocket commands) | Yes | Yes | Actions are fully exposed in the game sidebar with proper state sync and confirmation flows. Resign and draw offer/accept flows are E2E-verified; others are covered at the component/unit level. |
-| Presence, spectator role, reconnect/resume | Yes | Yes | Yes | Partial | Synchronisation exists, but the UI does not show connection state, players, spectator count, or presence. |
+| Presence, spectator role, reconnect/resume | Yes | Yes | Yes | Yes | Connection status, player metadata, live clocks, and spectator counts are exposed in the game UI. |
 | Password register/login/logout | Yes | Yes | Yes | Yes | Visible and exercised; refresh cookie restores the session. |
 | Session list/revocation | Yes | Yes | Partial (`sessions()` only) | No | No account/security screen. |
 | Password reset and email verification | Yes | Yes | No | No | Backend-only. Email sender is deployment-dependent. |
 | WebAuthn/passkeys | Yes | Yes | No | No | Registration/login/list/delete endpoints pass tests, but the website has no passkey flow. |
 | Profiles, ratings and recent games | Yes | Yes | Yes | Yes | Profile session race fixed; `/profile` now loads the signed-in user correctly. |
-| Leaderboard | Yes | Yes | No | No | `GET /v1/leaderboard/:variant` works, but there is no page or client adapter. |
+| Leaderboard | Yes | Yes | Yes | Yes | `GET /v1/leaderboard/:variant` exposed as SPA page at `/leaderboard` with variant selector populated by an app-layer labels module, optional GraphQL handle resolution, shortId fallback, stale request protection, two-child row rendering, semantic loading/list behavior, and composite view disposal. |
 | Seek creation, cancellation, acceptance and atomic game provisioning | Yes | Yes | Yes | Yes | Creation and acceptance are verified end-to-end with two users and real PostgreSQL provisioning. Cancellation is API-tested but has no end-to-end cancellation test. |
-| Play against a bot | Test harness only | No production route/service | No | No | The bot is confined to `@chess-platform/e2e-harness`; it is not a site feature. |
+| Play against a bot | Yes | Yes | Yes | Yes | Engine bot service (`POST /v1/games/bot`) and Play vs Computer dialog shipped (ADR-0080, ADR-0081). |
 | Engine/UCI analysis | Yes | **No composed engine service** | No | No | The engine bridge is a tested library, but Compose starts no engine worker and the API exposes no analysis endpoint. |
 | AI provider orchestration | Yes | No service/API | No | No | OpenAI/Anthropic adapters, routing, failover, cache and grounding exist only as libraries. Real-provider tests are key-gated. |
 | Move explainer | Yes | No | No | No | Library/test implementation only. |
@@ -38,7 +38,7 @@ Having a package in the monorepo does not imply that it is a product feature.
 | Opening explorer | Yes | No | No | No | Bundled data and library exist; no endpoint/page. |
 | Endgame trainer | Yes | No | No | No | Bundled data and library exist; no endpoint/page. |
 | Coach, study partner and voice coach | Yes | No | No | No | Ports and hermetic tests exist; no browser speech adapters or product workflow. |
-| Round-robin, Swiss and Arena tournaments | Yes | Yes | No | No | Full REST lifecycle/live view/result reporter exists, but the frontend has no tournament API client or page. |
+| Round-robin, Swiss and Arena tournaments | Yes | Yes | Yes | Yes | Full REST lifecycle, live view, tournament client adapter, and UI views shipped (ADR-0082). |
 | Tournament live broadcast/commentary | Yes | Partial | No | No | Live boards/result reporter run; AI commentary is not composed into a production service. |
 | PWA/offline shell | Yes | Yes | Yes | Yes | Manifest/service worker and offline-navigation acceptance test pass. |
 | Light/dark theme | Yes | Yes | Yes | Yes | Fixed: explicit light preference now overrides a dark OS preference and updates icon/ARIA/theme-color. |
@@ -95,11 +95,9 @@ Having a package in the monorepo does not imply that it is a product feature.
 
 ## Remaining product-critical work, in order
 
-1. Add game metadata/presence to the UI to make a match manageable without hidden protocol calls. Game controls (resign, draw, abort, claim flag) are already implemented.
-2. Add production bot service + `Play bot`; the current e2e bot is not reusable
-   from the website as deployed.
-3. Expose the already-built leaderboard, tournaments, passkeys and recovery
-   APIs through real pages and typed web clients.
+1. [Shipped] Add game metadata/presence to the UI to make a match manageable without hidden protocol calls. Game controls (resign, draw, abort, claim flag) are already implemented.
+2. [Shipped] Add production bot service + `Play bot` (ADR-0080, ADR-0081).
+3. Expose the remaining already-built passkeys and recovery APIs through real pages and typed web clients (leaderboard and tournaments UI are shipped in ADR-0082 and ADR-0107).
 4. Compose an engine worker and AI feature API before advertising any AI
    feature; then build analysis, puzzles, openings/endgames, coach and voice UI.
 5. Add a Compose-based browser acceptance job. The current backend Playwright

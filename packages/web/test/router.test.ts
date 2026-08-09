@@ -29,6 +29,7 @@ test('parseRoute: /profile/{handle} → profile with handle', () => {
 test('parseRoute: unknown path → not-found', () => {
   assert.equal(parseRoute('/unknown').name, 'not-found');
   assert.equal(parseRoute('/foo/bar/baz').name, 'not-found');
+  assert.equal(parseRoute('/leaderboard/atomic').name, 'not-found');
 });
 
 test('routeToPath: lobby → /', () => {

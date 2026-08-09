@@ -4,7 +4,14 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-09 - M14 Increment 42: Horde and Racing Kings perft coverage and rule fixes (ADR-0098)._
+_Last updated: 2026-08-09 - M14 Increment 43: SPA Leaderboard Page (ADR-0107)._
+
+## M14 Increment 43 - SPA Leaderboard Page (ADR-0107)
+
+Exposed the already-existing typed leaderboard API as a real, accessible SPA page (`/leaderboard`).
+- **Product-Offered Variants Selection**: The variant selector populates options exclusively from `OFFERED_VARIANTS` and labels from `VARIANT_LABELS` isolated in `src/app/variant-labels.ts` to keep `api/models.ts` framework-independent. Intentionally omits hollow `chess960`.
+- **Stale Request Guard & Composite Lifecycle Teardown**: `LeaderboardController` maintains a `requestGeneration` counter. Late async responses from older variant selections are ignored (`isCurrent(generation)` check), preventing out-of-order overwrites. Navigating away triggers `dispose()`. Bootstrap uses a reusable DOM `bindVariantSelector` helper to bind change handlers. On teardown, the route composite disposable invokes `unbind()` followed by `leaderboardCtrl.dispose()`, keeping event listeners from leaking without controller/DOM coupling.
+- **UI Architecture & Accessibility**: Enforces strict two-child composition per result row (`.row-main` containing rank plus player node, and `.count` for ratings) inside a `.panel-row`. Employs dynamic accessible roles: the results container switches to `role="status"` during the empty state to avoid invalid list ownership, and restores to `role="list"` when entries populate as `role="listitem"`.
 
 ## M14 Increment 42 - Horde and Racing Kings perft coverage and rule fixes (ADR-0098)
 
@@ -1231,23 +1238,7 @@ analysis cache remains a future **ADR-0003** (would amend `DATABASE.md`).
 
 ### Exact next step for the next agent
 
-**Milestones M1–M8 complete; M14 increments 1–4 landed.** The platform has:
-- 10 packages (core, game, realtime-gateway, persistence, api, engine, web, e2e-harness, ai-orchestrator, ai-features) + 3 deployable services (api, gateway, web).
-- 701 tests, 0 failures (see §2 for the per-package breakdown); strict TS + lint clean; CI active.
-- Docker Compose local stack with Postgres, Redis, API, gateway, and web.
-- Durable game authority (EventLog port + Postgres wiring).
-- Redis pub/sub for multi-node gateway fanout (RedisPubSub adapter, origin tagging, ref-counted subscribe).
-- Kubernetes Helm chart (`deploy/helm/gambit/`) with bundled/external datastores, migration init container, single gateway replica (ownership not coordinated across replicas — sticky routing or sharded authority is a later increment), ConfigMap/Secret split, health probes, and CI validation (helm lint + kubeconform).
-
-**Gateway replica constraint (M14 inc 4):** The gateway Deployment defaults to `replicas: 1`. Game-command ownership is NOT coordinated across gateway replicas. Scaling beyond 1 requires sticky per-game routing or sharded authority — a later M14 increment. See `docs/adr/0009-kubernetes-helm.md`.
-
-**Next priorities (in order):**
-1. **M4 identity hardening:** WebAuthn/passkeys (table exists). (Password reset + email verification are complete).
-2. **Small deferred correctness:** PGN parser, per-variant timeout rules.
-3. **M9 Tournaments & broadcast:** Arena pairing, FIDE Dutch compliance, live broadcast.
-4. **Remaining M14:** Terraform, blue/green, CI/CD pipeline, 100k-user load testing, secrets management (external-secrets), sticky per-game routing / sharded authority for horizontal gateway scaling.
-
-Read `docs/AI_HANDOVER.md` for the quickstart and guardrails.
+M14 Inc43 is complete; next is M14 Inc44, a real WebAuthn/passkey web flow over the published list/delete/register-options/register-verify/login-options/login-verify endpoints; password-recovery UI follows. Do not claim either UI is built.
 
 ## 8. How to build & test today
 

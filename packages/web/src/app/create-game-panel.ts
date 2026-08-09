@@ -15,6 +15,7 @@
 import { el } from './dom.js';
 import type { TimeControl, Variant, SeekColor } from '../api/models.js';
 import { OFFERED_VARIANTS } from '../api/models.js';
+import { VARIANT_LABELS } from './variant-labels.js';
 import type { KeyValueStorage } from '../net/session.js';
 import {
   TIME_PRESETS,
@@ -56,18 +57,6 @@ export interface CreateGamePanelOptions {
   /** Persists last-used time control + mode (defaults to `localStorage`). */
   readonly storage?: KeyValueStorage;
 }
-
-/** Human labels for the contract's variant codes. */
-const VARIANT_LABELS: Record<Variant, string> = {
-  standard: 'Standard',
-  chess960: 'Chess960',
-  kingofthehill: 'King of the Hill',
-  atomic: 'Atomic',
-  crazyhouse: 'Crazyhouse',
-  threecheck: 'Three-check',
-  horde: 'Horde',
-  racingkings: 'Racing Kings',
-};
 
 interface ColorOption {
   readonly value: SeekColor;

@@ -11,6 +11,7 @@
  * - `/game/{id}` → game view
  * - `/profile` → profile (future)
  * - `/profile/{handle}` → profile for a specific user (future)
+ * - `/leaderboard` → variant leaderboard
  * - `/tournaments` → tournaments list
  * - `/tournaments/{id}` → tournament detail
  * - `/search` → search
@@ -20,6 +21,7 @@ export type Route =
   | { readonly name: 'lobby' }
   | { readonly name: 'game'; readonly gameId: string }
   | { readonly name: 'profile'; readonly handle: string | null }
+  | { readonly name: 'leaderboard' }
   | { readonly name: 'tournaments' }
   | { readonly name: 'tournament'; readonly id: string }
   | { readonly name: 'search' }
@@ -46,6 +48,10 @@ export function parseRoute(pathname: string): Route {
   }
   if (segments[0] === 'profile') {
     return { name: 'profile', handle: segments[1] ?? null };
+  }
+  if (segments[0] === 'leaderboard') {
+    if (segments.length === 1) return { name: 'leaderboard' };
+    return { name: 'not-found' };
   }
   if (segments[0] === 'tournaments') {
     if (segments.length === 1) return { name: 'tournaments' };
@@ -110,6 +116,8 @@ export function routeToPath(route: Route): string {
       return `/game/${route.gameId}`;
     case 'profile':
       return route.handle !== null ? `/profile/${route.handle}` : '/profile';
+    case 'leaderboard':
+      return '/leaderboard';
     case 'tournaments':
       return '/tournaments';
     case 'tournament':

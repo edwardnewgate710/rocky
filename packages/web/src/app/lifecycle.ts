@@ -25,6 +25,7 @@ export const DISPOSABLE_TEARDOWN_MAP: Record<DisposableKey, true> = {
   board: true,
   lobby: true,
   profile: true,
+  leaderboard: true,
   tournament: true,
   search: true,
   messages: true,
