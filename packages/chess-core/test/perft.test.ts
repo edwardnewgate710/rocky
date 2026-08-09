@@ -13,6 +13,17 @@ interface PerftCase {
   name: string;
   fen: string;
   expected: number[]; // index = depth-1
+  variant?: Variant;
+}
+
+function assertPerftCase(c: PerftCase): void {
+  const variant = c.variant ?? 'standard';
+  const pos = Position.fromFen(c.fen, variant);
+  c.expected.forEach((exp, i) => {
+    const depth = i + 1;
+    const got = pos.perft(depth);
+    assert.equal(got, exp, `${c.name} depth ${depth}: expected ${exp}, got ${got}`);
+  });
 }
 
 // Reference: https://www.chessprogramming.org/Perft_Results
@@ -46,12 +57,7 @@ const CASES: PerftCase[] = [
 
 for (const c of CASES) {
   test(`perft: ${c.name}`, () => {
-    const pos = Position.fromFen(c.fen);
-    c.expected.forEach((exp, i) => {
-      const depth = i + 1;
-      const got = pos.perft(depth);
-      assert.equal(got, exp, `${c.name} depth ${depth}: expected ${exp}, got ${got}`);
-    });
+    assertPerftCase(c);
   });
 }
 
@@ -147,11 +153,61 @@ test('perft: atomic matches standard until the first capture, then diverges', ()
 });
 
 /**
- * `horde` and `racingkings` are deliberately absent.
- *
- * Both have their own start positions and genuinely different rules, so neither the standard
- * reference counts nor an equality invariant applies, and no published perft values for them were
- * available to verify against. Writing plausible-looking numbers would be fabrication, and a
- * fabricated reference is worse than no test: it reports verification that never happened. Tracked
- * in `docs/ROADMAP.md` as the remaining part of this follow-up.
+ * Independently sourced perft reference vectors for `horde` and `racingkings`.
+ * Sourced from lichess-org/scalachess:
+ * - https://raw.githubusercontent.com/lichess-org/scalachess/master/test-kit/src/test/resources/horde.perft
+ * - https://raw.githubusercontent.com/lichess-org/scalachess/master/test-kit/src/test/resources/racingkings.perft
  */
+
+const VARIANT_CASES: PerftCase[] = [
+  // Horde
+  {
+    name: 'horde-start',
+    variant: 'horde',
+    fen: 'rnbqkbnr/pppppppp/8/1PP2PP1/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP w kq - 0 1',
+    expected: [8, 128, 1274, 23310],
+  },
+  {
+    name: 'horde-open-flank',
+    variant: 'horde',
+    fen: '4k3/pp4q1/3P2p1/8/P3PP2/PPP2r2/PPP5/PPPP4 b - - 0 1',
+    expected: [30, 241, 6633, 56539],
+  },
+  {
+    name: 'horde-en-passant',
+    variant: 'horde',
+    fen: 'k7/5p2/4p2P/3p2P1/2p2P2/1p2P2P/p2P2P1/2P2P2 w - - 0 1',
+    expected: [13, 172, 2205, 33781],
+  },
+  // Racing Kings
+  {
+    name: 'racingkings-start',
+    variant: 'racingkings',
+    fen: '8/8/8/8/8/8/krbnNBRK/qrbnNBRQ w - - 0 1',
+    expected: [21, 421, 11264, 296242, 9472927],
+  },
+  {
+    name: 'occupied-goal',
+    variant: 'racingkings',
+    fen: '4brn1/2K2k2/8/8/8/8/8/8 w - - 0 1',
+    expected: [6, 33, 178, 3151, 12981, 265932],
+  },
+  {
+    name: 'near-discovered-check',
+    variant: 'racingkings',
+    fen: '8/8/1rk4K/8/8/8/2bnNBR1/qrbnNBRQ b - - 0 1',
+    expected: [36, 697, 26592, 661533],
+  },
+];
+
+for (const c of VARIANT_CASES) {
+  test(`perft (${c.variant}): ${c.name}`, () => {
+    assertPerftCase(c);
+  });
+}
+
+test('perft divide: a variant-terminal position has no root branches', () => {
+  const terminal = Position.fromFen('2K5/8/8/8/8/8/8/4k3 b - - 0 1', 'racingkings');
+  assert.equal(terminal.perft(1), 0);
+  assert.deepEqual(terminal.perftDivide(1), {});
+});

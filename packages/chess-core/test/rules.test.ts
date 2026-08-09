@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Position } from '../src/position';
+import type { Move } from '../src/types';
 
 test('scholar\'s mate is detected as checkmate', () => {
   let pos = Position.initial();
@@ -87,9 +88,46 @@ test('horde: White loses when its army is gone', () => {
   if (status.reason === 'variant_win') assert.equal(status.winner, 'b');
 });
 
+test('horde: rank-1 White pawn double pushes are legal and create no en-passant square', () => {
+  const pos = Position.fromFen('k7/8/8/8/8/8/8/P7 w - - 0 1', 'horde');
+  const next = pos.play('a1a3');
+  assert.equal(next.fen().split(' ')[3], '-', 'Double push from rank 1 must not set an en-passant target square');
+});
+
+test('racing kings: White reaching rank 8 remains ongoing when Black can equalize, then Black goal move yields variant_draw', () => {
+  // White king on c8 (rank 8), Black king on e7 (rank 7) with Black to move.
+  // Black can reach rank 8 legally via e7e8 -> position remains ongoing.
+  const ongoing = Position.fromFen('2K5/4k3/8/8/8/8/8/8 b - - 0 1', 'racingkings');
+  assert.equal(ongoing.status().over, false, 'Black getting a turn to reach rank 8 keeps game ongoing');
+
+  // Black moves king to rank 8 (e7e8) -> variant_draw.
+  const drawn = ongoing.play('e7e8');
+  const drawStatus = drawn.status();
+  assert.ok(drawStatus.over);
+  assert.equal(drawStatus.reason, 'variant_draw');
+});
+
+test('racing kings: White reaching rank 8 is an immediate White variant_win when Black cannot equalize in one move', () => {
+  // White king on c8 (rank 8), Black king on e1 (rank 1) with Black to move.
+  // Black cannot reach rank 8 in one move -> immediate White win.
+  const win = Position.fromFen('2K5/8/8/8/8/8/8/4k3 b - - 0 1', 'racingkings');
+  const winStatus = win.status();
+  assert.ok(winStatus.over);
+  assert.equal(winStatus.reason, 'variant_win');
+  if (winStatus.reason === 'variant_win') assert.equal(winStatus.winner, 'w');
+});
+
 test('immutability: playing a move does not mutate the source position', () => {
   const start = Position.initial();
   const before = start.fen();
   start.play('e2e4');
   assert.equal(start.fen(), before);
+});
+
+test('immutability: callers cannot mutate the memoized legal-move array', () => {
+  const position = Position.initial();
+  const moves = position.legalMoves();
+
+  assert.throws(() => (moves as Move[]).pop(), TypeError);
+  assert.equal(position.perft(1), 20);
 });

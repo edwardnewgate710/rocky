@@ -143,7 +143,8 @@ export function generatePseudoLegal(state: PositionState): Move[] {
           } else {
             pushMove(moves, { from, to: one, piece, flags: MoveFlag.Normal });
             // Double push.
-            if (rankOf(from) === startRank) {
+            const canDouble = rankOf(from) === startRank || (state.variant === 'horde' && us === 'w' && rankOf(from) === 0);
+            if (canDouble) {
               const two = from + forward * 2;
               if (board[two] === null) {
                 pushMove(moves, { from, to: two, piece, flags: MoveFlag.DoublePawnPush });
@@ -357,8 +358,8 @@ export function applyMove(state: PositionState, move: Move): PositionState {
       board[rookFrom] = null;
     }
 
-    // Double pawn push sets the en-passant target.
-    if (move.flags & MoveFlag.DoublePawnPush) {
+    // Double pawn push sets the en-passant target (only from standard starting rank).
+    if ((move.flags & MoveFlag.DoublePawnPush) && rankOf(move.from) === (us === 'w' ? 1 : 6)) {
       next.epSquare = move.from + (us === 'w' ? 16 : -16);
     }
 

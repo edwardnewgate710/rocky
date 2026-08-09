@@ -67,23 +67,30 @@ version of the same test compared `perft(5)` totals instead and asserted only `>
 of the package's 15-second suite and proved something weaker — that one number exceeded another,
 without saying by how much or why. The pocket FEN gives an exact figure in milliseconds.
 
-### 4. `horde` and `racingkings` are deliberately left uncovered
+### 4. `horde` and `racingkings` coverage added from independent published vectors (M14 Increment 42 update)
 
-Both have their own start positions and genuinely different rules, so neither the standard reference
-counts nor the equality invariant applies, and no published perft values for them were available to
-verify against. Writing plausible-looking numbers would be fabrication, and a fabricated reference is
-worse than an absent one: it reports verification that never happened.
+`horde` and `racingkings` coverage has been added using the official `lichess-org/scalachess` perft resources as the source of truth:
+- `https://raw.githubusercontent.com/lichess-org/scalachess/master/test-kit/src/test/resources/horde.perft`
+- `https://raw.githubusercontent.com/lichess-org/scalachess/master/test-kit/src/test/resources/racingkings.perft`
 
-The remaining work is sourcing published values from an independent implementation. Tracked in
-`docs/ROADMAP.md`.
+Testing against these independent reference vectors surfaced two rule defects in `@chess-platform/core`:
+
+1. **Horde pawn rules (`packages/chess-core/src/movegen.ts`)**:
+   - White Horde pawns on ranks 1 and 2 (rank indices 0 and 1) are eligible for a two-square initial move. `generatePseudoLegal` previously checked `rankOf(from) === startRank` (where `startRank` is 1 for White), omitting double pushes for White pawns on rank index 0 (Rank 1).
+   - `applyMove` set `epSquare` for all double pawn pushes including rank index 0; however, en-passant target squares are created only when double pushing from standard starting ranks (rank index 1 for White, rank index 6 for Black).
+   - Allowing rank index 0 double pushes for White in Horde and restricting `epSquare` creation brought `horde-start`, `horde-open-flank`, and `horde-en-passant` into 100% agreement across all published depths 1..4.
+
+2. **Racing Kings 8th rank terminal and turn logic (`packages/chess-core/src/position.ts`)**:
+   - `racingKingsResult()` previously declared `wIn` (White king on 8th rank) an immediate White win regardless of turn. In Racing Kings, when White reaches rank 8, Black receives one final move on `turn === 'b'` to attempt to move Black's king to rank 8 to draw.
+   - `racingKingsResult()` inspects `this.legalMoves()` for an authoritative legal king move reaching rank index 7 on Black's turn (`turn === 'b'`). If Black has a goal-reaching reply, the game remains ongoing; if Black cannot reach rank 8, White wins immediately. If Black reaches rank 8 on the next move, the game ends in `variant_draw`.
+   - `perft()` and `perftDivide()` both stop at variant-terminal roots, so the aggregate count and root breakdown cannot disagree about a finished Racing Kings position.
+   - Correcting this turn logic brought `racingkings-start`, `occupied-goal`, and `near-discovered-check` into 100% agreement across all published depths (`racingkings-start` depths 1..5 including `9472927`, `occupied-goal` 1..6, `near-discovered-check` 1..4). Published `racingkings-start` depth 5 (`9472927`) is verified and included in automated tests.
 
 ## Consequences
 
-- Six of eight variants now have perft coverage; the chess-core suite goes from 16 tests to 24 and
-  runs in about 2.4 seconds.
-- A change that made `kingofthehill` diverge from standard move generation, or that dropped
-  crazyhouse drops, now fails a test. Both were verified by mutation rather than assumed.
-- `horde` and `racingkings` movegen remains unverified, and the ROADMAP says so.
+- All eight variants declared in `@chess-platform/core` now have perft verification.
+- The chess-core suite grows from 24 tests to 35 tests (including focused Horde and Racing Kings behavioral regression tests).
+- `horde` and `racingkings` move generation and terminal status logic are verified against independent published counts.
 
 ## Out of scope
 
@@ -92,4 +99,3 @@ The remaining work is sourcing published values from an independent implementati
   kiwipete, rights of `HAha` yield `perft(1) = 46`, identical to no castling rights at all, against
   48 for `KQkq`. The comment there points at a "960 module" that does not exist in
   `packages/chess-core/src/`. Recorded in `docs/ROADMAP.md`.
-- Any change to move generation. This increment adds tests only.

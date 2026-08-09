@@ -4,7 +4,16 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-07 - M14 Increment 39: Capabilities-driven navigation (ADR-0106)._
+_Last updated: 2026-08-09 - M14 Increment 42: Horde and Racing Kings perft coverage and rule fixes (ADR-0098)._
+
+## M14 Increment 42 - Horde and Racing Kings perft coverage and rule fixes (ADR-0098)
+
+Completes the perft suite for the remaining two chess variants (`horde` and `racingkings`), sourcing six reference positions from official `lichess-org/scalachess` perft resources (`horde.perft` and `racingkings.perft`) rather than golden-master outputs. Resolves two variant-rule defects in `@chess-platform/core`.
+
+- **Horde Pawn Double-Push & En-Passant (`packages/chess-core/src/movegen.ts`)**: White Horde pawns on ranks 1 and 2 (rank indices 0 and 1) are eligible for a two-square initial move. Updated `generatePseudoLegal` to allow White pawns on rank index 0 to double push to rank index 2 when both intermediate and destination squares are empty, and restricted `epSquare` creation in `applyMove` to double pushes from standard starting ranks (rank index 1 for White, 6 for Black). Brings `horde-start`, `horde-open-flank`, and `horde-en-passant` into 100% agreement across depths 1..4.
+- **Racing Kings Goal & Turn Semantics (`packages/chess-core/src/position.ts`)**: Corrected `racingKingsResult()` so that when White reaches rank 8, Black receives one final move on `turn === 'b'` to also reach rank 8 (for a draw). `racingKingsResult()` inspects `this.legalMoves()` to detect whether Black has any legal king move reaching rank index 7; if Black has no such move, White wins immediately. If both kings land on rank 8, `racingKingsResult` returns `variant_draw`. Brings `racingkings-start`, `occupied-goal`, and `near-discovered-check` into 100% agreement across all published depths.
+- **Perft Test Coverage & Behavioral Regression Tests (`packages/chess-core/test/perft.test.ts`, `packages/chess-core/test/rules.test.ts`)**: Added data-driven test cases for all six reference positions (`horde-start`, `horde-open-flank`, `horde-en-passant`, `racingkings-start` depths 1..5, `occupied-goal`, `near-discovered-check`) with EPDs completed by `0 1` fields and unified through a single `assertPerftCase` assertion helper. Added behavioral regression tests in `rules.test.ts` verifying Horde rank-1 pawn double pushes (confirming en-passant square remains `-`) and Racing Kings goal-reach win/draw semantics, plus regressions confirming `perftDivide()` exposes no root branches from a variant-terminal position and callers cannot mutate the memoized legal-move array used by perft. `racingkings-start` depth 5 (`9472927`) is verified 100% against official scalachess and included in automated perft coverage.
+- **Documentation (`docs/adr/0098-variant-perft.md`, `docs/ROADMAP.md`, `docs/PROJECT_STATE.md`)**: Amended ADR-0098 with independent sources, defects found, rule fixes, and consequences; updated `docs/ROADMAP.md` follow-up to resolved; added M14 Increment 42 entry to `docs/PROJECT_STATE.md`.
 
 ## M14 Increment 39 - Capabilities-driven navigation (ADR-0106)
 

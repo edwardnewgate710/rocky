@@ -24,7 +24,7 @@ export class IllegalMoveError extends Error {
 
 export class Position {
   private readonly state: PositionState;
-  private cachedLegal: Move[] | null = null;
+  private cachedLegal: readonly Move[] | null = null;
 
   private constructor(state: PositionState) {
     this.state = state;
@@ -62,11 +62,11 @@ export class Position {
     return parseFen(this.fen(), this.state.variant);
   }
 
-  /** All legal moves in the current position (memoized). */
+  /** All legal moves in the current position. Memoized; the returned array is frozen at runtime. */
   legalMoves(): readonly Move[] {
     let cached = this.cachedLegal;
     if (cached === null) {
-      cached = generateLegalMoves(this.state);
+      cached = Object.freeze(generateLegalMoves(this.state));
       this.cachedLegal = cached;
     }
     return cached;
@@ -173,7 +173,27 @@ export class Position {
 
   /** Compute the current game status (terminal or ongoing), variant-aware. */
   status(): GameStatus {
+    const variantStatus = this.variantTerminalStatus();
+    if (variantStatus) return variantStatus;
+
     const legal = this.legalMoves();
+    if (legal.length === 0) {
+      if (this.isCheck()) {
+        return { over: true, reason: 'checkmate', winner: opposite(this.state.turn) };
+      }
+      return { over: true, reason: 'stalemate' };
+    }
+
+    if (this.state.halfmoves >= 100 && this.state.variant !== 'threecheck') {
+      return { over: true, reason: 'fifty_move' };
+    }
+    if (this.hasInsufficientMaterial()) {
+      return { over: true, reason: 'insufficient_material' };
+    }
+    return { over: false };
+  }
+
+  private variantTerminalStatus(): GameStatus | null {
     const s = this.state;
 
     // Variant win conditions checked before generic terminal states.
@@ -203,21 +223,7 @@ export class Position {
       }
       if (whitePieces === 0) return { over: true, reason: 'variant_win', winner: 'b' };
     }
-
-    if (legal.length === 0) {
-      if (this.isCheck()) {
-        return { over: true, reason: 'checkmate', winner: opposite(s.turn) };
-      }
-      return { over: true, reason: 'stalemate' };
-    }
-
-    if (s.halfmoves >= 100 && s.variant !== 'threecheck') {
-      return { over: true, reason: 'fifty_move' };
-    }
-    if (this.hasInsufficientMaterial()) {
-      return { over: true, reason: 'insufficient_material' };
-    }
-    return { over: false };
+    return null;
   }
 
   private kingReachedCenter(): Color | null {
@@ -237,8 +243,22 @@ export class Position {
     const wIn = wk !== -1 && rankOf(wk) === 7;
     const bIn = bk !== -1 && rankOf(bk) === 7;
     if (wIn && bIn) return { over: true, reason: 'variant_draw' };
-    if (wIn) return { over: true, reason: 'variant_win', winner: 'w' };
-    if (bIn) return { over: true, reason: 'variant_win', winner: 'b' };
+
+    if (this.state.turn === 'w') {
+      if (wIn !== bIn) {
+        return { over: true, reason: 'variant_win', winner: wIn ? 'w' : 'b' };
+      }
+    } else {
+      if (bIn && !wIn) return { over: true, reason: 'variant_win', winner: 'b' };
+      if (wIn && !bIn) {
+        const blackCanReachGoal = this.legalMoves().some(
+          (move) => typeOf(move.piece) === 'k' && rankOf(move.to) === 7,
+        );
+        if (!blackCanReachGoal) {
+          return { over: true, reason: 'variant_win', winner: 'w' };
+        }
+      }
+    }
     return null;
   }
 
@@ -259,7 +279,8 @@ export class Position {
   /** Perft: count leaf nodes to `depth`. Used for engine verification. */
   perft(depth: number): number {
     if (depth === 0) return 1;
-    const moves = generateLegalMoves(this.state);
+    if (this.variantTerminalStatus() !== null) return 0;
+    const moves = this.legalMoves();
     if (depth === 1) return moves.length;
     let nodes = 0;
     for (const move of moves) {
@@ -270,8 +291,9 @@ export class Position {
 
   /** Perft divided by root move (debugging aid). */
   perftDivide(depth: number): Record<string, number> {
+    if (this.variantTerminalStatus() !== null) return {};
     const out: Record<string, number> = {};
-    for (const move of generateLegalMoves(this.state)) {
+    for (const move of this.legalMoves()) {
       out[this.toUci(move)] = new Position(applyMove(this.state, move)).perft(depth - 1);
     }
     return out;
