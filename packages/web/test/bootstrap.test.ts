@@ -108,7 +108,12 @@ function makeFakeEl(id?: string): HTMLElement {
       add: (c: string) => classList.add(c),
       remove: (c: string) => classList.delete(c),
       contains: (c: string) => classList.has(c),
-      toggle: (c: string) => { if (classList.has(c)) classList.delete(c); else classList.add(c); },
+      toggle: (c: string, force?: boolean) => {
+        if (force === true) classList.add(c);
+        else if (force === false || classList.has(c)) classList.delete(c);
+        else classList.add(c);
+        return classList.has(c);
+      },
     },
     addEventListener: () => {},
     removeEventListener: () => {},
@@ -148,10 +153,12 @@ function makeDoc(ids: string[] = ['board', 'status', 'flip', 'theme-toggle', 'au
   }
 
   const docEl = makeFakeEl('documentElement');
+  const body = makeFakeEl('body');
   return {
     getElementById: (id: string) => elements.get(id) ?? null,
     querySelectorAll: () => [],
     documentElement: docEl,
+    body,
   } as unknown as Document;
 }
 
@@ -162,10 +169,12 @@ function makeDocWithBoard(boardEl: HTMLElement, ids: string[] = ['status', 'flip
     elements.set(id, makeFakeEl(id));
   }
   const docEl = makeFakeEl('documentElement');
+  const body = makeFakeEl('body');
   return {
     getElementById: (id: string) => elements.get(id) ?? null,
     querySelectorAll: () => [],
     documentElement: docEl,
+    body,
   } as unknown as Document;
 }
 
@@ -379,6 +388,25 @@ test('C3: bootstrap without game ID does not open a connection', () => {
   const result = bootstrap(doc, { ...makeDeps(sockets) });
   assert.equal(sockets.sockets.length, 0, 'no socket without a game id');
   assert.equal(result.controller, null);
+});
+
+test('bootstrap marks only the game route on the body', () => {
+  const originalLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+
+  try {
+    for (const [pathname, expected] of [['/game/g1', true], ['/', false]] as const) {
+      const doc = makeDoc();
+      Object.defineProperty(globalThis, 'location', { configurable: true, value: { pathname } });
+      bootstrap(doc, { ...makeDeps(), gameId: '' });
+      assert.equal(doc.body.classList.contains('route-game'), expected, pathname);
+    }
+  } finally {
+    if (originalLocation) {
+      Object.defineProperty(globalThis, 'location', originalLocation);
+    } else {
+      delete (globalThis as { location?: unknown }).location;
+    }
+  }
 });
 
 test('C3: bootstrap opens a connection when no token is provided (anonymous spectator)', async () => {

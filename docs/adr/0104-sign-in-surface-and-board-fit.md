@@ -84,8 +84,10 @@ The click path and the Enter path now run the same code, so they cannot diverge.
 ### 3. The board takes the space that is left, and never estimates it
 
 `body` becomes a flex column with `min-height: 100dvh` (after a `100vh` fallback), `.game` takes
-`flex: 1` with `min-height: 0`, and `.cb-board` caps at `max-height: 100%`. `aspect-ratio`
-recomputes the width from the clamped height, so a square board fits whatever box it is handed.
+`flex: 1` with `min-height: 0`, and `.cb-board` takes `height: 100%` with an automatic width.
+`aspect-ratio` derives that width from the bounded height, while `max-width: 100%` can still shrink
+both axes when width is tighter. Keeping width automatic is essential: a definite `width: 100%`
+followed by `max-height: 100%` clamps only the height and distorts the board.
 
 The first attempt did this with `max-width: min(100%, calc(100dvh - var(--board-chrome)))` and a
 `--board-chrome: 96px` token measuring the topbar plus the grid's padding. The review of PR #101

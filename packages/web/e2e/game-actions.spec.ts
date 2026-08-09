@@ -52,6 +52,12 @@ test.describe('Game actions flow', () => {
       await expect(status1).toHaveText(/your move/i, { timeout: 15_000 });
       await expect(status2).toHaveText(/white to move/i, { timeout: 15_000 });
 
+      // BoardView maps both axes with one square size, so a visually squashed board also makes
+      // legal DOM clicks land on the wrong ranks.
+      const boardBox = await page1.locator('.cb-board').boundingBox();
+      if (boardBox === null) throw new Error('board has no rendered bounds');
+      expect(Math.abs(boardBox.width - boardBox.height)).toBeLessThan(1);
+
       // Both should see game actions
       await expect(page1.locator('#game-actions')).toBeVisible();
       await expect(page2.locator('#game-actions')).toBeVisible();

@@ -170,16 +170,40 @@ test('the board fits the window without estimating the chrome height', () => {
     /max-height:\s*100%/.test(board.body),
     'the board caps at 100% of the box it is given; aspect-ratio derives the width from there',
   );
+  assert.ok(
+    /(^|[;\s])height\s*:\s*100%/.test(board.body)
+      && /(^|[;\s])width\s*:\s*auto/.test(board.body),
+    'the bounded height must be the definite axis — width:100% fixes the other axis first, '
+      + 'so max-height squashes the board into a rectangle and breaks pointer-to-square mapping',
+  );
 
   // The cap only binds if the ancestors actually hand it a bounded height.
-  const body = rules().find((r) => r.selectors.includes('body'));
-  assert.ok(body && /min-height:\s*100d?vh/.test(body.body), 'body must be one viewport tall');
+  const all = rules();
+  const body = all.find((r) => r.selectors.includes('body'));
   assert.ok(body && /flex-direction:\s*column/.test(body.body), 'body must be a column');
-  const game = rules().find((r) => r.selectors.includes('.game') && r.body.includes('flex:'));
+  const game = all.find((r) => r.selectors.includes('.game') && r.body.includes('flex:'));
   assert.ok(game, '.game must take the height the topbar leaves');
   assert.ok(
     /min-height:\s*0/.test(game.body),
     'without min-height:0 a flex item will not shrink below its content, and the cap never binds',
+  );
+
+  /**
+   * The half this test used to miss. `max-height: 100%` needs a parent whose height is *definite*;
+   * against a parent that only has `min-height`, it resolves to nothing at all — the board sizes to
+   * the parent while the parent sizes to the board, and neither ever gives. Every assertion above
+   * passed while a 792px board hung 101px below the fold of a 767px window.
+   *
+   * So the assertion is on `height`, not `min-height`, and on the bootstrap-managed game-route
+   * marker rather than a browser-dependent relational selector.
+   */
+  const boundsTheGameColumn = all.some((rule) =>
+    rule.selectors.includes('body.route-game')
+    && /(^|[;\s])height\s*:\s*100d?vh/.test(rule.body));
+  assert.ok(
+    boundsTheGameColumn,
+    'the game route needs a definite `height` on the column, not just `min-height` — '
+      + 'a `max-height: 100%` child resolves to nothing against a parent that can grow',
   );
 });
 

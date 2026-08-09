@@ -484,6 +484,7 @@ export function bootstrap(
   const showStudies = route.name === 'studies';
   const showStudy = route.name === 'study';
   const showStudyChapter = route.name === 'study-chapter';
+  doc.body.classList.toggle('route-game', showGame);
   if (mainEl) mainEl.hidden = !showGame;
   if (lobbySectionEl) lobbySectionEl.hidden = !showLobby;
   if (profileSectionEl) profileSectionEl.hidden = !showProfile;
