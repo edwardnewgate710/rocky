@@ -118,3 +118,12 @@ test('serializes the forum routes back to their paths', () => {
   assert.equal(routeToPath({ name: 'forum', slug: 'city-chess' }), '/teams/city-chess/forum');
   assert.equal(routeToPath({ name: 'thread', slug: 'city-chess', threadId: 'th-1' }), '/teams/city-chess/forum/th-1');
 });
+
+test('parses /password-reset route', () => {
+  assert.deepEqual(parseRoute('/password-reset'), { name: 'password-reset' });
+  assert.deepEqual(parseRoute('/password-reset?token=abc-123'), { name: 'password-reset' });
+});
+
+test('serializes /password-reset route back to path', () => {
+  assert.equal(routeToPath({ name: 'password-reset' }), '/password-reset');
+});

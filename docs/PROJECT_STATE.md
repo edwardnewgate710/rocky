@@ -4,7 +4,15 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-09 - M14 Increment 44: WebAuthn Passkeys Real Browser Web Flow (ADR-0108)._
+_Last updated: 2026-08-11 - M14 Increment 45: Password-Recovery Web UI (ADR-0109)._
+
+## M14 Increment 45 - Password-Recovery Web UI (ADR-0109)
+
+Delivered full password-recovery web UI flow in `@chess-platform/web` over the existing M4 server contracts (`POST /v1/auth/password-reset/request` and `POST /v1/auth/password-reset/confirm`).
+- **Typed Web Client & Models (`packages/web/src/api/client.ts`, `models.ts`)**: Added typed request interfaces `PasswordResetRequest` and `PasswordResetConfirmRequest` to `models.ts` and `requestPasswordReset` and `confirmPasswordReset` methods to `AuthApi` in `client.ts`. Backend API contracts remain completely unchanged.
+- **SPA Routing & Surface Discoverability (`packages/web/src/app/router.ts`, `index.html`)**: Added SPA route `/password-reset` (accepting optional `?token=...` query parameter) and a discoverable "Forgot password?" link (`#auth-forgot-password`) on the signed-out auth surface.
+- **Form Orchestration & Session Cleanup (`packages/web/src/app/password-reset-controller.ts`, `bootstrap.ts`)**: Managed by DOM-free `PasswordResetController` with client validation (8..1024 char password length and matching confirmation), loading/disabled/aria-busy states, duplicate submission guards, and generic success messaging to prevent handle enumeration. On successful password reset confirmation (204), clears local auth session state (`auth.clearLocalSession()`).
+- **Token Secrecy & Lifecycle Hygiene (`packages/web/src/app/bootstrap.ts`, `lifecycle.ts`)**: Strips secret reset tokens from the visible URL via `history.replaceState` before any background network requests run, preventing token leakage in `Referer` headers. The token is held only in route-local memory and released after success or route teardown. Integrated into `BootstrappedDisposables` and `DISPOSABLE_TEARDOWN_MAP` for leak-free route teardown.
 
 ## M14 Increment 44 - WebAuthn Passkeys Real Browser Web Flow (ADR-0108)
 
@@ -1248,7 +1256,7 @@ analysis cache remains a future **ADR-0003** (would amend `DATABASE.md`).
 
 ### Exact next step for the next agent
 
-M14 Inc44 is complete: the real browser WebAuthn/passkey flow now covers the published list/delete/register-options/register-verify/login-options/login-verify endpoints. The next documented bounded item is the password-recovery web UI; do not claim it is built.
+M14 Inc45 is complete: password-recovery web UI is implemented and verified in `@chess-platform/web` over the existing M4 server contracts (`POST /v1/auth/password-reset/request` and `POST /v1/auth/password-reset/confirm`). Production email delivery remains deployment/provider-dependent (`ConsoleEmailSender` default per ADR-0026).
 
 ## 8. How to build & test today
 

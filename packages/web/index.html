@@ -132,7 +132,40 @@
           <button id="auth-passkey" type="button">Sign in with passkey</button>
         </div>
       </form>
+      <p class="auth-meta"><a id="auth-forgot-password" href="/password-reset" data-route="password-reset" class="auth-forgot-link">Forgot password?</a></p>
       <p id="auth-error" class="error" role="alert"></p>
+    </section>
+    <section id="password-reset" class="password-reset auth" aria-labelledby="password-reset-heading" hidden>
+      <h2 id="password-reset-heading">Password recovery</h2>
+      <div id="password-reset-request-view">
+        <form id="password-reset-request-form" class="auth-form" novalidate>
+          <div class="auth-field">
+            <label for="password-reset-request-input">Handle or email</label>
+            <input id="password-reset-request-input" type="text" autocomplete="username email" required />
+          </div>
+          <div class="auth-actions">
+            <button id="password-reset-request-submit" type="submit">Send reset link</button>
+          </div>
+        </form>
+      </div>
+      <div id="password-reset-confirm-view" hidden>
+        <form id="password-reset-confirm-form" class="auth-form" novalidate>
+          <div class="auth-field">
+            <label for="password-reset-confirm-password">New password</label>
+            <input id="password-reset-confirm-password" type="password" autocomplete="new-password" required minlength="8" maxlength="1024" />
+          </div>
+          <div class="auth-field">
+            <label for="password-reset-confirm-password-confirm">Confirm new password</label>
+            <input id="password-reset-confirm-password-confirm" type="password" autocomplete="new-password" required minlength="8" maxlength="1024" />
+          </div>
+          <div class="auth-actions">
+            <button id="password-reset-confirm-submit" type="submit">Reset password</button>
+          </div>
+        </form>
+      </div>
+      <p id="password-reset-status" class="social-note" role="status" aria-live="polite"></p>
+      <p id="password-reset-error" class="error" role="alert" aria-live="polite"></p>
+      <p class="auth-meta"><a id="password-reset-back-link" href="/" data-route="lobby">Back to sign in</a></p>
     </section>
     <section id="lobby" class="lobby" aria-label="Lobby" hidden>
       <div id="create-game" class="create-game"></div>

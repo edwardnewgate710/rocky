@@ -80,6 +80,7 @@ import { AuthController } from './auth-controller.js';
 import type { AuthController as AuthControllerType } from './auth-controller.js';
 import type { AuthSession } from './auth-controller.js';
 import { PasskeysController } from './passkeys-controller.js';
+import { PasswordResetController } from './password-reset-controller.js';
 import { renderPasskeys } from './passkeys-view.js';
 import type { WebAuthnAdapter } from '../ports/webauthn.js';
 import { parseRoute } from './router.js';
@@ -106,6 +107,7 @@ export interface BootstrappedDisposables {
   readonly learning: LearningControllerType | null;
   readonly studies: StudiesControllerType | null;
   readonly passkeys: { dispose: () => void } | null;
+  readonly passwordReset: { dispose: () => void } | null;
   readonly connectivity: { dispose: () => void } | null;
 }
 
@@ -307,6 +309,21 @@ export function bootstrap(
   doc: Document,
   deps?: BootstrapDependencies,
 ): Bootstrapped {
+  // Extract and immediately strip secret reset token from location bar BEFORE any network call or app composition
+  let activeResetToken: string | null = null;
+  const rawUrl = typeof location !== 'undefined' ? location.pathname + (location.search ?? '') : '/';
+  const route = parseRoute(rawUrl);
+  if (route.name === 'password-reset' && typeof location !== 'undefined' && location.search) {
+    const searchParams = new URLSearchParams(location.search);
+    const t = searchParams.get('token');
+    if (t) {
+      activeResetToken = t;
+      if (typeof history !== 'undefined' && typeof history.replaceState === 'function') {
+        history.replaceState(null, '', '/password-reset');
+      }
+    }
+  }
+
   const config = deps?.config ?? resolveConfig();
   const appDeps: AppDependencies = {
     config,
@@ -369,7 +386,7 @@ export function bootstrap(
         // the form inside it: the section carries the heading and the panel, so hiding only the
         // form left a signed-in visitor looking at an empty box titled "Sign in". That was
         // invisible while the section had no styling and obvious the moment it got some.
-        if (authSectionEl) authSectionEl.hidden = session !== null;
+        if (authSectionEl) authSectionEl.hidden = session !== null || showPasswordReset;
         if (authLogoutEl) authLogoutEl.hidden = session === null;
         // Update create-seek button state (M2 gating).
         const createBtn = doc.getElementById('create-seek');
@@ -461,11 +478,14 @@ export function bootstrap(
   // asynchronously via the httpOnly refresh cookie rather than from storage.
   const restorePromise = auth.restore();
 
-  // --- Determine route ---
-  const pathname = typeof location !== 'undefined' ? location.pathname : '/';
-  const route = parseRoute(pathname);
+  // --- Determine route & game params ---
   const gameId = deps?.gameId ?? (route.name === 'game' ? route.gameId : null);
   const token = deps?.token ?? app.api.session.current?.tokens.accessToken;
+  const showPasswordReset = route.name === 'password-reset';
+
+  // Set initial auth section visibility from already-known route and auth state
+  if (authSectionEl) authSectionEl.hidden = auth.currentSession !== null || showPasswordReset;
+  if (authLogoutEl) authLogoutEl.hidden = auth.currentSession === null;
 
   // --- Toggle top-level section visibility for the active route ---
   // index.html ships lobby/profile hidden; the game <main> is always present.
@@ -489,6 +509,7 @@ export function bootstrap(
   const studiesSectionEl = doc.getElementById('studies');
   const studySectionEl = doc.getElementById('study');
   const studyChapterSectionEl = doc.getElementById('study-chapter');
+  const passwordResetSectionEl = doc.getElementById('password-reset');
   const showGame = route.name === 'game';
   const showLobby = route.name === 'lobby';
   const showProfile = route.name === 'profile';
@@ -528,6 +549,7 @@ export function bootstrap(
   if (studiesSectionEl) studiesSectionEl.hidden = !showStudies;
   if (studySectionEl) studySectionEl.hidden = !showStudy;
   if (studyChapterSectionEl) studyChapterSectionEl.hidden = !showStudyChapter;
+  if (passwordResetSectionEl) passwordResetSectionEl.hidden = !showPasswordReset;
 
   // Board-only controls should not suggest functionality on lobby/profile
   // routes. They were previously visible everywhere despite doing nothing.
@@ -852,7 +874,7 @@ export function bootstrap(
         });
     }
 
-    return { app, board, controller, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, connectivity, auth, theme };
+    return { app, board, controller, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity, auth, theme };
   }
 
   // --- Lobby view ---
@@ -951,7 +973,7 @@ export function bootstrap(
 
     lobby.start();
 
-    return { app, board: null, controller: null, lobby, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, connectivity: null, auth, theme };
+    return { app, board: null, controller: null, lobby, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
   }
 
   // --- Profile view ---
@@ -1350,7 +1372,7 @@ export function bootstrap(
           },
         }
       : null;
-    return { app, board: null, controller: null, lobby: null, profile, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys, connectivity: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys, passwordReset: null, connectivity: null, auth, theme };
   }
 
   // --- Leaderboard view ---
@@ -1412,7 +1434,7 @@ export function bootstrap(
           leaderboardCtrl.dispose();
         }
       },
-      tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, connectivity: null, auth, theme
+      tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme
     };
   }
 
@@ -1453,7 +1475,7 @@ export function bootstrap(
     });
 
     void tournament.loadList();
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, connectivity: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
   }
 
   // --- Single tournament detail view ---
@@ -1505,7 +1527,7 @@ export function bootstrap(
     });
 
     void tournament.loadDetail(route.id);
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, connectivity: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
   }
 
   // --- Search view ---
@@ -1605,7 +1627,7 @@ export function bootstrap(
       if (resultsEl) renderSearchPrompt(resultsEl);
     }
 
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: searchCtrl, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, connectivity: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: searchCtrl, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
   }
 
   // --- Messages Inbox view (/messages) ---
@@ -1640,7 +1662,7 @@ export function bootstrap(
         .catch(() => undefined);
     }
 
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: messagesCtrl, teams: null, forum: null, learning: null, studies: null, passkeys: null, connectivity: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: messagesCtrl, teams: null, forum: null, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
   }
 
   // --- Conversation Thread view (/messages/:id) ---
@@ -1711,7 +1733,7 @@ export function bootstrap(
         .catch(() => undefined);
     }
 
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: messagesCtrl, teams: null, forum: null, learning: null, studies: null, passkeys: null, connectivity: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: messagesCtrl, teams: null, forum: null, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
   }
 
   // --- Teams list view (/teams) ---
@@ -1751,7 +1773,7 @@ export function bootstrap(
     }
 
     void teamsCtrl.loadList();
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: teamsCtrl, forum: null, learning: null, studies: null, passkeys: null, connectivity: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: teamsCtrl, forum: null, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
   }
 
   // --- Team detail view (/teams/:slug) ---
@@ -1858,7 +1880,7 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: teamsCtrl, forum: null, learning: null, studies: null, passkeys: null, connectivity: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: teamsCtrl, forum: null, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
   }
 
   // --- Forum thread list (/teams/:slug/forum) ---
@@ -1931,7 +1953,7 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: forumCtrl, learning: null, studies: null, passkeys: null, connectivity: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: forumCtrl, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
   }
 
   // --- Forum thread (/teams/:slug/forum/:threadId) ---
@@ -1997,7 +2019,7 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: forumCtrl, learning: null, studies: null, passkeys: null, connectivity: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: forumCtrl, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
   }
 
   // --- Courses list view (/courses) ---
@@ -2035,7 +2057,7 @@ export function bootstrap(
     });
 
     void learningCtrl.loadCourses();
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, studies: null, passkeys: null, connectivity: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
   }
 
   // --- Course detail view (/courses/:slug) ---
@@ -2077,7 +2099,7 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, studies: null, passkeys: null, connectivity: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
   }
 
   // --- Lesson detail view (/lessons/:id) ---
@@ -2138,7 +2160,7 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, studies: null, passkeys: null, connectivity: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
   }
 
   // --- Studies list view (/studies) ---
@@ -2188,7 +2210,7 @@ export function bootstrap(
     }
 
     void studiesCtrl.loadStudies();
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: studiesCtrl, passkeys: null, connectivity: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: studiesCtrl, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
   }
 
   // --- Study detail view (/studies/:id) ---
@@ -2239,7 +2261,7 @@ export function bootstrap(
     });
 
     void studiesCtrl.loadStudy(studyId);
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: studiesCtrl, passkeys: null, connectivity: null, auth, theme };
+    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: studiesCtrl, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
   }
 
   // --- Study chapter detail view (/studies/:id/chapters/:chapterId) ---
@@ -2300,7 +2322,112 @@ export function bootstrap(
     });
 
     void studiesCtrl.loadChapter(studyId, chapterId);
-    return { app, board: chapterBoard, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: studiesCtrl, passkeys: null, connectivity: null, auth, theme };
+    return { app, board: chapterBoard, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: studiesCtrl, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
+  }
+
+  // --- Password reset view ---
+  let passwordResetDisposable: { dispose: () => void } | null = null;
+  if (showPasswordReset) {
+    const requestViewEl = doc.getElementById('password-reset-request-view');
+    const confirmViewEl = doc.getElementById('password-reset-confirm-view');
+    const requestFormEl = doc.getElementById('password-reset-request-form') as HTMLFormElement | null;
+    const confirmFormEl = doc.getElementById('password-reset-confirm-form') as HTMLFormElement | null;
+    const requestInputEl = doc.getElementById('password-reset-request-input') as HTMLInputElement | null;
+    const confirmPassEl = doc.getElementById('password-reset-confirm-password') as HTMLInputElement | null;
+    const confirmPassConfirmEl = doc.getElementById('password-reset-confirm-password-confirm') as HTMLInputElement | null;
+    const requestSubmitEl = doc.getElementById('password-reset-request-submit') as HTMLButtonElement | null;
+    const confirmSubmitEl = doc.getElementById('password-reset-confirm-submit') as HTMLButtonElement | null;
+    const statusEl = doc.getElementById('password-reset-status');
+    const errorEl = doc.getElementById('password-reset-error');
+
+    if (requestViewEl) requestViewEl.hidden = activeResetToken !== null;
+    if (confirmViewEl) confirmViewEl.hidden = activeResetToken === null;
+    if (statusEl) statusEl.textContent = '';
+    if (errorEl) errorEl.textContent = '';
+
+    const passwordResetCtrl = new PasswordResetController({
+      client: app.api,
+      callbacks: {
+        onPending: (pending) => {
+          if (requestSubmitEl) {
+            requestSubmitEl.disabled = pending;
+            requestSubmitEl.textContent = pending ? 'Sending…' : 'Send reset link';
+          }
+          if (confirmSubmitEl) {
+            confirmSubmitEl.disabled = pending;
+            confirmSubmitEl.textContent = pending ? 'Resetting…' : 'Reset password';
+          }
+          if (requestInputEl) requestInputEl.disabled = pending;
+          if (confirmPassEl) confirmPassEl.disabled = pending;
+          if (confirmPassConfirmEl) confirmPassConfirmEl.disabled = pending;
+          if (requestFormEl) requestFormEl.setAttribute('aria-busy', String(pending));
+          if (confirmFormEl) confirmFormEl.setAttribute('aria-busy', String(pending));
+        },
+        onError: (msg) => {
+          if (errorEl) errorEl.textContent = msg ?? '';
+        },
+        onSuccess: (msg) => {
+          if (statusEl) statusEl.textContent = msg ?? '';
+          if (msg && activeResetToken !== null) {
+            activeResetToken = null;
+            if (confirmPassEl) confirmPassEl.value = '';
+            if (confirmPassConfirmEl) confirmPassConfirmEl.value = '';
+            if (confirmViewEl) confirmViewEl.hidden = true;
+          }
+        },
+        onSessionInvalidated: () => {
+          auth.clearLocalSession();
+        },
+      },
+    });
+
+    if (requestFormEl) {
+      requestFormEl.onsubmit = (e) => {
+        e.preventDefault();
+        const value = requestInputEl?.value ?? '';
+        void passwordResetCtrl.requestReset(value);
+      };
+    }
+
+    if (confirmFormEl) {
+      confirmFormEl.onsubmit = (e) => {
+        e.preventDefault();
+        const pass = confirmPassEl?.value ?? '';
+        const confirmPass = confirmPassConfirmEl?.value ?? '';
+        if (activeResetToken) {
+          void passwordResetCtrl.confirmReset(activeResetToken, pass, confirmPass);
+        }
+      };
+    }
+
+    passwordResetDisposable = {
+      dispose: () => {
+        if (requestFormEl) requestFormEl.onsubmit = null;
+        if (confirmFormEl) confirmFormEl.onsubmit = null;
+        passwordResetCtrl.dispose();
+      },
+    };
+
+    return {
+      app,
+      board: null,
+      controller: null,
+      lobby: null,
+      profile: null,
+      leaderboard: null,
+      tournament: null,
+      search: null,
+      messages: null,
+      teams: null,
+      forum: null,
+      learning: null,
+      studies: null,
+      passkeys: null,
+      passwordReset: passwordResetDisposable,
+      connectivity: null,
+      auth,
+      theme,
+    };
   }
 
   // --- Standalone board (no game ID, no lobby, no profile, no tournament, no search, no messages) ---
@@ -2308,5 +2435,5 @@ export function bootstrap(
     ? mountBoard({ boardEl, statusEl, flipEl })
     : null;
 
-  return { app, board, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, connectivity: null, auth, theme };
+  return { app, board, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
 }

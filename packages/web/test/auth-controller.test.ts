@@ -214,6 +214,53 @@ test('M12 inc 2: reload path — persisted {handle,userId} + refresh yields sess
   assert.equal(refreshResult.tokens.accessToken, 'fresh-from-cookie');
 });
 
+test('password reset clearance wins over an in-flight session restore', async () => {
+  const storage = makeFakeStorage();
+  storage.setItem('gambit-session', JSON.stringify({ handle: 'alice', userId: 'u1' }));
+
+  let releaseRefresh!: () => void;
+  const refreshGate = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+  let currentAccessToken: string | undefined;
+  let client: any;
+  const refreshed = {
+    user: { id: 'u1', handle: 'alice', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] },
+    tokens: { accessToken: 'late-token', tokenType: 'Bearer', expiresIn: 900, refreshExpiresAt: '2030-01-01T00:00:00Z' },
+  };
+  client = makeFakeClient({
+    refresh: async () => {
+      await refreshGate;
+      client.session.adopt(refreshed);
+      return refreshed;
+    },
+  });
+  client.session = {
+    get current() { return currentAccessToken ? { tokens: { accessToken: currentAccessToken } } : null; },
+    adopt: (auth: any) => { currentAccessToken = auth.tokens.accessToken; },
+    reset: () => { currentAccessToken = undefined; },
+  };
+
+  const sessions: (AuthSession | null)[] = [];
+  const ctrl = new AuthController({
+    client,
+    callbacks: {
+      onSessionChange: (session) => { sessions.push(session); },
+      onPending: () => {},
+      onError: () => {},
+    },
+    storage,
+  });
+
+  const restore = ctrl.restore();
+  ctrl.clearLocalSession();
+  releaseRefresh();
+
+  assert.equal(await restore, null);
+  assert.equal(ctrl.isAuthenticated(), false);
+  assert.equal(client.session.current, null);
+  assert.equal(storage.getItem('gambit-session'), null);
+  assert.deepEqual(sessions, [null]);
+});
+
 test('dispose ignores future calls', async () => {
   const client = makeFakeClient() as any;
   let changes = 0;

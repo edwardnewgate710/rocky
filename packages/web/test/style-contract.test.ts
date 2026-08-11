@@ -147,7 +147,7 @@ test('the promotion tile sizes and centres its piece artwork', () => {
  * some classes are behavioural hooks with nothing to style; growing the list is how a future
  * surface joins the guarantee.
  */
-const STYLED_CLASSES = ['auth', 'auth-form', 'auth-field', 'auth-actions', 'passkeys-actions'];
+const STYLED_CLASSES = ['auth', 'auth-form', 'auth-field', 'auth-actions', 'auth-meta', 'passkeys-actions'];
 
 test('every class the auth surface carries is matched by a rule', () => {
   const HTML = readFileSync(resolve(PACKAGE_ROOT, 'index.html'), 'utf8');

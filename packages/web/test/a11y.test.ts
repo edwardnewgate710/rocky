@@ -318,3 +318,25 @@ test('passkeys status region has role=status and aria-live=polite', () => {
 test('passkeys error region has role=alert', () => {
   assert.match(HTML_TEMPLATE, /id="passkeys-error"[^>]*role="alert"/);
 });
+
+// --- Password Recovery region (M14 inc 45) ---
+
+test('auth section carries a forgot password link', () => {
+  assert.ok(HTML_TEMPLATE.includes('id="auth-forgot-password"'));
+});
+
+test('password reset section carries aria-labelledby heading', () => {
+  assert.ok(HTML_TEMPLATE.includes('id="password-reset"'));
+  assert.ok(HTML_TEMPLATE.includes('aria-labelledby="password-reset-heading"'));
+});
+
+test('password reset forms carry labelled inputs', () => {
+  assert.ok(HTML_TEMPLATE.includes('for="password-reset-request-input"'));
+  assert.ok(HTML_TEMPLATE.includes('for="password-reset-confirm-password"'));
+  assert.ok(HTML_TEMPLATE.includes('for="password-reset-confirm-password-confirm"'));
+});
+
+test('password reset status and error regions have appropriate ARIA roles', () => {
+  assert.match(HTML_TEMPLATE, /id="password-reset-status"[^>]*role="status"[^>]*aria-live="polite"/);
+  assert.match(HTML_TEMPLATE, /id="password-reset-error"[^>]*role="alert"/);
+});

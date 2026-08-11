@@ -127,6 +127,15 @@ export interface LoginRequest {
   readonly password: string;
 }
 
+export interface PasswordResetRequest {
+  readonly handleOrEmail: string;
+}
+
+export interface PasswordResetConfirmRequest {
+  readonly token: string;
+  readonly newPassword: string;
+}
+
 /**
  * Refresh request body. Used by non-browser API clients that send the
  * refresh token in the JSON body. The browser flow omits the body and

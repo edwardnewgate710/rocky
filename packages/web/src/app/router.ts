@@ -15,6 +15,7 @@
  * - `/tournaments` → tournaments list
  * - `/tournaments/{id}` → tournament detail
  * - `/search` → search
+ * - `/password-reset` → password recovery form (optional ?token=...)
  */
 
 export type Route =
@@ -37,17 +38,22 @@ export type Route =
   | { readonly name: 'studies' }
   | { readonly name: 'study'; readonly id: string }
   | { readonly name: 'study-chapter'; readonly id: string; readonly chapterId: string }
+  | { readonly name: 'password-reset' }
   | { readonly name: 'not-found' };
 
 /** Parse a URL pathname into a typed route. */
 export function parseRoute(pathname: string): Route {
-  const segments = pathname.split('/').filter(Boolean);
+  const [pathOnly] = pathname.split('?');
+  const segments = (pathOnly ?? '').split('/').filter(Boolean);
   if (segments.length === 0) return { name: 'lobby' };
   if (segments[0] === 'game' && segments.length >= 2) {
     return { name: 'game', gameId: segments[1]! };
   }
   if (segments[0] === 'profile') {
     return { name: 'profile', handle: segments[1] ?? null };
+  }
+  if (segments[0] === 'password-reset') {
+    return segments.length === 1 ? { name: 'password-reset' } : { name: 'not-found' };
   }
   if (segments[0] === 'leaderboard') {
     if (segments.length === 1) return { name: 'leaderboard' };
@@ -148,6 +154,8 @@ export function routeToPath(route: Route): string {
       return `/studies/${route.id}`;
     case 'study-chapter':
       return `/studies/${route.id}/chapters/${route.chapterId}`;
+    case 'password-reset':
+      return '/password-reset';
     case 'not-found':
       return '/not-found';
   }
