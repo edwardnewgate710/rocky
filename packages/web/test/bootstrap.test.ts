@@ -2,9 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bootstrap, extractGameId, formatClock, formatTimeControl } from '../src/app/bootstrap.js';
 import type { BootstrapDependencies } from '../src/app/bootstrap.js';
+import { createLifecycle } from '../src/app/lifecycle.js';
 import { GameController } from '../src/app/game-controller.js';
 import { FakeTransport, json } from './support/fake-transport.js';
 import { FakeSocketFactory } from './support/fake-socket.js';
+import type { HttpResponse, HttpTransport } from '../src/ports/http.js';
 import { MemoryTokenStore } from '../src/net/session.js';
 import type { ServerMessage, StateView } from '../src/net/ws-protocol.js';
 import type { WebAuthnAdapter } from '../src/ports/webauthn.js';
@@ -90,9 +92,27 @@ class FakeHTMLFormElement {
 }
 (globalThis as any).HTMLFormElement = FakeHTMLFormElement;
 
+class FakeWindowEvents {
+  private readonly listeners = new Map<string, Set<EventListener>>();
+
+  addEventListener(type: string, listener: EventListener): void {
+    const listeners = this.listeners.get(type) ?? new Set<EventListener>();
+    listeners.add(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  removeEventListener(type: string, listener: EventListener): void {
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  listenerCount(type: string): number {
+    return this.listeners.get(type)?.size ?? 0;
+  }
+}
+
 /** IDs that should be treated as HTMLButtonElement instances. */
 const BUTTON_IDS = new Set([
-  'auth-submit', 'auth-logout', 'create-seek', 'flip', 'theme-toggle',
+  'auth-submit', 'auth-register', 'auth-logout', 'create-seek', 'flip', 'theme-toggle',
   'action-resign', 'confirm-resign-yes', 'confirm-resign-no',
   'action-abort', 'confirm-abort-yes', 'confirm-abort-no',
   'action-offer-draw', 'action-accept-draw', 'action-decline-draw', 'action-claim-flag',
@@ -352,6 +372,78 @@ test('bootstrap with game ID opens a connection via gameSync.start()', () => {
   // C3: bootstrap now calls gameSync.start(), which opens the WebSocket.
   assert.equal(sockets.sockets.length, 1, 'a socket should be opened for a game view');
   assert.ok(result.controller);
+});
+
+test('route teardown closes the app socket and removes browser connectivity listeners', () => {
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  const browserEvents = new FakeWindowEvents();
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: browserEvents });
+
+  try {
+    const doc = makeDoc();
+    const sockets = new FakeSocketFactory();
+    const lifecycle = createLifecycle(() => bootstrap(doc, {
+      ...makeDeps(sockets),
+      gameId: 'g1',
+      token: 'token-u1',
+    }));
+
+    lifecycle.run();
+    sockets.last.open();
+    assert.equal(browserEvents.listenerCount('offline'), 1);
+    assert.equal(browserEvents.listenerCount('online'), 1);
+
+    lifecycle.teardown();
+
+    assert.deepEqual(sockets.last.closed, { code: 1000, reason: 'app-disposed' });
+    assert.equal(browserEvents.listenerCount('offline'), 0);
+    assert.equal(browserEvents.listenerCount('online'), 0);
+  } finally {
+    if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
+    else delete (globalThis as { window?: unknown }).window;
+  }
+});
+
+test('route teardown prevents a delayed auth restore from reopening the game socket', async () => {
+  let resolveRefresh: ((response: HttpResponse) => void) | undefined;
+  let refreshRequests = 0;
+  const refreshResponse = new Promise<HttpResponse>((resolve) => {
+    resolveRefresh = resolve;
+  });
+  const transport: HttpTransport = {
+    send: (request) => {
+      if (new URL(request.url).pathname === '/v1/auth/refresh') {
+        refreshRequests += 1;
+        return refreshResponse;
+      }
+      return Promise.resolve(json(200, {}));
+    },
+  };
+  const storage = {
+    getItem: () => JSON.stringify({ handle: 'alice', userId: 'u1' }),
+    setItem: () => undefined,
+    removeItem: () => undefined,
+  };
+  const sockets = new FakeSocketFactory();
+  const lifecycle = createLifecycle(() => bootstrap(makeDoc(), {
+    ...makeDeps(sockets),
+    gameId: 'g1',
+    httpTransport: transport,
+    storage,
+  }));
+
+  lifecycle.run();
+  assert.equal(refreshRequests, 1, 'auth restoration must be pending for the race to be exercised');
+  assert.equal(sockets.sockets.length, 0, 'the socket waits for auth restoration');
+  lifecycle.teardown();
+  if (!resolveRefresh) throw new Error('refresh resolver was not initialized');
+  resolveRefresh(json(200, {
+    user: { id: 'u1', handle: 'alice', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] },
+    tokens: { accessToken: 'restored-token', tokenType: 'Bearer', expiresIn: 900, refreshExpiresAt: '2030-01-01T00:00:00Z' },
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(sockets.sockets.length, 0, 'a torn-down route must not reconnect after auth settles');
 });
 
 test('bootstrap wires onPosition callback to board.setPosition', () => {
@@ -948,6 +1040,63 @@ test('SPA re-bootstrap keeps one passkey sign-in action per click', async () => 
 
   const optionsCalls = transport.calls.filter((call) => call.url.endsWith('/v1/auth/webauthn/login/options'));
   assert.equal(optionsCalls.length, 1);
+});
+
+test('SPA re-bootstrap keeps one registration action per click', async () => {
+  const doc = makeDoc([
+    'auth', 'auth-status', 'auth-logout', 'auth-submit', 'auth-register', 'auth-error',
+    'auth-form', 'auth-handle', 'auth-password', 'create-seek', 'theme-toggle',
+  ]);
+  const transport = new FakeTransport().onEach((request) => {
+    const path = new URL(request.url).pathname;
+    if (path === '/v1/capabilities') return json(200, { capabilities: {} });
+    if (path === '/v1/auth/register') {
+      return json(201, {
+        user: { id: 'u1', handle: 'alice', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] },
+        tokens: { accessToken: 'tok', tokenType: 'Bearer', expiresIn: 900, refreshExpiresAt: '2030-01-01T00:00:00Z' },
+      });
+    }
+    return json(404, {});
+  });
+  (doc.getElementById('auth-handle') as unknown as { value: string }).value = 'alice';
+  (doc.getElementById('auth-password') as unknown as { value: string }).value = 'password1';
+
+  bootstrap(doc, { ...makeDeps(), httpTransport: transport });
+  bootstrap(doc, { ...makeDeps(), httpTransport: transport });
+  (doc.getElementById('auth-register') as unknown as FakeHTMLButtonElement).click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const registerCalls = transport.calls.filter((call) => call.url.endsWith('/v1/auth/register'));
+  assert.equal(registerCalls.length, 1);
+});
+
+test('SPA re-bootstrap keeps one logout action per click', async () => {
+  const doc = makeDoc([
+    'auth', 'auth-status', 'auth-logout', 'auth-submit', 'auth-error',
+    'auth-form', 'auth-handle', 'auth-password', 'create-seek', 'theme-toggle',
+  ]);
+  const transport = new FakeTransport().onEach((request) => {
+    const path = new URL(request.url).pathname;
+    if (path === '/v1/capabilities') return json(200, { capabilities: {} });
+    if (path === '/v1/auth/login') {
+      return json(200, {
+        user: { id: 'u1', handle: 'alice', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] },
+        tokens: { accessToken: 'tok', tokenType: 'Bearer', expiresIn: 900, refreshExpiresAt: '2030-01-01T00:00:00Z' },
+      });
+    }
+    if (path === '/v1/auth/logout') return json(200, {});
+    return json(404, {});
+  });
+
+  const first = bootstrap(doc, { ...makeDeps(), httpTransport: transport });
+  const second = bootstrap(doc, { ...makeDeps(), httpTransport: transport });
+  await first.auth.login('alice', 'password1');
+  await second.auth.login('alice', 'password1');
+  (doc.getElementById('auth-logout') as unknown as FakeHTMLButtonElement).click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const logoutCalls = transport.calls.filter((call) => call.url.endsWith('/v1/auth/logout'));
+  assert.equal(logoutCalls.length, 1);
 });
 
 test('self profile passkeys region visibility, failure independence, and teardown', async () => {

@@ -25,7 +25,7 @@ The goal of this increment is to make forgetting to tear down a disposable struc
 
 ### 1. Derive `DisposableKey` from `BootstrappedDisposables` for compile-time exhaustiveness
 
-`BootstrappedDisposables` defines every disposable returned by `bootstrap()`. `Bootstrapped` extends `BootstrappedDisposables` with non-disposable infrastructure handles (`app`, `auth`, `theme`).
+`BootstrappedDisposables` defines every disposable returned by `bootstrap()`. `Bootstrapped` extends `BootstrappedDisposables` with the non-disposable infrastructure handles `auth` and `theme`; `app` is disposable because it owns the route's realtime client.
 
 Teardown is driven by `DISPOSABLE_TEARDOWN_MAP`, typed strictly as `Record<DisposableKey, true>`. Adding a new field to `BootstrappedDisposables` without registering it in `DISPOSABLE_TEARDOWN_MAP` causes TypeScript compilation to fail immediately:
 
@@ -51,11 +51,16 @@ All disposables carried by `BootstrappedDisposables` now implement `dispose(): v
 
 `GameController.stop()` (and `dispose()`) now invokes `this.gameSync.stop()`. `GameSync.stop()` unsubscribes `GameSync` from the shared `WsClient` without terminating the underlying app-wide WebSocket connection, releasing game socket subscriptions promptly when leaving a game route.
 
+### 5. Dispose route-owned browser connectivity resources
+
+Each bootstrap creates its own `App` and therefore owns that app's `WsClient`. `App.dispose()` closes the realtime connection and cancels its reconnect and heartbeat timers. Game routes also return a connectivity disposable that removes their named `online` and `offline` listeners and invalidates any deferred socket start still waiting for authentication restoration. The teardown map disposes the game controller and connectivity listener/guard before disposing the app, so a navigation cannot leave or later reopen a socket or browser listener.
+
 ## Consequences
 
 - Forgetting to register a disposable returned by `bootstrap` causes an immediate TypeScript compile error.
 - The run/teardown loop has unit tests for the first time, without needing a DOM (`packages/web/test/lifecycle.test.ts`): teardown happens before the next bootstrap, a `null` slot is skipped, and the exhaustiveness guarantee is pinned by a `@ts-expect-error` case that stops compiling if the guard is ever weakened. What is *not* covered is whether each individual controller's own `dispose()` does the right thing — those remain each controller's own tests.
 - `GameController` and `GameSync` subscriptions release cleanly when navigating away from `/game/{id}` routes.
+- The route-owned WebSocket and its `online`/`offline` browser listeners are released on every game-route teardown.
 - `main.ts` is simplified to a thin DOM event binding shell around `createLifecycle`.
 
 ## Alternatives considered

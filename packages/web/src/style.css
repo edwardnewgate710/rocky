@@ -108,21 +108,6 @@ body {
   min-height: 100vh;
   min-height: 100dvh;
 }
-/* On the game route only, the column is exactly one viewport tall rather than at least one.
- *
- * `min-height` alone is not enough for the board's `max-height: 100%` to mean anything: the board
- * sizes to its parent while the parent, having only a floor, sizes to its content — so each waits
- * for the other and the cap never binds. Measured on a 767px window, `.game` came out 824px and the
- * board 792px, hanging 101px past the fold. Increment 40 exposed it by restoring `.game` to its
- * full 1100px, which let the board grow wide enough for height to become the binding dimension.
- *
- * Bootstrap adds `route-game` from the active route, so the height stays scoped without depending
- * on the `:has()` selector. Applying it to every page would clamp the lobby, profile and team lists
- * to a viewport as well, and those are meant to grow and scroll. */
-body.route-game {
-  height: 100vh;
-  height: 100dvh;
-}
 .skip-link {
   position: absolute;
   left: -999px;
@@ -162,39 +147,37 @@ body.route-game {
   flex: 1;
   min-height: 0;
 }
-@media (min-width: 720px) {
-  .game { grid-template-columns: minmax(320px, 1fr) 260px; }
-}
-/* The board is square, so a width-only constraint lets it grow taller than the window: measured at
-   1515x784 it computed 810px and pushed rank 1 — the player's own back rank — below the fold, so
-   you had to scroll to see your own pieces.
-
-   The bound is the space actually left over, never an estimate of it. The first version subtracted
-   a hard-coded 96px for the chrome and was wrong the moment the chrome changed: `.topbar` carries
-   `flex-wrap: wrap`, so on a narrow window it becomes two rows and the board overflowed again on
-   exactly the screens with the least room — and on a very short viewport the subtraction went
-   negative, which makes `max-width` invalid, so it was dropped entirely and the overflow came
-   back. Both raised in the review of PR #101.
-
-   So: the page is a column exactly one viewport tall, `.game` takes what the topbar leaves, and the
-   board takes 100% of *that height*. Its width stays automatic, so `aspect-ratio` derives the other
-   axis and `max-width` can still shrink both on a narrow screen. A definite `width: 100%` here would
-   let `max-height` squash only the height, turning the board into a rectangle and breaking the
-   pointer geometry. */
+/* Small screens need the board to claim the available line. A height-driven board shares a fixed
+   viewport column with the stacked sidebar and collapsed to 115px at 390×844. Let the page scroll
+   vertically instead: width establishes the square and the sidebar follows below it. */
 .cb-board {
   display: grid;
   grid-template-columns: repeat(8, 1fr);
   grid-template-rows: repeat(8, 1fr);
   aspect-ratio: 1 / 1;
-  width: auto;
-  height: 100%;
+  width: 100%;
+  height: auto;
   max-width: 100%;
-  max-height: 100%;
   justify-self: center;
   margin-inline: auto;
   user-select: none;
   border-radius: 6px;
   overflow: hidden;
+}
+/* At desktop widths the board and sidebar sit side by side, so vertical space becomes the useful
+   bound. The game-only definite height makes the percentage cap resolvable without estimating the
+   topbar height; `width:auto` preserves the board's square aspect ratio. */
+@media (min-width: 720px) {
+  body.route-game {
+    height: 100vh;
+    height: 100dvh;
+  }
+  .game { grid-template-columns: minmax(320px, 1fr) 260px; }
+  .cb-board {
+    width: auto;
+    height: 100%;
+    max-height: 100%;
+  }
 }
 .cb-sq {
   display: flex;
@@ -212,6 +195,14 @@ body.route-game {
   outline: 1px solid var(--sel-edge);
   outline-offset: -1px;
   box-shadow: inset 0 0 0 3px var(--sel);
+}
+/* Roving keyboard focus uses the same two-tone, board-safe contrast treatment as selection, with a
+   wider footprint so focus remains distinct when the focused square is also selected. */
+.cb-sq:focus-visible {
+  outline: 1px solid var(--sel-edge);
+  outline-offset: -1px;
+  box-shadow: inset 0 0 0 4px var(--sel);
+  z-index: var(--z-board-cue);
 }
 /* Last-move and premove are separated by LIGHTNESS, not hue alone: composited
    over the board they measure 1.88:1 (light square) and 2.13:1 (dark square)
@@ -236,7 +227,9 @@ body.route-game {
    band and would mute it. Inset them by the ring width in that overlap so the
    ring stays crisp and selection is never ambiguous. */
 .cb-selected.cb-last::before,
-.cb-selected.cb-premove::before {
+.cb-selected.cb-premove::before,
+.cb-sq:focus-visible.cb-last::before,
+.cb-sq:focus-visible.cb-premove::before {
   inset: 3px;
 }
 /* Legal destination: a dot for empty squares, a ring for captures. */

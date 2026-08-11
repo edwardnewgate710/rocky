@@ -13,9 +13,13 @@ interface Rule {
   readonly body: string;
 }
 
+function stripCssComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
 /** Every top-level rule in the stylesheet, comments stripped. */
-function rules(): Rule[] {
-  const stripped = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+function rules(source = CSS): Rule[] {
+  const stripped = stripCssComments(source);
   const out: Rule[] = [];
   for (const chunk of stripped.split('}')) {
     const brace = chunk.indexOf('{');
@@ -26,6 +30,42 @@ function rules(): Rule[] {
   }
   return out;
 }
+
+/** Body of the first matching at-rule, accounting for nested declaration blocks. */
+function atRuleBody(marker: string, source = CSS): string {
+  const stripped = stripCssComments(source);
+  const markerIndex = stripped.indexOf(marker);
+  assert.notEqual(markerIndex, -1, `could not find ${marker}`);
+  const open = stripped.indexOf('{', markerIndex);
+  assert.notEqual(open, -1, `could not find the opening brace for ${marker}`);
+
+  let depth = 1;
+  let quote: "'" | '"' | undefined;
+  let escaped = false;
+  for (let index = open + 1; index < stripped.length; index += 1) {
+    const character = stripped[index];
+    if (quote !== undefined) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === quote) quote = undefined;
+      continue;
+    }
+    if (character === "'" || character === '"') quote = character;
+    else if (character === '{') depth += 1;
+    else if (character === '}' && --depth === 0) return stripped.slice(open + 1, index);
+  }
+  throw new Error(`could not find the closing brace for ${marker}`);
+}
+
+test('at-rule parsing ignores braces in comments and quoted values', () => {
+  const source = `@media (min-width: 720px) {
+    /* A closing brace here must not terminate the at-rule: } */
+    .label { content: "}"; }
+    .target { inline-size: 100%; }
+  }`;
+
+  assert.match(atRuleBody('@media (min-width: 720px)', source), /\.target\s*\{\s*inline-size:\s*100%/);
+});
 
 const USES_BACKGROUND_SHORTHAND = /(^|[;\s])background\s*:/;
 
@@ -179,14 +219,9 @@ test('the board fits the window without estimating the chrome height', () => {
       'that estimate goes stale the moment the topbar wraps, and goes negative on a short window',
   );
   assert.ok(
-    /max-height:\s*100%/.test(board.body),
-    'the board caps at 100% of the box it is given; aspect-ratio derives the width from there',
-  );
-  assert.ok(
-    /(^|[;\s])height\s*:\s*100%/.test(board.body)
-      && /(^|[;\s])width\s*:\s*auto/.test(board.body),
-    'the bounded height must be the definite axis — width:100% fixes the other axis first, '
-      + 'so max-height squashes the board into a rectangle and breaks pointer-to-square mapping',
+    /(^|[;\s])width\s*:\s*100%/.test(board.body)
+      && /(^|[;\s])height\s*:\s*auto/.test(board.body),
+    'the mobile board must be width-driven so stacked game controls cannot collapse it',
   );
 
   // The cap only binds if the ancestors actually hand it a bounded height.
@@ -209,7 +244,8 @@ test('the board fits the window without estimating the chrome height', () => {
    * So the assertion is on `height`, not `min-height`, and on the bootstrap-managed game-route
    * marker rather than a browser-dependent relational selector.
    */
-  const boundsTheGameColumn = all.some((rule) =>
+  const desktop = rules(atRuleBody('@media (min-width: 720px)'));
+  const boundsTheGameColumn = desktop.some((rule) =>
     rule.selectors.includes('body.route-game')
     && /(^|[;\s])height\s*:\s*100d?vh/.test(rule.body));
   assert.ok(
@@ -217,6 +253,21 @@ test('the board fits the window without estimating the chrome height', () => {
     'the game route needs a definite `height` on the column, not just `min-height` — '
       + 'a `max-height: 100%` child resolves to nothing against a parent that can grow',
   );
+  const desktopBoard = desktop.find((rule) => rule.selectors.includes('.cb-board'));
+  assert.ok(desktopBoard, 'the desktop breakpoint must switch the board to a height-driven square');
+  assert.ok(
+    /(^|[;\s])height\s*:\s*100%/.test(desktopBoard.body)
+      && /(^|[;\s])width\s*:\s*auto/.test(desktopBoard.body)
+      && /max-height:\s*100%/.test(desktopBoard.body),
+    'desktop must use the bounded height as the definite axis and derive width from the square ratio',
+  );
+});
+
+test('keyboard focus on a board square has a visible board-safe indicator', () => {
+  const focus = rules().find((rule) => rule.selectors.includes('.cb-sq:focus-visible'));
+  assert.ok(focus, 'board squares need an explicit focus-visible treatment');
+  assert.match(focus.body, /outline\s*:/);
+  assert.match(focus.body, /box-shadow\s*:/);
 });
 
 /**

@@ -33,6 +33,13 @@ function log(msg) {
   console.log(`[smoke] ${msg}`);
 }
 
+function requireHeader(response, name, expected) {
+  const actual = response.headers.get(name);
+  if (actual !== expected) {
+    throw new Error(`GET ${webUrl}/ returned ${name}: ${actual ?? '<missing>'}; expected ${expected}`);
+  }
+}
+
 async function waitForHealth(url, name) {
   const deadline = Date.now() + TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -170,6 +177,25 @@ async function main() {
   await waitForHealth(webUrl, 'Web');
   // Gateway health is on port+1 inside the container, but from outside we
   // can check the WS port is listening by attempting a connection later.
+  log('');
+
+  log('Checking the web document security headers...');
+  const webDocument = await fetch(webUrl);
+  requireHeader(webDocument, 'x-frame-options', 'DENY');
+  requireHeader(webDocument, 'x-content-type-options', 'nosniff');
+  requireHeader(webDocument, 'referrer-policy', 'no-referrer');
+  requireHeader(webDocument, 'cross-origin-resource-policy', 'same-origin');
+  requireHeader(
+    webDocument,
+    'permissions-policy',
+    'camera=(), geolocation=(), microphone=(), payment=()',
+  );
+  requireHeader(webDocument, 'strict-transport-security', 'max-age=31536000; includeSubDomains');
+  const contentSecurityPolicy = webDocument.headers.get('content-security-policy') ?? '';
+  if (!contentSecurityPolicy.includes("frame-ancestors 'none'")) {
+    throw new Error(`GET ${webUrl}/ permits framing: ${contentSecurityPolicy || '<missing CSP>'}`);
+  }
+  log('✓ Web document rejects framing and carries the required security headers');
   log('');
 
   // 1b. The Prometheus registry must not be reachable through the public web proxy. Its `route`

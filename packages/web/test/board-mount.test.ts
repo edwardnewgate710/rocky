@@ -6,7 +6,7 @@ import { mountBoard } from '../src/app/board.js';
  * Records listener add/remove calls so a remount can be checked for stacking.
  *
  * There is no DOM in this package's unit tests, and `BoardView` touches very little of the element:
- * two class/attribute setters, `innerHTML`, and the two listeners this is about. A fake covering
+ * two class/attribute setters, `innerHTML`, and the three listeners this is about. A fake covering
  * exactly that is enough, and keeps the assertion on the thing that matters — the net number of
  * live handlers — rather than on a rendered tree Playwright already covers.
  */
@@ -48,13 +48,15 @@ test('remounting a board does not stack listeners on the same element', () => {
 
   assert.equal(board.liveCount('click'), 1, 'one live click handler after three mounts');
   assert.equal(board.liveCount('pointerdown'), 1, 'one live pointerdown handler after three mounts');
+  assert.equal(board.liveCount('keydown'), 1, 'one live keydown handler after three mounts');
   assert.equal(flip.liveCount('click'), 1, 'one live flip handler after three mounts');
 
   // Sanity: the mounts really did attach each time, so the counts above come from detaching the
   // previous view rather than from never attaching at all.
-  assert.equal(board.totalAdds(), 6, 'each mount attaches its own pair before the previous detaches');
+  assert.equal(board.totalAdds(), 9, 'each mount attaches its three handlers before the previous detaches');
 
   third.destroy();
   assert.equal(board.liveCount('click'), 0, 'destroy detaches the last view too');
+  assert.equal(board.liveCount('keydown'), 0, 'destroy detaches keyboard input too');
   assert.equal(flip.liveCount('click'), 0);
 });
