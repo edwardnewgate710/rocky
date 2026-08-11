@@ -2345,24 +2345,30 @@ export function bootstrap(
     if (statusEl) statusEl.textContent = '';
     if (errorEl) errorEl.textContent = '';
 
+    const setPasswordResetPending = (pending: boolean): void => {
+      if (requestSubmitEl) {
+        requestSubmitEl.disabled = pending;
+        requestSubmitEl.textContent = pending ? 'Sending…' : 'Send reset link';
+      }
+      if (confirmSubmitEl) {
+        confirmSubmitEl.disabled = pending;
+        confirmSubmitEl.textContent = pending ? 'Resetting…' : 'Reset password';
+      }
+      if (requestInputEl) requestInputEl.disabled = pending;
+      if (confirmPassEl) confirmPassEl.disabled = pending;
+      if (confirmPassConfirmEl) confirmPassConfirmEl.disabled = pending;
+      if (requestFormEl) requestFormEl.setAttribute('aria-busy', String(pending));
+      if (confirmFormEl) confirmFormEl.setAttribute('aria-busy', String(pending));
+    };
+
+    // The SPA reuses these nodes between route bootstraps, so establish an
+    // explicit idle state instead of inheriting mutations from a disposed run.
+    setPasswordResetPending(false);
+
     const passwordResetCtrl = new PasswordResetController({
       client: app.api,
       callbacks: {
-        onPending: (pending) => {
-          if (requestSubmitEl) {
-            requestSubmitEl.disabled = pending;
-            requestSubmitEl.textContent = pending ? 'Sending…' : 'Send reset link';
-          }
-          if (confirmSubmitEl) {
-            confirmSubmitEl.disabled = pending;
-            confirmSubmitEl.textContent = pending ? 'Resetting…' : 'Reset password';
-          }
-          if (requestInputEl) requestInputEl.disabled = pending;
-          if (confirmPassEl) confirmPassEl.disabled = pending;
-          if (confirmPassConfirmEl) confirmPassConfirmEl.disabled = pending;
-          if (requestFormEl) requestFormEl.setAttribute('aria-busy', String(pending));
-          if (confirmFormEl) confirmFormEl.setAttribute('aria-busy', String(pending));
-        },
+        onPending: setPasswordResetPending,
         onError: (msg) => {
           if (errorEl) errorEl.textContent = msg ?? '';
         },
@@ -2405,6 +2411,7 @@ export function bootstrap(
         if (requestFormEl) requestFormEl.onsubmit = null;
         if (confirmFormEl) confirmFormEl.onsubmit = null;
         passwordResetCtrl.dispose();
+        setPasswordResetPending(false);
       },
     };
 

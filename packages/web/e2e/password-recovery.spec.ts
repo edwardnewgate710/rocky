@@ -68,6 +68,44 @@ test.describe('Password recovery web UI', () => {
     expect(requestBody).toEqual({ handleOrEmail: 'alice@example.com' });
   });
 
+  test('leaving during a pending request restores an idle form on SPA route re-entry', async ({ page }) => {
+    let markRequestStarted!: () => void;
+    const requestStarted = new Promise<void>((resolve) => {
+      markRequestStarted = resolve;
+    });
+    let releaseRequest!: () => void;
+    const requestReleased = new Promise<void>((resolve) => {
+      releaseRequest = resolve;
+    });
+
+    await page.route('**/v1/auth/password-reset/request', async (route) => {
+      markRequestStarted();
+      await requestReleased;
+      await route.fulfill({ status: 202, contentType: 'application/json', body: '' });
+    });
+
+    await page.goto('/password-reset');
+    await page.locator('#password-reset-request-input').fill('alice@example.com');
+    await page.locator('#password-reset-request-submit').click();
+    await requestStarted;
+
+    await expect(page.locator('#password-reset-request-form')).toHaveAttribute('aria-busy', 'true');
+    await expect(page.locator('#password-reset-request-submit')).toBeDisabled();
+
+    await page.locator('#password-reset-back-link').click();
+    await expect(page).toHaveURL(/\/$/);
+    await page.locator('#auth-forgot-password').click();
+    await expect(page).toHaveURL(/\/password-reset$/);
+
+    await expect(page.locator('#password-reset-request-form')).toHaveAttribute('aria-busy', 'false');
+    await expect(page.locator('#password-reset-confirm-form')).toHaveAttribute('aria-busy', 'false');
+    await expect(page.locator('#password-reset-request-input')).toBeEnabled();
+    await expect(page.locator('#password-reset-request-submit')).toBeEnabled();
+    await expect(page.locator('#password-reset-request-submit')).toHaveText('Send reset link');
+
+    releaseRequest();
+  });
+
   test('confirm reset flow: validation errors preserve inputs, success clears inputs, releases token, and hides confirm view', async ({ page }) => {
     let confirmCalls = 0;
     let confirmBody: unknown = null;
