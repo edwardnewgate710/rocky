@@ -13,9 +13,13 @@ interface Rule {
   readonly body: string;
 }
 
+function stripCssComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
 /** Every top-level rule in the stylesheet, comments stripped. */
 function rules(source = CSS): Rule[] {
-  const stripped = source.replace(/\/\*[\s\S]*?\*\//g, '');
+  const stripped = stripCssComments(source);
   const out: Rule[] = [];
   for (const chunk of stripped.split('}')) {
     const brace = chunk.indexOf('{');
@@ -28,20 +32,40 @@ function rules(source = CSS): Rule[] {
 }
 
 /** Body of the first matching at-rule, accounting for nested declaration blocks. */
-function atRuleBody(marker: string): string {
-  const markerIndex = CSS.indexOf(marker);
+function atRuleBody(marker: string, source = CSS): string {
+  const stripped = stripCssComments(source);
+  const markerIndex = stripped.indexOf(marker);
   assert.notEqual(markerIndex, -1, `could not find ${marker}`);
-  const open = CSS.indexOf('{', markerIndex);
+  const open = stripped.indexOf('{', markerIndex);
   assert.notEqual(open, -1, `could not find the opening brace for ${marker}`);
 
   let depth = 1;
-  for (let index = open + 1; index < CSS.length; index += 1) {
-    if (CSS[index] === '{') depth += 1;
-    if (CSS[index] === '}') depth -= 1;
-    if (depth === 0) return CSS.slice(open + 1, index);
+  let quote: "'" | '"' | undefined;
+  let escaped = false;
+  for (let index = open + 1; index < stripped.length; index += 1) {
+    const character = stripped[index];
+    if (quote !== undefined) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === quote) quote = undefined;
+      continue;
+    }
+    if (character === "'" || character === '"') quote = character;
+    else if (character === '{') depth += 1;
+    else if (character === '}' && --depth === 0) return stripped.slice(open + 1, index);
   }
   throw new Error(`could not find the closing brace for ${marker}`);
 }
+
+test('at-rule parsing ignores braces in comments and quoted values', () => {
+  const source = `@media (min-width: 720px) {
+    /* A closing brace here must not terminate the at-rule: } */
+    .label { content: "}"; }
+    .target { inline-size: 100%; }
+  }`;
+
+  assert.match(atRuleBody('@media (min-width: 720px)', source), /\.target\s*\{\s*inline-size:\s*100%/);
+});
 
 const USES_BACKGROUND_SHORTHAND = /(^|[;\s])background\s*:/;
 
