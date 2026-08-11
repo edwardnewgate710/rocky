@@ -4,7 +4,8 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-11 - M14 Increment 45: Password-Recovery Web UI (ADR-0109)._
+_Last updated: 2026-08-11 - AUD-007 documentation reconciliation; the latest
+product increment remains M14 Increment 45 (ADR-0109)._
 
 ## M14 Increment 45 - Password-Recovery Web UI (ADR-0109)
 
@@ -1014,7 +1015,15 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 
 ---
 
-## 1. Snapshot
+## Historical archive notice
+
+> The sections from “1. Snapshot” onward are retained as point-in-time handover
+> records. Their test totals, “next” instructions, and statements that work is
+> deferred or in progress describe the state when each section was written; they
+> are not current status. Use the dated delivery entries above and
+> [`ROADMAP.md`](ROADMAP.md) for current status and remaining work.
+
+## 1. Snapshot (historical; superseded)
 
 - **Product:** *Gambit* — AGPL-3.0 open-source chess platform aiming at feature
   parity with Lichess/Chess.com plus a first-class AI layer. Intended to be a
@@ -1025,7 +1034,7 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
   tests → self-critique loop → multi-perspective review (distributed-systems,
   performance, security, chess-server maintainer) → advance only when clean.
 
-## 2. Completed milestones
+## 2. Completed milestones (historical snapshot)
 
 | M | Package | Result | Tests |
 |---|---|---|---|
@@ -1045,7 +1054,7 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 
 **Whole-repo total: 1049 tests passing, 0 failures, across 13 packages + the gateway service** (31 skips, all environment-gated — Postgres/API-key/Redis; `npm run test:counts` prints the live per-package breakdown). Strict TS, zero errors, lint clean. CI active — 6 jobs: build+typecheck+test on Node 22/24, Postgres integration, M6 Playwright + Lighthouse acceptance, helm lint + kubeconform, gateway service (build + Redis integration).
 
-## 3. Architecture summary (as-built)
+## 3. Architecture summary (historical snapshot)
 
 - **Dependency arrow points at the domain:**
   `core ← game ← realtime-gateway`, and `core, game ← persistence ← api`. Domain
@@ -1098,7 +1107,7 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 - **Minimal dependencies:** everything is `node:crypto`/`node:http`. Root entry has
   no third-party runtime dep; `pg` only enters through the `/pg` subpath.
 
-## 4. Key engineering decisions (log)
+## 4. Key engineering decisions (historical log)
 
 1. **REST-first for M4; GraphQL deferred to M10–M11** (commit `15d6bb1`).
 2. **M4 split:** `persistence` (durable data) then `api` (stateless REST).
@@ -1117,7 +1126,7 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
    port in `api` (write side of the existing `audit_log` table). Additive only;
    all existing persistence tests stay green.
 
-## 5. Deferred work / follow-ups (tracked, not lost)
+## 5. Deferred work / follow-ups (historical snapshot)
 
 - **Tournaments (M9 follow-ups):** items 1 (production result reporter) and
   2 (optimistic concurrency for `TournamentsRepository`) from the 2026-07-18
@@ -1147,7 +1156,7 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
   The refresh token now lives in an `httpOnly` cookie (not `localStorage`),
   and the access token is kept in memory only. See ADR-0012 for details.
 
-## 6. Technical debt (status)
+## 6. Technical debt (historical snapshot)
 
 1. **`LICENSE` — ✅ DONE** (AGPL-3.0, commit `d295ad2`).
 2. **CI — ✅ ACTIVE.** `.github/workflows/ci.yml` runs **six** jobs on every push/PR
@@ -1161,7 +1170,7 @@ approved.** Base commits: `f7c588e` (M4 api) → `cb19dec` + `4703f23` (M5 gate 
 3. **Lockfile — ✅ DONE.** The root `package-lock.json` is committed and CI
    installs with `npm ci` for reproducible builds.
 
-## 7. Milestone 4 — status & next steps
+## 7. Milestone 4 — historical status & next steps
 
 **Status: COMPLETE.** Both packages shipped, green, and reviewed.
 
@@ -1258,7 +1267,7 @@ analysis cache remains a future **ADR-0003** (would amend `DATABASE.md`).
 
 M14 Inc45 is complete: password-recovery web UI is implemented and verified in `@chess-platform/web` over the existing M4 server contracts (`POST /v1/auth/password-reset/request` and `POST /v1/auth/password-reset/confirm`). Production email delivery remains deployment/provider-dependent (`ConsoleEmailSender` default per ADR-0026).
 
-## 8. How to build & test today
+## 8. Historical build & test snapshot
 
 ```bash
 npm install                 # workspaces root
@@ -1267,6 +1276,9 @@ npm test                    # runs all package test suites (node --test)
 npm run openapi -w @chess-platform/api   # regenerate packages/api/openapi.json
 ```
 Per package: `cd packages/<pkg> && npm install && npm run build && npm test`.
+
+> The increment sections below are historical delivery records. Later sections
+> may close deferrals or replace adapters described in earlier entries.
 
 ## M9 Increment 11: Arena through the API + persistence
 - **Parallel Arena Service**: In order to securely implement API access to the `ArenaTournament` format without jeopardizing the stability of round-based formats (round-robin and swiss), `TournamentConfig` was split into `RoundBasedConfig` and `ArenaConfig`.

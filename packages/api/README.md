@@ -2,7 +2,7 @@
 
 The stateless REST + identity service for Gambit. It consumes
 `@chess-platform/persistence` (repositories, Glicko-2, UUIDv7) and the domain
-packages (`@chess-platform/game`, `@chess-platform/core`), and exposes a small,
+packages (`@chess-platform/game`, `@chess-platform/core`), and exposes a typed,
 dependency-free HTTP API with a published OpenAPI 3.1 contract.
 
 ## Design
@@ -30,34 +30,34 @@ dependency-free HTTP API with a published OpenAPI 3.1 contract.
   entry pulls in no third-party runtime dependency. Postgres wiring is isolated
   behind the `@chess-platform/api/pg` subpath.
 
-## Endpoints (v1)
+## API surface (v1)
 
-| Method | Path | Auth | Purpose |
-|---|---|---|---|
-| GET | `/v1/health` | — | Liveness probe |
-| GET | `/v1/openapi.json` | — | OpenAPI 3.1 document |
-| POST | `/v1/auth/register` | — | Create an account |
-| POST | `/v1/auth/login` | — | Password login |
-| POST | `/v1/auth/refresh` | — | Rotate a refresh token |
-| POST | `/v1/auth/logout` | bearer | Revoke the presented session |
-| GET | `/v1/auth/sessions` | bearer | List the caller's sessions |
-| GET | `/v1/users/me` | bearer | The authenticated account |
-| GET | `/v1/users/:handle` | — | Public profile + ratings |
-| GET | `/v1/users/:handle/ratings` | — | Ratings across variants |
-| GET | `/v1/users/:handle/games` | — | Recent games |
-| POST | `/v1/users/:userId/roles` | admin | Grant a role |
-| GET | `/v1/leaderboard/:variant` | — | Top players for a variant |
-| GET | `/v1/seeks` | — | List open seeks |
-| POST | `/v1/seeks` | bearer | Create a seek |
-| DELETE | `/v1/seeks/:id` | bearer | Cancel a seek (owner or moderator) |
-| GET | `/v1/games/:id` | — | Game summary |
+The route table in [`src/routes.ts`](src/routes.ts) is the implementation source
+of truth. It generates the committed [`openapi.json`](openapi.json), which is
+also served at `GET /v1/openapi.json`; use that contract for the exact current
+methods, paths, authentication policies, request bodies, and response schemas.
+
+The published surface is organized into these families:
+
+- service metadata, health/readiness, capabilities, metrics, and OpenAPI;
+- password, refresh-token, email-verification, password-recovery, and WebAuthn
+  identity flows;
+- users, roles, ratings, leaderboards, seeks, games, and tournaments;
+- keyword/semantic search and the read-only GraphQL layer;
+- social graph, direct messaging, teams/forums, and achievements;
+- collaborative studies/PGN and courses/lessons/progress; and
+- moderation endpoints for anti-cheat and bot-detection reports and analysis.
 
 ## Quick start (in-memory, no database)
+
+Set `ACCESS_TOKEN_SECRET` to a development secret of at least 32 bytes before
+running this example. No database is required.
 
 ```ts
 import {
   createApiServer, createInMemoryRepositories, resolveConfig,
   ScryptPasswordHasher, AccessTokenService, systemClock, uuidv7Generator,
+  InMemoryRateLimiter, InMemoryGameLauncher, ConsoleEmailSender,
 } from '@chess-platform/api';
 
 const clock = systemClock;
@@ -66,11 +66,19 @@ const config = resolveConfig({ accessTokenSecret: process.env.ACCESS_TOKEN_SECRE
 const tokens = new AccessTokenService({
   secret: config.accessTokenSecret, ttlSec: config.accessTokenTtlSec, clock, ids,
 });
+const repos = createInMemoryRepositories(clock);
 
 const server = createApiServer({
-  repos: createInMemoryRepositories(),
+  repos,
   hasher: new ScryptPasswordHasher(),
   tokens, clock, ids, config,
+  rateLimiter: new InMemoryRateLimiter(clock),
+  tournamentRepo: repos.tournaments,
+  gameLauncher: new InMemoryGameLauncher(ids),
+  liveView: { activeGames: () => [] },
+  emailSender: new ConsoleEmailSender(),
+  studiesRepository: repos.studies,
+  learningRepository: repos.learning,
 });
 
 await server.listen(8080);
@@ -100,6 +108,6 @@ npm test           # compiles + runs the suite via node --test
 npm run openapi    # regenerates ./openapi.json from the live route table
 ```
 
-45 tests pass (auth flows, authorization matrix, token/scrypt units, router
-edge cases, resources, and OpenAPI self-consistency). Strict TypeScript, zero
-errors.
+The suite covers auth flows, the authorization matrix, token/scrypt units,
+router edge cases, resource families, and OpenAPI self-consistency. Run the
+commands above for the current result.

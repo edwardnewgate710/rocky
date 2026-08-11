@@ -5,8 +5,9 @@ Lichess and Chess.com, plus a first-class AI layer. This repository is built
 **milestone by milestone**, and every milestone ships real, tested, typed code —
 no skeletons, no placeholders.
 
-> **Status:** Milestones 1–9 complete, M12 (security hardening) and M14
-> (deployment & scale) in progress —
+> **Status:** Milestones 1–9, M12 (security hardening), and M13
+> (observability & SRE) are complete; M10 (social & learning), M11 (search),
+> and M14 (deployment & scale) have delivered increments and remain in progress —
 > a perft-verified, variant-aware chess rules engine (`@chess-platform/core`),
 > an event-sourced game authority with clocks (`@chess-platform/game`), a
 > real-time gateway with authoritative fanout, durable event log, and Redis
@@ -45,6 +46,13 @@ chess-platform/
 │   ├── e2e-harness/        # ✅ In-process backend harness for Playwright acceptance
 │   ├── tournament/         # ✅ Round-robin, Swiss, and Arena tournament domain
 │   ├── anti-cheat/         # ✅ Engine-correlation analysis (ACPL, T1/T3, per-player suspicion, cross-game aggregation, service orchestration)
+│   ├── social/             # ✅ Follows, friends, blocks, and relationship rules
+│   ├── messaging/          # ✅ Direct-conversation domain and repository port
+│   ├── community/          # ✅ Teams, memberships, join requests, and forums
+│   ├── achievements/       # ✅ Achievement catalogue, progress, and awarding rules
+│   ├── studies/            # ✅ Collaborative studies, move trees, and PGN import/export
+│   ├── learning/           # ✅ Courses, lessons, steps, and progress
+│   ├── search/             # ✅ Keyword, semantic, and hybrid search domain
 │   ├── ai-orchestrator/    # ✅ AI provider routing, failover, caching, grounding
 │   └── ai-features/        # ✅ Coach, puzzles, explanations, commentator (9 features)
 ├── docs/
@@ -56,9 +64,9 @@ chess-platform/
 └── README.md
 ```
 
-Planned packages (see roadmap): `search` and `infra` (Terraform/K8s);
 `services/gateway` is the deployable realtime-gateway binary with its
-production adapters (Postgres event log, Redis pub/sub, `ws`).
+production adapters (Postgres event log, Redis pub/sub, `ws`). Deployment
+assets live under `deploy/`; see the roadmap for remaining infrastructure work.
 
 ## `@chess-platform/core`
 
@@ -96,8 +104,9 @@ npm run build      # tsc → dist/
 npm test           # compiles tests, runs perft + rules suites via node --test
 ```
 
-All 16 tests pass, including 5 perft positions to depths that exercise
-castling, en passant, promotions, pins, and discovered checks.
+The package suite covers reference perft positions plus castling, en passant,
+promotions, pins, discovered checks, and variant rules. Run the commands above
+for the current result.
 
 ## `@chess-platform/game`
 
@@ -128,7 +137,8 @@ const rebuilt = Game.fromEvents(eventLog);
 - Server-authoritative legality (clients never decide results).
 - Clocks: Fischer increment, Bronstein/US delay, sudden-death, unlimited.
 - Commands: move, resign, draw offer/accept/decline, flag claim, abort.
-- 25 tests pass; exact event-log reconstruction; ~1.17ms/game replay.
+- The package suite verifies exact event-log reconstruction and deterministic
+  replay behavior.
 
 ```bash
 cd packages/game && npm install && npm run build && npm test
@@ -154,9 +164,9 @@ documented adapter seams (`transport.ts`, `pubsub.ts`).
   restored) and asks for every move it missed since `lastPly`.
 - **Latency compensation.** `ping`/`pong` carry a server timestamp; clocks stay
   authoritative on the server and clients interpolate locally.
-- 61 tests pass, including a reconnection integration test and a fanout load
-  test: **p99 < 50ms** broadcasting to 5,000 active subscribers with 50,000
-  idle connections registered.
+- The package suite includes reconnection integration coverage and a fanout
+  load test targeting **p99 < 50ms** while broadcasting to 5,000 active
+  subscribers with 50,000 idle connections registered.
 
 ```ts
 import {
@@ -204,8 +214,8 @@ relational projections and identity tables.
   (not native ENUM). Forward-only, checksum-verified migration runner + CLI.
 - **UUIDv7** (time-ordered ids) and a **Glicko-2** implementation verified against
   Glickman's worked example.
-- 19 tests pass (Postgres integration tests gated on `DATABASE_URL`); the
-  play → store → `Game.fromEvents` round-trip is verified.
+- Postgres integration coverage is gated on `DATABASE_URL`; the play → store →
+  `Game.fromEvents` round-trip is verified.
 
 ```bash
 cd packages/persistence && npm install && npm run build && npm test
@@ -223,11 +233,12 @@ dependency at the root entry.
   **opaque, single-use refresh tokens** with rotation and theft (reuse) detection.
 - **RBAC** (`user`/`coach`/`tournament_director`/`moderator`/`admin`) enforced
   declaratively per route.
-- **Resources:** accounts, profiles, sessions, seeks/lobby, Glicko-2 ratings and
-  per-variant leaderboards, and game summaries.
+- **Resources:** identity and sessions, profiles and ratings, seeks and games,
+  tournaments, search, social/community features, studies, and learning.
 - **Published OpenAPI 3.1** generated from the live route table (served at
   `/v1/openapi.json`, committed to `packages/api/openapi.json`).
-- 118 tests pass, including the M4 **authorization matrix**. Strict TS, zero errors.
+- The suite includes the M4 **authorization matrix**, route/OpenAPI coupling,
+  and focused coverage for each optional subsystem.
 
 ```ts
 import { createPgApiServer } from '@chess-platform/api/pg';
@@ -239,8 +250,8 @@ await server.listen(8080);
 cd packages/api && npm install && npm run build && npm test
 ```
 
-See [`packages/api/README.md`](packages/api/README.md) for the full endpoint list
-and the in-memory (no-database) quick start.
+See [`packages/api/README.md`](packages/api/README.md) for the canonical endpoint
+contract and the in-memory (no-database) quick start.
 
 ## `@chess-platform/engine`
 
@@ -256,7 +267,8 @@ Stockfish binary.
   variations.
 - **Adapter seam:** `InMemoryEngine` for tests/dev, `StockfishEngine` for
   production.
-- 50 tests pass; strict TS, zero errors.
+- The package suite covers protocol handling, scheduling, failure isolation,
+  cancellation, and engine capability routing.
 
 ```bash
 cd packages/engine && npm install && npm run build && npm test
@@ -268,9 +280,11 @@ The web frontend for the platform — lobby, board UI, game play, and
 analysis views. Built with a typed component layer and the realtime gateway
 client.
 
-- **Complete (M6):** lobby and game views, board rendering, realtime
-  connection management.
-- 260 tests pass (unit + component); strict TS, zero errors.
+- **Playable SPA:** lobby and game views, board rendering, realtime connection
+  management, profiles, tournaments, search, social/community surfaces,
+  learning/studies, passkeys, and password recovery.
+- Unit, component, accessibility, and browser acceptance suites live with the
+  package; run the commands below for the current result.
 
 ```bash
 cd packages/web && npm install && npm run build && npm test

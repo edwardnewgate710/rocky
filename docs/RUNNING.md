@@ -1,6 +1,6 @@
 # Running Gambit Locally
 
-This guide covers the **local runnable stack** (M14 Increment 1): a single
+This guide covers the **local runnable stack** (introduced in M14 Increment 1): a single
 `docker compose up` command that brings the entire platform live with real
 Postgres, a real API, a real WebSocket gateway, and the web frontend.
 
@@ -34,18 +34,20 @@ That's it. You can register a user, and the platform is live.
 
 ## What runs
 
-| Service | Container | Port | Description |
+| Service | Container | Published host port | Description |
 |---|---|---|---|
-| **Postgres** | `postgres` | 5432 | Postgres 16 with the schema auto-migrated on API startup |
-| **API** | `api` | 8080 | REST API (`@chess-platform/api`) backed by real Postgres |
-| **Gateway** | `gateway` | 4175 | WebSocket gateway (`@chess-platform/realtime-gateway`) with shared-secret token verification |
-| **Web** | `web` | 3000 | Vite-built SPA served by nginx, proxying `/v1` → API and `/ws` → gateway |
+| **Postgres + pgvector** | `postgres` | `localhost:5432` | `pgvector/pgvector:pg16`, with the schema auto-migrated on API startup |
+| **Redis** | `redis` | `localhost:6379` | Redis 7 durable pub/sub service for multi-node gateway fanout |
+| **API** | `api` | `localhost:8080` | REST API (`@chess-platform/api`) backed by real Postgres |
+| **Gateway** | `gateway` | `localhost:4175` | WebSocket gateway (`@chess-platform/realtime-gateway`) with shared-secret token verification |
+| **Web** | `web` | `localhost:3000` | Vite-built SPA served by nginx, proxying `/v1` → API and `/ws` → gateway |
 
 ## How it works
 
 ### Postgres + migrations
 
-The `postgres` service uses the official `postgres:16-alpine` image. The API
+The `postgres` service uses `pgvector/pgvector:pg16`, which supplies PostgreSQL
+16 plus the vector extension required by the search migrations. The API
 container runs `npm run migrate --workspace @chess-platform/persistence` before
 starting the server, so the schema is applied automatically on first boot. The
 `schema_migrations` table tracks applied migrations with checksums, so
@@ -77,8 +79,9 @@ default), Redis pub/sub fans authoritative broadcasts across gateway nodes;
 without it, the gateway falls back to `InMemoryPubSub` for single-node use.
 See ADR-0007 (local stack/durability) and ADR-0008 (Redis fanout).
 
-Health check: `GET :4176/health` returns `{ status: "ok" }` (health runs on
-port+1, separate from the WebSocket port).
+The gateway health endpoint listens on container port 4176 (the WebSocket port
+plus one) and is used by the Compose healthcheck. That port is not published to
+the host by the primary Compose file.
 
 **Play vs Computer** needs two things and fails quietly without either: `ENGINE_BOT=1`, and an
 engine binary at `STOCKFISH_PATH`. The gateway image installs Stockfish at
@@ -151,8 +154,8 @@ The script:
 | `PORT` | `8080` | No | API host port |
 | `GATEWAY_PORT` | `4175` | No | Gateway WebSocket host port |
 | `WEB_PORT` | `3000` | No | Web frontend host port |
-| `ENGINE_BOT` | unset (`0`) | No | Set to `"1"` to host the autonomous engine bot mover in the gateway (ADR-0080) |
-| `STOCKFISH_PATH` | unset | Required if `ENGINE_BOT=1` | Path to Stockfish UCI executable binary |
+| `ENGINE_BOT` | `1` in Compose | No | Set to `"0"` to disable the autonomous engine bot mover in the gateway (ADR-0080) |
+| `STOCKFISH_PATH` | `/usr/games/stockfish` in the gateway image | Required if `ENGINE_BOT=1` outside the image | Path to the Stockfish UCI executable binary |
 
 
 **Never commit real secrets.** The `.env.example` has development defaults only.

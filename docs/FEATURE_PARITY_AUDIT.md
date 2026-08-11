@@ -1,8 +1,14 @@
 # Gambit feature-parity audit
 
-- Date: 2026-07-19
-- Target: `main` at `9b7aad4`, plus the local fixes listed below
-- Environment: production Docker Compose stack at `http://localhost:3000`
+- Original audit date: 2026-07-19
+- Original target: `main` at `9b7aad4`, plus the fixes listed below
+- Original environment: production Docker Compose stack at `http://localhost:3000`
+- Reconciled through: M14 Increment 45 and the audit P1 remediation
+
+The original audit provenance and browser findings are retained below. Feature
+rows and follow-up dispositions have been reconciled with later shipped work;
+[`ROADMAP.md`](ROADMAP.md) and [`PROJECT_STATE.md`](PROJECT_STATE.md) remain the
+canonical sources for current milestone and increment status.
 
 This audit distinguishes four different meanings of “implemented”:
 
@@ -43,15 +49,15 @@ Having a package in the monorepo does not imply that it is a product feature.
 | Tournament live broadcast/commentary | Yes | Partial | No | No | Live boards/result reporter run; AI commentary is not composed into a production service. |
 | PWA/offline shell | Yes | Yes | Yes | Yes | Manifest/service worker and offline-navigation acceptance test pass. |
 | Light/dark theme | Yes | Yes | Yes | Yes | Fixed: explicit light preference now overrides a dark OS preference and updates icon/ARIA/theme-color. |
-| Social features (teams, friends, chat, forums, achievements) | No | No | No | No | M10 not started. |
-| Learning content, PGN import and collaborative studies | No product implementation | No | No | No | M10 not started; the AI `StudyPartner` library is not a collaborative study product. |
-| Search | No | No | No | No | M11 not started. |
-| CORS, security headers, httpOnly refresh and rate limiting | Yes | Yes | N/A | Indirect | Verified against the live API and dedicated Postgres integration tests. |
-| Anti-cheat/bot detection/pen-test | No | No | No | No | Remaining M12 work. |
+| Social features (teams, friends, chat, forums, achievements) | Yes | Partial | Yes | Yes when enabled | Domain and REST work shipped in M10; profile social controls, messages, teams/forums, and achievements UI shipped in later M14 web increments. Optional repositories remain capability-gated by deployment configuration. |
+| Learning content, PGN import and collaborative studies | Yes | Partial | Yes | Yes when enabled | Courses/lessons and studies/PGN have durable adapters, REST contracts, typed clients, and visible web routes. Studies and learning repositories are opt-in in the production composition root. |
+| Search | Yes | Yes | Yes | Yes | Keyword, semantic, and hybrid search, indexing/backfill, `GET /v1/search`, and the `/search` UI are shipped. |
+| CORS, security headers, httpOnly refresh and rate limiting | Yes | Yes | N/A | Indirect | M12 controls cover the API; the served web document also emits anti-framing and related security headers after the audit P1 remediation. |
+| Anti-cheat/bot detection/pen-test | Yes | Yes | No | No | M12 is closed: moderation APIs and background analysis workers are production-hostable, and the pen-test findings are recorded in [`SECURITY_AUDIT.md`](SECURITY_AUDIT.md). No moderator web UI is shipped. |
 | Docker Compose | Yes | Yes | N/A | N/A | Full stack healthy after Dockerfile, healthcheck and WebSocket proxy fixes. |
 | Kubernetes Helm | Yes | Packaging only | N/A | N/A | Chart exists; no live cluster deployment was part of this local audit. |
 | Terraform, canary/blue-green, large load/chaos | No | No | N/A | N/A | Remaining M14 work. |
-| OpenTelemetry, Prometheus, Grafana, SLOs | No | No | No | No | M13 not started. |
+| OpenTelemetry, Prometheus, Grafana, SLOs | Yes | Partial | N/A | Operational assets | M13 is closed with tracing/export, Prometheus rules, Grafana dashboards, SLOs, runbooks, and drift validation. The primary Compose file does not start Prometheus or Grafana, and SLO targets remain explicitly unvalidated against production traffic. |
 
 ## Defects found and fixed during this audit
 
@@ -79,30 +85,29 @@ Having a package in the monorepo does not imply that it is a product feature.
    runtime dependencies; the Compose web healthcheck used a container-local
    hostname that failed on this image. The Dockerfiles/healthcheck were fixed.
 
-## Verification performed
+## Verification performed on the original audit target
 
-- Full monorepo production build: passed.
-- Full monorepo test command across all 11 packages: passed with zero failures.
-- Full monorepo strict TypeScript lint: passed.
-- Web unit suite: 272/272 passed.
-- Web static/offline Playwright suite (Without GAMBIT_E2E_BACKEND): 6 passed, 6 skipped.
-- Web full backend-gated Playwright suite (With GAMBIT_E2E_BACKEND=1): 12 passed, 0 skipped.
-- Dedicated real-Postgres persistence suite: 23/23 passed.
-- Dedicated real-Postgres API suite: 138/138 passed.
+- Full monorepo production build, test, and strict TypeScript lint commands passed.
+- Web unit, static/offline Playwright, and backend-gated Playwright suites passed;
+  environment-gated cases were reported separately rather than counted as passes.
+- Dedicated real-Postgres persistence and API suites passed.
 - Compose smoke test through nginx `/ws`: passed.
 - Manual real-browser acceptance: theme both ways, restored profile, seek
   creation, second-user acceptance, route to game, authenticated WebSocket,
   64-square board, legal `e2` destinations, and authoritative `e2-e4` update.
 
-## Remaining product-critical work, in order
+## Original follow-ups and current disposition
 
 1. [Shipped] Add game metadata/presence to the UI to make a match manageable without hidden protocol calls. Game controls (resign, draw, abort, claim flag) are already implemented.
 2. [Shipped] Add production bot service + `Play bot` (ADR-0080, ADR-0081).
-3. Expose the remaining already-built passkeys and recovery APIs through real pages and typed web clients (leaderboard and tournaments UI are shipped in ADR-0082 and ADR-0107).
+3. [Shipped] Expose passkeys and password recovery through real pages and typed web clients (ADR-0108 and ADR-0109).
 4. Compose an engine worker and AI feature API before advertising any AI
    feature; then build analysis, puzzles, openings/endgames, coach and voice UI.
 5. Add a Compose-based browser acceptance job. The current backend Playwright
    tests use the e2e harness, which is why the production nginx 401 escaped.
-6. Add a real not-found page and clean up SPA controller/listener lifecycle on
-   repeated client-side navigation.
-7. Complete M10, M11, M12 anti-cheat, M13 and the deferred M14 scale work.
+6. [Partially shipped] Repeated-navigation controller, authentication, WebSocket,
+   and connectivity cleanup landed in the audit P1 remediation. A dedicated
+   user-facing not-found page remains open.
+7. [Updated] M10 and M11 now have delivered domain, persistence, API, and web
+   increments; M12 and M13 are closed. The deferred M14 scale items remain open
+   in `ROADMAP.md`.
