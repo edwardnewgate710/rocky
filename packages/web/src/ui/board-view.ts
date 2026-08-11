@@ -148,7 +148,11 @@ export class BoardView {
     const square = cell.dataset['square'];
     if (square === undefined || !isSquare(square)) return;
 
-    if (event.key === 'Enter' || event.key === ' ') {
+    const activatesSquare = event.key === 'Enter'
+      || event.key === ' '
+      || event.key === 'Spacebar'
+      || event.code === 'Space';
+    if (activatesSquare) {
       event.preventDefault();
       this.focusedSquare = square;
       this.dispatch(this.interaction.tap(square));

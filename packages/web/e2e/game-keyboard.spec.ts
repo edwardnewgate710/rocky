@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 
 test.skip(!process.env['GAMBIT_E2E_BACKEND'], 'requires running backend');
 
-test('the board supports roving arrow focus and keyboard move entry', async ({ page, request }) => {
+test('the board supports roving focus, compatible Space activation, and keyboard move entry', async ({ page, request }) => {
   const suffix = randomUUID().replaceAll('-', '').slice(0, 10);
   const password = 'test-password-123';
   const whiteHandle = `e2e-keyboard-w-${suffix}`;
@@ -52,6 +52,20 @@ test('the board supports roving arrow focus and keyboard move entry', async ({ p
   await expect(board.locator('[data-square="f2"]')).toBeFocused();
   await page.keyboard.press('ArrowLeft');
   await expect(board.locator('[data-square="e2"]')).toBeFocused();
+
+  for (const { key, code, selected } of [
+    { key: 'Unidentified', code: 'Space', selected: 'true' },
+    { key: 'Spacebar', code: '', selected: 'false' },
+  ]) {
+    await board.locator('[data-square="e2"]').evaluate((cell, keyboardEvent) => {
+      cell.dispatchEvent(new KeyboardEvent('keydown', {
+        ...keyboardEvent,
+        bubbles: true,
+        cancelable: true,
+      }));
+    }, { key, code });
+    await expect(board.locator('[data-square="e2"]')).toHaveAttribute('aria-selected', selected);
+  }
 
   await page.keyboard.press('Enter');
   await expect(board.locator('[data-square="e2"]')).toHaveAttribute('aria-selected', 'true');
