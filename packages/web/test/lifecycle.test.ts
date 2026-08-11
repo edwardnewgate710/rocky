@@ -38,6 +38,7 @@ function createMockBootstrapped(
     learning: disposables.learning as Bootstrapped['learning'],
     studies: disposables.studies as Bootstrapped['studies'],
     passkeys: disposables.passkeys as Bootstrapped['passkeys'],
+    passwordReset: disposables.passwordReset as Bootstrapped['passwordReset'],
     connectivity: disposables.connectivity as Bootstrapped['connectivity'],
   };
 }

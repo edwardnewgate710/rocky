@@ -88,6 +88,7 @@ export class AuthController {
   private readonly storage: KeyValueStorage | undefined;
   private readonly storageKey: string;
   private session: AuthSession | null = null;
+  private sessionGeneration = 0;
   private disposed = false;
 
   constructor(opts: AuthControllerOptions) {
@@ -119,6 +120,7 @@ export class AuthController {
   async restore(): Promise<AuthSession | null> {
     if (this.disposed) return null;
     if (!this.storage) return null;
+    const generation = this.sessionGeneration;
     try {
       const raw = this.storage.getItem(this.storageKey);
       if (!raw) return null;
@@ -127,6 +129,12 @@ export class AuthController {
         // Try to get a fresh access token via the httpOnly cookie.
         try {
           const refreshed = await this.client.auth.refresh();
+          if (this.disposed || generation !== this.sessionGeneration) {
+            // AuthApi.refresh adopts before returning. A password reset may have
+            // invalidated the local session while the network request was in flight.
+            this.client.session.reset();
+            return null;
+          }
           return this.adoptSession(refreshed.user);
         } catch {
           // Cookie expired or absent — clear persisted state and return null.
@@ -216,6 +224,15 @@ export class AuthController {
       this.callbacks.onSessionChange(null);
       this.callbacks.onPending(false);
     }
+  }
+
+  /** Clear local session state without issuing server logout (e.g. after password reset confirm). */
+  clearLocalSession(): void {
+    this.sessionGeneration++;
+    this.session = null;
+    this.clearPersisted();
+    this.client.session.reset();
+    this.callbacks.onSessionChange(null);
   }
 
   /** Permanently dispose the controller. */

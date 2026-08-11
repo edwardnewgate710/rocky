@@ -41,6 +41,8 @@ import type {
   CapabilitiesResponse,
   LeaderboardEntry,
   LoginRequest,
+  PasswordResetRequest,
+  PasswordResetConfirmRequest,
   ConversationList,
   ConversationReadState,
   ConversationView,
@@ -303,6 +305,25 @@ export class AuthApi {
 
   sessions(): Promise<SessionView[]> {
     return this.execute<SessionView[]>({ method: 'GET', path: '/v1/auth/sessions', auth: true });
+  }
+
+  requestPasswordReset(body: PasswordResetRequest): Promise<void> {
+    return this.execute<void>({
+      method: 'POST',
+      path: '/v1/auth/password-reset/request',
+      body,
+    });
+  }
+
+  confirmPasswordReset(body: PasswordResetConfirmRequest): Promise<void> {
+    return this.execute<void>({
+      method: 'POST',
+      path: '/v1/auth/password-reset/confirm',
+      body,
+      // The response clears the httpOnly refresh cookie. Include credentials so
+      // browsers accept that Set-Cookie when the configured API is cross-origin.
+      credentials: 'include',
+    });
   }
 
   listPasskeys(): Promise<PasskeyView[]> {
