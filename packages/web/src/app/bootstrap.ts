@@ -47,8 +47,8 @@ import type { Relationship, SelfSocial } from './social-controller.js';
 import { AchievementsController } from './achievements-controller.js';
 import { renderAchievements } from './achievements-view.js';
 import { summaryLabel } from './achievements-helpers.js';
-import { SearchController } from './search-controller.js';
 import type { SearchController as SearchControllerType } from './search-controller.js';
+import { mountSearch } from './search-mount.js';
 import { LearningController } from './learning-controller.js';
 import type { LearningController as LearningControllerType } from './learning-controller.js';
 import { renderCourseList, renderCourseDetail, renderLessonDetail } from './learning-view.js';
@@ -66,10 +66,8 @@ import type { TeamsController as TeamsControllerType } from './teams-controller.
 import { renderTeamList, renderTeamMembers, renderJoinRequests } from './teams-view.js';
 import { teamAction, actionExplanation, membershipOf, createJoinRequestQueue } from './teams-helpers.js';
 import type { MessagesController as MessagesControllerType } from './messages-controller.js';
-import { renderSearchResults, renderSearchPrompt } from './search-view.js';
 import { renderInbox, renderThread } from './messages-view.js';
-import { parseSearchMode } from './search-results.js';
-import type { JoinRequestView, SearchMode, SocialPlayer } from '../api/models.js';
+import type { JoinRequestView, SocialPlayer } from '../api/models.js';
 import { ThemeToggle } from './theme-toggle.js';
 import type { ThemeToggle as ThemeToggleType } from './theme-toggle.js';
 import { AuthController } from './auth-controller.js';
@@ -494,12 +492,6 @@ export function bootstrap(
       void auth.logout();
     };
   }
-
-  // The header search form lives in the nav, outside every section this function replaces, so it
-  // survives each re-run — and a listener attached here would be added again on every navigation
-  // until one submit fired a whole stack of them. Its handler is bound once in `main.ts`, next to
-  // the other document-level handlers, for exactly that reason. Only the value is refreshed here.
-  const searchInputEl = doc.getElementById('search-input') as HTMLInputElement | null;
 
   // Restore any persisted session. Kept as a promise so the authenticated game
   // socket below can wait for the access token, which M12 inc 2 obtains
@@ -1361,101 +1353,7 @@ export function bootstrap(
   // --- Search view ---
   const searchEl = doc.getElementById('search');
   if (searchEl && route.name === 'search') {
-    const modeMountEl = doc.getElementById('search-mode');
-    const resultsEl = doc.getElementById('search-results');
-    const errorEl = doc.getElementById('search-error');
-
-    // These elements are static in index.html, so state set by a previous run outlives it. A search
-    // abandoned by navigating away is disposed before `onLoading(false)` reaches the DOM, which
-    // would otherwise leave the region announcing itself as busy forever. Starting each run from a
-    // known state costs nothing and does not depend on the controller getting a last word in.
-    if (resultsEl) resultsEl.setAttribute('aria-busy', 'false');
-    if (errorEl) errorEl.textContent = '';
-
-    const searchParams = new URLSearchParams(typeof location !== 'undefined' ? location.search : '');
-    const rawQ = searchParams.get('q') ?? '';
-    const q = rawQ.trim();
-    const activeMode = parseSearchMode(searchParams.get('mode'));
-
-    if (searchInputEl) {
-      searchInputEl.value = rawQ;
-    }
-
-    // Render mode selector (segmented control matching create-game-panel.ts)
-    if (modeMountEl) {
-      modeMountEl.innerHTML = '';
-      const modes: { readonly value: SearchMode; readonly label: string }[] = [
-        { value: 'keyword', label: 'Keyword' },
-        { value: 'semantic', label: 'Semantic' },
-        { value: 'hybrid', label: 'Hybrid' },
-      ];
-      for (const m of modes) {
-        const labelEl = doc.createElement('label');
-        labelEl.className = 'cg-seg';
-        const inputEl = doc.createElement('input');
-        inputEl.type = 'radio';
-        inputEl.name = 'search-mode-option';
-        inputEl.value = m.value;
-        if (m.value === activeMode) inputEl.checked = true;
-
-        inputEl.addEventListener('change', () => {
-          if (inputEl.checked) {
-            const params = new URLSearchParams();
-            if (q) params.set('q', q);
-            if (m.value !== 'keyword') params.set('mode', m.value);
-            const url = `/search?${params.toString()}`;
-
-            // Reuse the single navigation path: update history and dispatch popstate.
-            history.pushState(null, '', url);
-            window.dispatchEvent(new PopStateEvent('popstate'));
-          }
-        });
-
-        const spanEl = doc.createElement('span');
-        spanEl.className = 'cg-seg-label';
-        spanEl.textContent = m.label;
-
-        labelEl.append(inputEl, spanEl);
-        modeMountEl.appendChild(labelEl);
-      }
-    }
-
-    let resultsRendered = false;
-    const searchCtrl = new SearchController({
-      client: app.api,
-      callbacks: {
-        onResults: (hits) => {
-          resultsRendered = true;
-          if (errorEl) errorEl.textContent = '';
-          if (resultsEl) renderSearchResults(resultsEl, hits);
-        },
-        onLoading: (loading) => {
-          if (!resultsEl) return;
-          // `aria-busy` carries the state on its own. The placeholder that used to sit here was a
-          // `.panel-row` reading "Loading…" — a counterfeit result inside the results list, which a
-          // screen reader announces as a row. It existed to cover the window while per-result
-          // hydration filled in; hits now arrive complete in one request (ADR-0094), so the window
-          // it covered is a single round trip and the fake row costs more than it buys.
-          resultsEl.setAttribute('aria-busy', loading ? 'true' : 'false');
-          if (loading) {
-            resultsRendered = false;
-            return;
-          }
-          if (!resultsRendered) resultsEl.innerHTML = '';
-        },
-        onError: (msg) => {
-          if (errorEl) errorEl.textContent = msg;
-        },
-      },
-    });
-
-    if (q) {
-      void searchCtrl.search(q, activeMode);
-    } else {
-      if (resultsEl) renderSearchPrompt(resultsEl);
-    }
-
-    return createBootstrapped(app, auth, theme, { search: searchCtrl });
+    return createBootstrapped(app, auth, theme, { search: mountSearch(doc, app.api) });
   }
 
   // --- Messages Inbox view (/messages) ---
