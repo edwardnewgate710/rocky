@@ -28,18 +28,13 @@ import { CreateGamePanel } from './create-game-panel.js';
 import { PlayBotDialog } from './play-bot-dialog.js';
 import { ProfileController } from './profile-controller.js';
 import type { ProfileController as ProfileControllerType } from './profile-controller.js';
-import { LeaderboardController } from './leaderboard-controller.js';
-import { renderLeaderboard, renderVariantSelector, bindVariantSelector } from './leaderboard-view.js';
 import { OFFERED_VARIANTS } from '../api/models.js';
-import type { Variant } from '../api/models.js';
-import { TournamentController } from './tournament-controller.js';
 import type { TournamentController as TournamentControllerType } from './tournament-controller.js';
 import {
-  renderTournamentList,
-  renderTournamentDetail,
-  renderStandings,
-  renderLiveBoards,
-} from './tournament-view.js';
+  mountLeaderboard,
+  mountTournamentDetail,
+  mountTournamentList,
+} from './competition-mounts.js';
 import {
   renderEmpty,
   formatClock,
@@ -74,7 +69,7 @@ import type { MessagesController as MessagesControllerType } from './messages-co
 import { renderSearchResults, renderSearchPrompt } from './search-view.js';
 import { renderInbox, renderThread } from './messages-view.js';
 import { parseSearchMode } from './search-results.js';
-import type { JoinRequestView, SearchMode, SocialPlayer, TournamentDetail } from '../api/models.js';
+import type { JoinRequestView, SearchMode, SocialPlayer } from '../api/models.js';
 import { ThemeToggle } from './theme-toggle.js';
 import type { ThemeToggle as ThemeToggleType } from './theme-toggle.js';
 import { AuthController } from './auth-controller.js';
@@ -1342,154 +1337,25 @@ export function bootstrap(
   // --- Leaderboard view ---
   const leaderboardEl = doc.getElementById('leaderboard');
   if (leaderboardEl && route.name === 'leaderboard') {
-    const selectEl = doc.getElementById('leaderboard-variant-select') as HTMLSelectElement | null;
-    const loadingEl = doc.getElementById('leaderboard-loading');
-    const resultsEl = doc.getElementById('leaderboard-results');
-    const errorEl = doc.getElementById('leaderboard-error');
-    let resultsRendered = false;
-
-    let activeVariant: Variant = 'standard';
-    if (selectEl) {
-      renderVariantSelector(selectEl, activeVariant);
-    }
-
-    const leaderboardCtrl = new LeaderboardController({
-      client: app.api,
-      callbacks: {
-        onResults: (entries, names, _variant) => {
-          resultsRendered = true;
-          if (errorEl) errorEl.textContent = '';
-          if (resultsEl) renderLeaderboard(resultsEl, entries, names);
-        },
-        onLoading: (loading) => {
-          if (!resultsEl || !loadingEl) return;
-          resultsEl.setAttribute('aria-busy', loading ? 'true' : 'false');
-          if (loading) {
-            resultsRendered = false;
-            if (errorEl) errorEl.textContent = '';
-            resultsEl.hidden = true;
-            loadingEl.hidden = false;
-            return;
-          }
-          loadingEl.hidden = true;
-          resultsEl.hidden = false;
-          if (!resultsRendered) resultsEl.innerHTML = '';
-        },
-        onError: (msg) => {
-          if (errorEl) errorEl.textContent = msg;
-        },
-      },
-    });
-
-    let unbind = () => {};
-    if (selectEl) {
-      unbind = bindVariantSelector(selectEl, (val) => {
-        activeVariant = val;
-        void leaderboardCtrl.loadLeaderboard(activeVariant);
-      });
-    }
-
-    void leaderboardCtrl.loadLeaderboard(activeVariant);
     return createBootstrapped(app, auth, theme, {
-      leaderboard: {
-        dispose: () => {
-          unbind();
-          leaderboardCtrl.dispose();
-        },
-      },
+      leaderboard: mountLeaderboard(doc, app.api),
     });
   }
 
   // --- Tournaments list view ---
   const tournamentsEl = doc.getElementById('tournaments');
   if (tournamentsEl && route.name === 'tournaments') {
-    const listEl = doc.getElementById('tournament-list');
-    const errorEl = doc.getElementById('tournaments-error');
-    let listRendered = false;
-
-    const tournament = new TournamentController({
-      client: app.api,
-      callbacks: {
-        onList: (items) => {
-          listRendered = true;
-          if (listEl) renderTournamentList(listEl, items);
-        },
-        onDetail: () => {},
-        onStandings: () => {},
-        onLiveGames: () => {},
-        onLoading: (loading) => {
-          if (!listEl) return;
-          listEl.setAttribute('aria-busy', loading ? 'true' : 'false');
-          if (loading) {
-            listRendered = false;
-            listEl.innerHTML = '<div class="panel-row">Loading…</div>';
-            return;
-          }
-          // Loading ended without a render, so the request failed. The error line says what went
-          // wrong; leaving "Loading…" underneath it would contradict that and imply work still
-          // in progress.
-          if (!listRendered) listEl.innerHTML = '';
-        },
-        onError: (msg) => {
-          if (errorEl) errorEl.textContent = msg;
-        },
-      },
+    return createBootstrapped(app, auth, theme, {
+      tournament: mountTournamentList(doc, app.api),
     });
-
-    void tournament.loadList();
-    return createBootstrapped(app, auth, theme, { tournament });
   }
 
   // --- Single tournament detail view ---
   const tournamentEl = doc.getElementById('tournament');
   if (tournamentEl && route.name === 'tournament') {
-    const metaEl = doc.getElementById('tournament-meta');
-    const standingsEl = doc.getElementById('tournament-standings');
-    const liveEl = doc.getElementById('tournament-live');
-    const errorEl = doc.getElementById('tournament-error');
-
-    let currentDetail: TournamentDetail | null = null;
-
-    const tournament = new TournamentController({
-      client: app.api,
-      callbacks: {
-        onList: () => {},
-        onDetail: (detail) => {
-          currentDetail = detail;
-          const nameEl = doc.getElementById('tournament-name');
-          if (nameEl) nameEl.textContent = detail.name;
-          if (metaEl) renderTournamentDetail(metaEl, detail);
-          if (detail.state === 'running') {
-            tournament.startLive(detail.id);
-          }
-        },
-        onStandings: (standings, names) => {
-          if (standingsEl) renderStandings(standingsEl, standings, names);
-        },
-        onLiveGames: (games, names) => {
-          if (liveEl) renderLiveBoards(liveEl, games, names);
-        },
-        onLoading: (loading) => {
-          if (metaEl) metaEl.setAttribute('aria-busy', loading ? 'true' : 'false');
-          if (standingsEl) standingsEl.setAttribute('aria-busy', loading ? 'true' : 'false');
-          if (liveEl) liveEl.setAttribute('aria-busy', loading ? 'true' : 'false');
-          if (!metaEl) return;
-          if (loading && currentDetail === null) {
-            metaEl.innerHTML = '<div class="panel-row">Loading…</div>';
-            return;
-          }
-          // Loading finished with no detail: the load failed. Clear the placeholder so the error
-          // line is not sitting under a claim that the page is still fetching.
-          if (!loading && currentDetail === null) metaEl.innerHTML = '';
-        },
-        onError: (msg) => {
-          if (errorEl) errorEl.textContent = msg;
-        },
-      },
+    return createBootstrapped(app, auth, theme, {
+      tournament: mountTournamentDetail(doc, app.api, route.id),
     });
-
-    void tournament.loadDetail(route.id);
-    return createBootstrapped(app, auth, theme, { tournament });
   }
 
   // --- Search view ---
