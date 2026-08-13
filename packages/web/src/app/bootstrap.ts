@@ -1,9 +1,10 @@
 /**
  * DOM entry for the composition root: build the application graph, mount the
- * interactive board, and return the wired handles. This is the only app-layer
- * module that reads the DOM; it is invoked from `main.ts`. Keeping it separate
- * from {@link createApp} lets the object graph be composed and tested with no
- * DOM present.
+ * interactive board, and return the wired handles. It is invoked from
+ * `main.ts` and delegates bounded DOM concerns such as route visibility to
+ * focused app-layer modules. Keeping DOM composition separate from
+ * {@link createApp} lets the object graph be composed and tested with no DOM
+ * present.
  *
  * Routing: the bootstrap reads the URL pathname via {@link parseRoute} and
  * mounts the appropriate view:
@@ -84,6 +85,7 @@ import { PasswordResetController } from './password-reset-controller.js';
 import { renderPasskeys } from './passkeys-view.js';
 import type { WebAuthnAdapter } from '../ports/webauthn.js';
 import { parseRoute } from './router.js';
+import { applyRouteSurface } from './route-surface.js';
 import { shortId } from '../api/graphql.js';
 import type { SeekView } from '../api/models.js';
 import type { TimeControl } from '../net/ws-protocol.js';
@@ -487,76 +489,7 @@ export function bootstrap(
   if (authSectionEl) authSectionEl.hidden = auth.currentSession !== null || showPasswordReset;
   if (authLogoutEl) authLogoutEl.hidden = auth.currentSession === null;
 
-  // --- Toggle top-level section visibility for the active route ---
-  // index.html ships lobby/profile hidden; the game <main> is always present.
-  // Show exactly the section that matches the current route.
-  const mainEl = doc.getElementById('game-main');
-  const lobbySectionEl = doc.getElementById('lobby');
-  const profileSectionEl = doc.getElementById('profile');
-  const leaderboardSectionEl = doc.getElementById('leaderboard');
-  const tournamentsSectionEl = doc.getElementById('tournaments');
-  const tournamentSectionEl = doc.getElementById('tournament');
-  const searchSectionEl = doc.getElementById('search');
-  const messagesSectionEl = doc.getElementById('messages');
-  const conversationSectionEl = doc.getElementById('conversation');
-  const teamsSectionEl = doc.getElementById('teams');
-  const teamSectionEl = doc.getElementById('team');
-  const forumSectionEl = doc.getElementById('forum');
-  const threadSectionEl = doc.getElementById('thread');
-  const coursesSectionEl = doc.getElementById('courses');
-  const courseSectionEl = doc.getElementById('course');
-  const lessonSectionEl = doc.getElementById('lesson');
-  const studiesSectionEl = doc.getElementById('studies');
-  const studySectionEl = doc.getElementById('study');
-  const studyChapterSectionEl = doc.getElementById('study-chapter');
-  const passwordResetSectionEl = doc.getElementById('password-reset');
-  const showGame = route.name === 'game';
-  const showLobby = route.name === 'lobby';
-  const showProfile = route.name === 'profile';
-  const showLeaderboard = route.name === 'leaderboard';
-  const showTournaments = route.name === 'tournaments';
-  const showTournament = route.name === 'tournament';
-  const showSearch = route.name === 'search';
-  const showMessages = route.name === 'messages';
-  const showConversation = route.name === 'conversation';
-  const showTeams = route.name === 'teams';
-  const showTeam = route.name === 'team';
-  const showForum = route.name === 'forum';
-  const showThread = route.name === 'thread';
-  const showCourses = route.name === 'courses';
-  const showCourse = route.name === 'course';
-  const showLesson = route.name === 'lesson';
-  const showStudies = route.name === 'studies';
-  const showStudy = route.name === 'study';
-  const showStudyChapter = route.name === 'study-chapter';
-  doc.body.classList.toggle('route-game', showGame);
-  if (mainEl) mainEl.hidden = !showGame;
-  if (lobbySectionEl) lobbySectionEl.hidden = !showLobby;
-  if (profileSectionEl) profileSectionEl.hidden = !showProfile;
-  if (leaderboardSectionEl) leaderboardSectionEl.hidden = !showLeaderboard;
-  if (tournamentsSectionEl) tournamentsSectionEl.hidden = !showTournaments;
-  if (tournamentSectionEl) tournamentSectionEl.hidden = !showTournament;
-  if (searchSectionEl) searchSectionEl.hidden = !showSearch;
-  if (messagesSectionEl) messagesSectionEl.hidden = !showMessages;
-  if (conversationSectionEl) conversationSectionEl.hidden = !showConversation;
-  if (teamsSectionEl) teamsSectionEl.hidden = !showTeams;
-  if (teamSectionEl) teamSectionEl.hidden = !showTeam;
-  if (forumSectionEl) forumSectionEl.hidden = !showForum;
-  if (threadSectionEl) threadSectionEl.hidden = !showThread;
-  if (coursesSectionEl) coursesSectionEl.hidden = !showCourses;
-  if (courseSectionEl) courseSectionEl.hidden = !showCourse;
-  if (lessonSectionEl) lessonSectionEl.hidden = !showLesson;
-  if (studiesSectionEl) studiesSectionEl.hidden = !showStudies;
-  if (studySectionEl) studySectionEl.hidden = !showStudy;
-  if (studyChapterSectionEl) studyChapterSectionEl.hidden = !showStudyChapter;
-  if (passwordResetSectionEl) passwordResetSectionEl.hidden = !showPasswordReset;
-
-  // Board-only controls should not suggest functionality on lobby/profile
-  // routes. They were previously visible everywhere despite doing nothing.
-  const routeFlipEl = doc.getElementById('flip');
-  const skipBoardEl = doc.getElementById('skip-board');
-  if (routeFlipEl) routeFlipEl.hidden = !showGame;
-  if (skipBoardEl) skipBoardEl.hidden = !showGame;
+  applyRouteSurface(doc, route);
 
   // --- Game view ---
   const boardEl = doc.getElementById('board');
