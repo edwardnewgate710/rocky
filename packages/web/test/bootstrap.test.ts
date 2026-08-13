@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bootstrap, extractGameId, formatClock, formatTimeControl } from '../src/app/bootstrap.js';
-import type { BootstrapDependencies } from '../src/app/bootstrap.js';
+import type { BootstrapDependencies, Bootstrapped } from '../src/app/bootstrap.js';
 import { createLifecycle } from '../src/app/lifecycle.js';
 import { GameController } from '../src/app/game-controller.js';
 import { FakeTransport, json } from './support/fake-transport.js';
@@ -340,6 +340,42 @@ test('formatTimeControl formats delay correctly', () => {
 });
 
 // ── bootstrap without game ID ───────────────────────────────────────────
+
+test('bootstrap returns a fresh result with every public named field', () => {
+  const expectedFields: Record<keyof Bootstrapped, true> = {
+    app: true,
+    controller: true,
+    board: true,
+    lobby: true,
+    profile: true,
+    leaderboard: true,
+    tournament: true,
+    search: true,
+    messages: true,
+    teams: true,
+    forum: true,
+    learning: true,
+    studies: true,
+    passkeys: true,
+    passwordReset: true,
+    connectivity: true,
+    auth: true,
+    theme: true,
+  };
+  const first = bootstrap(makeDoc([]), makeDeps());
+  const second = bootstrap(makeDoc([]), makeDeps());
+
+  try {
+    assert.notStrictEqual(first, second);
+    assert.deepEqual(Object.keys(first).sort(), Object.keys(expectedFields).sort());
+    assert.deepEqual(Object.keys(second).sort(), Object.keys(expectedFields).sort());
+  } finally {
+    first.auth.dispose();
+    first.app.dispose();
+    second.auth.dispose();
+    second.app.dispose();
+  }
+});
 
 test('bootstrap without game ID mounts standalone board, no controller', () => {
   const doc = makeDoc();

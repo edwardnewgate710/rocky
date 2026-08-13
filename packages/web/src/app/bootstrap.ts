@@ -122,6 +122,37 @@ export interface Bootstrapped extends BootstrappedDisposables {
 /** Key of disposables returned by bootstrap. Driven by BootstrappedDisposables for structural teardown exhaustiveness. */
 export type DisposableKey = keyof BootstrappedDisposables;
 
+type ActiveBootstrappedDisposables = Partial<Omit<BootstrappedDisposables, 'app'>>;
+
+function createBootstrapped(
+  app: App,
+  auth: AuthControllerType,
+  theme: ThemeToggleType,
+  activeDisposables: ActiveBootstrappedDisposables,
+): Bootstrapped {
+  return {
+    app,
+    controller: null,
+    board: null,
+    lobby: null,
+    profile: null,
+    leaderboard: null,
+    tournament: null,
+    search: null,
+    messages: null,
+    teams: null,
+    forum: null,
+    learning: null,
+    studies: null,
+    passkeys: null,
+    passwordReset: null,
+    connectivity: null,
+    auth,
+    theme,
+    ...activeDisposables,
+  };
+}
+
 /**
  * Extract a game ID from a URL-like path. Only `/game/{id}` is accepted.
  * Returns `null` when no game ID is found.
@@ -807,7 +838,7 @@ export function bootstrap(
         });
     }
 
-    return { app, board, controller, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity, auth, theme };
+    return createBootstrapped(app, auth, theme, { board, controller, connectivity });
   }
 
   // --- Lobby view ---
@@ -906,7 +937,7 @@ export function bootstrap(
 
     lobby.start();
 
-    return { app, board: null, controller: null, lobby, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
+    return createBootstrapped(app, auth, theme, { lobby });
   }
 
   // --- Profile view ---
@@ -1305,7 +1336,7 @@ export function bootstrap(
           },
         }
       : null;
-    return { app, board: null, controller: null, lobby: null, profile, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys, passwordReset: null, connectivity: null, auth, theme };
+    return createBootstrapped(app, auth, theme, { profile, passkeys });
   }
 
   // --- Leaderboard view ---
@@ -1359,16 +1390,14 @@ export function bootstrap(
     }
 
     void leaderboardCtrl.loadLeaderboard(activeVariant);
-    return {
-      app, board: null, controller: null, lobby: null, profile: null,
+    return createBootstrapped(app, auth, theme, {
       leaderboard: {
         dispose: () => {
           unbind();
           leaderboardCtrl.dispose();
-        }
+        },
       },
-      tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme
-    };
+    });
   }
 
   // --- Tournaments list view ---
@@ -1408,7 +1437,7 @@ export function bootstrap(
     });
 
     void tournament.loadList();
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
+    return createBootstrapped(app, auth, theme, { tournament });
   }
 
   // --- Single tournament detail view ---
@@ -1460,7 +1489,7 @@ export function bootstrap(
     });
 
     void tournament.loadDetail(route.id);
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
+    return createBootstrapped(app, auth, theme, { tournament });
   }
 
   // --- Search view ---
@@ -1560,7 +1589,7 @@ export function bootstrap(
       if (resultsEl) renderSearchPrompt(resultsEl);
     }
 
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: searchCtrl, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
+    return createBootstrapped(app, auth, theme, { search: searchCtrl });
   }
 
   // --- Messages Inbox view (/messages) ---
@@ -1595,7 +1624,7 @@ export function bootstrap(
         .catch(() => undefined);
     }
 
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: messagesCtrl, teams: null, forum: null, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
+    return createBootstrapped(app, auth, theme, { messages: messagesCtrl });
   }
 
   // --- Conversation Thread view (/messages/:id) ---
@@ -1666,7 +1695,7 @@ export function bootstrap(
         .catch(() => undefined);
     }
 
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: messagesCtrl, teams: null, forum: null, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
+    return createBootstrapped(app, auth, theme, { messages: messagesCtrl });
   }
 
   // --- Teams list view (/teams) ---
@@ -1706,7 +1735,7 @@ export function bootstrap(
     }
 
     void teamsCtrl.loadList();
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: teamsCtrl, forum: null, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
+    return createBootstrapped(app, auth, theme, { teams: teamsCtrl });
   }
 
   // --- Team detail view (/teams/:slug) ---
@@ -1813,7 +1842,7 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: teamsCtrl, forum: null, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
+    return createBootstrapped(app, auth, theme, { teams: teamsCtrl });
   }
 
   // --- Forum thread list (/teams/:slug/forum) ---
@@ -1886,7 +1915,7 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: forumCtrl, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
+    return createBootstrapped(app, auth, theme, { forum: forumCtrl });
   }
 
   // --- Forum thread (/teams/:slug/forum/:threadId) ---
@@ -1952,7 +1981,7 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: forumCtrl, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
+    return createBootstrapped(app, auth, theme, { forum: forumCtrl });
   }
 
   // --- Courses list view (/courses) ---
@@ -1990,7 +2019,7 @@ export function bootstrap(
     });
 
     void learningCtrl.loadCourses();
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
+    return createBootstrapped(app, auth, theme, { learning: learningCtrl });
   }
 
   // --- Course detail view (/courses/:slug) ---
@@ -2032,7 +2061,7 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
+    return createBootstrapped(app, auth, theme, { learning: learningCtrl });
   }
 
   // --- Lesson detail view (/lessons/:id) ---
@@ -2093,7 +2122,7 @@ export function bootstrap(
     if (auth.currentSession !== null) load();
     else void restorePromise.then(() => load()).catch(() => undefined);
 
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: learningCtrl, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
+    return createBootstrapped(app, auth, theme, { learning: learningCtrl });
   }
 
   // --- Studies list view (/studies) ---
@@ -2143,7 +2172,7 @@ export function bootstrap(
     }
 
     void studiesCtrl.loadStudies();
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: studiesCtrl, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
+    return createBootstrapped(app, auth, theme, { studies: studiesCtrl });
   }
 
   // --- Study detail view (/studies/:id) ---
@@ -2194,7 +2223,7 @@ export function bootstrap(
     });
 
     void studiesCtrl.loadStudy(studyId);
-    return { app, board: null, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: studiesCtrl, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
+    return createBootstrapped(app, auth, theme, { studies: studiesCtrl });
   }
 
   // --- Study chapter detail view (/studies/:id/chapters/:chapterId) ---
@@ -2255,7 +2284,7 @@ export function bootstrap(
     });
 
     void studiesCtrl.loadChapter(studyId, chapterId);
-    return { app, board: chapterBoard, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: studiesCtrl, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
+    return createBootstrapped(app, auth, theme, { board: chapterBoard, studies: studiesCtrl });
   }
 
   // --- Password reset view ---
@@ -2348,26 +2377,7 @@ export function bootstrap(
       },
     };
 
-    return {
-      app,
-      board: null,
-      controller: null,
-      lobby: null,
-      profile: null,
-      leaderboard: null,
-      tournament: null,
-      search: null,
-      messages: null,
-      teams: null,
-      forum: null,
-      learning: null,
-      studies: null,
-      passkeys: null,
-      passwordReset: passwordResetDisposable,
-      connectivity: null,
-      auth,
-      theme,
-    };
+    return createBootstrapped(app, auth, theme, { passwordReset: passwordResetDisposable });
   }
 
   // --- Standalone board (no game ID, no lobby, no profile, no tournament, no search, no messages) ---
@@ -2375,5 +2385,5 @@ export function bootstrap(
     ? mountBoard({ boardEl, statusEl, flipEl })
     : null;
 
-  return { app, board, controller: null, lobby: null, profile: null, leaderboard: null, tournament: null, search: null, messages: null, teams: null, forum: null, learning: null, studies: null, passkeys: null, passwordReset: null, connectivity: null, auth, theme };
+  return createBootstrapped(app, auth, theme, { board });
 }
