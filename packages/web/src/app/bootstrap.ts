@@ -55,16 +55,12 @@ import { StudiesController } from './studies-controller.js';
 import type { StudiesController as StudiesControllerType } from './studies-controller.js';
 import { renderStudyList, renderStudyDetail, renderChapterDetail } from './studies-view.js';
 import { mountConversation, mountMessagesInbox } from './messaging-mounts.js';
-import { TeamsController } from './teams-controller.js';
-import { ForumController } from './forum-controller.js';
+import { mountTeamDetail, mountTeamList } from './team-mounts.js';
+import { mountForum, mountForumThread } from './forum-mounts.js';
 import type { ForumController as ForumControllerType } from './forum-controller.js';
-import { renderThreadList, renderPosts } from './forum-view.js';
-import { canStartThread, canReply, abilityExplanation, threadDisplayTitle } from './forum-helpers.js';
 import type { TeamsController as TeamsControllerType } from './teams-controller.js';
-import { renderTeamList, renderTeamMembers, renderJoinRequests } from './teams-view.js';
-import { teamAction, actionExplanation, membershipOf, createJoinRequestQueue } from './teams-helpers.js';
 import type { MessagesController as MessagesControllerType } from './messages-controller.js';
-import type { JoinRequestView, SocialPlayer } from '../api/models.js';
+import type { SocialPlayer } from '../api/models.js';
 import { ThemeToggle } from './theme-toggle.js';
 import type { ThemeToggle as ThemeToggleType } from './theme-toggle.js';
 import { AuthController } from './auth-controller.js';
@@ -1382,287 +1378,50 @@ export function bootstrap(
   // --- Teams list view (/teams) ---
   const teamsEl = doc.getElementById('teams');
   if (teamsEl && route.name === 'teams') {
-    const listEl = doc.getElementById('team-list');
-    const errorEl = doc.getElementById('teams-error');
-    const formEl = doc.getElementById('team-search-form') as HTMLFormElement | null;
-    const inputEl = doc.getElementById('team-search-input') as HTMLInputElement | null;
-    let searched = false;
-
-    const teamsCtrl = new TeamsController({
-      client: app.api,
-      callbacks: {
-        onList: (teams) => {
-          if (errorEl) errorEl.textContent = '';
-          if (listEl) renderTeamList(listEl, teams, searched);
-        },
-        onTeam: () => {},
-        onLoading: (loading) => {
-          if (listEl) listEl.setAttribute('aria-busy', loading ? 'true' : 'false');
-        },
-        onError: (msg) => {
-          if (errorEl) errorEl.textContent = msg;
-        },
-        onNotFound: () => {},
-      },
-    });
-
-    if (formEl && inputEl) {
-      formEl.onsubmit = (e) => {
-        e.preventDefault();
-        const term = inputEl.value.trim();
-        searched = term.length > 0;
-        void teamsCtrl.loadList(term || undefined);
-      };
-    }
-
-    void teamsCtrl.loadList();
-    return createBootstrapped(app, auth, theme, { teams: teamsCtrl });
+    return createBootstrapped(app, auth, theme, { teams: mountTeamList(doc, app.api) });
   }
 
   // --- Team detail view (/teams/:slug) ---
   const teamEl = doc.getElementById('team');
   if (teamEl && route.name === 'team') {
-    const nameEl = doc.getElementById('team-name');
-    const descEl = doc.getElementById('team-description');
-    const noteEl = doc.getElementById('team-action-note');
-    const actionsEl = doc.getElementById('team-actions');
-    const membersEl = doc.getElementById('team-members');
-    const joinRequestsHeadingEl = doc.getElementById('join-requests-heading');
-    const joinRequestsEl = doc.getElementById('join-requests');
-    const forumLinkEl = doc.getElementById('team-forum-link');
-    const errorEl = doc.getElementById('team-error');
-    const slug = route.slug;
-    // Read late, never captured: the access token arrives asynchronously, so the viewer's identity
-    // is only known once the session restore has settled.
-    const viewerId = (): string | null => app.api.session.current?.user.id ?? null;
-
-    const teamsCtrl = new TeamsController({
-      client: app.api,
-      callbacks: {
-        onList: () => {},
-        onTeam: (team, members, names, joinRequests) => {
-          if (errorEl) errorEl.textContent = '';
-          if (nameEl) nameEl.textContent = team.name;
-          if (descEl) descEl.textContent = team.description;
-          if (membersEl) renderTeamMembers(membersEl, members, names);
-          // The forum belongs to THIS team, so its href is only knowable once the team has loaded.
-          // The SPA click handler navigates to whatever `href` says, so leaving a placeholder here
-          // sends every visitor back to the teams list instead of into the forum.
-          if (forumLinkEl instanceof HTMLAnchorElement) {
-            forumLinkEl.href = `/teams/${encodeURIComponent(team.slug)}/forum`;
-          }
-
-          if (joinRequestsHeadingEl) joinRequestsHeadingEl.hidden = joinRequests === undefined;
-          if (joinRequestsEl) joinRequestsEl.hidden = joinRequests === undefined;
-          if (joinRequestsEl && joinRequests !== undefined) {
-            const queue = createJoinRequestQueue({
-              renderQueue: (busy) => {
-                renderJoinRequests(joinRequestsEl, joinRequests, names, busy, {
-                  onAccept: (req) => void queue.respond(req.id, 'accepted'),
-                  onDecline: (req) => void queue.respond(req.id, 'declined'),
-                });
-              },
-              respond: (requestId, status) => teamsCtrl.respondToJoinRequest(team.id, requestId, status, slug),
-            });
-            queue.render();
-          }
-
-          if (!actionsEl || !noteEl) return;
-          actionsEl.replaceChildren();
-          noteEl.textContent = '';
-
-          const viewer = viewerId();
-          const action = teamAction(team, team.viewerRole, viewer);
-          if (action.kind === 'none') {
-            noteEl.textContent = actionExplanation(action.reason);
-            return;
-          }
-
-          const button = doc.createElement('button');
-          button.type = 'button';
-          button.textContent = action.kind === 'join' ? 'Join team' : 'Leave team';
-          button.addEventListener('click', () => {
-            button.disabled = true;
-            const own = membershipOf(members, viewer);
-            const done =
-              action.kind === 'join'
-                ? teamsCtrl.join(team.id, slug)
-                : own === null
-                  ? Promise.resolve(false)
-                  : teamsCtrl.leave(team.id, own.playerId, slug);
-            void done.then(() => {
-              button.disabled = false;
-            });
-          });
-          actionsEl.appendChild(button);
-        },
-        onLoading: (loading) => {
-          if (membersEl) membersEl.setAttribute('aria-busy', loading ? 'true' : 'false');
-          if (joinRequestsEl) joinRequestsEl.setAttribute('aria-busy', loading ? 'true' : 'false');
-        },
-        onError: (msg) => {
-          if (errorEl) errorEl.textContent = msg;
-        },
-        onNotFound: () => {
-          // A private team the viewer cannot see answers 404 exactly as a missing one does
-          // (ADR-0069). Saying "not permitted" here would confirm that it exists.
-          if (nameEl) nameEl.textContent = 'Team not found';
-          if (descEl) descEl.textContent = 'No such team, or it is private.';
-          if (membersEl) membersEl.replaceChildren();
-          if (actionsEl) actionsEl.replaceChildren();
-          if (noteEl) noteEl.textContent = '';
-          if (joinRequestsHeadingEl) joinRequestsHeadingEl.hidden = true;
-          if (joinRequestsEl) joinRequestsEl.hidden = true;
-        },
-      },
+    return createBootstrapped(app, auth, theme, {
+      teams: mountTeamDetail({
+        doc,
+        client: app.api,
+        slug: route.slug,
+        sessionPresent: auth.currentSession !== null,
+        restorePromise,
+      }),
     });
-
-    // The team routes are public, but WHICH action to offer depends on knowing the viewer, so the
-    // load waits for the session the same way the messages routes do.
-    const load = (): void => void teamsCtrl.loadTeam(slug);
-    if (auth.currentSession !== null) load();
-    else void restorePromise.then(() => load()).catch(() => undefined);
-
-    return createBootstrapped(app, auth, theme, { teams: teamsCtrl });
   }
 
   // --- Forum thread list (/teams/:slug/forum) ---
   const forumEl = doc.getElementById('forum');
   if (forumEl && route.name === 'forum') {
-    const titleEl = doc.getElementById('forum-title');
-    const listEl = doc.getElementById('thread-list');
-    const noteEl = doc.getElementById('forum-note');
-    const errorEl = doc.getElementById('forum-error');
-    const formEl = doc.getElementById('thread-form') as HTMLFormElement | null;
-    const titleInputEl = doc.getElementById('thread-title-input') as HTMLInputElement | null;
-    const bodyInputEl = doc.getElementById('thread-body-input') as HTMLInputElement | null;
-    const slug = route.slug;
-    const viewerId = (): string | null => app.api.session.current?.user.id ?? null;
-    let teamId: string | null = null;
-
-    const forumCtrl = new ForumController({
-      client: app.api,
-      callbacks: {
-        onThreads: (team, threads, members, names) => {
-          teamId = team.id;
-          if (errorEl) errorEl.textContent = '';
-          if (titleEl) titleEl.textContent = `${team.name} forum`;
-          if (listEl) renderThreadList(listEl, slug, threads, names);
-
-          const ability = canStartThread(members, viewerId());
-          if (formEl) formEl.hidden = ability.kind !== 'allowed';
-          if (noteEl) {
-            noteEl.textContent = ability.kind === 'allowed' ? '' : abilityExplanation(ability.reason);
-          }
-        },
-        onThread: () => {},
-        onLoading: (loading) => {
-          if (listEl) listEl.setAttribute('aria-busy', loading ? 'true' : 'false');
-        },
-        onError: (msg) => {
-          if (errorEl) errorEl.textContent = msg;
-        },
-        onNotFound: () => {
-          if (titleEl) titleEl.textContent = 'Team not found';
-          if (listEl) listEl.replaceChildren();
-          if (formEl) formEl.hidden = true;
-          if (noteEl) noteEl.textContent = 'No such team, or it is private.';
-        },
-      },
+    return createBootstrapped(app, auth, theme, {
+      forum: mountForum({
+        doc,
+        client: app.api,
+        slug: route.slug,
+        sessionPresent: auth.currentSession !== null,
+        restorePromise,
+      }),
     });
-
-    if (formEl && titleInputEl && bodyInputEl) {
-      formEl.onsubmit = (e) => {
-        e.preventDefault();
-        const title = titleInputEl.value.trim();
-        const body = bodyInputEl.value.trim();
-        if (!title || !body || teamId === null) return;
-        // Clear only once the thread exists; a failed create otherwise discards what was typed.
-        titleInputEl.disabled = true;
-        bodyInputEl.disabled = true;
-        void forumCtrl.createThread(teamId, slug, title, body).then((created) => {
-          titleInputEl.disabled = false;
-          bodyInputEl.disabled = false;
-          if (created) {
-            titleInputEl.value = '';
-            bodyInputEl.value = '';
-          }
-          titleInputEl.focus();
-        });
-      };
-    }
-
-    const load = (): void => void forumCtrl.loadThreads(slug);
-    if (auth.currentSession !== null) load();
-    else void restorePromise.then(() => load()).catch(() => undefined);
-
-    return createBootstrapped(app, auth, theme, { forum: forumCtrl });
   }
 
   // --- Forum thread (/teams/:slug/forum/:threadId) ---
   const threadEl = doc.getElementById('thread');
   if (threadEl && route.name === 'thread') {
-    const titleEl = doc.getElementById('thread-title');
-    const postsEl = doc.getElementById('thread-posts');
-    const noteEl = doc.getElementById('thread-note');
-    const errorEl = doc.getElementById('thread-error');
-    const formEl = doc.getElementById('reply-form') as HTMLFormElement | null;
-    const inputEl = doc.getElementById('reply-input') as HTMLInputElement | null;
-    const slug = route.slug;
-    const threadId = route.threadId;
-    const viewerId = (): string | null => app.api.session.current?.user.id ?? null;
-    let teamId: string | null = null;
-
-    const forumCtrl = new ForumController({
-      client: app.api,
-      callbacks: {
-        onThreads: () => {},
-        onThread: (team, thread, posts, members, names) => {
-          teamId = team.id;
-          if (errorEl) errorEl.textContent = '';
-          if (titleEl) titleEl.textContent = threadDisplayTitle(thread);
-          if (postsEl) renderPosts(postsEl, posts, names, viewerId());
-
-          const ability = canReply(thread, members, viewerId());
-          if (formEl) formEl.hidden = ability.kind !== 'allowed';
-          if (noteEl) {
-            noteEl.textContent = ability.kind === 'allowed' ? '' : abilityExplanation(ability.reason);
-          }
-        },
-        onLoading: (loading) => {
-          if (postsEl) postsEl.setAttribute('aria-busy', loading ? 'true' : 'false');
-        },
-        onError: (msg) => {
-          if (errorEl) errorEl.textContent = msg;
-        },
-        onNotFound: () => {
-          if (titleEl) titleEl.textContent = 'Thread not found';
-          if (postsEl) postsEl.replaceChildren();
-          if (formEl) formEl.hidden = true;
-          if (noteEl) noteEl.textContent = 'No such thread, or the team is private.';
-        },
-      },
+    return createBootstrapped(app, auth, theme, {
+      forum: mountForumThread({
+        doc,
+        client: app.api,
+        slug: route.slug,
+        threadId: route.threadId,
+        sessionPresent: auth.currentSession !== null,
+        restorePromise,
+      }),
     });
-
-    if (formEl && inputEl) {
-      formEl.onsubmit = (e) => {
-        e.preventDefault();
-        const body = inputEl.value.trim();
-        if (!body || teamId === null) return;
-        inputEl.disabled = true;
-        void forumCtrl.createPost(teamId, slug, threadId, body).then((sent) => {
-          inputEl.disabled = false;
-          if (sent) inputEl.value = '';
-          inputEl.focus();
-        });
-      };
-    }
-
-    const load = (): void => void forumCtrl.loadThread(slug, threadId);
-    if (auth.currentSession !== null) load();
-    else void restorePromise.then(() => load()).catch(() => undefined);
-
-    return createBootstrapped(app, auth, theme, { forum: forumCtrl });
   }
 
   // --- Courses list view (/courses) ---
