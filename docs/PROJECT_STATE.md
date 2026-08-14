@@ -4,8 +4,12 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-11 - AUD-007 documentation reconciliation; the latest
-product increment remains M14 Increment 45 (ADR-0109)._
+_Last updated: 2026-08-14 - AUD-008I password-recovery route mount extraction;
+the latest product increment remains M14 Increment 45 (ADR-0109)._
+
+## AUD-008I - Password-Recovery Route Mount Extraction
+
+Extracted the `/password-reset` route's DOM composition from `packages/web/src/app/bootstrap.ts` into the focused `packages/web/src/app/password-recovery-mount.ts` module. The early URL-token capture and `history.replaceState` stripping remain in `bootstrap` before application composition or background requests. The mount preserves route-local token lifetime and post-success replay prevention, local session clearing, persistent form ownership, pending-request disposal, idle-state restoration, DOM IDs, accessibility, styling, and the named `passwordReset` lifecycle disposable. Focused mount regressions plus the existing controller and Playwright coverage protect successful reset, invalid/expired-token retry, and stale completion suppression.
 
 ## M14 Increment 45 - Password-Recovery Web UI (ADR-0109)
 

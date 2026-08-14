@@ -66,7 +66,7 @@ import { AuthController } from './auth-controller.js';
 import type { AuthController as AuthControllerType } from './auth-controller.js';
 import type { AuthSession } from './auth-controller.js';
 import { PasskeysController } from './passkeys-controller.js';
-import { PasswordResetController } from './password-reset-controller.js';
+import { mountPasswordRecovery } from './password-recovery-mount.js';
 import { renderPasskeys } from './passkeys-view.js';
 import type { WebAuthnAdapter } from '../ports/webauthn.js';
 import { parseRoute } from './router.js';
@@ -1496,96 +1496,15 @@ export function bootstrap(
   }
 
   // --- Password reset view ---
-  let passwordResetDisposable: { dispose: () => void } | null = null;
   if (showPasswordReset) {
-    const requestViewEl = doc.getElementById('password-reset-request-view');
-    const confirmViewEl = doc.getElementById('password-reset-confirm-view');
-    const requestFormEl = doc.getElementById('password-reset-request-form') as HTMLFormElement | null;
-    const confirmFormEl = doc.getElementById('password-reset-confirm-form') as HTMLFormElement | null;
-    const requestInputEl = doc.getElementById('password-reset-request-input') as HTMLInputElement | null;
-    const confirmPassEl = doc.getElementById('password-reset-confirm-password') as HTMLInputElement | null;
-    const confirmPassConfirmEl = doc.getElementById('password-reset-confirm-password-confirm') as HTMLInputElement | null;
-    const requestSubmitEl = doc.getElementById('password-reset-request-submit') as HTMLButtonElement | null;
-    const confirmSubmitEl = doc.getElementById('password-reset-confirm-submit') as HTMLButtonElement | null;
-    const statusEl = doc.getElementById('password-reset-status');
-    const errorEl = doc.getElementById('password-reset-error');
-
-    if (requestViewEl) requestViewEl.hidden = activeResetToken !== null;
-    if (confirmViewEl) confirmViewEl.hidden = activeResetToken === null;
-    if (statusEl) statusEl.textContent = '';
-    if (errorEl) errorEl.textContent = '';
-
-    const setPasswordResetPending = (pending: boolean): void => {
-      if (requestSubmitEl) {
-        requestSubmitEl.disabled = pending;
-        requestSubmitEl.textContent = pending ? 'Sending…' : 'Send reset link';
-      }
-      if (confirmSubmitEl) {
-        confirmSubmitEl.disabled = pending;
-        confirmSubmitEl.textContent = pending ? 'Resetting…' : 'Reset password';
-      }
-      if (requestInputEl) requestInputEl.disabled = pending;
-      if (confirmPassEl) confirmPassEl.disabled = pending;
-      if (confirmPassConfirmEl) confirmPassConfirmEl.disabled = pending;
-      if (requestFormEl) requestFormEl.setAttribute('aria-busy', String(pending));
-      if (confirmFormEl) confirmFormEl.setAttribute('aria-busy', String(pending));
-    };
-
-    // The SPA reuses these nodes between route bootstraps, so establish an
-    // explicit idle state instead of inheriting mutations from a disposed run.
-    setPasswordResetPending(false);
-
-    const passwordResetCtrl = new PasswordResetController({
-      client: app.api,
-      callbacks: {
-        onPending: setPasswordResetPending,
-        onError: (msg) => {
-          if (errorEl) errorEl.textContent = msg ?? '';
-        },
-        onSuccess: (msg) => {
-          if (statusEl) statusEl.textContent = msg ?? '';
-          if (msg && activeResetToken !== null) {
-            activeResetToken = null;
-            if (confirmPassEl) confirmPassEl.value = '';
-            if (confirmPassConfirmEl) confirmPassConfirmEl.value = '';
-            if (confirmViewEl) confirmViewEl.hidden = true;
-          }
-        },
-        onSessionInvalidated: () => {
-          auth.clearLocalSession();
-        },
-      },
+    return createBootstrapped(app, auth, theme, {
+      passwordReset: mountPasswordRecovery({
+        doc,
+        client: app.api,
+        resetToken: activeResetToken,
+        onSessionInvalidated: () => auth.clearLocalSession(),
+      }),
     });
-
-    if (requestFormEl) {
-      requestFormEl.onsubmit = (e) => {
-        e.preventDefault();
-        const value = requestInputEl?.value ?? '';
-        void passwordResetCtrl.requestReset(value);
-      };
-    }
-
-    if (confirmFormEl) {
-      confirmFormEl.onsubmit = (e) => {
-        e.preventDefault();
-        const pass = confirmPassEl?.value ?? '';
-        const confirmPass = confirmPassConfirmEl?.value ?? '';
-        if (activeResetToken) {
-          void passwordResetCtrl.confirmReset(activeResetToken, pass, confirmPass);
-        }
-      };
-    }
-
-    passwordResetDisposable = {
-      dispose: () => {
-        if (requestFormEl) requestFormEl.onsubmit = null;
-        if (confirmFormEl) confirmFormEl.onsubmit = null;
-        passwordResetCtrl.dispose();
-        setPasswordResetPending(false);
-      },
-    };
-
-    return createBootstrapped(app, auth, theme, { passwordReset: passwordResetDisposable });
   }
 
   // --- Standalone board (no game ID, no lobby, no profile, no tournament, no search, no messages) ---
