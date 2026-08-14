@@ -49,14 +49,12 @@ import { renderAchievements } from './achievements-view.js';
 import { summaryLabel } from './achievements-helpers.js';
 import type { SearchController as SearchControllerType } from './search-controller.js';
 import { mountSearch } from './search-mount.js';
-import { LearningController } from './learning-controller.js';
 import type { LearningController as LearningControllerType } from './learning-controller.js';
-import { renderCourseList, renderCourseDetail, renderLessonDetail } from './learning-view.js';
-import { courseProgressLabel, stepStatusLabel } from './learning-helpers.js';
+import { mountCourseDetail, mountCourseList, mountLesson } from './learning-mounts.js';
 import { StudiesController } from './studies-controller.js';
 import type { StudiesController as StudiesControllerType } from './studies-controller.js';
 import { renderStudyList, renderStudyDetail, renderChapterDetail } from './studies-view.js';
-import { MessagesController } from './messages-controller.js';
+import { mountConversation, mountMessagesInbox } from './messaging-mounts.js';
 import { TeamsController } from './teams-controller.js';
 import { ForumController } from './forum-controller.js';
 import type { ForumController as ForumControllerType } from './forum-controller.js';
@@ -66,7 +64,6 @@ import type { TeamsController as TeamsControllerType } from './teams-controller.
 import { renderTeamList, renderTeamMembers, renderJoinRequests } from './teams-view.js';
 import { teamAction, actionExplanation, membershipOf, createJoinRequestQueue } from './teams-helpers.js';
 import type { MessagesController as MessagesControllerType } from './messages-controller.js';
-import { renderInbox, renderThread } from './messages-view.js';
 import type { JoinRequestView, SocialPlayer } from '../api/models.js';
 import { ThemeToggle } from './theme-toggle.js';
 import type { ThemeToggle as ThemeToggleType } from './theme-toggle.js';
@@ -79,7 +76,6 @@ import { renderPasskeys } from './passkeys-view.js';
 import type { WebAuthnAdapter } from '../ports/webauthn.js';
 import { parseRoute } from './router.js';
 import { applyRouteSurface } from './route-surface.js';
-import { shortId } from '../api/graphql.js';
 import type { SeekView } from '../api/models.js';
 import type { TimeControl } from '../net/ws-protocol.js';
 
@@ -1359,107 +1355,28 @@ export function bootstrap(
   // --- Messages Inbox view (/messages) ---
   const messagesEl = doc.getElementById('messages');
   if (messagesEl && route.name === 'messages') {
-    const inboxEl = doc.getElementById('messages-inbox');
-    const errorEl = doc.getElementById('messages-error');
-    const getUserId = () => app.api.session.current?.user.id ?? null;
-
-    const messagesCtrl = new MessagesController({
-      client: app.api,
-      callbacks: {
-        onInbox: (items, names) => {
-          if (errorEl) errorEl.textContent = '';
-          if (inboxEl) renderInbox(inboxEl, items, names, getUserId());
-        },
-        onThread: () => {},
-        onLoading: (loading) => {
-          if (inboxEl) inboxEl.setAttribute('aria-busy', loading ? 'true' : 'false');
-        },
-        onError: (msg) => {
-          if (errorEl) errorEl.textContent = msg;
-        },
-      },
+    return createBootstrapped(app, auth, theme, {
+      messages: mountMessagesInbox({
+        doc,
+        client: app.api,
+        sessionPresent: auth.currentSession !== null,
+        restorePromise,
+      }),
     });
-
-    if (auth.currentSession !== null) {
-      void messagesCtrl.loadInbox();
-    } else {
-      void restorePromise
-        .then(() => void messagesCtrl.loadInbox())
-        .catch(() => undefined);
-    }
-
-    return createBootstrapped(app, auth, theme, { messages: messagesCtrl });
   }
 
   // --- Conversation Thread view (/messages/:id) ---
   const conversationEl = doc.getElementById('conversation');
   if (conversationEl && route.name === 'conversation') {
-    const threadEl = doc.getElementById('conversation-thread');
-    const participantEl = doc.getElementById('conversation-participant');
-    const errorEl = doc.getElementById('conversation-error');
-    const composerEl = doc.getElementById('conversation-composer') as HTMLFormElement | null;
-    const composerInputEl = doc.getElementById('composer-input') as HTMLInputElement | null;
-    const getUserId = () => app.api.session.current?.user.id ?? null;
-    const convId = route.id;
-
-    const messagesCtrl = new MessagesController({
-      client: app.api,
-      callbacks: {
-        onInbox: () => {},
-        onThread: (_id, messages, names, otherParticipantId) => {
-          if (errorEl) errorEl.textContent = '';
-          const currentUserId = getUserId();
-          if (threadEl) renderThread(threadEl, messages, names, currentUserId);
-
-          if (participantEl) {
-            // Named from the conversation's participants, never inferred from who has posted: a
-            // thread the viewer alone has written in used to label itself with the viewer's own
-            // handle, which is the state every conversation starts in.
-            participantEl.textContent =
-              otherParticipantId === null
-                ? 'Conversation'
-                : `Conversation with ${names.get(otherParticipantId)?.handle ?? shortId(otherParticipantId)}`;
-          }
-        },
-        onLoading: (loading) => {
-          if (threadEl) threadEl.setAttribute('aria-busy', loading ? 'true' : 'false');
-        },
-        onError: (msg) => {
-          if (errorEl) errorEl.textContent = msg;
-        },
-      },
+    return createBootstrapped(app, auth, theme, {
+      messages: mountConversation({
+        doc,
+        client: app.api,
+        conversationId: route.id,
+        sessionPresent: auth.currentSession !== null,
+        restorePromise,
+      }),
     });
-
-    if (composerEl && composerInputEl) {
-      composerEl.onsubmit = (e) => {
-        e.preventDefault();
-        const text = composerInputEl.value.trim();
-        if (!text) return;
-        // Clear only once the send has landed. Clearing first loses what the user typed whenever
-        // the request fails, and the error message alone gives them no way to get it back.
-        composerInputEl.disabled = true;
-        void messagesCtrl.send(convId, text).then((sent) => {
-          composerInputEl.disabled = false;
-          if (sent) composerInputEl.value = '';
-          composerInputEl.focus();
-        });
-      };
-    }
-
-    const startThread = () => {
-      void messagesCtrl.loadThread(convId);
-      messagesCtrl.startPolling(convId);
-    };
-
-    if (auth.currentSession !== null) {
-      startThread();
-    } else {
-      void restorePromise
-        .then(() => startThread())
-        .catch(() => undefined);
-    }
-
-    return createBootstrapped(app, auth, theme, { messages: messagesCtrl });
   }
 
   // --- Teams list view (/teams) ---
@@ -1751,142 +1668,39 @@ export function bootstrap(
   // --- Courses list view (/courses) ---
   const coursesEl = doc.getElementById('courses');
   if (coursesEl && route.name === 'courses') {
-    const listEl = doc.getElementById('course-list');
-    const errorEl = doc.getElementById('courses-error');
-
-    const learningCtrl = new LearningController({
-      client: app.api,
-      callbacks: {
-        onCourseList: (courses) => {
-          if (errorEl) errorEl.textContent = '';
-          if (listEl) renderCourseList(listEl, courses);
-        },
-        onCourse: () => {},
-        onLesson: () => {},
-        onAttemptResult: () => {},
-        onLoading: (loading) => {
-          if (listEl) listEl.setAttribute('aria-busy', loading ? 'true' : 'false');
-        },
-        onError: (msg) => {
-          if (errorEl) errorEl.textContent = msg;
-        },
-        onUnavailable: () => {
-          if (coursesEl) {
-            coursesEl.replaceChildren();
-            const p = doc.createElement('p');
-            p.className = 'count';
-            p.textContent = 'Learning service unavailable.';
-            coursesEl.appendChild(p);
-          }
-        },
-      },
+    return createBootstrapped(app, auth, theme, {
+      learning: mountCourseList({ doc, client: app.api, surface: coursesEl }),
     });
-
-    void learningCtrl.loadCourses();
-    return createBootstrapped(app, auth, theme, { learning: learningCtrl });
   }
 
   // --- Course detail view (/courses/:slug) ---
   const courseEl = doc.getElementById('course');
   if (courseEl && route.name === 'course') {
-    const slug = route.slug;
-    const errorEl = doc.getElementById('course-error');
-
-    const learningCtrl = new LearningController({
-      client: app.api,
-      callbacks: {
-        onCourseList: () => {},
-        onCourse: (course, lessons, progress) => {
-          if (errorEl) errorEl.textContent = '';
-          renderCourseDetail(courseEl, course, lessons, progress);
-        },
-        onLesson: () => {},
-        onAttemptResult: () => {},
-        onLoading: (loading) => {
-          const listEl = doc.getElementById('lesson-list');
-          if (listEl) listEl.setAttribute('aria-busy', loading ? 'true' : 'false');
-        },
-        onError: (msg) => {
-          if (errorEl) errorEl.textContent = msg;
-        },
-        onUnavailable: () => {
-          if (courseEl) {
-            courseEl.replaceChildren();
-            const p = doc.createElement('p');
-            p.className = 'count';
-            p.textContent = 'Learning service unavailable.';
-            courseEl.appendChild(p);
-          }
-        },
-      },
+    return createBootstrapped(app, auth, theme, {
+      learning: mountCourseDetail({
+        doc,
+        client: app.api,
+        surface: courseEl,
+        slug: route.slug,
+        sessionPresent: auth.currentSession !== null,
+        restorePromise,
+      }),
     });
-
-    const load = (): void => void learningCtrl.loadCourse(slug);
-    if (auth.currentSession !== null) load();
-    else void restorePromise.then(() => load()).catch(() => undefined);
-
-    return createBootstrapped(app, auth, theme, { learning: learningCtrl });
   }
 
   // --- Lesson detail view (/lessons/:id) ---
   const lessonEl = doc.getElementById('lesson');
   if (lessonEl && route.name === 'lesson') {
-    const lessonId = route.id;
-    const errorEl = doc.getElementById('lesson-error');
-    let currentCourseId = '';
-
-    const learningCtrl = new LearningController({
-      client: app.api,
-      callbacks: {
-        onCourseList: () => {},
-        onCourse: () => {},
-        onLesson: (lesson, steps, progress, stepAttempts) => {
-          currentCourseId = lesson.courseId;
-          if (errorEl) errorEl.textContent = '';
-          renderLessonDetail(
-            lessonEl,
-            lesson,
-            steps,
-            progress,
-            stepAttempts,
-            async (stepId, input) => {
-              await learningCtrl.submitAttempt(stepId, currentCourseId, input);
-            },
-          );
-        },
-        onAttemptResult: (stepId, result, courseProgress) => {
-          const stepCard = lessonEl.querySelector(`[data-step-id="${stepId}"]`);
-          if (stepCard) {
-            const statusEl = stepCard.querySelector('.step-status');
-            if (statusEl) statusEl.textContent = stepStatusLabel(result);
-          }
-          const progressEl = doc.getElementById('lesson-progress');
-          if (progressEl) progressEl.textContent = courseProgressLabel(courseProgress);
-        },
-        onLoading: (loading) => {
-          const stepListEl = doc.getElementById('step-list');
-          if (stepListEl) stepListEl.setAttribute('aria-busy', loading ? 'true' : 'false');
-        },
-        onError: (msg) => {
-          if (errorEl) errorEl.textContent = msg;
-        },
-        onUnavailable: () => {
-          if (lessonEl) {
-            lessonEl.replaceChildren();
-            const p = doc.createElement('p');
-            p.className = 'count';
-            p.textContent = 'Learning service unavailable.';
-            lessonEl.appendChild(p);
-          }
-        },
-      },
+    return createBootstrapped(app, auth, theme, {
+      learning: mountLesson({
+        doc,
+        client: app.api,
+        surface: lessonEl,
+        lessonId: route.id,
+        sessionPresent: auth.currentSession !== null,
+        restorePromise,
+      }),
     });
-
-    const load = (): void => void learningCtrl.loadLesson(lessonId);
-    if (auth.currentSession !== null) load();
-    else void restorePromise.then(() => load()).catch(() => undefined);
-
-    return createBootstrapped(app, auth, theme, { learning: learningCtrl });
   }
 
   // --- Studies list view (/studies) ---
