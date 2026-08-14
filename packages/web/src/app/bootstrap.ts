@@ -51,9 +51,8 @@ import type { SearchController as SearchControllerType } from './search-controll
 import { mountSearch } from './search-mount.js';
 import type { LearningController as LearningControllerType } from './learning-controller.js';
 import { mountCourseDetail, mountCourseList, mountLesson } from './learning-mounts.js';
-import { StudiesController } from './studies-controller.js';
 import type { StudiesController as StudiesControllerType } from './studies-controller.js';
-import { renderStudyList, renderStudyDetail, renderChapterDetail } from './studies-view.js';
+import { mountStudiesList, mountStudyChapter, mountStudyDetail } from './studies-mounts.js';
 import { mountConversation, mountMessagesInbox } from './messaging-mounts.js';
 import { mountTeamDetail, mountTeamList } from './team-mounts.js';
 import { mountForum, mountForumThread } from './forum-mounts.js';
@@ -1465,163 +1464,35 @@ export function bootstrap(
   // --- Studies list view (/studies) ---
   const studiesEl = doc.getElementById('studies');
   if (studiesEl && route.name === 'studies') {
-    const listEl = doc.getElementById('study-list');
-    const errorEl = doc.getElementById('studies-error');
-    const searchFormEl = doc.getElementById('study-search-form') as HTMLFormElement | null;
-
-    const studiesCtrl = new StudiesController({
-      client: app.api,
-      callbacks: {
-        onStudyList: (studies) => {
-          if (errorEl) errorEl.textContent = '';
-          if (listEl) renderStudyList(listEl, studies);
-        },
-        onStudy: () => {},
-        onChapterDetail: () => {},
-        onLoading: (loading) => {
-          if (listEl) listEl.setAttribute('aria-busy', loading ? 'true' : 'false');
-        },
-        onError: (msg) => {
-          if (errorEl) errorEl.textContent = msg;
-        },
-        onUnavailable: () => {
-          if (studiesEl) {
-            studiesEl.replaceChildren();
-            const p = doc.createElement('p');
-            p.className = 'count';
-            p.textContent = 'Studies service unavailable.';
-            studiesEl.appendChild(p);
-          }
-        },
-      },
+    return createBootstrapped(app, auth, theme, {
+      studies: mountStudiesList({ doc, client: app.api, surface: studiesEl }),
     });
-
-    if (searchFormEl) {
-      // Assignment, not addEventListener: `#study-search-form` lives in index.html and outlives the
-      // route, so a listener added per bootstrap would stack one more copy — each holding a disposed
-      // controller — on every visit. `onsubmit` replaces. Same as the teams and forum forms.
-      searchFormEl.onsubmit = (e): void => {
-        e.preventDefault();
-        const input = doc.getElementById('study-search-input') as HTMLInputElement | null;
-        const q = input?.value.trim() ?? '';
-        void studiesCtrl.loadStudies(q);
-      };
-    }
-
-    void studiesCtrl.loadStudies();
-    return createBootstrapped(app, auth, theme, { studies: studiesCtrl });
   }
 
   // --- Study detail view (/studies/:id) ---
   const studyEl = doc.getElementById('study');
   if (studyEl && route.name === 'study') {
-    const studyId = route.id;
-    const errorEl = doc.getElementById('study-error');
-
-    const studiesCtrl = new StudiesController({
-      client: app.api,
-      callbacks: {
-        onStudyList: () => {},
-        onStudy: (study, chapters, collaborators, exportUrl) => {
-          if (errorEl) errorEl.textContent = '';
-          renderStudyDetail(
-            {
-              nameEl: doc.getElementById('study-name'),
-              descEl: doc.getElementById('study-description'),
-              visEl: doc.getElementById('study-visibility'),
-              exportEl: doc.getElementById('study-export-link') as HTMLAnchorElement | null,
-              chaptersEl: doc.getElementById('study-chapters'),
-              collabsEl: doc.getElementById('study-collaborators'),
-            },
-            study,
-            chapters,
-            collaborators,
-            exportUrl,
-          );
-        },
-        onChapterDetail: () => {},
-        onLoading: (loading) => {
-          const chaptersEl = doc.getElementById('study-chapters');
-          if (chaptersEl) chaptersEl.setAttribute('aria-busy', loading ? 'true' : 'false');
-        },
-        onError: (msg) => {
-          if (errorEl) errorEl.textContent = msg;
-        },
-        onUnavailable: () => {
-          if (studyEl) {
-            studyEl.replaceChildren();
-            const p = doc.createElement('p');
-            p.className = 'count';
-            p.textContent = 'Studies service unavailable.';
-            studyEl.appendChild(p);
-          }
-        },
-      },
+    return createBootstrapped(app, auth, theme, {
+      studies: mountStudyDetail({
+        doc,
+        client: app.api,
+        surface: studyEl,
+        studyId: route.id,
+      }),
     });
-
-    void studiesCtrl.loadStudy(studyId);
-    return createBootstrapped(app, auth, theme, { studies: studiesCtrl });
   }
 
   // --- Study chapter detail view (/studies/:id/chapters/:chapterId) ---
   const studyChapterEl = doc.getElementById('study-chapter');
   if (studyChapterEl && route.name === 'study-chapter') {
-    const { id: studyId, chapterId } = route;
-    const errorEl = doc.getElementById('study-chapter-error');
-    const boardEl = doc.getElementById('chapter-board');
-
-    const chapterBoard = boardEl ? mountBoard({ boardEl }) : null;
-    if (chapterBoard) {
-      chapterBoard.setTurn(false);
-    }
-
-    const studiesCtrl = new StudiesController({
+    const mountedChapter = mountStudyChapter({
+      doc,
       client: app.api,
-      callbacks: {
-        onStudyList: () => {},
-        onStudy: () => {},
-        onChapterDetail: (study, chapter, tree, chapters, exportUrl) => {
-          if (errorEl) errorEl.textContent = '';
-          chapterBoard?.setPosition(chapter.startingFen);
-          renderChapterDetail(
-            {
-              studyLinkEl: doc.getElementById('chapter-study-link') as HTMLAnchorElement | null,
-              chapterNameEl: doc.getElementById('chapter-name'),
-              exportEl: doc.getElementById('chapter-export-link') as HTMLAnchorElement | null,
-              treeEl: doc.getElementById('chapter-tree'),
-              navEl: doc.getElementById('chapter-list-nav'),
-            },
-            study,
-            chapter,
-            tree,
-            chapters,
-            exportUrl,
-            (fenAfter) => {
-              chapterBoard?.setPosition(fenAfter);
-            },
-          );
-        },
-        onLoading: (loading) => {
-          const treeEl = doc.getElementById('chapter-tree');
-          if (treeEl) treeEl.setAttribute('aria-busy', loading ? 'true' : 'false');
-        },
-        onError: (msg) => {
-          if (errorEl) errorEl.textContent = msg;
-        },
-        onUnavailable: () => {
-          if (studyChapterEl) {
-            studyChapterEl.replaceChildren();
-            const p = doc.createElement('p');
-            p.className = 'count';
-            p.textContent = 'Studies service unavailable.';
-            studyChapterEl.appendChild(p);
-          }
-        },
-      },
+      surface: studyChapterEl,
+      studyId: route.id,
+      chapterId: route.chapterId,
     });
-
-    void studiesCtrl.loadChapter(studyId, chapterId);
-    return createBootstrapped(app, auth, theme, { board: chapterBoard, studies: studiesCtrl });
+    return createBootstrapped(app, auth, theme, mountedChapter);
   }
 
   // --- Password reset view ---
