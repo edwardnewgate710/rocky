@@ -4,8 +4,12 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-15 - AUD-008L game route mount extraction;
+_Last updated: 2026-08-15 - AUD-008M composition-root cleanup (AUD-008A through M complete);
 the latest product increment remains M14 Increment 45 (ADR-0109)._
+
+## AUD-008M - Web Composition Root Cleanup
+
+Completed AUD-008M, the final web composition-root cleanup across `packages/web/src/app/bootstrap.ts` following the AUD-008A through AUD-008L route mount extractions. Reduced `bootstrap.ts` to a clear, minimal composition root responsible for URL route parsing, secret password-recovery token extraction and URL stripping, shared application graph and auth/theme composition, top-level route surface visibility, dispatch into the extracted route mounts, and backward-compatible `Bootstrapped` handle assembly. Removed stale comments, duplicate password-reset route checks, and redundant legacy type-import aliases without introducing framework abstractions, registries, or behavior changes. Preserved the public `bootstrap` signature and named result properties, ADR-0092 teardown exhaustiveness (`BootstrappedDisposables` and `DisposableKey`), auth/session restore ordering, WebSocket ownership and cleanup, and compatibility exports (`renderEmpty`, `formatClock`, `formatTimeControl`, `EmptyStateOptions`, and `extractGameId`). Completes the entire AUD-008A through M route extraction and composition-root cleanup series.
 
 ## AUD-008L - Game Route Mount Extraction
 

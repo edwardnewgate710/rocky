@@ -1,18 +1,14 @@
 /**
  * DOM entry for the composition root: build the application graph, mount the
- * interactive board, and return the wired handles. It is invoked from
- * `main.ts` and delegates bounded DOM concerns such as route visibility to
- * focused app-layer modules. Keeping DOM composition separate from
- * {@link createApp} lets the object graph be composed and tested with no DOM
- * present.
+ * active route view, and return the wired handles. It is invoked from
+ * `main.ts` and delegates bounded DOM concerns to focused app-layer modules.
+ * Keeping DOM composition separate from {@link createApp} lets the object
+ * graph be composed and tested with no DOM present.
  *
- * Routing: the bootstrap reads the URL pathname via {@link parseRoute} and
- * mounts the appropriate view:
- * - `/` → lobby (seek list + create-seek form)
- * - `/game/{id}` → game view (board + clock + status)
- * - `/profile` or `/profile/{handle}` → profile view
+ * Routing: reads the URL pathname via {@link parseRoute}, applies top-level
+ * surface visibility, and dispatches into the focused route mounts.
  *
- * The theme toggle is always wired, regardless of route.
+ * Theme toggle and auth controller are always wired across all routes.
  */
 import { createApp } from './composition.js';
 import type { App, AppDependencies } from './composition.js';
@@ -20,13 +16,13 @@ import { applyNavCapabilities } from './capabilities-nav.js';
 import { resolveConfig } from './config.js';
 import { mountBoard } from './board.js';
 import type { MountedBoard } from './board.js';
-import type { GameController as GameControllerType } from './game-controller.js';
+import type { GameController } from './game-controller.js';
 import { mountGame } from './game-mount.js';
-import type { LobbyController as LobbyControllerType } from './lobby-controller.js';
+import type { LobbyController } from './lobby-controller.js';
 import { mountLobby } from './lobby-mount.js';
-import type { ProfileController as ProfileControllerType } from './profile-controller.js';
+import type { ProfileController } from './profile-controller.js';
 import { mountProfile } from './profile-mount.js';
-import type { TournamentController as TournamentControllerType } from './tournament-controller.js';
+import type { TournamentController } from './tournament-controller.js';
 import {
   mountLeaderboard,
   mountTournamentDetail,
@@ -38,22 +34,20 @@ import {
   formatTimeControl,
 } from './render-helpers.js';
 import type { EmptyStateOptions } from './render-helpers.js';
-import type { SearchController as SearchControllerType } from './search-controller.js';
+import type { SearchController } from './search-controller.js';
 import { mountSearch } from './search-mount.js';
-import type { LearningController as LearningControllerType } from './learning-controller.js';
+import type { LearningController } from './learning-controller.js';
 import { mountCourseDetail, mountCourseList, mountLesson } from './learning-mounts.js';
-import type { StudiesController as StudiesControllerType } from './studies-controller.js';
+import type { StudiesController } from './studies-controller.js';
 import { mountStudiesList, mountStudyChapter, mountStudyDetail } from './studies-mounts.js';
 import { mountConversation, mountMessagesInbox } from './messaging-mounts.js';
 import { mountTeamDetail, mountTeamList } from './team-mounts.js';
 import { mountForum, mountForumThread } from './forum-mounts.js';
-import type { ForumController as ForumControllerType } from './forum-controller.js';
-import type { TeamsController as TeamsControllerType } from './teams-controller.js';
-import type { MessagesController as MessagesControllerType } from './messages-controller.js';
+import type { ForumController } from './forum-controller.js';
+import type { TeamsController } from './teams-controller.js';
+import type { MessagesController } from './messages-controller.js';
 import { ThemeToggle } from './theme-toggle.js';
-import type { ThemeToggle as ThemeToggleType } from './theme-toggle.js';
 import { AuthController } from './auth-controller.js';
-import type { AuthController as AuthControllerType } from './auth-controller.js';
 import type { AuthSession } from './auth-controller.js';
 import { mountPasswordRecovery } from './password-recovery-mount.js';
 import type { WebAuthnAdapter } from '../ports/webauthn.js';
@@ -66,18 +60,18 @@ export type { EmptyStateOptions };
 /** Disposables returned by bootstrap, torn down on SPA route navigation. */
 export interface BootstrappedDisposables {
   readonly app: App;
-  readonly controller: GameControllerType | null;
+  readonly controller: GameController | null;
   readonly board: MountedBoard | null;
-  readonly lobby: LobbyControllerType | null;
-  readonly profile: ProfileControllerType | null;
+  readonly lobby: LobbyController | null;
+  readonly profile: ProfileController | null;
   readonly leaderboard: { dispose: () => void } | null;
-  readonly tournament: TournamentControllerType | null;
-  readonly search: SearchControllerType | null;
-  readonly messages: MessagesControllerType | null;
-  readonly teams: TeamsControllerType | null;
-  readonly forum: ForumControllerType | null;
-  readonly learning: LearningControllerType | null;
-  readonly studies: StudiesControllerType | null;
+  readonly tournament: TournamentController | null;
+  readonly search: SearchController | null;
+  readonly messages: MessagesController | null;
+  readonly teams: TeamsController | null;
+  readonly forum: ForumController | null;
+  readonly learning: LearningController | null;
+  readonly studies: StudiesController | null;
   readonly passkeys: { dispose: () => void } | null;
   readonly passwordReset: { dispose: () => void } | null;
   readonly connectivity: { dispose: () => void } | null;
@@ -85,8 +79,8 @@ export interface BootstrappedDisposables {
 
 /** Everything the bootstrap wired, returned for later increments and tests. */
 export interface Bootstrapped extends BootstrappedDisposables {
-  readonly auth: AuthControllerType;
-  readonly theme: ThemeToggleType;
+  readonly auth: AuthController;
+  readonly theme: ThemeToggle;
 }
 
 /** Key of disposables returned by bootstrap. Driven by BootstrappedDisposables for structural teardown exhaustiveness. */
@@ -96,8 +90,8 @@ type ActiveBootstrappedDisposables = Partial<Omit<BootstrappedDisposables, 'app'
 
 function createBootstrapped(
   app: App,
-  auth: AuthControllerType,
-  theme: ThemeToggleType,
+  auth: AuthController,
+  theme: ThemeToggle,
   activeDisposables: ActiveBootstrappedDisposables,
 ): Bootstrapped {
   return {
@@ -142,8 +136,6 @@ export interface BootstrapDependencies extends Partial<AppDependencies> {
   readonly webauthnAdapter?: WebAuthnAdapter;
 }
 
-
-
 /**
  * Compose the app and mount views against the given document. The route is
  * determined from the URL pathname (or `deps.gameId` override).
@@ -156,7 +148,9 @@ export function bootstrap(
   let activeResetToken: string | null = null;
   const rawUrl = typeof location !== 'undefined' ? location.pathname + (location.search ?? '') : '/';
   const route = parseRoute(rawUrl);
-  if (route.name === 'password-reset' && typeof location !== 'undefined' && location.search) {
+  const showPasswordReset = route.name === 'password-reset';
+
+  if (showPasswordReset && typeof location !== 'undefined' && location.search) {
     const searchParams = new URLSearchParams(location.search);
     const t = searchParams.get('token');
     if (t) {
@@ -225,10 +219,8 @@ export function bootstrap(
         if (authStatusEl) {
           authStatusEl.textContent = session ? `Signed in as ${session.handle}` : 'Not signed in';
         }
-        // Show/hide the sign-in surface vs the logout button. The *section* is what hides, not just
-        // the form inside it: the section carries the heading and the panel, so hiding only the
-        // form left a signed-in visitor looking at an empty box titled "Sign in". That was
-        // invisible while the section had no styling and obvious the moment it got some.
+        // Show/hide the sign-in surface vs the logout button. The section is what hides, not just
+        // the form inside it: hiding only the form left a signed-in visitor looking at an empty box.
         if (authSectionEl) authSectionEl.hidden = session !== null || showPasswordReset;
         if (authLogoutEl) authLogoutEl.hidden = session === null;
         // Update create-seek button state (M2 gating).
@@ -263,11 +255,7 @@ export function bootstrap(
     ...(deps?.storage !== undefined ? { storage: deps.storage } : typeof localStorage !== 'undefined' ? { storage: localStorage } : {}),
   });
 
-  // Wire auth form submit (sign in). Bound on the *form*, not on the button's click: the markup
-  // used to carry `onsubmit="return false"` with both buttons `type="button"`, so pressing Enter
-  // in the password field did nothing at all and signing in required reaching for the mouse. Every
-  // other form in this file already binds `onsubmit` and calls `preventDefault()`; this one now
-  // does too, and `auth-submit` is `type="submit"` so the click arrives through the same path.
+  // Wire auth form submit (sign in). Bound on the form so pressing Enter in the password field signs in.
   const submitSignIn = (): void => {
     const handle = authHandleEl?.value ?? '';
     const password = authPasswordEl?.value ?? '';
@@ -310,15 +298,13 @@ export function bootstrap(
     };
   }
 
-  // Restore any persisted session. Kept as a promise so the authenticated game
-  // socket below can wait for the access token, which M12 inc 2 obtains
-  // asynchronously via the httpOnly refresh cookie rather than from storage.
+  // Restore any persisted session. Kept as a promise so downstream mounts can wait
+  // for the access token asynchronously via httpOnly refresh cookie.
   const restorePromise = auth.restore();
 
   // --- Determine route & game params ---
   const gameId = deps?.gameId ?? (route.name === 'game' ? route.gameId : null);
   const token = deps?.token ?? app.api.session.current?.tokens.accessToken;
-  const showPasswordReset = route.name === 'password-reset';
 
   // Set initial auth section visibility from already-known route and auth state
   if (authSectionEl) authSectionEl.hidden = auth.currentSession !== null || showPasswordReset;
@@ -565,7 +551,7 @@ export function bootstrap(
     });
   }
 
-  // --- Standalone board (no game ID, no lobby, no profile, no tournament, no search, no messages) ---
+  // --- Standalone fallback board ---
   const statusEl = doc.getElementById('status');
   const flipEl = doc.getElementById('flip');
   const board = boardEl
