@@ -4,8 +4,12 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-15 - AUD-008K profile route mount extraction;
+_Last updated: 2026-08-15 - AUD-008L game route mount extraction;
 the latest product increment remains M14 Increment 45 (ADR-0109)._
+
+## AUD-008L - Game Route Mount Extraction
+
+Extracted the `/game/:id` route DOM composition from `packages/web/src/app/bootstrap.ts` into the focused `packages/web/src/app/game-mount.ts` module. The mount preserves exact behavior for `GameSync` initialization, authoritative move oracle creation, board mounting, clock/status/metadata/presence/live-announcement updates, action controls (draw, claim flag, resign, abort with inline confirmations, double-click protection, and error display), immediate authenticated WebSocket startup when a token is provided, and deferred spectator/authenticated startup when waiting for asynchronous session restoration (with rejection swallowing and route-exit cancellation). Preserves the single `GameController.start()` invocation, `window` `online`/`offline` connectivity listener registration and teardown in `connectivity.dispose()`, teardown ordering, and named `Bootstrapped` result handles (`board`, `controller`, `connectivity`). Route-scoped action click listeners are tracked and idempotently unbound in `connectivity.dispose()` to prevent handler stacking across SPA route remounts. Focused mount regressions cover immediate and restore-deferred socket startup, reject handling, premature disposal cancellation, online/offline browser listeners, action/confirmation wiring, and disposal unbinding.
 
 ## AUD-008K - Profile Route Mount Extraction
 
