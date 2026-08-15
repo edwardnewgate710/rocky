@@ -4,8 +4,12 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-14 - AUD-008I password-recovery route mount extraction;
+_Last updated: 2026-08-14 - AUD-008J lobby route mount extraction;
 the latest product increment remains M14 Increment 45 (ADR-0109)._
+
+## AUD-008J - Lobby Route Mount Extraction
+
+Extracted the lobby route's seek-list rendering, create-game panel, play-vs-computer dialog, and delegated seek actions from `packages/web/src/app/bootstrap.ts` into the focused `packages/web/src/app/lobby-mount.ts` module. `bootstrap(document, dependencies)` and its named `lobby` result still expose the same `LobbyController`; auth restoration, seek polling, game navigation, storage selection, DOM IDs, accessibility, styling, and API contracts are unchanged. Focused mount regressions cover seek states and actions, auth gating, create-game and bot-game submission, error presentation, navigation, and injected preference storage.
 
 ## AUD-008I - Password-Recovery Route Mount Extraction
 

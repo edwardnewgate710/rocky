@@ -22,13 +22,10 @@ import { mountBoard } from './board.js';
 import type { MountedBoard } from './board.js';
 import { GameController } from './game-controller.js';
 import type { GameController as GameControllerType } from './game-controller.js';
-import { LobbyController } from './lobby-controller.js';
 import type { LobbyController as LobbyControllerType } from './lobby-controller.js';
-import { CreateGamePanel } from './create-game-panel.js';
-import { PlayBotDialog } from './play-bot-dialog.js';
+import { mountLobby } from './lobby-mount.js';
 import { ProfileController } from './profile-controller.js';
 import type { ProfileController as ProfileControllerType } from './profile-controller.js';
-import { OFFERED_VARIANTS } from '../api/models.js';
 import type { TournamentController as TournamentControllerType } from './tournament-controller.js';
 import {
   mountLeaderboard,
@@ -71,7 +68,6 @@ import { renderPasskeys } from './passkeys-view.js';
 import type { WebAuthnAdapter } from '../ports/webauthn.js';
 import { parseRoute } from './router.js';
 import { applyRouteSurface } from './route-surface.js';
-import type { SeekView } from '../api/models.js';
 import type { TimeControl } from '../net/ws-protocol.js';
 
 export { renderEmpty, formatClock, formatTimeControl };
@@ -245,78 +241,6 @@ function renderPlayerList(
   }
 }
 
-/**
- * Render a seek list into a DOM element. Each seek is a row with variant,
- * speed, time control, and — only on the viewer's own seeks — a cancel button
- * (`currentUserId`). Cancelling someone else's seek is a 403, so the affordance
- * is owner-only. An empty list renders a first-run empty state.
- */
-function renderSeeks(
-  container: HTMLElement,
-  seeks: readonly SeekView[],
-  currentUserId: string | null,
-): void {
-  container.innerHTML = '';
-  if (seeks.length === 0) {
-    renderEmpty(container, {
-      mark: '♟',
-      title: 'No open seeks right now',
-      body: 'Create a game above — the first player to accept joins you.',
-    });
-    return;
-  }
-  for (const seek of seeks) {
-    const owned = currentUserId !== null && seek.creatorId === currentUserId;
-    const row = document.createElement('div');
-    row.className = owned ? 'seek-row seek-row-own' : 'seek-row';
-    row.dataset.seekId = seek.id;
-
-    const info = document.createElement('span');
-    info.className = 'seek-info';
-    const tc = formatTimeControl(seek.timeControl);
-    info.textContent = `${seek.variant} · ${seek.speed} · ${tc}${seek.rated ? ' · rated' : ''}`;
-
-    if (owned) {
-      // Your own open seek is live and waiting to be accepted — say so, and
-      // give it the cancel affordance (only the creator can cancel; others 403).
-      const main = document.createElement('div');
-      main.className = 'seek-main';
-      main.appendChild(info);
-
-      const waiting = document.createElement('span');
-      waiting.className = 'seek-waiting';
-      const dot = document.createElement('span');
-      dot.className = 'seek-dot';
-      dot.setAttribute('aria-hidden', 'true');
-      waiting.append(dot, 'Waiting for an opponent…');
-      main.appendChild(waiting);
-      row.appendChild(main);
-
-      const cancelBtn = document.createElement('button');
-      cancelBtn.type = 'button';
-      cancelBtn.className = 'seek-cancel';
-      cancelBtn.textContent = 'Cancel';
-      cancelBtn.dataset.seekId = seek.id;
-      cancelBtn.setAttribute('aria-label', 'Cancel your seek');
-      row.appendChild(cancelBtn);
-    } else {
-      const main = document.createElement('div');
-      main.className = 'seek-main';
-      main.appendChild(info);
-      row.appendChild(main);
-
-      const acceptBtn = document.createElement('button');
-      acceptBtn.type = 'button';
-      acceptBtn.className = 'seek-accept button primary';
-      acceptBtn.textContent = 'Play';
-      acceptBtn.dataset.seekId = seek.id;
-      acceptBtn.setAttribute('aria-label', 'Accept seek');
-      row.appendChild(acceptBtn);
-    }
-
-    container.appendChild(row);
-  }
-}
 
 /**
  * Compose the app and mount views against the given document. The route is
@@ -390,7 +314,7 @@ export function bootstrap(
   const authSectionEl = doc.getElementById('auth');
 
   let selfProfileSessionHandler: ((session: AuthSession | null) => void) | null = null;
-  let playBotDialog: PlayBotDialog | null = null;
+  let setPlayBotAuthenticated: ((authenticated: boolean) => void) | null = null;
   const auth = new AuthController({
     client: app.api,
     ...(deps?.webauthnAdapter !== undefined ? { webauthnAdapter: deps.webauthnAdapter } : {}),
@@ -416,7 +340,7 @@ export function bootstrap(
           playBotBtn.disabled = session === null;
           playBotBtn.title = session === null ? 'Sign in to play the computer' : '';
         }
-        playBotDialog?.setAuthenticated(session !== null);
+        setPlayBotAuthenticated?.(session !== null);
         selfProfileSessionHandler?.(session);
       },
       onPending: (pending) => {
@@ -822,100 +746,15 @@ export function bootstrap(
   // --- Lobby view ---
   const lobbyEl = doc.getElementById('lobby');
   if (lobbyEl && route.name === 'lobby') {
-    const seekListEl = doc.getElementById('seek-list');
-    const createGameEl = doc.getElementById('create-game');
-    const playBotMountEl = doc.getElementById('play-bot-mount');
-    const errorEl = doc.getElementById('lobby-error');
-
-    let panel: CreateGamePanel | null = null;
-
-    const lobby = new LobbyController({
+    const mountedLobby = mountLobby({
+      doc,
       client: app.api,
-      callbacks: {
-        onSeeks: (seeks) => {
-          if (seekListEl) renderSeeks(seekListEl, seeks, app.api.session.current?.user.id ?? null);
-        },
-        onCreatePending: (pending) => {
-          panel?.setPending(pending);
-        },
-        onError: (msg) => {
-          if (errorEl) errorEl.textContent = msg;
-        },
-        onGameMatched: (gameId) => {
-          window.location.href = `/game/${gameId}`;
-        },
-      },
       isAuthenticated: () => auth.isAuthenticated(),
+      ...(deps?.storage !== undefined ? { storage: deps.storage } : {}),
     });
+    setPlayBotAuthenticated = mountedLobby.setPlayBotAuthenticated;
 
-    // Mount the create-a-game panel; it hands validated params to the lobby.
-    if (createGameEl) {
-      panel = new CreateGamePanel({
-        doc,
-        mount: createGameEl,
-        initialAuthenticated: auth.isAuthenticated(),
-        ...(deps?.storage !== undefined
-          ? { storage: deps.storage }
-          : typeof localStorage !== 'undefined'
-            ? { storage: localStorage }
-            : {}),
-        callbacks: {
-          onSubmit: async (params) => {
-            const seek = await lobby.createSeek(params);
-            return seek !== null;
-          },
-          onError: (msg) => {
-            if (errorEl) errorEl.textContent = msg ?? '';
-          },
-        },
-      });
-    }
-
-    // Mount the play-vs-computer dialog.
-    // Variant is hardcoded to 'standard': the backend POST /v1/games/bot contract
-    // accepts any variant code, but the Stockfish engine worker build only supports
-    // standard chess rules (not Atomic, Crazyhouse, etc.). Offering other variants
-    // would be a promise the backend engine worker cannot keep.
-    if (playBotMountEl) {
-      playBotDialog = new PlayBotDialog({
-        doc,
-        mount: playBotMountEl,
-        initialAuthenticated: auth.isAuthenticated(),
-        callbacks: {
-          onSubmit: async (params) => {
-            const result = await lobby.createBotGame({
-              ...params,
-              variant: 'standard',
-            });
-            if (!result.ok) {
-              playBotDialog?.setError(result.message);
-              return null;
-            }
-            window.location.href = `/game/${result.gameId}`;
-            return result.gameId;
-          },
-        },
-      });
-    }
-
-    // Wire cancel/accept buttons (event delegation on the seek list).
-    if (seekListEl) {
-      seekListEl.addEventListener('click', (e) => {
-        const target = e.target;
-        if (target instanceof HTMLElement && target.dataset.seekId) {
-          const id = target.dataset.seekId;
-          if (target.classList.contains('seek-cancel')) {
-            void lobby.cancelSeek(id);
-          } else if (target.classList.contains('seek-accept')) {
-            void lobby.acceptSeek(id);
-          }
-        }
-      });
-    }
-
-    lobby.start();
-
-    return createBootstrapped(app, auth, theme, { lobby });
+    return createBootstrapped(app, auth, theme, { lobby: mountedLobby.lobby });
   }
 
   // --- Profile view ---
