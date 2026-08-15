@@ -236,10 +236,10 @@ test('the board fits the window without estimating the chrome height', () => {
   );
 
   /**
-   * The half this test used to miss. `max-height: 100%` needs a parent whose height is *definite*;
-   * against a parent that only has `min-height`, it resolves to nothing at all — the board sizes to
-   * the parent while the parent sizes to the board, and neither ever gives. Every assertion above
-   * passed while a 792px board hung 101px below the fold of a 767px window.
+   * The half this test used to miss. Both the former percentage cap and the current container-height
+   * unit need a parent whose height is *definite*; against a parent that only has `min-height`, the
+   * board sizes to the parent while the parent sizes to the board, and neither ever gives. Every
+   * assertion above passed while a 792px board hung 101px below the fold of a 767px window.
    *
    * So the assertion is on `height`, not `min-height`, and on the bootstrap-managed game-route
    * marker rather than a browser-dependent relational selector.
@@ -253,13 +253,19 @@ test('the board fits the window without estimating the chrome height', () => {
     'the game route needs a definite `height` on the column, not just `min-height` — '
       + 'a `max-height: 100%` child resolves to nothing against a parent that can grow',
   );
-  const desktopBoard = desktop.find((rule) => rule.selectors.includes('.cb-board'));
-  assert.ok(desktopBoard, 'the desktop breakpoint must switch the board to a height-driven square');
+  const desktopGame = desktop.find((rule) => rule.selectors.includes('.game'));
+  assert.ok(desktopGame, 'the desktop breakpoint must define the board sizing container');
   assert.ok(
-    /(^|[;\s])height\s*:\s*100%/.test(desktopBoard.body)
-      && /(^|[;\s])width\s*:\s*auto/.test(desktopBoard.body)
-      && /max-height:\s*100%/.test(desktopBoard.body),
-    'desktop must use the bounded height as the definite axis and derive width from the square ratio',
+    /container-type\s*:\s*size/.test(desktopGame.body),
+    'the game grid must expose both available axes so the board can use the smaller one',
+  );
+  const desktopBoard = desktop.find((rule) => rule.selectors.includes('.cb-board'));
+  assert.ok(desktopBoard, 'the desktop breakpoint must size the board against its container');
+  assert.ok(
+    /(^|[;\s])width\s*:\s*min\(\s*100%\s*,\s*100cqh\s*\)/.test(desktopBoard.body)
+      && /(^|[;\s])height\s*:\s*auto/.test(desktopBoard.body)
+      && /align-self\s*:\s*start/.test(desktopBoard.body),
+    'desktop must keep the board square using the smaller of its column width and available height',
   );
 });
 
