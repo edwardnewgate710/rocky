@@ -24,8 +24,8 @@ import { GameController } from './game-controller.js';
 import type { GameController as GameControllerType } from './game-controller.js';
 import type { LobbyController as LobbyControllerType } from './lobby-controller.js';
 import { mountLobby } from './lobby-mount.js';
-import { ProfileController } from './profile-controller.js';
 import type { ProfileController as ProfileControllerType } from './profile-controller.js';
+import { mountProfile } from './profile-mount.js';
 import type { TournamentController as TournamentControllerType } from './tournament-controller.js';
 import {
   mountLeaderboard,
@@ -36,14 +36,8 @@ import {
   renderEmpty,
   formatClock,
   formatTimeControl,
-  appendPanelRow,
 } from './render-helpers.js';
-import type { EmptyStateOptions, RowAction } from './render-helpers.js';
-import { SocialController } from './social-controller.js';
-import type { Relationship, SelfSocial } from './social-controller.js';
-import { AchievementsController } from './achievements-controller.js';
-import { renderAchievements } from './achievements-view.js';
-import { summaryLabel } from './achievements-helpers.js';
+import type { EmptyStateOptions } from './render-helpers.js';
 import type { SearchController as SearchControllerType } from './search-controller.js';
 import { mountSearch } from './search-mount.js';
 import type { LearningController as LearningControllerType } from './learning-controller.js';
@@ -56,15 +50,12 @@ import { mountForum, mountForumThread } from './forum-mounts.js';
 import type { ForumController as ForumControllerType } from './forum-controller.js';
 import type { TeamsController as TeamsControllerType } from './teams-controller.js';
 import type { MessagesController as MessagesControllerType } from './messages-controller.js';
-import type { SocialPlayer } from '../api/models.js';
 import { ThemeToggle } from './theme-toggle.js';
 import type { ThemeToggle as ThemeToggleType } from './theme-toggle.js';
 import { AuthController } from './auth-controller.js';
 import type { AuthController as AuthControllerType } from './auth-controller.js';
 import type { AuthSession } from './auth-controller.js';
-import { PasskeysController } from './passkeys-controller.js';
 import { mountPasswordRecovery } from './password-recovery-mount.js';
-import { renderPasskeys } from './passkeys-view.js';
 import type { WebAuthnAdapter } from '../ports/webauthn.js';
 import { parseRoute } from './router.js';
 import { applyRouteSurface } from './route-surface.js';
@@ -152,94 +143,6 @@ export interface BootstrapDependencies extends Partial<AppDependencies> {
   readonly webauthnAdapter?: WebAuthnAdapter;
 }
 
-/**
- * Render the action bar shown on another player's profile.
- *
- * A relationship of `null` means there is nothing to offer — the viewer is
- * signed out, or looking at their own profile — so the bar is emptied rather
- * than filled with disabled controls that suggest a signed-in affordance.
- *
- * Follow state is carried by the verb ("Follow" vs "Unfollow"), never by colour
- * alone: this system has exactly one accent and it means "active", so a colour
- * difference here would be both off-system and invisible to a colourblind user.
- */
-function renderSocialActions(
-  container: HTMLElement,
-  relationship: Relationship | null,
-  social: SocialController,
-  busy: boolean,
-  onOpenMessage?: () => void,
-): void {
-  container.innerHTML = '';
-  if (relationship === null) return;
-
-  const actions: RowAction[] = [];
-
-  if (relationship.blocked) {
-    // A block supersedes everything else, so offering follow or friend controls
-    // beside it would advertise actions the server will refuse.
-    actions.push({ label: 'Unblock', run: () => void social.unblockSubject() });
-  } else {
-    actions.push(
-      relationship.following
-        ? { label: 'Unfollow', run: () => void social.unfollow() }
-        : { label: 'Follow', run: () => void social.follow() },
-    );
-
-    if (onOpenMessage) {
-      actions.push({ label: 'Message', run: onOpenMessage, communicative: true });
-    }
-
-    if (relationship.incomingRequestId !== null) {
-      const id = relationship.incomingRequestId;
-      actions.push(
-        { label: 'Accept friend request', run: () => void social.respond(id, 'accept') },
-        { label: 'Decline friend request', run: () => void social.respond(id, 'decline') },
-      );
-    } else if (relationship.outgoingRequestId !== null) {
-      const id = relationship.outgoingRequestId;
-      actions.push({ label: 'Cancel friend request', run: () => void social.respond(id, 'cancel') });
-    } else {
-      actions.push({ label: 'Add friend', run: () => void social.sendFriendRequest() });
-    }
-
-    actions.push({ label: 'Block', run: () => void social.block(), destructive: true });
-  }
-
-  for (const action of actions) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.textContent = action.label;
-    button.disabled = busy;
-    // Block is destructive and must not sit flush against the connective
-    // actions, where a mis-aimed click is one pixel away from severing a
-    // relationship. DESIGN.md is explicit that hierarchy here comes from
-    // placement and copy rather than a second button treatment, so it is
-    // separated by position — not by colour or weight.
-    if (action.destructive) button.classList.add('social-action-destructive');
-    if (action.communicative) button.classList.add('social-action-communicate');
-    button.addEventListener('click', action.run);
-    container.appendChild(button);
-  }
-}
-
-/** Render a list of players, each with the actions that apply to them. */
-function renderPlayerList(
-  container: HTMLElement,
-  players: readonly SocialPlayer[],
-  empty: { readonly title: string; readonly body: string },
-  busy: boolean,
-  actionsFor: (player: SocialPlayer) => readonly RowAction[] = () => [],
-): void {
-  container.innerHTML = '';
-  if (players.length === 0) {
-    renderEmpty(container, { ...empty, inline: true });
-    return;
-  }
-  for (const player of players) {
-    appendPanelRow(container, player.handle, actionsFor(player), busy);
-  }
-}
 
 
 /**
@@ -760,400 +663,20 @@ export function bootstrap(
   // --- Profile view ---
   const profileEl = doc.getElementById('profile');
   if (profileEl && route.name === 'profile') {
-    const handleEl = doc.getElementById('profile-handle');
-    const ratingsEl = doc.getElementById('profile-ratings');
-    const gamesEl = doc.getElementById('profile-games');
-    const profileErrorEl = doc.getElementById('profile-error');
-
-    // --- Social region (M10 inc 9) ---
-    const socialActionsEl = doc.getElementById('social-actions');
-    const followersEl = doc.getElementById('social-followers');
-    const followingEl = doc.getElementById('social-following');
-    const followerCountEl = doc.getElementById('social-follower-count');
-    const followingCountEl = doc.getElementById('social-following-count');
-    const socialSelfEl = doc.getElementById('social-self');
-    const incomingEl = doc.getElementById('social-incoming');
-    const outgoingEl = doc.getElementById('social-outgoing');
-    const friendsEl = doc.getElementById('social-friends');
-    const friendCountEl = doc.getElementById('social-friend-count');
-    const blockedEl = doc.getElementById('social-blocked');
-    const socialNoteEl = doc.getElementById('social-note');
-    const socialErrorEl = doc.getElementById('social-error');
-
-    // --- Achievements region (M14 inc 22) ---
-    const achievementsEl = doc.getElementById('achievements');
-    const achievementsListEl = doc.getElementById('achievements-list');
-    const achievementsCountEl = doc.getElementById('achievements-count');
-    const achievementsErrorEl = doc.getElementById('achievements-error');
-
-    // --- Passkeys region (M14 inc 44) ---
-    const passkeysSelfEl = doc.getElementById('passkeys-self');
-    const passkeysCountEl = doc.getElementById('passkeys-count');
-    const passkeysRegisterEl = doc.getElementById('passkey-register');
-    const passkeysListEl = doc.getElementById('passkeys-list');
-    const passkeysNoteEl = doc.getElementById('passkeys-note');
-    const passkeysErrorEl = doc.getElementById('passkeys-error');
-
-    let socialBusy = false;
-    let passkeysBusy = false;
-    let lastRelationship: Relationship | null = null;
-    let lastSelfSocial: SelfSocial | null = null;
-    let passkeysCtrl: PasskeysController | null = null;
-    let passkeysUnbind = () => {};
-
-    const handle = route.name === 'profile' ? route.handle : null;
-    if (!handle) {
-      passkeysCtrl = new PasskeysController({
-        client: app.api,
-        ...(deps?.webauthnAdapter !== undefined ? { webauthnAdapter: deps.webauthnAdapter } : {}),
-        callbacks: {
-          onPasskeys: (items) => {
-            if (passkeysCountEl) passkeysCountEl.textContent = items.length > 0 ? `(${items.length})` : '';
-            if (passkeysListEl) {
-              renderPasskeys(
-                passkeysListEl,
-                items,
-                (id) => void passkeysCtrl?.deletePasskey(id),
-                passkeysBusy,
-              );
-            }
-          },
-          onPending: (pending) => {
-            passkeysBusy = pending;
-            if (passkeysRegisterEl instanceof HTMLButtonElement) {
-              passkeysRegisterEl.disabled = pending;
-            }
-            if (passkeysListEl) {
-              for (const btn of passkeysListEl.querySelectorAll('button')) {
-                btn.disabled = pending;
-              }
-            }
-          },
-          onError: (msg) => {
-            if (passkeysErrorEl) passkeysErrorEl.textContent = msg;
-          },
-          onStatus: (msg) => {
-            if (passkeysNoteEl) passkeysNoteEl.textContent = msg;
-            if (passkeysErrorEl) passkeysErrorEl.textContent = '';
-          },
-        },
-      });
-
-      if (passkeysRegisterEl instanceof HTMLButtonElement) {
-        const handler = () => {
-          if (passkeysNoteEl) passkeysNoteEl.textContent = '';
-          if (passkeysErrorEl) passkeysErrorEl.textContent = '';
-          void passkeysCtrl?.registerPasskey();
-        };
-        passkeysRegisterEl.addEventListener('click', handler);
-        passkeysUnbind = () => passkeysRegisterEl.removeEventListener('click', handler);
-      }
-    }
-
-    const social = new SocialController({
+    const mountedProfile = mountProfile({
+      doc,
       client: app.api,
-      callbacks: {
-        onConnections: (c) => {
-          if (followerCountEl) followerCountEl.textContent = String(c.followerCount);
-          if (followingCountEl) followingCountEl.textContent = String(c.followingCount);
-          if (followersEl) {
-            renderPlayerList(
-              followersEl,
-              c.followers,
-              { title: 'No followers yet', body: 'Followers appear here once someone follows this player.' },
-              socialBusy,
-            );
-          }
-          if (followingEl) {
-            renderPlayerList(
-              followingEl,
-              c.following,
-              { title: 'Not following anyone yet', body: 'Players this account follows appear here.' },
-              socialBusy,
-            );
-          }
-          if (socialNoteEl) {
-            // Names come only from the read layer. Saying so beats showing
-            // truncated ids with no explanation.
-            socialNoteEl.textContent = c.named
-              ? ''
-              : 'Player names are unavailable while the read layer is disabled; showing partial ids.';
-          }
-        },
-        onRelationship: (r) => {
-          lastRelationship = r;
-          if (socialActionsEl) renderSocialActions(socialActionsEl, r, social, socialBusy, getOpenMessageFn());
-        },
-        onSelfSocial: (s) => {
-          lastSelfSocial = s;
-          if (socialSelfEl) socialSelfEl.hidden = s === null;
-          if (s === null) return;
-          if (incomingEl) {
-            incomingEl.innerHTML = '';
-            if (s.incoming.length === 0) {
-              renderEmpty(incomingEl, {
-                title: 'No requests waiting',
-                body: 'Friend requests sent to you appear here.',
-                inline: true,
-              });
-            } else {
-              for (const { request, player } of s.incoming) {
-                appendPanelRow(
-                  incomingEl,
-                  player.handle,
-                  [
-                    { label: 'Accept', run: () => void social.respond(request.id, 'accept') },
-                    { label: 'Decline', run: () => void social.respond(request.id, 'decline') },
-                  ],
-                  socialBusy,
-                );
-              }
-            }
-          }
-          if (outgoingEl) {
-            outgoingEl.innerHTML = '';
-            if (s.outgoing.length === 0) {
-              renderEmpty(outgoingEl, {
-                title: 'Nothing pending',
-                body: 'Requests you send appear here until they are answered.',
-                inline: true,
-              });
-            } else {
-              for (const { request, player } of s.outgoing) {
-                appendPanelRow(
-                  outgoingEl,
-                  player.handle,
-                  [{ label: 'Cancel', run: () => void social.respond(request.id, 'cancel') }],
-                  socialBusy,
-                );
-              }
-            }
-          }
-          if (friendCountEl) friendCountEl.textContent = String(s.friends.length);
-          if (friendsEl) {
-            renderPlayerList(
-              friendsEl,
-              s.friends,
-              { title: 'No friends yet', body: 'Accepted friend requests appear here.' },
-              socialBusy,
-            );
-          }
-          if (blockedEl) {
-            renderPlayerList(
-              blockedEl,
-              s.blocked,
-              { title: 'No blocked players', body: 'Players you block appear here.' },
-              socialBusy,
-              (player) => [{ label: 'Unblock', run: () => void social.unblock(player.id) }],
-            );
-          }
-        },
-        onBusy: (busy) => {
-          socialBusy = busy;
-          // Re-render only what carries controls, so a click cannot land twice.
-          if (socialActionsEl) renderSocialActions(socialActionsEl, lastRelationship, social, busy, getOpenMessageFn());
-          if (lastSelfSocial !== null && socialSelfEl && !socialSelfEl.hidden) {
-            for (const el of [incomingEl, outgoingEl, blockedEl]) {
-              if (!el) continue;
-              for (const button of el.querySelectorAll('button')) button.disabled = busy;
-            }
-          }
-        },
-        onError: (msg) => {
-          if (socialErrorEl) socialErrorEl.textContent = msg;
-        },
-      },
+      handle: route.handle ?? null,
+      getCurrentSession: () => auth.currentSession,
+      restorePromise,
+      ...(deps?.webauthnAdapter !== undefined ? { webauthnAdapter: deps.webauthnAdapter } : {}),
     });
+    selfProfileSessionHandler = mountedProfile.onSessionChange;
 
-    // Remembered so a later sign-in or sign-out can reload the region for the
-    // new viewer. Without this the relationship is a snapshot of whoever was
-    // signed in when the profile rendered: signing out would leave working
-    // Follow/Block controls on screen, and signing in would show none at all,
-    // until the visitor happened to navigate.
-    let socialSubject: SocialPlayer | null = null;
-    const getOpenMessageFn = (): (() => void) | undefined => {
-      const viewerId = auth.currentSession?.userId;
-      const targetId = socialSubject?.id;
-      if (!viewerId || !targetId || viewerId === targetId) return undefined;
-      return () => {
-        void (async () => {
-          try {
-            const conv = await app.api.messages.openWith(targetId);
-            const url = `/messages/${encodeURIComponent(conv.id)}`;
-            history.pushState(null, '', url);
-            window.dispatchEvent(new PopStateEvent('popstate'));
-          } catch (err) {
-            if (socialErrorEl) socialErrorEl.textContent = err instanceof Error ? err.message : String(err);
-          }
-        })();
-      };
-    };
-
-    const loadSocialFor = (player: SocialPlayer): void => {
-      socialSubject = player;
-      if (socialErrorEl) socialErrorEl.textContent = '';
-      void social.load(player, auth.currentSession?.userId ?? null);
-    };
-
-    const achievements = new AchievementsController({
-      client: app.api,
-      callbacks: {
-        onAchievements: (items, summary) => {
-          if (achievementsCountEl) achievementsCountEl.textContent = summaryLabel(summary, items);
-          if (achievementsListEl) renderAchievements(achievementsListEl, items);
-          if (achievementsErrorEl) achievementsErrorEl.textContent = '';
-          if (achievementsEl) achievementsEl.hidden = false;
-        },
-        onError: (msg) => {
-          // Revealed on failure, unlike the unavailable case: a load that broke for this profile is
-          // something the visitor can retry, so saying nothing would look like the player has none.
-          if (achievementsErrorEl) achievementsErrorEl.textContent = msg;
-          if (achievementsEl) achievementsEl.hidden = false;
-        },
-        onUnavailable: () => {
-          if (achievementsEl) achievementsEl.hidden = true;
-        },
-      },
+    return createBootstrapped(app, auth, theme, {
+      profile: mountedProfile.profile,
+      passkeys: mountedProfile.passkeys,
     });
-
-    const loadAchievementsFor = (playerId: string): void => {
-      achievements.reset();
-      if (achievementsListEl) achievementsListEl.replaceChildren();
-      if (achievementsCountEl) achievementsCountEl.textContent = '';
-      if (achievementsErrorEl) achievementsErrorEl.textContent = '';
-      void achievements.load(playerId);
-    };
-
-    const profile = new ProfileController({
-      client: app.api,
-      callbacks: {
-        onProfile: (p) => {
-          if (handleEl) handleEl.textContent = p.user.handle;
-          loadSocialFor({ id: p.user.id, handle: p.user.handle });
-          // Keyed by id, not handle: both achievements routes take a player id, and this is the
-          // first point on the page where one is known.
-          loadAchievementsFor(p.user.id);
-          if (ratingsEl) {
-            if (p.ratings.length === 0) {
-              renderEmpty(ratingsEl, {
-                title: 'No ratings yet',
-                body: 'Play a rated game to establish a rating.',
-                inline: true,
-              });
-            } else {
-              ratingsEl.innerHTML = '';
-              for (const r of p.ratings) {
-                const row = document.createElement('div');
-                row.className = 'rating-row';
-                row.textContent = `${r.variant}: ${Math.round(r.rating)} (RD ${Math.round(r.rd)})`;
-                ratingsEl.appendChild(row);
-              }
-            }
-          }
-        },
-        onGames: (games) => {
-          if (gamesEl) {
-            if (games.length === 0) {
-              renderEmpty(gamesEl, {
-                mark: '♞',
-                title: 'No games yet',
-                body: 'Your finished games will show up here.',
-                cta: { label: 'Find a game', href: '/', route: 'lobby' },
-              });
-            } else {
-              gamesEl.innerHTML = '';
-              for (const g of games) {
-                const row = document.createElement('div');
-                row.className = 'game-row';
-                row.textContent = `${g.variant} · ${g.speed} · ${g.result ?? 'ongoing'} · ${g.plyCount} ply`;
-                gamesEl.appendChild(row);
-              }
-            }
-          }
-        },
-        onError: (msg) => {
-          if (profileErrorEl) profileErrorEl.textContent = msg;
-        },
-      },
-    });
-
-    if (handle) {
-      void profile.load(handle);
-      // Another player's profile: the page itself does not change when the
-      // viewer's session does, but who they are to this player does — so the
-      // social region reloads while the profile above it stays put.
-      selfProfileSessionHandler = () => {
-        if (socialSubject !== null) loadSocialFor(socialSubject);
-      };
-    } else {
-      // Session restoration rotates the httpOnly refresh cookie and is
-      // asynchronous. Loading /users/me before it finishes produces a false
-      // "no active session" error even though the header becomes signed-in a
-      // moment later. Wait for the authenticated session, and also react when
-      // a user signs in while already on this route.
-      let loadedUserId: string | null = null;
-      const clearSelfProfile = (): void => {
-        if (handleEl) handleEl.textContent = '';
-        if (ratingsEl) ratingsEl.innerHTML = '';
-        if (gamesEl) gamesEl.innerHTML = '';
-        if (profileErrorEl) profileErrorEl.textContent = '';
-        // Signing out must take the social region with it — leaving one
-        // account's friends and blocked list on screen for the next visitor
-        // would be a disclosure, not a stale render.
-        social.reset();
-        // Achievements are public, so a stale one is not a disclosure the way a friends list is —
-        // but leaving the previous account's row of unlocks under a blank handle still reads as
-        // the next visitor's, so it goes with the rest.
-        achievements.reset();
-        passkeysCtrl?.reset();
-        if (achievementsEl) achievementsEl.hidden = true;
-        if (achievementsCountEl) achievementsCountEl.textContent = '';
-        if (passkeysCountEl) passkeysCountEl.textContent = '';
-        if (passkeysNoteEl) passkeysNoteEl.textContent = '';
-        if (passkeysErrorEl) passkeysErrorEl.textContent = '';
-        if (passkeysSelfEl) passkeysSelfEl.hidden = true;
-        for (const el of [socialActionsEl, followersEl, followingEl, incomingEl, outgoingEl, friendsEl, blockedEl, achievementsListEl, passkeysListEl]) {
-          if (el) el.innerHTML = '';
-        }
-        for (const el of [followerCountEl, followingCountEl, friendCountEl, socialNoteEl, socialErrorEl]) {
-          if (el) el.textContent = '';
-        }
-        if (socialSelfEl) socialSelfEl.hidden = true;
-      };
-      selfProfileSessionHandler = (session) => {
-        if (session === null) {
-          loadedUserId = null;
-          profile.reset();
-          clearSelfProfile();
-          if (profileErrorEl) profileErrorEl.textContent = 'Sign in to view your profile.';
-          return;
-        }
-
-        if (session.userId === loadedUserId) return;
-
-        loadedUserId = session.userId;
-        profile.reset();
-        clearSelfProfile();
-        void profile.loadSelf();
-        if (passkeysSelfEl) passkeysSelfEl.hidden = false;
-        void passkeysCtrl?.load();
-      };
-      if (auth.currentSession !== null) {
-        selfProfileSessionHandler(auth.currentSession);
-      } else {
-        void restorePromise.then((session) => selfProfileSessionHandler?.(session));
-      }
-    }
-
-    const passkeys = passkeysCtrl
-      ? {
-          dispose: (): void => {
-            passkeysUnbind();
-            passkeysCtrl?.dispose();
-          },
-        }
-      : null;
-    return createBootstrapped(app, auth, theme, { profile, passkeys });
   }
 
   // --- Leaderboard view ---

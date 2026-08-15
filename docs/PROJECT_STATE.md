@@ -4,8 +4,12 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-14 - AUD-008J lobby route mount extraction;
+_Last updated: 2026-08-15 - AUD-008K profile route mount extraction;
 the latest product increment remains M14 Increment 45 (ADR-0109)._
+
+## AUD-008K - Profile Route Mount Extraction
+
+Extracted the `/profile` and `/profile/:handle` route DOM composition from `packages/web/src/app/bootstrap.ts` into the focused `packages/web/src/app/profile-mount.ts` module. The mount preserves exact behavior for `ProfileController` (self and public profiles, ratings, games, empty/error states, and stale-response protection), `SocialController` (followers, following, friends, blocks, relationship actions, privacy/unavailable states, busy protection, and profile-to-message SPA navigation), `AchievementsController` (summary, list, unavailable, reset, and error presentation), and self-profile `PasskeysController` (list, register, delete, WebAuthn adapter injection, click-handler ownership, and lifecycle unbinding/disposal). Preserves session-restore ordering, same-user deduplication, sign-out and account-switch private-state clearing (disclosure prevention), and public-profile session-change social refreshes without profile data reloading. Focused mount regressions cover session restoration, deduplication, disclosure protection, passkey disposal, social refresh, SPA messaging navigation, and achievements handling.
 
 ## AUD-008J - Lobby Route Mount Extraction
 
