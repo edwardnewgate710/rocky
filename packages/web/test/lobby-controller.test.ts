@@ -1,7 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { LobbyController } from '../src/app/lobby-controller.js';
-import type { SeekView, Variant } from '../src/api/models.js';
+import type { GambitClient } from '../src/api/client.js';
+import type { GameSummary, SeekView, Variant } from '../src/api/models.js';
+
+function deferred<T>(): {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T) => void;
+} {
+  let resolvePromise!: (value: T) => void;
+  const promise = new Promise<T>((resolve) => { resolvePromise = resolve; });
+  return {
+    promise,
+    resolve: resolvePromise,
+  };
+}
 
 function makeSeek(overrides: Partial<SeekView> = {}): SeekView {
   return {
@@ -152,6 +165,7 @@ test('errors are reported via onError', async () => {
 
 test('dispose stops timer and ignores future calls', async () => {
   const client = makeFakeClient([makeSeek()]) as any;
+  let scheduled = 0;
   let cleared = 0;
   const ctrl = new LobbyController({
     client,
@@ -160,11 +174,17 @@ test('dispose stops timer and ignores future calls', async () => {
       onCreatePending: () => {},
       onError: () => {},
     },
-    setInterval: (fn, ms) => 1 as any,
+    setInterval: (fn, ms) => {
+      scheduled++;
+      return 1 as unknown as ReturnType<typeof setInterval>;
+    },
     clearInterval: (id) => { cleared++; },
   });
   ctrl.start();
   ctrl.dispose();
+  ctrl.dispose();
+  ctrl.start();
+  assert.equal(scheduled, 1);
   assert.equal(cleared, 1);
   // After dispose, refresh should be a no-op
   await ctrl.refresh();
@@ -174,6 +194,98 @@ test('dispose stops timer and ignores future calls', async () => {
     timeControl: { initialMs: 60000, incrementMs: 0, delayMs: 0, kind: 'sudden_death' },
   });
   assert.equal(result, null);
+});
+
+test('POST-AUD-001: deferred refresh cannot publish after disposal', async () => {
+  const pendingSeeks = deferred<SeekView[]>();
+  const client = {
+    seeks: { list: () => pendingSeeks.promise },
+  } as unknown as GambitClient;
+  const publishedLists: SeekView[][] = [];
+  const matchedGames: string[] = [];
+  const errors: string[] = [];
+  const ctrl = new LobbyController({
+    client,
+    callbacks: {
+      onSeeks: (seeks) => { publishedLists.push([...seeks]); },
+      onCreatePending: () => {},
+      onError: (message) => { errors.push(message); },
+      onGameMatched: (gameId) => { matchedGames.push(gameId); },
+    },
+  });
+
+  const refresh = ctrl.refresh();
+  ctrl.dispose();
+  pendingSeeks.resolve([makeSeek({ gameId: 'stale-game' })]);
+  await refresh;
+
+  assert.deepEqual(publishedLists, []);
+  assert.deepEqual(matchedGames, []);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(ctrl.currentSeeks, []);
+});
+
+test('POST-AUD-001: deferred seek acceptance cannot match after disposal', async () => {
+  const pendingAcceptance = deferred<SeekView>();
+  const client = {
+    seeks: { accept: () => pendingAcceptance.promise },
+  } as unknown as GambitClient;
+  const matchedGames: string[] = [];
+  const ctrl = new LobbyController({
+    client,
+    callbacks: {
+      onSeeks: () => {},
+      onCreatePending: () => {},
+      onError: () => {},
+      onGameMatched: (gameId) => { matchedGames.push(gameId); },
+    },
+    isAuthenticated: () => true,
+  });
+
+  const acceptance = ctrl.acceptSeek('seek-1');
+  ctrl.dispose();
+  pendingAcceptance.resolve(makeSeek({ gameId: 'stale-game' }));
+
+  assert.equal(await acceptance, false);
+  assert.deepEqual(matchedGames, []);
+});
+
+test('POST-AUD-001: deferred bot creation cannot succeed after disposal', async () => {
+  const pendingGame = deferred<GameSummary>();
+  const client = {
+    games: { createVsBot: () => pendingGame.promise },
+  } as unknown as GambitClient;
+  const ctrl = new LobbyController({
+    client,
+    callbacks: {
+      onSeeks: () => {},
+      onCreatePending: () => {},
+      onError: () => {},
+    },
+    isAuthenticated: () => true,
+  });
+
+  const creation = ctrl.createBotGame({
+    level: 'novice',
+    variant: 'standard',
+    timeControl: { initialMs: 300_000, incrementMs: 0, delayMs: 0, kind: 'sudden_death' },
+  });
+  ctrl.dispose();
+  pendingGame.resolve({
+    id: 'stale-bot-game',
+    variant: 'standard',
+    rated: false,
+    speed: 'blitz',
+    whiteId: 'u1',
+    blackId: 'bot',
+    result: null,
+    termination: null,
+    plyCount: 0,
+    startedAt: '2026-01-01T00:00:00Z',
+    endedAt: null,
+  });
+
+  assert.deepEqual(await creation, { ok: false, message: 'Lobby is no longer active.' });
 });
 
 test('currentSeeks returns the last fetched list', async () => {

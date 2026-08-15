@@ -4,6 +4,7 @@
  * Gated: requires GAMBIT_E2E_BACKEND=1 and the e2e harness running.
  */
 import { test, expect } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
 
 test.skip(!process.env['GAMBIT_E2E_BACKEND'], 'requires running backend — M14 acceptance gate');
 
@@ -159,4 +160,60 @@ test('play vs computer — Escape and Cancel are inert while the request is in f
   await page.keyboard.press('Escape');
   await expect(dialog).not.toBeVisible();
   await expect(page).toHaveURL(/\/$/);
+});
+
+test('POST-AUD-001: a completed bot request cannot reclaim navigation after leaving the lobby', async ({ page }) => {
+  let releaseCreate!: () => void;
+  const createMayFinish = new Promise<void>((resolve) => { releaseCreate = resolve; });
+  let requestStarted!: () => void;
+  const createStarted = new Promise<void>((resolve) => { requestStarted = resolve; });
+
+  await page.route('**/v1/games/bot', async (route) => {
+    requestStarted();
+    await createMayFinish;
+    await route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        id: 'stale-bot-game',
+        variant: 'standard',
+        rated: false,
+        speed: 'blitz',
+        whiteId: 'player',
+        blackId: 'bot',
+        result: null,
+        termination: null,
+        plyCount: 0,
+        startedAt: '2026-01-01T00:00:00Z',
+        endedAt: null,
+      }),
+    });
+  });
+
+  await page.goto('/');
+  const suffix = randomUUID().replaceAll('-', '').slice(0, 10);
+  const handle = `e2e-stale-lobby-${suffix}`;
+  await page.locator('#auth-handle').fill(handle);
+  await page.locator('#auth-password').fill('test-password-123');
+  await page.locator('#auth-register').click();
+  await expect(page.locator('#auth-status')).toHaveText(`Signed in as ${handle}`);
+
+  await page.locator('a[data-route="profile"]').click();
+  await expect(page).toHaveURL('/profile');
+  await page.locator('a[data-route="lobby"]').first().click();
+  await expect(page).toHaveURL('/');
+
+  await page.locator('#play-bot').click();
+  await page.locator('.pb-dialog button[type="submit"]').click();
+  await createStarted;
+  await page.goBack();
+  await expect(page).toHaveURL('/profile');
+
+  const botResponse = page.waitForResponse('**/v1/games/bot');
+  releaseCreate();
+  await botResponse;
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  }));
+  await expect(page).toHaveURL('/profile');
 });

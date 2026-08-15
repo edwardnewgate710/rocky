@@ -45,6 +45,8 @@ export interface LobbyControllerOptions {
   readonly refreshIntervalMs?: number;
   /** Whether the user is authenticated (gates create-seek). */
   readonly isAuthenticated?: () => boolean;
+  /** Releases route-owned resources when this controller is disposed. */
+  readonly onDispose?: () => void;
   /** Injected timer (for tests). */
   readonly setInterval?: (fn: () => void, ms: number) => ReturnType<typeof setInterval>;
   readonly clearInterval?: (id: ReturnType<typeof setInterval>) => void;
@@ -62,6 +64,7 @@ export class LobbyController {
   private readonly callbacks: LobbyCallbacks;
   private readonly refreshIntervalMs: number;
   private readonly isAuthenticated: (() => boolean) | undefined;
+  private readonly onDispose: () => void;
   private readonly _setInterval: (fn: () => void, ms: number) => ReturnType<typeof setInterval>;
   private readonly _clearInterval: (id: ReturnType<typeof setInterval>) => void;
   private timerId: ReturnType<typeof setInterval> | null = null;
@@ -73,6 +76,7 @@ export class LobbyController {
     this.callbacks = opts.callbacks;
     this.refreshIntervalMs = opts.refreshIntervalMs ?? 10_000;
     this.isAuthenticated = opts.isAuthenticated;
+    this.onDispose = opts.onDispose ?? (() => {});
     this._setInterval = opts.setInterval ?? ((fn, ms) => setInterval(fn, ms));
     this._clearInterval = opts.clearInterval ?? ((id) => clearInterval(id));
   }
@@ -86,8 +90,10 @@ export class LobbyController {
   async refresh(): Promise<void> {
     if (this.disposed) return;
     try {
-      this.seeks = await this.client.seeks.list();
-      
+      const seeks = await this.client.seeks.list();
+      if (this.disposed) return;
+      this.seeks = seeks;
+
       // Look for a matched seek (our backend only returns them if we are the creator)
       const matched = this.seeks.find((s) => s.gameId !== null);
       if (matched && this.callbacks.onGameMatched) {
@@ -97,13 +103,15 @@ export class LobbyController {
       // Filter out matched seeks before passing to the UI
       this.callbacks.onSeeks(this.seeks.filter((s) => s.gameId === null));
     } catch (err) {
-      this.callbacks.onError(err instanceof Error ? err.message : String(err));
+      if (!this.disposed) {
+        this.callbacks.onError(err instanceof Error ? err.message : String(err));
+      }
     }
   }
 
   /** Start the auto-refresh timer and do an immediate fetch. */
   start(): void {
-    if (this.timerId !== null) return;
+    if (this.disposed || this.timerId !== null) return;
     void this.refresh();
     if (this.refreshIntervalMs > 0) {
       this.timerId = this._setInterval(() => void this.refresh(), this.refreshIntervalMs);
@@ -144,14 +152,17 @@ export class LobbyController {
         ...(params.maxRating !== undefined ? { maxRating: params.maxRating } : {}),
       };
       const seek = await this.client.seeks.create(body);
+      if (this.disposed) return null;
       // Refresh the list to include the new seek.
       await this.refresh();
-      return seek;
+      return this.disposed ? null : seek;
     } catch (err) {
-      this.callbacks.onError(err instanceof Error ? err.message : String(err));
+      if (!this.disposed) {
+        this.callbacks.onError(err instanceof Error ? err.message : String(err));
+      }
       return null;
     } finally {
-      this.callbacks.onCreatePending(false);
+      if (!this.disposed) this.callbacks.onCreatePending(false);
     }
   }
 
@@ -182,8 +193,10 @@ export class LobbyController {
         ...(params.color !== undefined ? { color: params.color } : {}),
       };
       const game = await this.client.games.createVsBot(body);
+      if (this.disposed) return { ok: false, message: 'Lobby is no longer active.' };
       return { ok: true, gameId: game.id };
     } catch (err) {
+      if (this.disposed) return { ok: false, message: 'Lobby is no longer active.' };
       return { ok: false, message: err instanceof Error ? err.message : String(err) };
     }
   }
@@ -193,10 +206,13 @@ export class LobbyController {
     if (this.disposed) return false;
     try {
       await this.client.seeks.cancel(id);
+      if (this.disposed) return false;
       await this.refresh();
-      return true;
+      return !this.disposed;
     } catch (err) {
-      this.callbacks.onError(err instanceof Error ? err.message : String(err));
+      if (!this.disposed) {
+        this.callbacks.onError(err instanceof Error ? err.message : String(err));
+      }
       return false;
     }
   }
@@ -210,19 +226,24 @@ export class LobbyController {
     }
     try {
       const seek = await this.client.seeks.accept(id);
+      if (this.disposed) return false;
       if (seek.gameId && this.callbacks.onGameMatched) {
         this.callbacks.onGameMatched(seek.gameId);
       }
       return true;
     } catch (err) {
-      this.callbacks.onError(err instanceof Error ? err.message : String(err));
+      if (!this.disposed) {
+        this.callbacks.onError(err instanceof Error ? err.message : String(err));
+      }
       return false;
     }
   }
 
   /** Permanently dispose the controller: stop the timer and ignore future calls. */
   dispose(): void {
-    this.stop();
+    if (this.disposed) return;
     this.disposed = true;
+    this.stop();
+    this.onDispose();
   }
 }

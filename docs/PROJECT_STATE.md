@@ -4,8 +4,12 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-15 - AUD-008M composition-root cleanup (AUD-008A through M complete);
+_Last updated: 2026-08-15 - POST-AUD-001 lobby route-lifetime remediation;
 the latest product increment remains M14 Increment 45 (ADR-0109)._
+
+## POST-AUD-001 - Lobby Route-Lifetime Remediation
+
+Resolved a verified pre-existing lobby lifecycle defect that AUD-008J had mechanically preserved. The lobby controller now suppresses refresh, seek, and bot-game completions after disposal, cannot restart polling once disposed, and runs a single idempotent route cleanup hook. The lobby mount owns and removes its delegated seek-list click listener and guards create-game, bot-game, error, navigation, and session-update callbacks after route exit. Focused controller, mount, and browser regressions cover repeated remounts, deferred refresh and seek acceptance, stale bot-game navigation, active-route success behavior, and idempotent disposal. No routes, DOM IDs, UI behavior, API/OpenAPI contracts, or named `Bootstrapped` fields changed.
 
 ## AUD-008M - Web Composition Root Cleanup
 

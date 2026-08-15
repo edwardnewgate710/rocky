@@ -6,6 +6,18 @@ import type { CreateBotGameRequest, GameSummary, SeekView, Variant } from '../sr
 import type { GambitClient } from '../src/api/client.js';
 import type { KeyValueStorage } from '../src/net/session.js';
 
+function deferred<T>(): {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T) => void;
+} {
+  let resolvePromise!: (value: T) => void;
+  const promise = new Promise<T>((resolve) => { resolvePromise = resolve; });
+  return {
+    promise,
+    resolve: resolvePromise,
+  };
+}
+
 class FakeDOMElement {
   readonly tagName: string;
   id = '';
@@ -140,6 +152,10 @@ class FakeDOMElement {
   removeEventListener(type: string, fn: (event: Event) => void): void {
     if (!this.listeners[type]) return;
     this.listeners[type] = this.listeners[type]!.filter((cb) => cb !== fn);
+  }
+
+  listenerCount(type: string): number {
+    return this.listeners[type]?.length ?? 0;
   }
 
   dispatchEvent(event: Event): boolean {
@@ -325,6 +341,8 @@ function makeFakeClient(opts: {
   createSeekResult?: SeekView;
   createBotGameError?: string;
   createBotGameResultId?: string;
+  acceptSeek?: (id: string) => Promise<SeekView>;
+  createBotGame?: (body: CreateBotGameRequest) => Promise<GameSummary>;
   userId?: string | null;
 } = {}) {
   const createdSeeks: unknown[] = [];
@@ -347,12 +365,14 @@ function makeFakeClient(opts: {
       },
       accept: async (id: string): Promise<SeekView> => {
         acceptedSeeks.push(id);
+        if (opts.acceptSeek) return opts.acceptSeek(id);
         return makeSeek({ id, gameId: 'game-matched-1' });
       },
     },
     games: {
       createVsBot: async (body: CreateBotGameRequest): Promise<GameSummary> => {
         botGameCalls.push(body);
+        if (opts.createBotGame) return opts.createBotGame(body);
         if (opts.createBotGameError) {
           throw new Error(opts.createBotGameError);
         }
@@ -514,6 +534,53 @@ test('mountLobby: wires delegated accept button click to lobby.acceptSeek', asyn
   assert.deepEqual(acceptedSeeks, ['seek-to-accept']);
 });
 
+test('POST-AUD-001: repeated lobby mounts do not stack delegated seek listeners', () => {
+  const { doc, elements } = createTestDoc();
+  const seekListEl = elements.get('seek-list')!;
+  const { client } = makeFakeClient();
+
+  const first = mountTestLobby({ doc, client, isAuthenticated: () => true });
+  assert.equal(seekListEl.listenerCount('click'), 1);
+
+  first.lobby.dispose();
+  assert.equal(seekListEl.listenerCount('click'), 0);
+
+  const second = mountTestLobby({ doc, client, isAuthenticated: () => true });
+  assert.equal(seekListEl.listenerCount('click'), 1);
+
+  second.lobby.dispose();
+  second.lobby.dispose();
+  assert.equal(seekListEl.listenerCount('click'), 0);
+});
+
+test('POST-AUD-001: deferred seek acceptance cannot navigate after disposal', async () => {
+  const pendingAcceptance = deferred<SeekView>();
+  const { doc, elements } = createTestDoc();
+  const { client } = makeFakeClient({ acceptSeek: () => pendingAcceptance.promise });
+  const locationState = { href: '' };
+  const target = globalThis as unknown as Record<string, unknown>;
+  const originalWindow = target['window'];
+  target['window'] = { location: locationState };
+
+  try {
+    const mounted = mountTestLobby({ doc, client, isAuthenticated: () => true });
+    renderSeeks(
+      elements.get('seek-list') as unknown as HTMLElement,
+      [makeSeek({ id: 'pending-seek', creatorId: 'other' })],
+      'me',
+    );
+    elements.get('seek-list')!.querySelector('.seek-accept')!.click();
+    mounted.lobby.dispose();
+    pendingAcceptance.resolve(makeSeek({ id: 'pending-seek', gameId: 'stale-game' }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(locationState.href, '');
+  } finally {
+    if (originalWindow === undefined) delete target['window'];
+    else target['window'] = originalWindow;
+  }
+});
+
 test('mountLobby: session changes update PlayBotDialog without changing create-panel state', () => {
   const { doc, elements } = createTestDoc();
   const { client } = makeFakeClient();
@@ -612,6 +679,29 @@ test('mountLobby: successful play-bot submission navigates to the created standa
   } finally {
     if (origWindow === undefined) delete target['window'];
     else target['window'] = origWindow;
+  }
+});
+
+test('POST-AUD-001: deferred bot creation cannot navigate after disposal', async () => {
+  const pendingGame = deferred<GameSummary>();
+  const { doc, elements } = createTestDoc();
+  const { client } = makeFakeClient({ createBotGame: () => pendingGame.promise });
+  const locationState = { href: '' };
+  const target = globalThis as unknown as Record<string, unknown>;
+  const originalWindow = target['window'];
+  target['window'] = { location: locationState };
+
+  try {
+    const mounted = mountTestLobby({ doc, client, isAuthenticated: () => true });
+    submit(elements.get('play-bot-mount')!.querySelector('form')!);
+    mounted.lobby.dispose();
+    pendingGame.resolve(makeFakeGameSummary('stale-bot-game'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(locationState.href, '');
+  } finally {
+    if (originalWindow === undefined) delete target['window'];
+    else target['window'] = originalWindow;
   }
 });
 

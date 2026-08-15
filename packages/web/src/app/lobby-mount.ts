@@ -109,6 +109,19 @@ export function mountLobby(deps: LobbyMountDependencies): MountedLobby {
 
   let panel: CreateGamePanel | null = null;
   let playBotDialog: PlayBotDialog | null = null;
+  let routeActive = true;
+
+  function handleSeekAction(event: Event): void {
+    if (!routeActive) return;
+    const target = event.target;
+    if (!(target instanceof HTMLElement) || !target.dataset.seekId) return;
+    const id = target.dataset.seekId;
+    if (target.classList.contains('seek-cancel')) {
+      void lobby.cancelSeek(id);
+    } else if (target.classList.contains('seek-accept')) {
+      void lobby.acceptSeek(id);
+    }
+  }
 
   const lobby = new LobbyController({
     client,
@@ -127,6 +140,10 @@ export function mountLobby(deps: LobbyMountDependencies): MountedLobby {
       },
     },
     isAuthenticated,
+    onDispose: () => {
+      routeActive = false;
+      seekListEl?.removeEventListener('click', handleSeekAction);
+    },
   });
 
   // Mount the create-a-game panel; it hands validated params to the lobby.
@@ -143,10 +160,10 @@ export function mountLobby(deps: LobbyMountDependencies): MountedLobby {
       callbacks: {
         onSubmit: async (params) => {
           const seek = await lobby.createSeek(params);
-          return seek !== null;
+          return routeActive && seek !== null;
         },
         onError: (msg) => {
-          if (errorEl) errorEl.textContent = msg ?? '';
+          if (routeActive && errorEl) errorEl.textContent = msg ?? '';
         },
       },
     });
@@ -168,6 +185,7 @@ export function mountLobby(deps: LobbyMountDependencies): MountedLobby {
             ...params,
             variant: 'standard',
           });
+          if (!routeActive) return null;
           if (!result.ok) {
             playBotDialog?.setError(result.message);
             return null;
@@ -181,17 +199,7 @@ export function mountLobby(deps: LobbyMountDependencies): MountedLobby {
 
   // Wire cancel/accept buttons (event delegation on the seek list).
   if (seekListEl) {
-    seekListEl.addEventListener('click', (e) => {
-      const target = e.target;
-      if (target instanceof HTMLElement && target.dataset.seekId) {
-        const id = target.dataset.seekId;
-        if (target.classList.contains('seek-cancel')) {
-          void lobby.cancelSeek(id);
-        } else if (target.classList.contains('seek-accept')) {
-          void lobby.acceptSeek(id);
-        }
-      }
-    });
+    seekListEl.addEventListener('click', handleSeekAction);
   }
 
   lobby.start();
@@ -200,6 +208,8 @@ export function mountLobby(deps: LobbyMountDependencies): MountedLobby {
     lobby,
     // Bootstrap retains ownership of the persistent create-seek trigger. The dialog also owns
     // open-state cleanup, so it needs this narrow session-change seam after asynchronous restore.
-    setPlayBotAuthenticated: (authenticated) => playBotDialog?.setAuthenticated(authenticated),
+    setPlayBotAuthenticated: (authenticated) => {
+      if (routeActive) playBotDialog?.setAuthenticated(authenticated);
+    },
   };
 }
