@@ -10,6 +10,11 @@
 > 100k-user validation is still deferred. What the baseline rules out is targets that were never
 > achievable; what it cannot tell you is how the service behaves at real scale, on real data, under
 > real concurrency.
+>
+> **The three objectives below are HTTP and observability only. There is still no WebSocket SLO.**
+> ADR-0111 added a WebSocket baseline over real sockets against two gateway nodes — see **Measured
+> WebSocket baseline** — but it enforces coverage and correctness, and reports its latency figures
+> as an observation. 34 connections on one workstation is not the evidence an objective needs.
 
 Defined in `deploy/observability/prometheus/rules/gambit.rules.yml`; see ADR-0064 for the reasoning
 and `docs/RUNBOOKS.md` for what to do when one burns.
@@ -56,9 +61,11 @@ Two consequences worth stating plainly:
   usable SLI for the segment it covers — a command handed to the node that owns the game — but two
   gaps stand between that and an objective. There is no SLI for end-to-end WebSocket responsiveness
   as a player perceives it: this measures one hop, and commands served on the local fast path are
-  never observed by it at all. And the gateway path has not been exercised under load (see **What
-  the baseline cannot tell you**), so no production gateway objective has been empirically
-  validated; any objective stated here today would be an unvalidated guess.
+  never observed by it at all. ADR-0111 added a WebSocket baseline that does exercise the gateway
+  path over real sockets and reports client-observed end-to-end numbers (see **Measured WebSocket
+  baseline**), but at 34 connections on one workstation — enough to rule out a broken path, nowhere
+  near enough to set a production objective from. Any gateway objective stated here today would
+  still be an unvalidated guess.
 - **`http_request_duration_seconds` has fixed buckets:** `0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5,
   1, 2.5, 5, 10` seconds. A latency threshold that is *not* one of these edges forces
   `histogram_quantile` to interpolate inside a bucket, producing an estimate that reads like a
@@ -189,8 +196,63 @@ exactly why the objective is stated at p99 rather than at the worst observed req
 - **The dataset is nearly empty.** `/v1/search` in particular is measured against almost no rows.
   ADR-0059 recorded that the `id` tie-break defeats the HNSW index, so semantic search is a
   sequential scan whose latency grows with corpus size — this baseline says nothing about that.
-- **No WebSocket load.** The gateway path is not exercised at all, so every gateway metric in the
-  table above is registered but has no baseline behind it.
+- **No WebSocket load.** The gateway path is not exercised by this harness at all. That gap is
+  partly closed by the separate WebSocket baseline below; it was completely open until ADR-0111.
+
+## Measured WebSocket baseline
+
+Run `npm run load-test:ws` against the two-gateway stack
+(`docker compose -f docker-compose.yml -f docker-compose.chaos.yml`). Unlike the HTTP baseline, the
+k6 thresholds here are **not** SLOs — there is no WebSocket SLO to express. They assert coverage and
+correctness: every socket joins, every socket receives every ply exactly once, nothing unexpected
+arrives. The latency figures are an observation, not a target (ADR-0111 §3).
+
+**Conditions — read these before quoting the numbers.** One Windows 11 workstation, Intel i7-13700HX
+(16 cores / 24 threads), 16 GB RAM, Docker Desktop with ~8 GB allocated to the Linux VM. The stack
+is one Postgres, one Redis, one API replica and **two** gateway processes (`docker-compose.yml` plus
+`docker-compose.chaos.yml`), with the k6 container on the same host, competing for the same CPU.
+34 WebSocket connections — 17 per node: one player plus 16 anonymous spectators — on a single game,
+playing 32 plies at 250 ms spacing. Measured 2026-08-16; the k6 iteration took 8.6 s.
+
+| Coverage | Measured | |
+|---|---|---|
+| Sockets seated | **34 of 34** | ✅ enforced as a threshold |
+| Broadcast deliveries | **1,088 of 1,088** (34 sockets × 32 plies) | ✅ enforced as a threshold |
+| Protocol errors | **0** — no reject, no unexpected frame, no ply gap, no position disagreement | ✅ enforced as a threshold |
+| Commands forwarded between nodes | **16** on node2 (`gateway_forwarded_commands_total` 16 → 32); node1 owned the game and served its own 16 moves on the local fast path | ✅ checked by the runner |
+
+| Client-observed latency — **informational, not an SLO** | med | p95 | max |
+|---|---|---|---|
+| Socket open (TCP + WebSocket upgrade) | 12 ms | 17 ms | 20 ms |
+| `join` → `joined` (token verify, hydrate, seat) | 24 ms | 39 ms | 40 ms |
+| Move → broadcast back to the mover's own socket | 20 ms | 29 ms | 33 ms |
+| Move → broadcast to a socket on the mover's node | 21 ms | 30 ms | 38 ms |
+| Move → broadcast to a socket on the **other** node | 21 ms | 27 ms | 33 ms |
+
+The last two rows classify delivery by the observer's node, not by the command-routing path. Each
+aggregate mixes 16 owner fast-path moves with 16 moves forwarded to the owner over Redis before
+fanout, so their similar values do **not** isolate or quantify the forwarding hop. The exact
+`gateway_forwarded_commands_total` delta proves that forwarding occurred; the client trends remain
+an end-to-end observation for 34 sockets and one game on one machine, not a latency budget.
+
+All five figures are also an **upper bound**, because one k6 VU drives every socket on one
+event loop, so each measurement includes whatever client-side queueing that loop contributed.
+
+### What the WebSocket baseline cannot tell you
+
+- **No objective follows from it.** One run, one machine, 34 sockets. ADR-0064 shipped SLOs that
+  were admitted guesses and ADR-0065 measured them so they would stop being guesses; writing a
+  WebSocket target from this would put us back at the start of that sequence.
+- **One source IP caps the size.** The gateway allows 20 connections per IP per node
+  (`WS_MAX_CONNECTIONS_PER_IP`), and k6 generates everything from one container, so 20 per node is
+  the ceiling — the limit, not the hardware, is what bounds this. The harness deliberately does not
+  raise it. Going bigger needs load generated from many hosts, which is the deferred 100k work.
+- **One game, one variant, no churn.** Nothing measures many concurrent games, ownership moving
+  between nodes under load, reconnect/resume traffic, spectators joining and leaving mid-game, or
+  anything sustained enough to call a soak.
+- **`gateway_forward_latency_seconds` is still not an end-to-end SLI.** It measures the cross-node
+  hop only and never sees a fast-path command. The `ws_move_*` figures above are client-observed and
+  come from k6, not from that histogram.
 
 ## Burn-rate alerting
 

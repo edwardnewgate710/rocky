@@ -19,21 +19,12 @@
  *   READ_VUS, AUTH_VUS, DURATION   passed through to the scenario
  */
 
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { fail, readSummaryMetrics, runK6 } from './lib/k6-docker.mjs';
 
-const K6_IMAGE = 'grafana/k6:0.55.0'; // pinned: a load baseline is worthless if the tool drifts
 const SCENARIO = 'deploy/load/scenarios/api-baseline.js';
-const RESULTS_DIR = 'deploy/load/results';
 
 const baseUrl = process.env['BASE_URL'] ?? 'http://host.docker.internal:8080';
 const healthUrl = process.env['HEALTH_URL'] ?? 'http://localhost:8080';
-
-function fail(message) {
-  console.error(`\n✗ ${message}\n`);
-  process.exit(1);
-}
 
 async function assertStackIsUp() {
   process.stdout.write(`Checking ${healthUrl}/v1/health ... `);
@@ -50,40 +41,22 @@ async function assertStackIsUp() {
   }
 }
 
-function runK6() {
-  if (!existsSync(SCENARIO)) fail(`scenario not found: ${SCENARIO}`);
-  mkdirSync(RESULTS_DIR, { recursive: true });
-
-  const summaryPath = join(RESULTS_DIR, 'summary.json');
-  const args = [
-    'run', '--rm', '-i',
-    '--add-host', 'host.docker.internal:host-gateway',
-    '-v', `${process.cwd()}/deploy/load:/load`,
-    '-e', `BASE_URL=${baseUrl}`,
-  ];
-  for (const key of ['READ_VUS', 'AUTH_VUS', 'DURATION']) {
-    if (process.env[key]) args.push('-e', `${key}=${process.env[key]}`);
-  }
-  args.push(
-    K6_IMAGE,
-    'run',
-    '--summary-export', '/load/results/summary.json',
-    `/load/scenarios/${SCENARIO.split('/').pop()}`,
-  );
-
-  console.log(`\nRunning k6 (${K6_IMAGE}) against ${baseUrl}\n`);
-  const proc = spawnSync('docker', args, { stdio: 'inherit' });
-
-  if (proc.error) fail(`could not run docker: ${proc.error.message}`);
-  return { code: proc.status ?? 1, summaryPath };
+function runApiBaseline() {
+  return runK6({
+    scenario: SCENARIO,
+    summaryFile: 'summary.json',
+    target: baseUrl,
+    env: {
+      BASE_URL: baseUrl,
+      READ_VUS: process.env['READ_VUS'] || undefined,
+      AUTH_VUS: process.env['AUTH_VUS'] || undefined,
+      DURATION: process.env['DURATION'] || undefined,
+    },
+  });
 }
 
 function report(summaryPath, k6ExitCode) {
-  if (!existsSync(summaryPath)) {
-    fail('k6 produced no summary — the run did not complete.');
-  }
-  const summary = JSON.parse(readFileSync(summaryPath, 'utf8'));
-  const m = summary.metrics ?? {};
+  const m = readSummaryMetrics(summaryPath);
 
   const num = (v) => (typeof v === 'number' ? v : undefined);
   const pct = (v) => (v === undefined ? 'n/a' : `${(v * 100).toFixed(3)}%`);
@@ -133,7 +106,7 @@ function report(summaryPath, k6ExitCode) {
 
 async function main() {
   await assertStackIsUp();
-  const { code, summaryPath } = runK6();
+  const { code, summaryPath } = runApiBaseline();
   report(summaryPath, code);
 }
 

@@ -102,6 +102,13 @@ jobs:
       - name: Test (node --test)
         run: npm test
 
+      # `deploy/load` is an on-demand harness that CI never runs (ADR-0065), so nothing else would
+      # notice its correctness guards rotting: the per-IP socket budget, the alternating move plan
+      # that produces the cross-node forwarding, and the frame checks that decide whether a run
+      # measured anything. These are pure functions and a few file reads — seconds, no services.
+      - name: Load harness contract tests
+        run: npm run test:load-harness
+
       # The container images build with their own package chain, which CI never exercises — it
       # builds from the root chain instead. That gap let `docker compose up --build` stay broken
       # from M11 inc 5 onwards while every gate here was green. Static, so it costs seconds.

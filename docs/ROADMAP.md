@@ -1159,6 +1159,17 @@ Lets a signed-in user see their active sessions and end one, closing the last ha
 - **Route lifetime**: `SessionsController` mirrors `PasskeysController`'s dual-generation guards, is created and disposed alongside it on the self-profile, clears its rows on sign-out to avoid disclosing a previous account's devices and addresses, and drops a duplicate revoke for an id already in flight.
 - **Testing**: API tests for own-session revocation, cross-user rejection, unknown ids, idempotent double revocation and unauthenticated access; a `SessionView` schema/presenter coupling test (the first for this view); controller, view, client, mount and Playwright coverage. The IDOR protection, the active-session filter, the in-flight dedupe and the route disposal were each mutation-checked against deliberately broken code.
 
+### Increment 47 (M14 Inc 47): Local Two-Gateway WebSocket Load Baseline (ADR-0111) ✅
+
+Adds an on-demand, workstation-bounded k6 baseline against the real two-gateway Compose topology. A
+single room spans 34 real sockets across both nodes and plays a deterministic 32-ply line that forces
+16 commands through Redis ownership forwarding. Exact join/delivery/protocol thresholds, position
+agreement, production-limit guards, and the exact forwarding-counter delta make a passing run prove
+the intended path rather than merely complete a handshake. Latency trends are recorded as
+informational observations only; they are not a WebSocket SLO or a capacity claim. Access tokens stay
+inside k6 memory and the custom JSON summary is metrics-only. CI runs the pure harness contract tests,
+while the real load run remains on demand. Terraform and 100k-user cluster validation remain deferred.
+
 ## ✅ Verification hygiene — ADR claim drift guard (ADR-0079)
 
 Cross-cutting, not tied to one milestone. Increment 11 found ADR-0010 §7 specifying six ownership

@@ -4,8 +4,25 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-16 - M14 Increment 46: account security, session visibility and
-revocation (ADR-0110)._
+_Last updated: 2026-08-16 - M14 Increment 47: local two-gateway WebSocket load baseline
+(ADR-0111)._
+
+## M14 Increment 47 - Local Two-Gateway WebSocket Load Baseline (ADR-0111)
+
+Added an on-demand k6 baseline against the real two-gateway Compose topology without changing
+production limits or contracts. The default room opens 34 sockets (one player and 16 spectators per
+node), plays a deterministic 32-ply line, and requires exact counts for 34 joins, 1,088 authoritative
+deliveries, zero protocol errors, cross-node position agreement, and exactly 16 Redis-forwarded
+commands. The measured 2026-08-16 workstation run passed those checks; its latency trends are
+informational observations, not a WebSocket SLO or capacity statement.
+
+The harness stays beneath the gateway's production per-IP connection and message limits, validates
+its mirrored defaults against the gateway source, rejects configurations that cannot exercise
+forwarding, and cancels pending joins/ply barriers when the room closes. Setup access tokens remain
+in k6 memory: the WebSocket runner bypasses k6's secret-bearing built-in summary export and writes a
+contract-tested metrics-only artifact. CI runs the pure planning/protocol/security contract tests;
+the real Docker load run is intentionally on demand. Terraform, distributed generation, sustained
+soak, and 100k-user cluster validation remain deferred.
 
 ## M14 Increment 46 - Account Security: Session Visibility and Revocation (ADR-0110)
 

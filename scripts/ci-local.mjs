@@ -28,6 +28,7 @@ const CORE = [
   ['build (dependency order)', 'npm run build'],
   ['typecheck (tsc --noEmit)', 'npm run lint'],
   ['test (node --test)', 'npm test'],
+  ['load harness contract', 'npm run test:load-harness'],
   // The workflow invokes the script directly rather than through the npm alias; matched verbatim so
   // the parity check compares like with like.
   ['observability drift', 'node scripts/check-observability-drift.mjs'],
