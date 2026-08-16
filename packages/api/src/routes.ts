@@ -378,6 +378,28 @@ export function buildRouter(deps: RouteDeps): Router {
     },
   );
 
+  router.delete(
+    '/v1/auth/sessions/:id',
+    doc({
+      summary: "Revoke one of the caller's sessions",
+      tags: ['auth'],
+      security: 'bearer',
+      params: [pathParam('id', 'Session id, as returned by GET /v1/auth/sessions')],
+      responses: {
+        204: [undefined, 'Session revoked, or was already revoked'],
+        404: ['Error', 'No such session belonging to the caller'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const identity = requireAuth(ctx);
+      // The user id comes from the verified token, never from the request, so the id in the path is
+      // only ever resolved against this caller's own sessions. See AuthService.revokeSession.
+      await auth.revokeSession(identity.userId, ctx.params['id']!, meta(ctx));
+      return noContent();
+    },
+  );
+
   router.post(
     '/v1/auth/password-reset/request',
     doc({

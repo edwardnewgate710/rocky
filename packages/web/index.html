@@ -216,6 +216,15 @@
         <div id="passkeys-list" class="panel-list" aria-label="Passkeys"></div>
         <p id="passkeys-note" class="social-note" role="status" aria-live="polite"></p>
         <p id="passkeys-error" class="error" role="alert"></p>
+
+        <h3>Active sessions <span id="sessions-count" class="count"></span></h3>
+        <!-- States the one thing a user cannot otherwise know: revocation ends the session's
+             ability to renew, but an access token already issued stays valid until it expires.
+             Promising an instant cutoff here would be a promise the token design does not keep. -->
+        <p class="social-note">Revoking a session signs that browser out when its current access token expires.</p>
+        <div id="sessions-list" class="panel-list" aria-label="Active sessions"></div>
+        <p id="sessions-note" class="social-note" role="status" aria-live="polite"></p>
+        <p id="sessions-error" class="error" role="alert"></p>
       </div>
 
       <p id="social-note" class="social-note"></p>

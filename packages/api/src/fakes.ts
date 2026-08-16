@@ -181,6 +181,8 @@ export class InMemorySessionsRepository implements SessionsRepository {
       lastSeenAt: null,
       lastIp: null,
       lastUserAgent: null,
+      createdIp: session.ip ?? null,
+      createdUserAgent: session.userAgent ?? null,
     };
     this.byId.set(row.id, { row, refreshHash: session.refreshHash, seq: this.seq++ });
     return row;
@@ -226,6 +228,8 @@ export class InMemorySessionsRepository implements SessionsRepository {
       lastSeenAt: null,
       lastIp: null,
       lastUserAgent: null,
+      createdIp: replacement.ip ?? null,
+      createdUserAgent: replacement.userAgent ?? null,
     };
     this.byId.set(row.id, { row, refreshHash: replacement.refreshHash, seq: this.seq++ });
     return { status: 'rotated' as const, previous: previous.row, replacement: row };
@@ -237,10 +241,14 @@ export class InMemorySessionsRepository implements SessionsRepository {
     stored.row = { ...stored.row, lastSeenAt: at, lastIp: ip ?? null, lastUserAgent: userAgent ?? null };
   }
 
-  async revoke(id: string, at: Date): Promise<void> {
+  async revoke(id: string, at: Date): Promise<boolean> {
     const stored = this.byId.get(id);
-    if (!stored) return;
+    if (!stored) return false;
+    // Mirrors the `WHERE revoked_at IS NULL` in the Postgres repository: only the call that performs
+    // the transition reports having done it, so a test can hold this fake to the same contract.
+    if (stored.row.revokedAt) return false;
     stored.row = { ...stored.row, revokedAt: at };
+    return true;
   }
 
   async listForUser(userId: string): Promise<SessionRow[]> {

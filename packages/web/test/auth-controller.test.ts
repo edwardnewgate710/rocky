@@ -12,8 +12,22 @@ function makeFakeStorage() {
   };
 }
 
+/**
+ * The fake exposes the invalidation handler the controller registers, so a test can fire the one
+ * thing `SessionManager` would fire — a refresh that failed — without driving a real refresh.
+ */
+function makeFakeSession() {
+  return {
+    resets: 0,
+    invalidate: null as null | (() => void),
+    reset(): void { this.resets++; },
+    onInvalidated(handler: () => void): void { this.invalidate = handler; },
+  };
+}
+
 function makeFakeClient(overrides: Record<string, unknown> = {}) {
   return {
+    session: makeFakeSession(),
     auth: {
       login: async () => ({
         user: { id: 'u1', handle: 'alice', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] },
@@ -109,6 +123,39 @@ test('logout clears session and calls onSessionChange(null)', async () => {
   assert.equal(sessions[sessions.length - 1], null);
 });
 
+/**
+ * Revoking the session this browser is using is allowed (ADR-0110), so "the session went away and
+ * the user did not ask" is a state a user can now reach on purpose. `SessionManager` clears its own
+ * store when a refresh fails, but this controller holds a separate snapshot and a persisted handle
+ * hint: without this the header and account controls kept showing a signed-in user whose every
+ * protected request answered 401.
+ */
+test('a session invalidated by a failed refresh stops the UI showing a signed-in user', async () => {
+  const storage = makeFakeStorage();
+  const client = makeFakeClient() as any;
+  const sessions: (AuthSession | null)[] = [];
+  const ctrl = new AuthController({
+    client,
+    callbacks: {
+      onSessionChange: (s) => { sessions.push(s); },
+      onPending: () => {},
+      onError: () => {},
+    },
+    storage,
+  });
+  await ctrl.login('alice', 'pw');
+  assert.equal(ctrl.isAuthenticated(), true);
+
+  // Exactly what SessionManager does when a refresh fails.
+  assert.ok(client.session.invalidate, 'the controller registered for invalidation');
+  client.session.invalidate();
+
+  assert.equal(ctrl.isAuthenticated(), false);
+  assert.equal(ctrl.currentSession, null);
+  assert.equal(sessions[sessions.length - 1], null, 'the UI was told to drop the session');
+  assert.equal(storage.getItem('gambit-session'), null, 'the persisted hint went too');
+});
+
 test('M12 inc 2: restore takes identity from cookie refresh, not storage', async () => {
   const storage = makeFakeStorage();
   storage.setItem('gambit-session', JSON.stringify({
@@ -198,6 +245,7 @@ test('M12 inc 2: reload path — persisted {handle,userId} + refresh yields sess
     get current() { return currentAccessToken ? { tokens: { accessToken: currentAccessToken } } : null; },
     adopt: (auth: any) => { currentAccessToken = auth.tokens.accessToken; },
     reset: () => { currentAccessToken = undefined; },
+    onInvalidated: () => {},
     get isAuthenticated() { return currentAccessToken !== undefined; },
   };
   const ctrl = new AuthController({
@@ -237,6 +285,7 @@ test('password reset clearance wins over an in-flight session restore', async ()
     get current() { return currentAccessToken ? { tokens: { accessToken: currentAccessToken } } : null; },
     adopt: (auth: any) => { currentAccessToken = auth.tokens.accessToken; },
     reset: () => { currentAccessToken = undefined; },
+    onInvalidated: () => {},
   };
 
   const sessions: (AuthSession | null)[] = [];

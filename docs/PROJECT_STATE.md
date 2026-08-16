@@ -4,8 +4,35 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-15 - POST-AUD-001 lobby route-lifetime remediation;
-the latest product increment remains M14 Increment 45 (ADR-0109)._
+_Last updated: 2026-08-16 - M14 Increment 46: account security, session visibility and
+revocation (ADR-0110)._
+
+## M14 Increment 46 - Account Security: Session Visibility and Revocation (ADR-0110)
+
+Added `DELETE /v1/auth/sessions/:id` and an Active sessions list in the self-profile
+account-security panel, completing a surface that had a list endpoint since M4 and no way to act on
+it. `AuthService.revokeSession` resolves the path id *within* `sessions.listForUser(userId)`, so
+another user's id is structurally unreachable and answers 404 rather than 403 — a 403 would confirm
+that the id names a live session somewhere on the platform. Revoking an already-revoked session
+returns 204, which also makes two concurrent revocations of one id both succeed rather than one
+losing a race.
+
+Current-session semantics follow from the existing token design rather than being invented: access
+tokens are stateless HMACs whose `jti` is a fresh per-token id, so neither the server nor the client
+can identify which session the caller's own token belongs to. Nothing is marked as "current", and
+revocation is uniform. It ends the session's refresh capability; an access token already issued
+stays valid until it expires, because `authenticate` verifies by signature alone without consulting
+the session table. The UI states that in one line rather than implying an instant cutoff.
+
+`SessionsController` mirrors `PasskeysController`'s generation guards, is created and disposed
+alongside it, clears its rows on sign-out so a previous account's devices and addresses do not
+remain on screen, and drops a duplicate revoke for an id already in flight. The view lists only
+sessions that are neither revoked nor expired, so the heading stays true and revocation shows as the
+row leaving. `SessionView` gained its first schema/presenter coupling test. The IDOR protection, the
+active-session filter, the in-flight dedupe and the route disposal were each mutation-checked
+against deliberately broken code. Corrected the `FEATURE_PARITY_AUDIT.md` row that claimed a
+revocation API already existed. No routes, DOM IDs, UI behaviour outside the new section, or
+contracts changed beyond the new endpoint.
 
 ## POST-AUD-001 - Lobby Route-Lifetime Remediation
 

@@ -77,6 +77,27 @@ function strictBase64UrlDecode(input: unknown, name: string): Buffer {
   return buf;
 }
 
+/**
+ * Every session rotated from `rootId`, directly or transitively — the rest of the login session it
+ * belongs to. `rootId` itself is not included.
+ *
+ * A refresh retires the presented row and inserts a successor carrying `rotatedFrom`, so one login
+ * is a chain of rows and only its newest member is live. Both callers need the whole chain rather
+ * than the direct successor: after two refreshes the direct successor is revoked too.
+ */
+function descendantsOf(sessions: readonly SessionRow[], rootId: string): Set<string> {
+  const seen = new Set([rootId]);
+  const descendants = new Set<string>();
+  // `listForUser` orders newest first, so walk oldest first to reach a successor after its parent.
+  for (const session of [...sessions].reverse()) {
+    if (session.rotatedFrom && seen.has(session.rotatedFrom)) {
+      seen.add(session.id);
+      descendants.add(session.id);
+    }
+  }
+  return descendants;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown error';
 }
@@ -216,6 +237,43 @@ export class AuthService {
     return { user, roles, tokens };
   }
 
+  /**
+   * Reject a refresh presented against a revoked session, burning the account's other sessions only
+   * when the presentation actually looks like theft. Never returns.
+   *
+   * A revoked row has two very different causes, and the response to them is not the same:
+   *
+   * - It was **rotated away** by a legitimate refresh, and a live successor is holding the account.
+   *   Something is replaying a token the real client already exchanged, so the whole account is
+   *   burned — this is the reuse detection the rotation scheme exists for.
+   * - It was **deliberately revoked**, by {@link revokeSession} or {@link logout}. Then the browser
+   *   presenting it is simply the one the user just signed out, doing what any client does when its
+   *   access token expires. Burning the account here would mean that revoking one session signs the
+   *   user out of every *other* session within an access-token lifetime, which is precisely what the
+   *   feature promises not to do.
+   *
+   * A live successor is what separates them, because {@link revokeSession} revokes the whole
+   * rotation chain: after a deliberate revocation none of its descendants can still be refreshing.
+   */
+  private async rejectRevokedRefresh(
+    session: SessionRow,
+    now: number,
+    meta: RequestMeta,
+  ): Promise<never> {
+    const sessions = await this.repos.sessions.listForUser(session.userId);
+    // The whole descending chain, not just the direct successor: after two refreshes the successor
+    // of the presented row has itself been rotated away, and only the newest row is still live.
+    const descendants = descendantsOf(sessions, session.id);
+    const rotatedAway = sessions.some(
+      (s) => descendants.has(s.id) && !s.revokedAt && s.expiresAt.getTime() > now,
+    );
+    if (rotatedAway) {
+      await this.revokeAllForUser(session.userId, now);
+      await this.audit(meta, session.userId, 'auth.refresh.reuse', session.id);
+    }
+    throw HttpError.unauthorized('refresh token has been revoked');
+  }
+
   /** Rotate a refresh token, detecting reuse of an already-rotated token. */
   async refresh(refreshToken: string, meta: RequestMeta): Promise<AuthResult> {
     const hash = hashRefreshToken(refreshToken);
@@ -226,10 +284,7 @@ export class AuthService {
     }
     const now = this.clock.now();
     if (session.revokedAt) {
-      // The token was already rotated away — reuse implies theft. Burn the chain.
-      await this.revokeAllForUser(session.userId, now);
-      await this.audit(meta, session.userId, 'auth.refresh.reuse', session.id);
-      throw HttpError.unauthorized('refresh token has been revoked');
+      await this.rejectRevokedRefresh(session, now, meta);
     }
     if (session.expiresAt.getTime() <= now) {
       throw HttpError.unauthorized('refresh token has expired');
@@ -251,9 +306,7 @@ export class AuthService {
       throw HttpError.unauthorized('refresh token has expired');
     }
     if (rotation.status === 'revoked') {
-      await this.revokeAllForUser(session.userId, now);
-      await this.audit(meta, session.userId, 'auth.refresh.reuse', session.id);
-      throw HttpError.unauthorized('refresh token has been revoked');
+      await this.rejectRevokedRefresh(rotation.previous, now, meta);
     }
     await this.audit(meta, user.id, 'auth.refresh', session.id);
     return { user, roles, tokens: prepared.tokens };
@@ -275,6 +328,75 @@ export class AuthService {
   /** List a user's sessions (most recent first). */
   listSessions(userId: string): Promise<SessionRow[]> {
     return this.repos.sessions.listForUser(userId);
+  }
+
+  /**
+   * Revoke one of the caller's own sessions by id.
+   *
+   * Ownership is enforced structurally rather than by comparison: the candidate is looked up
+   * *within* `listForUser(userId)`, so a session belonging to anyone else is simply not in the set
+   * and cannot be reached. There is no code path where a caller-supplied id is passed to
+   * `sessions.revoke` without first having been found in that user's own list. Same shape as
+   * {@link deletePasskey}, and for the same reason.
+   *
+   * A session id that does not belong to the caller is reported as `404`, not `403`: distinguishing
+   * "not yours" from "does not exist" would turn this route into an oracle for whether an id is a
+   * live session somewhere on the platform.
+   *
+   * Revoking an already-revoked session succeeds rather than erroring. The caller asked for that
+   * session to be dead and it is dead, so there is nothing to report; this also makes two
+   * simultaneous revocations of the same id both succeed instead of one losing a race. Same
+   * tolerance {@link logout} already applies. The audit record is written by whichever call
+   * actually performed the transition, which `sessions.revoke` reports atomically — a
+   * read-then-write check here would let two concurrent requests both audit one revocation.
+   *
+   * What a user calls "a session" is a *chain* of rows, not one row: every {@link refresh} retires
+   * the current row and inserts a successor linked by `rotatedFrom`. Revoking only the row the user
+   * clicked would leave that browser signed in whenever a refresh landed between this list being
+   * read and the revocation being written, so the whole chain descending from the target goes with
+   * it. The re-read closes the same window for a rotation that lands during the first pass.
+   *
+   * What revocation does and does not reach is a consequence of the existing token design, not a
+   * choice made here. A session row *is* the refresh capability, so revoking it stops that session
+   * from ever minting another access token. Access tokens already issued are stateless HMACs that
+   * `authenticate` verifies by signature alone (`server.ts`) without consulting this table, so an
+   * outstanding one keeps working until it expires on its own — bounded by `accessTokenTtlSec`.
+   * Immediate cutoff would require checking session state per request, which is a different
+   * architecture from the one this endpoint was added to.
+   */
+  async revokeSession(userId: string, sessionId: string, meta: RequestMeta): Promise<void> {
+    const sessions = await this.repos.sessions.listForUser(userId);
+    if (!sessions.some((s) => s.id === sessionId)) throw HttpError.notFound('Session not found');
+
+    const at = new Date(this.clock.now());
+    const first = await this.revokeChain(sessions, sessionId, at);
+    // A refresh that landed while the first pass ran produced a successor the first list did not
+    // contain. One re-read catches it; the successor of *that* would need a refresh to have landed
+    // inside this window too, and it is revoked before it can mint anything either way.
+    const second = await this.revokeChain(await this.repos.sessions.listForUser(userId), sessionId, at);
+
+    if (first || second) await this.audit(meta, userId, 'auth.session.revoke', sessionId);
+  }
+
+  /**
+   * Revoke `rootId` and every session rotated from it, directly or transitively.
+   *
+   * Returns whether this call revoked anything, so the caller can audit once per revocation rather
+   * than once per request.
+   */
+  private async revokeChain(
+    sessions: readonly SessionRow[],
+    rootId: string,
+    at: Date,
+  ): Promise<boolean> {
+    const chain = descendantsOf(sessions, rootId);
+    chain.add(rootId);
+
+    let transitioned = false;
+    for (const id of chain) {
+      if (await this.repos.sessions.revoke(id, at)) transitioned = true;
+    }
+    return transitioned;
   }
 
   async requestPasswordReset(handleOrEmail: string, meta: RequestMeta): Promise<void> {

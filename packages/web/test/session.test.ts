@@ -139,6 +139,34 @@ test('refreshNow clears the session and rethrows on failure', async () => {
   assert.equal(mgr.isAuthenticated, false);
 });
 
+/**
+ * Clearing this manager's own store is not enough: whoever is rendering a signed-in user holds a
+ * separate snapshot and has no other way to learn the session is gone.
+ */
+test('a failed refresh notifies the registered invalidation handler', async () => {
+  const mgr = new SessionManager({
+    refresh: async () => { throw new Error('session revoked'); },
+    now: () => 0,
+  });
+  let notified = 0;
+  mgr.onInvalidated(() => { notified++; });
+  mgr.adopt(authResponse('a', 'r', 1));
+
+  await assert.rejects(mgr.refreshNow(), /session revoked/);
+  assert.equal(notified, 1, 'the holder of the duplicate state was told');
+});
+
+/** A sign-out is not an invalidation — the caller asked for it and already knows. */
+test('a deliberate reset does not notify the invalidation handler', () => {
+  const mgr = new SessionManager({ refresh: async () => authResponse(), now: () => 0 });
+  let notified = 0;
+  mgr.onInvalidated(() => { notified++; });
+  mgr.adopt(authResponse('a', 'r', 1));
+
+  mgr.reset();
+  assert.equal(notified, 0);
+});
+
 test('refreshNow without a session throws NoSessionError', async () => {
   const mgr = new SessionManager({ refresh: async () => authResponse(), now: () => 0 });
   await assert.rejects(mgr.refreshNow(), NoSessionError);

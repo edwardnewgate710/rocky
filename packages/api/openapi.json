@@ -409,6 +409,66 @@
         ]
       }
     },
+    "/v1/auth/sessions/{id}": {
+      "delete": {
+        "summary": "Revoke one of the caller's sessions",
+        "tags": [
+          "auth"
+        ],
+        "operationId": "delete_v1_auth_sessions_by_id",
+        "responses": {
+          "204": {
+            "description": "Session revoked, or was already revoked"
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such session belonging to the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Session id, as returned by GET /v1/auth/sessions",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/v1/auth/password-reset/request": {
       "post": {
         "summary": "Request a password reset",
@@ -11563,7 +11623,9 @@
           "revokedAt",
           "lastSeenAt",
           "lastIp",
-          "lastUserAgent"
+          "lastUserAgent",
+          "createdIp",
+          "createdUserAgent"
         ],
         "properties": {
           "id": {
@@ -11593,6 +11655,14 @@
             "nullable": true
           },
           "lastUserAgent": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdIp": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdUserAgent": {
             "type": "string",
             "nullable": true
           }

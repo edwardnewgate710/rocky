@@ -252,6 +252,10 @@ const PROFILE_DOM_IDS = [
   'passkeys-list',
   'passkeys-note',
   'passkeys-error',
+  'sessions-count',
+  'sessions-list',
+  'sessions-note',
+  'sessions-error',
 ] as const;
 
 function createProfileDocument(): {

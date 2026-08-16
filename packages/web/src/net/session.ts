@@ -85,6 +85,7 @@ export class SessionManager {
   private readonly doRefresh: RefreshFn;
   private readonly now: () => number;
   private readonly leewayMs: number;
+  private invalidatedHandler: (() => void) | null = null;
   private refreshInFlight: Promise<StoredSession> | null = null;
 
   constructor(options: SessionManagerOptions) {
@@ -111,6 +112,18 @@ export class SessionManager {
     };
     this.store.save(session);
     return session;
+  }
+
+  /**
+   * Register the handler for an *involuntary* session loss: a refresh that failed because the
+   * refresh token expired or the session was revoked from another device. A deliberate sign-out
+   * does not call it, because the caller already knows.
+   *
+   * Late registration rather than a constructor option because the party that needs to know is the
+   * {@link AuthController}, which is built from this client and so cannot exist before it.
+   */
+  onInvalidated(handler: () => void): void {
+    this.invalidatedHandler = handler;
   }
 
   /** Forget the local session (does not call the server). */
@@ -165,7 +178,11 @@ export class SessionManager {
         const auth = await this.doRefresh(session.tokens.refreshToken);
         return this.adopt(auth);
       } catch (error) {
+        // The session is gone and the user did not ask for that, so tell whoever is showing them as
+        // signed in. Clearing only this store would leave the header and account controls claiming a
+        // session that no request can use.
         this.reset();
+        this.invalidatedHandler?.();
         throw error;
       } finally {
         this.refreshInFlight = null;

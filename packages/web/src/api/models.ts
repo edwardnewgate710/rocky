@@ -154,6 +154,8 @@ export interface SessionView {
   readonly lastSeenAt: string | null;
   readonly lastIp: string | null;
   readonly lastUserAgent: string | null;
+  readonly createdIp: string | null;
+  readonly createdUserAgent: string | null;
 }
 
 /** A per-variant rating (Glicko-2 style fields). */

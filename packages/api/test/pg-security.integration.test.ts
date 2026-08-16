@@ -76,6 +76,84 @@ test('Postgres refresh rotation has exactly one winner under concurrency', { ski
   }
 });
 
+/**
+ * `AuthService.revokeSession` audits only when its own call performed the revocation, which is only
+ * true if the repository resolves the race rather than the service. The in-memory fake mirrors the
+ * contract but cannot prove it — a single JavaScript turn has no interleaving to lose.
+ */
+test('Postgres session revocation has exactly one winner under concurrency', { skip }, async () => {
+  const pool = createPool();
+  try {
+    await migrate(pool, join(process.cwd(), '../persistence/migrations'));
+    const users = new PgUsersRepository(pool);
+    const sessions = new PgSessionsRepository(pool);
+    const user = await users.createWithPasswordAndRole(
+      { id: uuidv7(), handle: `revoke${uuidv7().replaceAll('-', '').slice(0, 12)}` },
+      'hash',
+      'user',
+    );
+    const id = uuidv7();
+    await sessions.create({
+      id,
+      userId: user.id,
+      refreshHash: `rev-${uuidv7()}`,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+
+    const at = new Date();
+    const outcomes = await Promise.all([
+      sessions.revoke(id, at),
+      sessions.revoke(id, at),
+      sessions.revoke(id, at),
+    ]);
+    assert.equal(outcomes.filter(Boolean).length, 1, 'one caller performed the transition');
+
+    const later = await sessions.revoke(id, new Date(Date.now() + 1_000));
+    assert.equal(later, false, 'a revoked session cannot be revoked again');
+
+    const row = (await pool.query<{ revoked_at: Date }>(
+      'SELECT revoked_at FROM sessions WHERE id = $1', [id],
+    )).rows[0]!;
+    assert.equal(row.revoked_at.getTime(), at.getTime(), 'the first revocation time stands');
+  } finally {
+    await pool.end();
+  }
+});
+
+/**
+ * The account-security screen identifies sessions by their created metadata, so it has to survive
+ * the round trip: the columns are written by `create` but were absent from the read projection.
+ */
+test('Postgres session rows carry the request metadata they were created with', { skip }, async () => {
+  const pool = createPool();
+  try {
+    await migrate(pool, join(process.cwd(), '../persistence/migrations'));
+    const users = new PgUsersRepository(pool);
+    const sessions = new PgSessionsRepository(pool);
+    const user = await users.createWithPasswordAndRole(
+      { id: uuidv7(), handle: `meta${uuidv7().replaceAll('-', '').slice(0, 12)}` },
+      'hash',
+      'user',
+    );
+    const id = uuidv7();
+    await sessions.create({
+      id,
+      userId: user.id,
+      refreshHash: `meta-${uuidv7()}`,
+      expiresAt: new Date(Date.now() + 60_000),
+      ip: '203.0.113.7',
+      userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Firefox/121',
+    });
+
+    const listed = (await sessions.listForUser(user.id)).find((s) => s.id === id);
+    assert.equal(listed?.createdIp, '203.0.113.7');
+    assert.equal(listed?.createdUserAgent, 'Mozilla/5.0 (X11; Linux x86_64) Firefox/121');
+    assert.equal(listed?.lastIp, null, 'nothing writes the last-seen fields');
+  } finally {
+    await pool.end();
+  }
+});
+
 test('Postgres rate limiting is shared and atomic across limiter instances', { skip }, async () => {
   const pool = createPool();
   try {

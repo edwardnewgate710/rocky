@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { startHarness } from './helpers';
-import { joinRequestView, learnerStepView, teamView, teamDetailView, attemptResultView, capabilitiesView } from '../src/presenters';
+import { joinRequestView, learnerStepView, teamView, teamDetailView, attemptResultView, capabilitiesView, sessionView } from '../src/presenters';
 import type { JoinRequest, Team } from '@chess-platform/community';
 import type { AttemptResult, LessonStep } from '@chess-platform/learning';
 
@@ -378,6 +378,63 @@ test('WebAuthnOptions: served schemas match actual options emitted by service', 
     const loginRequiredKeys = [...schemas.WebAuthnLoginOptions.required].sort();
     assert.deepEqual(Object.keys(loginOptions).sort(), loginRequiredKeys);
     assert.equal(schemas.WebAuthnLoginOptions.required.includes('allowCredentials'), false);
+  } finally {
+    await h.close();
+  }
+});
+
+/**
+ * `SessionView` is the account-security screen's entire data source, and it had no coupling test
+ * even though the list route predates this increment — the same gap that let `ForumPostView`,
+ * `JoinRequestView` and `TeamView` drift (ADR-0088). Pinned now that a second route operates on the
+ * same objects: a field added to the presenter without the schema would be invisible to any
+ * consumer reading the spec, and a field declared but never emitted is a promise the server breaks.
+ */
+test('SessionView: the served schema describes exactly what the presenter emits', async () => {
+  const h = await startHarness();
+  try {
+    const schema = (h.server.openapiDocument() as any).components.schemas.SessionView;
+
+    const view = sessionView({
+      id: 's1',
+      userId: 'u1',
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+      expiresAt: new Date('2026-02-01T00:00:00Z'),
+      revokedAt: null,
+      rotatedFrom: null,
+      lastSeenAt: new Date('2026-01-02T00:00:00Z'),
+      lastIp: '203.0.113.1',
+      lastUserAgent: 'Mozilla/5.0',
+      createdIp: '203.0.113.9',
+      createdUserAgent: 'Mozilla/5.0 (first sign-in)',
+    });
+
+    const presenterKeys = Object.keys(view).sort();
+    assert.deepEqual(presenterKeys, Object.keys(schema.properties).sort());
+    assert.deepEqual(presenterKeys, [...schema.required].sort());
+
+    // The presenter must not leak session internals the schema does not declare. `userId` is
+    // redundant (the route is already scoped to the caller) and `rotatedFrom` exposes the refresh
+    // rotation chain, which is a server-side integrity detail rather than something a user acts on.
+    assert.equal('userId' in view, false, 'sessionView must not expose userId');
+    assert.equal('rotatedFrom' in view, false, 'sessionView must not expose the rotation chain');
+    assert.equal(JSON.stringify(view).includes('refresh'), false, 'no refresh material in the view');
+  } finally {
+    await h.close();
+  }
+});
+
+/** The revocation route must be declared, authenticated, and non-guessable about other users. */
+test('DELETE /v1/auth/sessions/{id} is declared with bearer security', async () => {
+  const h = await startHarness();
+  try {
+    const spec = h.server.openapiDocument() as any;
+    const op = spec.paths['/v1/auth/sessions/{id}']?.delete;
+    assert.ok(op, 'the revocation route must appear in the served spec');
+    assert.deepEqual(op.security, [{ bearerAuth: [] }]);
+    assert.ok(op.responses['204'], 'declares the success status the handler returns');
+    assert.ok(op.responses['404'], 'declares the not-found status used for another user\'s id');
+    assert.equal(op.responses['403'], undefined, 'must not advertise a 403 — that would be an existence oracle');
   } finally {
     await h.close();
   }

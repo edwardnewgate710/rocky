@@ -97,6 +97,14 @@ export class AuthController {
     this.webauthnAdapter = opts.webauthnAdapter ?? new NativeWebAuthnAdapter();
     this.storage = opts.storage;
     this.storageKey = opts.storageKey ?? DEFAULT_STORAGE_KEY;
+
+    // This controller mirrors the session that `SessionManager` owns, so when a refresh fails and
+    // that session goes away without the user asking — an expired refresh token, or the session
+    // revoked from another device — the mirror has to go with it. Otherwise the header and account
+    // controls keep showing a signed-in user whose every protected request 401s, until a reload.
+    this.client.session.onInvalidated(() => {
+      if (!this.disposed) this.clearLocalSession();
+    });
   }
 
   /** Current session (snapshot), or null when unauthenticated. */

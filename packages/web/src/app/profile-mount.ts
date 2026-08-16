@@ -9,6 +9,8 @@ import { renderAchievements } from './achievements-view.js';
 import { summaryLabel } from './achievements-helpers.js';
 import { PasskeysController } from './passkeys-controller.js';
 import { renderPasskeys } from './passkeys-view.js';
+import { SessionsController } from './sessions-controller.js';
+import { activeSessions, renderSessions } from './sessions-view.js';
 import type { WebAuthnAdapter } from '../ports/webauthn.js';
 import {
   renderEmpty,
@@ -166,12 +168,22 @@ export function mountProfile(deps: ProfileMountDependencies): MountedProfile {
   const passkeysNoteEl = doc.getElementById('passkeys-note');
   const passkeysErrorEl = doc.getElementById('passkeys-error');
 
+  // --- Active sessions region (M14 inc 46) ---
+  // Shares the `passkeys-self` container: both are account-security controls for the signed-in
+  // user's own profile, and neither has any meaning on someone else's.
+  const sessionsCountEl = doc.getElementById('sessions-count');
+  const sessionsListEl = doc.getElementById('sessions-list');
+  const sessionsNoteEl = doc.getElementById('sessions-note');
+  const sessionsErrorEl = doc.getElementById('sessions-error');
+
   let socialBusy = false;
   let passkeysBusy = false;
+  let sessionsBusy = false;
   let lastRelationship: Relationship | null = null;
   let lastSelfSocial: SelfSocial | null = null;
   let passkeysCtrl: PasskeysController | null = null;
   let passkeysUnbind = () => {};
+  let sessionsCtrl: SessionsController | null = null;
 
   if (!handle) {
     passkeysCtrl = new PasskeysController({
@@ -219,6 +231,39 @@ export function mountProfile(deps: ProfileMountDependencies): MountedProfile {
       passkeysRegisterEl.addEventListener('click', handler);
       passkeysUnbind = () => passkeysRegisterEl.removeEventListener('click', handler);
     }
+
+    sessionsCtrl = new SessionsController({
+      client,
+      callbacks: {
+        onSessions: (items) => {
+          const active = activeSessions(items, Date.now());
+          if (sessionsCountEl) sessionsCountEl.textContent = active.length > 0 ? `(${active.length})` : '';
+          if (sessionsListEl) {
+            renderSessions(
+              sessionsListEl,
+              items,
+              (id) => void sessionsCtrl?.revokeSession(id),
+              sessionsBusy,
+            );
+          }
+        },
+        onPending: (pending) => {
+          sessionsBusy = pending;
+          if (sessionsListEl) {
+            for (const btn of sessionsListEl.querySelectorAll('button')) {
+              btn.disabled = pending;
+            }
+          }
+        },
+        onError: (msg) => {
+          if (sessionsErrorEl) sessionsErrorEl.textContent = msg;
+        },
+        onStatus: (msg) => {
+          if (sessionsNoteEl) sessionsNoteEl.textContent = msg;
+          if (sessionsErrorEl) sessionsErrorEl.textContent = '';
+        },
+      },
+    });
   }
 
   const social = new SocialController({
@@ -479,13 +524,19 @@ export function mountProfile(deps: ProfileMountDependencies): MountedProfile {
       // the next visitor's, so it goes with the rest.
       achievements.reset();
       passkeysCtrl?.reset();
+      sessionsCtrl?.reset();
       if (achievementsEl) achievementsEl.hidden = true;
       if (achievementsCountEl) achievementsCountEl.textContent = '';
       if (passkeysCountEl) passkeysCountEl.textContent = '';
       if (passkeysNoteEl) passkeysNoteEl.textContent = '';
       if (passkeysErrorEl) passkeysErrorEl.textContent = '';
+      // A previous account's session list — its devices, IPs and last-seen times — must not survive
+      // a sign-out on screen. Same disclosure argument as the friends list above, and stronger.
+      if (sessionsCountEl) sessionsCountEl.textContent = '';
+      if (sessionsNoteEl) sessionsNoteEl.textContent = '';
+      if (sessionsErrorEl) sessionsErrorEl.textContent = '';
       if (passkeysSelfEl) passkeysSelfEl.hidden = true;
-      for (const el of [socialActionsEl, followersEl, followingEl, incomingEl, outgoingEl, friendsEl, blockedEl, achievementsListEl, passkeysListEl]) {
+      for (const el of [socialActionsEl, followersEl, followingEl, incomingEl, outgoingEl, friendsEl, blockedEl, achievementsListEl, passkeysListEl, sessionsListEl]) {
         if (el) el.innerHTML = '';
       }
       for (const el of [followerCountEl, followingCountEl, friendCountEl, socialNoteEl, socialErrorEl]) {
@@ -511,6 +562,7 @@ export function mountProfile(deps: ProfileMountDependencies): MountedProfile {
       void profile.loadSelf();
       if (passkeysSelfEl) passkeysSelfEl.hidden = false;
       void passkeysCtrl?.load();
+      void sessionsCtrl?.load();
     };
 
     onSessionChange = handleSelfSessionChange;
@@ -528,6 +580,9 @@ export function mountProfile(deps: ProfileMountDependencies): MountedProfile {
         dispose: (): void => {
           passkeysUnbind();
           passkeysCtrl?.dispose();
+          // Both account-security controllers are created together on the self-profile and share
+          // this one disposal, so neither can be left running when the route goes.
+          sessionsCtrl?.dispose();
         },
       }
     : null;

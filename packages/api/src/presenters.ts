@@ -94,6 +94,13 @@ export interface SessionView {
   readonly lastSeenAt: string | null;
   readonly lastIp: string | null;
   readonly lastUserAgent: string | null;
+  /**
+   * Where the session was signed in from. Nothing populates the `last*` fields today, so these are
+   * what the account-security screen can actually identify a session by; they are always present
+   * for a session created through a real request.
+   */
+  readonly createdIp: string | null;
+  readonly createdUserAgent: string | null;
 }
 
 export function sessionView(row: SessionRow): SessionView {
@@ -105,6 +112,8 @@ export function sessionView(row: SessionRow): SessionView {
     lastSeenAt: row.lastSeenAt ? row.lastSeenAt.toISOString() : null,
     lastIp: row.lastIp,
     lastUserAgent: row.lastUserAgent,
+    createdIp: row.createdIp,
+    createdUserAgent: row.createdUserAgent,
   };
 }
 

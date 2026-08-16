@@ -232,3 +232,277 @@ test('missing/expired access tokens are rejected on protected routes', async () 
     await h.close();
   }
 });
+
+// --- Session revocation (M14 inc 46) ---------------------------------------
+
+test('a user can revoke one of their own sessions, and the refresh token dies with it', async () => {
+  const h = await startHarness();
+  try {
+    // Two sessions for the same user: register, then log in again.
+    const reg = await h.json('POST', '/v1/auth/register', {
+      body: { handle: 'sonia', password: 'passw0rd!!' },
+    });
+    const token = reg.body.tokens.accessToken;
+    const firstRefresh = reg.body.tokens.refreshToken;
+
+    const second = await h.json('POST', '/v1/auth/login', {
+      body: { handle: 'sonia', password: 'passw0rd!!' },
+    });
+    const secondRefresh = second.body.tokens.refreshToken;
+
+    const before = await h.json('GET', '/v1/auth/sessions', { token });
+    assert.equal(before.body.length, 2);
+    // Pin which row is which rather than taking whichever the list happens to order first: the
+    // whole point of this test is the *order* the two refreshes are attempted in, so the token
+    // belonging to the revoked session has to be known, not guessed.
+    const byNewest = [...before.body].sort(
+      (x: { createdAt: string }, y: { createdAt: string }) =>
+        Date.parse(y.createdAt) - Date.parse(x.createdAt),
+    );
+    const victim = byNewest[0]; // the second sign-in, holding secondRefresh
+
+    const del = await h.json('DELETE', `/v1/auth/sessions/${victim.id}`, { token });
+    assert.equal(del.status, 204);
+
+    const after = await h.json('GET', '/v1/auth/sessions', { token });
+    const revoked = after.body.find((s: { id: string }) => s.id === victim.id);
+    assert.notEqual(revoked.revokedAt, null, 'the targeted session is revoked');
+    assert.equal(h.repos.audit.withAction('auth.session.revoke').length, 1);
+
+    // The revoked browser then does what any client does when its access token runs out: it
+    // refreshes. That must fail, and it must not take the surviving session down with it — treating
+    // a deliberately revoked row as token reuse would burn the whole account here, which is exactly
+    // what revoking a single session promises not to do. Order matters: the surviving session is
+    // checked *after* the revoked one has tried.
+    const revokedRetry = await h.json('POST', '/v1/auth/refresh', {
+      body: { refreshToken: secondRefresh },
+    });
+    assert.equal(revokedRetry.status, 401, 'the revoked session cannot mint another token');
+
+    const survivor = await h.json('POST', '/v1/auth/refresh', {
+      body: { refreshToken: firstRefresh },
+    });
+    assert.equal(survivor.status, 200, 'revoking one session must not invalidate the other');
+    assert.equal(
+      h.repos.audit.withAction('auth.refresh.reuse').length,
+      0,
+      'a deliberate revocation is not token theft',
+    );
+  } finally {
+    await h.close();
+  }
+});
+
+/**
+ * The route resolves the path id only within the caller's own session list, so another user's id is
+ * simply absent from the set. Reported as 404 rather than 403 on purpose: telling the caller "that
+ * exists but is not yours" would make this an oracle for live session ids across the platform.
+ */
+test('a user cannot revoke another user\'s session, and is not told it exists', async () => {
+  const h = await startHarness();
+  try {
+    const mallory = await h.json('POST', '/v1/auth/register', {
+      body: { handle: 'mallory', password: 'passw0rd!!' },
+    });
+    const victim = await h.json('POST', '/v1/auth/register', {
+      body: { handle: 'victim', password: 'passw0rd!!' },
+    });
+
+    const victimSessions = await h.json('GET', '/v1/auth/sessions', {
+      token: victim.body.tokens.accessToken,
+    });
+    const victimSessionId = victimSessions.body[0].id;
+
+    const attack = await h.json('DELETE', `/v1/auth/sessions/${victimSessionId}`, {
+      token: mallory.body.tokens.accessToken,
+    });
+    assert.equal(attack.status, 404);
+    assert.equal(attack.body.error.code, 'not_found');
+
+    // The victim's session is untouched and still refreshes.
+    const still = await h.json('GET', '/v1/auth/sessions', {
+      token: victim.body.tokens.accessToken,
+    });
+    assert.equal(still.body[0].revokedAt, null);
+    assert.equal(h.repos.audit.withAction('auth.session.revoke').length, 0);
+  } finally {
+    await h.close();
+  }
+});
+
+test('revoking an unknown session id is a 404', async () => {
+  const h = await startHarness();
+  try {
+    const reg = await h.json('POST', '/v1/auth/register', {
+      body: { handle: 'nadia', password: 'passw0rd!!' },
+    });
+    const res = await h.json('DELETE', '/v1/auth/sessions/does-not-exist', {
+      token: reg.body.tokens.accessToken,
+    });
+    assert.equal(res.status, 404);
+  } finally {
+    await h.close();
+  }
+});
+
+/**
+ * Revoking twice succeeds twice. The caller asked for that session to be dead and it is dead, so
+ * there is nothing to report — and it means two simultaneous revocations of the same id both win
+ * rather than one losing a race.
+ */
+test('revoking an already-revoked session succeeds and does not audit twice', async () => {
+  const h = await startHarness();
+  try {
+    const reg = await h.json('POST', '/v1/auth/register', {
+      body: { handle: 'ivan', password: 'passw0rd!!' },
+    });
+    const token = reg.body.tokens.accessToken;
+    const list = await h.json('GET', '/v1/auth/sessions', { token });
+    const id = list.body[0].id;
+
+    const first = await h.json('DELETE', `/v1/auth/sessions/${id}`, { token });
+    const second = await h.json('DELETE', `/v1/auth/sessions/${id}`, { token });
+    assert.equal(first.status, 204);
+    assert.equal(second.status, 204, 'idempotent: the desired end state already holds');
+    assert.equal(h.repos.audit.withAction('auth.session.revoke').length, 1, 'audited once, not twice');
+  } finally {
+    await h.close();
+  }
+});
+
+/**
+ * The sequential case above cannot reach the read-then-write race that made this necessary: an
+ * `if (revokedAt) return` in the service followed by an unconditional update lets two in-flight
+ * requests both observe an active row and both audit one revocation. Only concurrent calls show it.
+ */
+test('simultaneous revocations of the same session audit it once', async () => {
+  const h = await startHarness();
+  try {
+    const reg = await h.json('POST', '/v1/auth/register', {
+      body: { handle: 'wanda', password: 'passw0rd!!' },
+    });
+    const token = reg.body.tokens.accessToken;
+    const list = await h.json('GET', '/v1/auth/sessions', { token });
+    const id = list.body[0].id;
+
+    const results = await Promise.all([
+      h.json('DELETE', `/v1/auth/sessions/${id}`, { token }),
+      h.json('DELETE', `/v1/auth/sessions/${id}`, { token }),
+      h.json('DELETE', `/v1/auth/sessions/${id}`, { token }),
+    ]);
+
+    assert.deepEqual(results.map((r) => r.status), [204, 204, 204], 'every caller gets its end state');
+    assert.equal(
+      h.repos.audit.withAction('auth.session.revoke').length,
+      1,
+      'one revocation happened, so one record describes it',
+    );
+  } finally {
+    await h.close();
+  }
+});
+
+/**
+ * A session is a chain of rows, not one row: every refresh retires the current row and inserts a
+ * successor. Revoking only the row the caller named would leave the successor refreshing, which is
+ * the outcome of a refresh landing mid-revocation. Reached deterministically here by rotating first.
+ */
+test('revoking a session also ends the session it was rotated into', async () => {
+  const h = await startHarness();
+  try {
+    const reg = await h.json('POST', '/v1/auth/register', {
+      body: { handle: 'oscar', password: 'passw0rd!!' },
+    });
+    const originalId = (await h.json('GET', '/v1/auth/sessions', { token: reg.body.tokens.accessToken }))
+      .body[0].id;
+
+    // Refresh, so the original row is retired and a successor holds the account.
+    const rotated = await h.json('POST', '/v1/auth/refresh', {
+      body: { refreshToken: reg.body.tokens.refreshToken },
+    });
+    assert.equal(rotated.status, 200);
+    const token = rotated.body.tokens.accessToken;
+
+    const del = await h.json('DELETE', `/v1/auth/sessions/${originalId}`, { token });
+    assert.equal(del.status, 204);
+
+    const retry = await h.json('POST', '/v1/auth/refresh', {
+      body: { refreshToken: rotated.body.tokens.refreshToken },
+    });
+    assert.equal(retry.status, 401, 'the successor is no longer a working refresh capability');
+  } finally {
+    await h.close();
+  }
+});
+
+/**
+ * The reuse detection the rotation scheme exists for still has to fire. Distinguishing a stolen
+ * token from a deliberately revoked one must not turn into accepting both.
+ */
+test('replaying a rotated-away refresh token still burns the account', async () => {
+  const h = await startHarness();
+  try {
+    const reg = await h.json('POST', '/v1/auth/register', {
+      body: { handle: 'trudy', password: 'passw0rd!!' },
+    });
+    const stolen = reg.body.tokens.refreshToken;
+
+    // The real client refreshes, so `stolen` is now a token that has already been exchanged.
+    const legitimate = await h.json('POST', '/v1/auth/refresh', { body: { refreshToken: stolen } });
+    assert.equal(legitimate.status, 200);
+
+    const replay = await h.json('POST', '/v1/auth/refresh', { body: { refreshToken: stolen } });
+    assert.equal(replay.status, 401);
+    assert.equal(h.repos.audit.withAction('auth.refresh.reuse').length, 1, 'recorded as reuse');
+
+    const afterBurn = await h.json('POST', '/v1/auth/refresh', {
+      body: { refreshToken: legitimate.body.tokens.refreshToken },
+    });
+    assert.equal(afterBurn.status, 401, 'the live successor is burned with the rest of the chain');
+  } finally {
+    await h.close();
+  }
+});
+
+/**
+ * After two refreshes the *direct* successor of a stolen token has itself been rotated away, so
+ * asking only "is this row's successor live" answers no and lets the replay pass as an ordinary
+ * expired session. Liveness has to be asked of the whole descending chain.
+ */
+test('a stolen refresh token is detected however many rotations have happened since', async () => {
+  const h = await startHarness();
+  try {
+    const reg = await h.json('POST', '/v1/auth/register', {
+      body: { handle: 'peggy', password: 'passw0rd!!' },
+    });
+    const stolen = reg.body.tokens.refreshToken;
+
+    const second = await h.json('POST', '/v1/auth/refresh', { body: { refreshToken: stolen } });
+    assert.equal(second.status, 200);
+    const third = await h.json('POST', '/v1/auth/refresh', {
+      body: { refreshToken: second.body.tokens.refreshToken },
+    });
+    assert.equal(third.status, 200);
+
+    const replay = await h.json('POST', '/v1/auth/refresh', { body: { refreshToken: stolen } });
+    assert.equal(replay.status, 401);
+    assert.equal(h.repos.audit.withAction('auth.refresh.reuse').length, 1, 'still recorded as reuse');
+
+    const afterBurn = await h.json('POST', '/v1/auth/refresh', {
+      body: { refreshToken: third.body.tokens.refreshToken },
+    });
+    assert.equal(afterBurn.status, 401, 'the account was burned two rotations later');
+  } finally {
+    await h.close();
+  }
+});
+
+test('session revocation requires authentication', async () => {
+  const h = await startHarness();
+  try {
+    const res = await h.json('DELETE', '/v1/auth/sessions/anything');
+    assert.equal(res.status, 401);
+  } finally {
+    await h.close();
+  }
+});

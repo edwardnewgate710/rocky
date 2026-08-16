@@ -100,6 +100,7 @@ test('AuthController.loginWithPasskey: logs in via passkey, adopts session, and 
         return mockAuthResponse;
       },
     },
+    session: { reset: () => {}, onInvalidated: () => {} },
   } as unknown as GambitClient;
 
   const adapter = new FakeWebAuthnAdapter();
@@ -151,6 +152,7 @@ test('AuthController.loginWithPasskey: surfaces generic error copy when passkey 
         throw new Error('401 Unauthorized / User not found');
       },
     },
+    session: { reset: () => {}, onInvalidated: () => {} },
   } as unknown as GambitClient;
 
   const adapter = new FakeWebAuthnAdapter();
@@ -185,6 +187,7 @@ test('AuthController.loginWithPasskey: rejects missing handles and unsupported b
         throw new Error('must not be called');
       },
     },
+    session: { reset: () => {}, onInvalidated: () => {} },
   } as unknown as GambitClient;
   const adapter = new FakeWebAuthnAdapter();
   const errors: string[] = [];

@@ -71,6 +71,8 @@ interface SessionDbRow {
   last_seen_at: Date | null;
   last_ip: string | null;
   last_user_agent: string | null;
+  created_ip: string | null;
+  created_user_agent: string | null;
 }
 
 interface RatingDbRow {
@@ -147,6 +149,8 @@ function toSession(r: SessionDbRow): SessionRow {
     lastSeenAt: r.last_seen_at,
     lastIp: r.last_ip,
     lastUserAgent: r.last_user_agent,
+    createdIp: r.created_ip,
+    createdUserAgent: r.created_user_agent,
   };
 }
 
@@ -195,7 +199,7 @@ function toSeek(r: SeekDbRow): SeekRow {
 }
 
 const SESSION_COLS =
-  'id, user_id, created_at, expires_at, revoked_at, rotated_from, last_seen_at, last_ip, last_user_agent';
+  'id, user_id, created_at, expires_at, revoked_at, rotated_from, last_seen_at, last_ip, last_user_agent, created_ip, created_user_agent';
 const GAME_COLS =
   'id, variant, rated, speed, white_id, black_id, result, termination, ply_count, last_seq, started_at, ended_at';
 
@@ -429,8 +433,14 @@ export class PgSessionsRepository implements SessionsRepository {
     );
   }
 
-  async revoke(id: string, at: Date): Promise<void> {
-    await this.pool.query('UPDATE sessions SET revoked_at = $2 WHERE id = $1', [id, at]);
+  async revoke(id: string, at: Date): Promise<boolean> {
+    // `revoked_at IS NULL` makes the transition itself the lock: two concurrent revocations of the
+    // same session both succeed, but exactly one of them reports having performed it.
+    const res = await this.pool.query(
+      'UPDATE sessions SET revoked_at = $2 WHERE id = $1 AND revoked_at IS NULL',
+      [id, at],
+    );
+    return (res.rowCount ?? 0) > 0;
   }
 
   async listForUser(userId: string): Promise<SessionRow[]> {

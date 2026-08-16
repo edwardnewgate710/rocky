@@ -307,6 +307,18 @@ export class AuthApi {
     return this.execute<SessionView[]>({ method: 'GET', path: '/v1/auth/sessions', auth: true });
   }
 
+  /**
+   * Revoke one of the caller's own sessions. The server resolves the id only within this user's
+   * sessions, so an id from anywhere else answers 404 rather than acting.
+   */
+  revokeSession(id: string): Promise<void> {
+    return this.execute<void>({
+      method: 'DELETE',
+      path: `/v1/auth/sessions/${encodeURIComponent(id)}`,
+      auth: true,
+    });
+  }
+
   requestPasswordReset(body: PasswordResetRequest): Promise<void> {
     return this.execute<void>({
       method: 'POST',

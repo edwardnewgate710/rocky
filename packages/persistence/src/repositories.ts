@@ -148,6 +148,12 @@ export interface SessionRow {
   readonly lastSeenAt: Date | null;
   readonly lastIp: string | null;
   readonly lastUserAgent: string | null;
+  /**
+   * Request metadata captured when the session was created. Unlike the `last*` fields these are
+   * always populated, so they are what a session list can actually identify a session by.
+   */
+  readonly createdIp: string | null;
+  readonly createdUserAgent: string | null;
 }
 
 export interface NewSession {
@@ -175,7 +181,15 @@ export interface SessionsRepository {
   rotate(refreshHash: string, replacement: NewSession, at: Date): Promise<SessionRotationResult>;
   /** Record activity (last_seen_at / last_ip / last_user_agent). */
   touch(id: string, at: Date, ip?: string | null, userAgent?: string | null): Promise<void>;
-  revoke(id: string, at: Date): Promise<void>;
+  /**
+   * Revoke a session, atomically and idempotently.
+   *
+   * Returns `true` only for the call that performed the transition, so a caller that must act
+   * exactly once per revocation (writing an audit record, say) can do so without a read-then-write
+   * race between two concurrent revocations of the same session.
+   */
+  revoke(id: string, at: Date): Promise<boolean>;
+  /** Every session ever created for the user, including revoked and expired rows. */
   listForUser(userId: string): Promise<SessionRow[]>;
 }
 

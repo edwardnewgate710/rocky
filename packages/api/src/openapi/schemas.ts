@@ -105,7 +105,17 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
 
   SessionView: {
     type: 'object',
-    required: ['id', 'createdAt', 'expiresAt', 'revokedAt', 'lastSeenAt', 'lastIp', 'lastUserAgent'],
+    required: [
+      'id',
+      'createdAt',
+      'expiresAt',
+      'revokedAt',
+      'lastSeenAt',
+      'lastIp',
+      'lastUserAgent',
+      'createdIp',
+      'createdUserAgent',
+    ],
     properties: {
       id: { type: 'string', format: 'uuid' },
       createdAt: dateTime,
@@ -114,6 +124,8 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       lastSeenAt: { ...dateTime, nullable: true },
       lastIp: nullableString,
       lastUserAgent: nullableString,
+      createdIp: nullableString,
+      createdUserAgent: nullableString,
     },
   },
 
