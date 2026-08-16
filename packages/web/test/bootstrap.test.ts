@@ -116,7 +116,7 @@ const BUTTON_IDS = new Set([
   'action-resign', 'confirm-resign-yes', 'confirm-resign-no',
   'action-abort', 'confirm-abort-yes', 'confirm-abort-no',
   'action-offer-draw', 'action-accept-draw', 'action-decline-draw', 'action-claim-flag',
-  'auth-passkey', 'passkey-register'
+  'auth-passkey', 'passkey-register', 'email-verify-retry',
 ]);
 
 /**
@@ -142,6 +142,8 @@ function makeFakeEl(id?: string): HTMLElement {
     textContent: '',
     disabled: false,
     hidden: isHidden,
+    reportValidity: () => true,
+    value: '',
     classList: {
       add: (c: string) => classList.add(c),
       remove: (c: string) => classList.delete(c),
@@ -168,7 +170,7 @@ function makeFakeEl(id?: string): HTMLElement {
   } as unknown as HTMLElement;
 }
 
-function makeDoc(ids: string[] = ['board', 'status', 'flip', 'theme-toggle', 'auth', 'auth-status', 'auth-logout', 'auth-submit', 'auth-error', 'auth-form', 'auth-handle', 'auth-password', 'create-seek', 'game-actions', 'action-error', 'action-offer-draw', 'action-claim-flag', 'action-resign', 'action-abort', 'confirm-resign', 'confirm-resign-yes', 'confirm-resign-no', 'confirm-abort', 'confirm-abort-yes', 'confirm-abort-no', 'draw-offer-received', 'action-accept-draw', 'action-decline-draw', 'meta-connection', 'meta-role', 'meta-white', 'meta-white-name', 'meta-black', 'meta-black-name', 'meta-spectators', 'meta-variant', 'meta-time', 'meta-live-status']): Document {
+function makeDoc(ids: string[] = ['board', 'status', 'flip', 'theme-toggle', 'auth', 'auth-status', 'auth-logout', 'auth-submit', 'auth-error', 'auth-form', 'auth-handle', 'auth-password', 'auth-email', 'email-verify', 'email-verify-status', 'email-verify-error', 'email-verify-retry', 'create-seek', 'game-actions', 'action-error', 'action-offer-draw', 'action-claim-flag', 'action-resign', 'action-abort', 'confirm-resign', 'confirm-resign-yes', 'confirm-resign-no', 'confirm-abort', 'confirm-abort-yes', 'confirm-abort-no', 'draw-offer-received', 'action-accept-draw', 'action-decline-draw', 'meta-connection', 'meta-role', 'meta-white', 'meta-white-name', 'meta-black', 'meta-black-name', 'meta-spectators', 'meta-variant', 'meta-time', 'meta-live-status']): Document {
   const elements = new Map<string, HTMLElement>();
   for (const id of ids) {
     elements.set(id, makeFakeEl(id));
@@ -358,6 +360,7 @@ test('bootstrap returns a fresh result with every public named field', () => {
     studies: true,
     passkeys: true,
     passwordReset: true,
+    emailVerification: true,
     connectivity: true,
     auth: true,
     theme: true,
@@ -1211,4 +1214,225 @@ test('self profile passkeys region visibility, failure independence, and teardow
       delete (globalThis as { document?: unknown }).document;
     }
   }
+});
+
+/**
+ * The transport itself is the security property, so it gets its own test.
+ *
+ * A query string is part of the request line: `/email-verify?token=...` reaches the web tier on the
+ * first navigation, before this bundle parses, and a proxy logging `$request` keeps a live token in
+ * its access log — which `history.replaceState` cannot retract. A fragment is never transmitted.
+ * Reading the token from `location.search` must therefore stay impossible, not merely unused: a
+ * future "be liberal in what you accept" edit that also honoured the query would silently restore
+ * the exposure while every other test in this file kept passing.
+ */
+test('a token in the query string is ignored: only the fragment is honoured as a token transport', async () => {
+  const originalLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+  const originalHistory = Object.getOwnPropertyDescriptor(globalThis, 'history');
+
+  const queryToken = 'query-transport-token-must-be-ignored';
+  let replaceStateCalls = 0;
+
+  const doc = makeDoc([
+    'auth', 'auth-status', 'auth-logout', 'auth-submit', 'auth-error',
+    'auth-form', 'auth-handle', 'auth-password', 'auth-email',
+    'email-verify', 'email-verify-status', 'email-verify-error', 'email-verify-retry',
+  ]);
+
+  const transport = new FakeTransport().onEach((req) => {
+    const path = new URL(req.url).pathname;
+    if (path === '/v1/capabilities') return json(200, { capabilities: {} });
+    if (path === '/v1/auth/email/verify') return json(204, {});
+    return json(404, {});
+  });
+
+  Object.defineProperty(globalThis, 'location', {
+    configurable: true,
+    value: { pathname: '/email-verify', search: `?token=${queryToken}`, hash: '' },
+  });
+  Object.defineProperty(globalThis, 'history', {
+    configurable: true,
+    value: { replaceState: () => { replaceStateCalls++; } },
+  });
+
+  try {
+    bootstrap(doc, { ...makeDeps(), httpTransport: transport });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // No verification request at all: with no fragment there is no token, so the route reports the
+    // missing-link state rather than treating the query value as a credential.
+    const verifyCalls = transport.calls.filter((c) => new URL(c.url).pathname === '/v1/auth/email/verify');
+    assert.equal(verifyCalls.length, 0, 'a query-string token must never be sent to the verify endpoint');
+    assert.equal(replaceStateCalls, 0, 'nothing was captured, so there is nothing to strip');
+
+    for (const call of transport.calls) {
+      assert.equal(call.body?.includes(queryToken) ?? false, false, 'query token must not reach any request body');
+    }
+  } finally {
+    if (originalLocation) Object.defineProperty(globalThis, 'location', originalLocation);
+    else delete (globalThis as any).location;
+    if (originalHistory) Object.defineProperty(globalThis, 'history', originalHistory);
+    else delete (globalThis as any).history;
+  }
+});
+
+test('email-verify route strips token before any request, hides #auth, and provides emailVerification disposable', async () => {
+  const originalLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+  const originalHistory = Object.getOwnPropertyDescriptor(globalThis, 'history');
+
+  const distinctiveToken = 'super-secret-verify-token-999';
+  let replaceStateCalls = 0;
+  let requestsWhenReplaceStateCalled = -1;
+  let replacedUrl = '';
+
+  const doc = makeDoc([
+    'auth', 'auth-status', 'auth-logout', 'auth-submit', 'auth-error',
+    'auth-form', 'auth-handle', 'auth-password', 'auth-email',
+    'email-verify', 'email-verify-status', 'email-verify-error', 'email-verify-retry',
+  ]);
+
+  const transport = new FakeTransport().onEach((req) => {
+    const path = new URL(req.url).pathname;
+    if (path === '/v1/capabilities') return json(200, { capabilities: {} });
+    if (path === '/v1/auth/email/verify') return json(204, {});
+    return json(404, {});
+  });
+
+  Object.defineProperty(globalThis, 'location', {
+    configurable: true,
+    value: {
+      pathname: '/email-verify',
+      search: '',
+      hash: `#token=${distinctiveToken}`,
+    },
+  });
+
+  Object.defineProperty(globalThis, 'history', {
+    configurable: true,
+    value: {
+      replaceState: (_data: unknown, _title: string, url: string) => {
+        replaceStateCalls++;
+        requestsWhenReplaceStateCalled = transport.calls.length;
+        replacedUrl = url;
+      },
+    },
+  });
+
+  try {
+    const result = bootstrap(doc, { ...makeDeps(), httpTransport: transport });
+
+    assert.equal(replaceStateCalls, 1);
+    assert.equal(replacedUrl, '/email-verify');
+    assert.equal(requestsWhenReplaceStateCalled, 0, 'replaceState must be called before ANY transport request');
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Verify token secret hygiene: no request URL ever contained the token
+    for (const call of transport.calls) {
+      assert.equal(call.url.includes(distinctiveToken), false, `Request url ${call.url} contained token`);
+    }
+
+    // #auth hidden on /email-verify for signed out visitor
+    assert.equal(doc.getElementById('auth')?.hidden, true);
+
+    // Bootstrapped disposable
+    assert.ok(result.emailVerification !== null, 'emailVerification must be non-null on /email-verify');
+
+    // On another route, emailVerification is null
+    Object.defineProperty(globalThis, 'location', {
+      configurable: true,
+      value: { pathname: '/', search: '', hash: '' },
+    });
+    const lobbyDoc = makeDoc();
+    const lobbyResult = bootstrap(lobbyDoc, { ...makeDeps(), httpTransport: transport });
+    assert.equal(lobbyResult.emailVerification, null);
+  } finally {
+    if (originalLocation) Object.defineProperty(globalThis, 'location', originalLocation);
+    else delete (globalThis as any).location;
+    if (originalHistory) Object.defineProperty(globalThis, 'history', originalHistory);
+    else delete (globalThis as any).history;
+  }
+});
+
+test('bootstrapping the same document twice on /email-verify and disposing does not stack retry handlers', async () => {
+  const originalLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+  const originalHistory = Object.getOwnPropertyDescriptor(globalThis, 'history');
+
+  const doc = makeDoc([
+    'auth', 'auth-status', 'auth-logout', 'auth-submit', 'auth-error',
+    'auth-form', 'auth-handle', 'auth-password', 'auth-email',
+    'email-verify', 'email-verify-status', 'email-verify-error', 'email-verify-retry',
+  ]);
+
+  let verifyCount = 0;
+  const transport = new FakeTransport().onEach((req) => {
+    const path = new URL(req.url).pathname;
+    if (path === '/v1/capabilities') return json(200, { capabilities: {} });
+    if (path === '/v1/auth/email/verify') {
+      verifyCount++;
+      return json(500, { error: { message: 'Temporary error' } });
+    }
+    return json(404, {});
+  });
+
+  Object.defineProperty(globalThis, 'location', {
+    configurable: true,
+    value: { pathname: '/email-verify', search: '', hash: '#token=retry-token' },
+  });
+  Object.defineProperty(globalThis, 'history', {
+    configurable: true,
+    value: { replaceState: () => {} },
+  });
+
+  try {
+    const first = bootstrap(doc, { ...makeDeps(), httpTransport: transport });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(verifyCount, 1);
+    first.emailVerification?.dispose();
+
+    const second = bootstrap(doc, { ...makeDeps(), httpTransport: transport });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(verifyCount, 2);
+
+    const retryBtn = doc.getElementById('email-verify-retry') as unknown as FakeHTMLButtonElement;
+    retryBtn.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // One click on retry button should produce exactly one additional request (total 3)
+    assert.equal(verifyCount, 3);
+  } finally {
+    if (originalLocation) Object.defineProperty(globalThis, 'location', originalLocation);
+    else delete (globalThis as any).location;
+    if (originalHistory) Object.defineProperty(globalThis, 'history', originalHistory);
+    else delete (globalThis as any).history;
+  }
+});
+
+test('submitting the sign-in form with malformed email still calls login', () => {
+  const doc = makeDoc();
+  const transport = new FakeTransport().onEach(() => json(200, { accessToken: 't', handle: 'alice' }));
+  bootstrap(doc, { ...makeDeps(), httpTransport: transport });
+
+  (doc.getElementById('auth-handle') as unknown as { value: string; reportValidity(): boolean }).value = 'alice';
+  (doc.getElementById('auth-password') as unknown as { value: string; reportValidity(): boolean }).value = 'hunter2';
+  const emailEl = doc.getElementById('auth-email') as unknown as { value: string; reportValidity(): boolean };
+  let emailValidityChecks = 0;
+  emailEl.value = 'not-an-email';
+  emailEl.reportValidity = (): boolean => {
+    emailValidityChecks += 1;
+    return false;
+  };
+
+  const form = doc.getElementById('auth-form') as unknown as { submit(): void };
+  form.submit();
+
+  const urls = transport.calls.map((c) => c.url);
+  assert.ok(
+    urls.some((u) => u.includes('login')),
+    `submitting the form must call the login endpoint even with malformed email; saw ${JSON.stringify(urls)}`,
+  );
+  // The stronger half of the same requirement: sign-in must not merely survive an invalid optional
+  // field, it must never consult it. A future edit that validates the whole form on submit would
+  // reintroduce the regression on a real browser, where the field's invalidity does block the form.
+  assert.equal(emailValidityChecks, 0, 'sign-in must not consult the optional registration email');
 });

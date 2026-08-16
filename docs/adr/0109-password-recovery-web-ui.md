@@ -18,7 +18,7 @@ M14 Increment 45 delivers the password-recovery web UI in `@chess-platform/web` 
 
 2. **SPA Routing & Discoverability**:
    - `packages/web/src/app/router.ts` introduces `{ name: 'password-reset', token: string | null }`.
-   - `/password-reset` displays the account request form. `/password-reset?token=...` displays the new password reset form.
+   - `/password-reset` displays the account request form. `/password-reset#token=...` displays the new password reset form. (This was `?token=...` when this ADR was accepted; M14 Increment 48 moved both recovery flows to the fragment — see ADR-0112 §4 for why.)
    - `#auth-form` on the signed-out auth surface carries a discoverable "Forgot password?" link (`#auth-forgot-password`).
 
 3. **Form Orchestration & Anti-Enumeration Guarantees**:
@@ -29,7 +29,7 @@ M14 Increment 45 delivers the password-recovery web UI in `@chess-platform/web` 
 
 4. **Session Invalidation & Token Secrecy**:
    - Reset tokens are treated as secrets: never logged and never rendered in the DOM or HTML attributes.
-   - When mounting `/password-reset?token=...`, the token is captured into memory and stripped from the visible URL bar via `history.replaceState(null, '', '/password-reset')` before any background network calls run, preventing token leakage in `Referer` headers.
+   - When mounting `/password-reset#token=...`, the token is captured into memory and stripped from the visible URL bar via `history.replaceState(null, '', '/password-reset')` before any background network calls run, preventing token leakage in `Referer` headers. The fragment transport (M14 Increment 48, ADR-0112 §4) additionally keeps the token out of the initial document request, which `replaceState` alone could not do.
    - Successful password reset confirmation (204) revokes sessions backend-side and clears the refresh cookie; `onSessionInvalidated` calls `auth.clearLocalSession()` to reset in-memory and storage session states, updating the UI topbar to "Not signed in".
 
 5. **Lifecycle & Accessibility**:

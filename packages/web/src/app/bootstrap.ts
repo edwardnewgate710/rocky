@@ -50,6 +50,7 @@ import { ThemeToggle } from './theme-toggle.js';
 import { AuthController } from './auth-controller.js';
 import type { AuthSession } from './auth-controller.js';
 import { mountPasswordRecovery } from './password-recovery-mount.js';
+import { mountEmailVerification } from './email-verification-mount.js';
 import type { WebAuthnAdapter } from '../ports/webauthn.js';
 import { parseRoute } from './router.js';
 import { applyRouteSurface } from './route-surface.js';
@@ -74,6 +75,7 @@ export interface BootstrappedDisposables {
   readonly studies: StudiesController | null;
   readonly passkeys: { dispose: () => void } | null;
   readonly passwordReset: { dispose: () => void } | null;
+  readonly emailVerification: { dispose: () => void } | null;
   readonly connectivity: { dispose: () => void } | null;
 }
 
@@ -110,6 +112,7 @@ function createBootstrapped(
     studies: null,
     passkeys: null,
     passwordReset: null,
+    emailVerification: null,
     connectivity: null,
     auth,
     theme,
@@ -137,6 +140,34 @@ export interface BootstrapDependencies extends Partial<AppDependencies> {
 }
 
 /**
+ * Capture a secret recovery token from the URL **fragment** and strip it from the location bar
+ * before any application composition or background request runs.
+ *
+ * The fragment, not the query string, is what carries these tokens. A query string is part of the
+ * request line: `/email-verify?token=...` reaches the web tier on the very first navigation, before
+ * a single line of this bundle has parsed, and a reverse proxy logging `$request` keeps a live
+ * credential in its access log. No amount of client-side stripping retracts a request already made.
+ * A fragment is never transmitted — browsers keep it out of the request line and out of `Referer` —
+ * so the secret arrives here without having touched the server at all.
+ *
+ * `replaceState` still earns its place afterwards, for what the fragment *does* reach: the location
+ * bar, the history entry, and anything the visitor could copy out of either.
+ */
+function captureAndStripToken(routePath: string): string | null {
+  if (typeof location === 'undefined') return null;
+  const fragment = location.hash;
+  if (!fragment || fragment.length <= 1) return null;
+
+  const token = new URLSearchParams(fragment.slice(1)).get('token');
+  if (!token) return null;
+
+  if (typeof history !== 'undefined' && typeof history.replaceState === 'function') {
+    history.replaceState(null, '', routePath);
+  }
+  return token;
+}
+
+/**
  * Compose the app and mount views against the given document. The route is
  * determined from the URL pathname (or `deps.gameId` override).
  */
@@ -144,22 +175,15 @@ export function bootstrap(
   doc: Document,
   deps?: BootstrapDependencies,
 ): Bootstrapped {
-  // Extract and immediately strip secret reset token from location bar BEFORE any network call or app composition
-  let activeResetToken: string | null = null;
+  // Capture recovery tokens out of the fragment and clear the location bar BEFORE any network call
+  // or app composition. The fragment never reached the server; this clears the browser's copy.
   const rawUrl = typeof location !== 'undefined' ? location.pathname + (location.search ?? '') : '/';
   const route = parseRoute(rawUrl);
   const showPasswordReset = route.name === 'password-reset';
-
-  if (showPasswordReset && typeof location !== 'undefined' && location.search) {
-    const searchParams = new URLSearchParams(location.search);
-    const t = searchParams.get('token');
-    if (t) {
-      activeResetToken = t;
-      if (typeof history !== 'undefined' && typeof history.replaceState === 'function') {
-        history.replaceState(null, '', '/password-reset');
-      }
-    }
-  }
+  const showEmailVerify = route.name === 'email-verify';
+  const activeResetToken = showPasswordReset ? captureAndStripToken('/password-reset') : null;
+  const activeVerificationToken = showEmailVerify ? captureAndStripToken('/email-verify') : null;
+  const hideAuthSection = showPasswordReset || showEmailVerify;
 
   const config = deps?.config ?? resolveConfig();
   const appDeps: AppDependencies = {
@@ -202,6 +226,7 @@ export function bootstrap(
   const authFormEl = doc.getElementById('auth-form');
   const authHandleEl = doc.getElementById('auth-handle') as HTMLInputElement | null;
   const authPasswordEl = doc.getElementById('auth-password') as HTMLInputElement | null;
+  const authEmailEl = doc.getElementById('auth-email') as HTMLInputElement | null;
   const authSubmitEl = doc.getElementById('auth-submit');
   const authRegisterEl = doc.getElementById('auth-register');
   const authPasskeyEl = doc.getElementById('auth-passkey');
@@ -221,7 +246,7 @@ export function bootstrap(
         }
         // Show/hide the sign-in surface vs the logout button. The section is what hides, not just
         // the form inside it: hiding only the form left a signed-in visitor looking at an empty box.
-        if (authSectionEl) authSectionEl.hidden = session !== null || showPasswordReset;
+        if (authSectionEl) authSectionEl.hidden = session !== null || hideAuthSection;
         if (authLogoutEl) authLogoutEl.hidden = session === null;
         // Update create-seek button state (M2 gating).
         const createBtn = doc.getElementById('create-seek');
@@ -257,6 +282,12 @@ export function bootstrap(
 
   // Wire auth form submit (sign in). Bound on the form so pressing Enter in the password field signs in.
   const submitSignIn = (): void => {
+    if (authHandleEl && typeof authHandleEl.reportValidity === 'function' && !authHandleEl.reportValidity()) {
+      return;
+    }
+    if (authPasswordEl && typeof authPasswordEl.reportValidity === 'function' && !authPasswordEl.reportValidity()) {
+      return;
+    }
     const handle = authHandleEl?.value ?? '';
     const password = authPasswordEl?.value ?? '';
     if (handle && password) {
@@ -280,7 +311,7 @@ export function bootstrap(
       const handle = authHandleEl?.value ?? '';
       const password = authPasswordEl?.value ?? '';
       if (handle && password) {
-        void auth.register(handle, password);
+        void auth.register(handle, password, authEmailEl?.value ?? '');
       }
     };
   }
@@ -307,7 +338,7 @@ export function bootstrap(
   const token = deps?.token ?? app.api.session.current?.tokens.accessToken;
 
   // Set initial auth section visibility from already-known route and auth state
-  if (authSectionEl) authSectionEl.hidden = auth.currentSession !== null || showPasswordReset;
+  if (authSectionEl) authSectionEl.hidden = auth.currentSession !== null || hideAuthSection;
   if (authLogoutEl) authLogoutEl.hidden = auth.currentSession === null;
 
   applyRouteSurface(doc, route);
@@ -547,6 +578,17 @@ export function bootstrap(
         client: app.api,
         resetToken: activeResetToken,
         onSessionInvalidated: () => auth.clearLocalSession(),
+      }),
+    });
+  }
+
+  // --- Email verification view ---
+  if (showEmailVerify) {
+    return createBootstrapped(app, auth, theme, {
+      emailVerification: mountEmailVerification({
+        doc,
+        client: app.api,
+        verificationToken: activeVerificationToken,
       }),
     });
   }

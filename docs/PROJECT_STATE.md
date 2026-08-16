@@ -4,8 +4,56 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-16 - M14 Increment 47: local two-gateway WebSocket load baseline
-(ADR-0111)._
+_Last updated: 2026-08-16 - M14 Increment 48: email-verification web UI (ADR-0112)._
+
+## M14 Increment 48 - Email-Verification Web UI (ADR-0112)
+
+Made the second half of the identity surface reachable from a browser. `POST /v1/auth/email/verify`
+and the optional register `email` field have existed since M4 (ADR-0026) with no way to supply an
+address or act on a verification link. No backend, OpenAPI, or token semantics changed.
+
+The registration form gained one optional email field, and `AuthController.register` includes the
+`email` key only when the trimmed value is non-empty, so an email-less registration sends exactly the
+request it sent before. Sign-in is deliberately not gated by it: the form carries `novalidate` and
+validation runs per action - register validates the whole form, sign-in validates only handle and
+password - because a malformed address left in an optional field must not stop an existing user from
+signing in. Passkey sign-in is unchanged.
+
+`/email-verify` is public and accepts `#token=...` as an entry transport only. **The token rides the
+URL fragment, and this increment moved `/password-reset` off the query string with it.** ADR-0109's
+query-string transport could not be made safe client-side: a query string is part of the request
+line, so `?token=...` reached the web tier on the first navigation before any script parsed, and
+nginx's default access log retained a live credential that `replaceState` could not retract. A
+fragment is never transmitted, so the secret now arrives without having touched the server. Both
+flows moved together rather than leaving the older one exposed. No delivered link breaks, because
+nothing in the repository composes these URLs yet - `EmailSender.sendEmailVerification` is handed a
+bare token - but any real provider must emit the fragment form.
+
+The token is still captured and the fragment cleared with `history.replaceState` before app
+composition, the capabilities request, or session restoration; that now protects the location bar and
+history rather than the wire. The capture-and-strip mechanism is one helper shared with
+`/password-reset` rather than two copies. Inside the client the token lives only in route-local memory
+and is never rendered, logged, persisted, or interpolated into error copy - the transient-failure
+message is fixed text, and a controller test drives a 500 whose server envelope deliberately contains
+the token to prove the surface copy does not echo it. Query-string transport is tested against, not
+merely unused: a bootstrap test drives `?token=...` and asserts no request is issued. The server's
+hashed, 24-hour, atomic single-use behaviour is preserved and not duplicated client-side.
+
+`EmailVerificationController` mirrors `PasswordResetController`'s dual-generation guards across
+pending, success, invalid/expired/already-used, missing-token, and transient-failure states. Success
+and 401 are terminal and release the token, so a consumed or rejected token cannot be replayed by the
+mounted route; only a transient failure retains it and offers a retry, and an in-flight guard stops
+retries stacking. `emailVerification` is its own named disposable covered by ADR-0092 exhaustiveness;
+disposal is idempotent and terminal, and a completion after disposal invokes no callback. The surface
+reuses the existing auth visual system; the only new CSS is one scoped rule holding the retry control
+at the system's existing 44px touch target, which the shared `@media (pointer: coarse)` rule does not
+reach on a narrow desktop window.
+
+Real provider delivery and opening a link from an actual email client remain release/manual QA:
+`ConsoleEmailSender` is still the default, so no automated gate exercises a delivered message end to
+end. There is no resend-verification affordance and no verification status in the UI, because no
+existing public model exposes one. Terraform, cloud provisioning, and 100k-user cluster validation
+remain deferred.
 
 ## M14 Increment 47 - Local Two-Gateway WebSocket Load Baseline (ADR-0111)
 

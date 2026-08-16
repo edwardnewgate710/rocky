@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AuthController } from '../src/app/auth-controller.js';
 import type { AuthSession } from '../src/app/auth-controller.js';
+import type { GambitClient } from '../src/api/client.js';
+import type { LoginRequest, RegisterRequest } from '../src/api/models.js';
 
 function makeFakeStorage() {
   const store = new Map<string, string>();
@@ -103,6 +105,71 @@ test('register creates a session with correct fields', async () => {
   assert.ok(session);
   assert.equal(session!.handle, 'bob');
   assert.equal(session!.userId, 'u2');
+});
+
+/**
+ * Capture the exact body the controller hands `GambitClient.auth`, for one method.
+ *
+ * The assertion that matters for the optional registration email is the *shape* of that object,
+ * not a serialization of it: `assert.deepEqual` under `node:assert/strict` already treats
+ * `{ handle, password, email: undefined }` as different from `{ handle, password }`, and comparing
+ * the key set on top says so in the language of the requirement. Comparing `JSON.stringify` output
+ * instead would also fail on a harmless reordering of the literal, which is a test that breaks for
+ * a reason the product does not care about.
+ */
+function captureAuthBody<T>(method: 'register' | 'login'): {
+  readonly controller: AuthController;
+  readonly bodies: readonly T[];
+} {
+  const bodies: T[] = [];
+  const client = makeFakeClient({
+    [method]: async (body: T) => {
+      bodies.push(body);
+      return {
+        user: { id: 'u2', handle: 'bob', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] },
+        tokens: { accessToken: 'tok-2', tokenType: 'Bearer', expiresIn: 900, refreshToken: 'ref-2', refreshExpiresAt: '2030-01-01T00:00:00Z' },
+      };
+    },
+  }) as unknown as GambitClient;
+  const controller = new AuthController({
+    client,
+    callbacks: { onSessionChange: () => {}, onPending: () => {}, onError: () => {} },
+  });
+  return { controller, bodies };
+}
+
+test('register forwards a trimmed optional email', async () => {
+  const { controller, bodies } = captureAuthBody<RegisterRequest>('register');
+
+  await controller.register('bob', 'pw', '  bob@example.com  ');
+
+  assert.equal(bodies.length, 1);
+  assert.deepEqual(bodies[0], { handle: 'bob', password: 'pw', email: 'bob@example.com' });
+});
+
+test('register omits the email key entirely when no email is given or it is blank', async () => {
+  const { controller, bodies } = captureAuthBody<RegisterRequest>('register');
+
+  await controller.register('bob', 'pw');
+  await controller.register('bob', 'pw', '   ');
+
+  assert.equal(bodies.length, 2);
+  for (const body of bodies) {
+    assert.deepEqual(body, { handle: 'bob', password: 'pw' });
+    // Absent, not present-and-empty: the server treats a supplied address as one to verify, so an
+    // `email: ''` or `email: null` reaching the wire is a different request from an email-less one.
+    assert.deepEqual(Object.keys(body).sort(), ['handle', 'password']);
+  }
+});
+
+test('sign-in is unaffected by the optional registration email and still sends only credentials', async () => {
+  const { controller, bodies } = captureAuthBody<LoginRequest>('login');
+
+  await controller.login('alice', 'pw');
+
+  assert.equal(bodies.length, 1);
+  assert.deepEqual(bodies[0], { handle: 'alice', password: 'pw' });
+  assert.deepEqual(Object.keys(bodies[0]!).sort(), ['handle', 'password']);
 });
 
 test('logout clears session and calls onSessionChange(null)', async () => {

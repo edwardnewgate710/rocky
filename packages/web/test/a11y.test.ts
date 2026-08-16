@@ -340,3 +340,33 @@ test('password reset status and error regions have appropriate ARIA roles', () =
   assert.match(HTML_TEMPLATE, /id="password-reset-status"[^>]*role="status"[^>]*aria-live="polite"/);
   assert.match(HTML_TEMPLATE, /id="password-reset-error"[^>]*role="alert"/);
 });
+
+// --- Email verification region (M14 inc 48) ---
+
+test('email verify section carries aria-labelledby heading with visible text', () => {
+  assert.ok(HTML_TEMPLATE.includes('id="email-verify"'));
+  assert.ok(HTML_TEMPLATE.includes('aria-labelledby="email-verify-heading"'));
+  assert.ok(
+    /<h2 id="email-verify-heading">[^<]+<\/h2>/.test(HTML_TEMPLATE),
+    '<h2 id="email-verify-heading"> must be a visible heading with text',
+  );
+});
+
+test('email verify status and error regions have appropriate ARIA roles', () => {
+  assert.match(HTML_TEMPLATE, /id="email-verify-status"[^>]*role="status"[^>]*aria-live="polite"/);
+  assert.match(HTML_TEMPLATE, /id="email-verify-error"[^>]*role="alert"/);
+});
+
+test('email verify section starts hidden', () => {
+  assert.match(HTML_TEMPLATE, /<section id="email-verify"[^>]*\bhidden\b/);
+});
+
+test('auth email field has associated label, proper type and autocomplete, and is optional', () => {
+  assert.ok(HTML_TEMPLATE.includes('label for="auth-email"'));
+  const inputMatch = HTML_TEMPLATE.match(/<input id="auth-email"[^>]*\/>/);
+  assert.ok(inputMatch, 'could not find #auth-email input tag');
+  const inputTag = inputMatch[0];
+  assert.ok(inputTag.includes('type="email"'));
+  assert.ok(inputTag.includes('autocomplete="email"'));
+  assert.ok(!inputTag.includes(' required'), '#auth-email must not be required');
+});

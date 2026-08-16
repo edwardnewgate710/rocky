@@ -16,6 +16,7 @@
  * - `/tournaments/{id}` → tournament detail
  * - `/search` → search
  * - `/password-reset` → password recovery form (optional ?token=...)
+ * - `/email-verify` → email verification (optional ?token=...)
  */
 
 export type Route =
@@ -39,6 +40,7 @@ export type Route =
   | { readonly name: 'study'; readonly id: string }
   | { readonly name: 'study-chapter'; readonly id: string; readonly chapterId: string }
   | { readonly name: 'password-reset' }
+  | { readonly name: 'email-verify' }
   | { readonly name: 'not-found' };
 
 /** Parse a URL pathname into a typed route. */
@@ -54,6 +56,9 @@ export function parseRoute(pathname: string): Route {
   }
   if (segments[0] === 'password-reset') {
     return segments.length === 1 ? { name: 'password-reset' } : { name: 'not-found' };
+  }
+  if (segments[0] === 'email-verify') {
+    return segments.length === 1 ? { name: 'email-verify' } : { name: 'not-found' };
   }
   if (segments[0] === 'leaderboard') {
     if (segments.length === 1) return { name: 'leaderboard' };
@@ -156,6 +161,8 @@ export function routeToPath(route: Route): string {
       return `/studies/${route.id}/chapters/${route.chapterId}`;
     case 'password-reset':
       return '/password-reset';
+    case 'email-verify':
+      return '/email-verify';
     case 'not-found':
       return '/not-found';
   }

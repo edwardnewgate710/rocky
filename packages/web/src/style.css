@@ -548,6 +548,16 @@ button:disabled {
   font-size: 1rem;
 }
 
+/* The verification surface's only control is its retry button, and it is the whole recovery path
+   when the network drops mid-verification — so it has to stay thumb-sized on a phone. The shared
+   44px target already exists in this stylesheet, but only inside `@media (pointer: coarse)`, which
+   a narrow window on a mouse-driven machine does not match: the button measured 36px there. Scoped
+   to this section rather than raised globally, the same way `#password-reset` scopes its input
+   sizing, because widening every button in the app is a redesign, not a fix. */
+#email-verify .auth-actions button {
+  min-height: 44px;
+}
+
 /* Every centred content column in the app, in one place.
  *
  * `body` became a flex column in ADR-0104 so the board could take the height the topbar leaves.

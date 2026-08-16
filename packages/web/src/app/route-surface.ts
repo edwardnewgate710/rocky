@@ -22,6 +22,7 @@ const ROUTE_SURFACE_IDS: Readonly<Record<Route['name'], string | null>> = {
   study: 'study',
   'study-chapter': 'study-chapter',
   'password-reset': 'password-reset',
+  'email-verify': 'email-verify',
   'not-found': null,
 };
 

@@ -21,6 +21,7 @@
  * or absent, the session is not restored (user must log in again).
  */
 import type { GambitClient } from '../api/client.js';
+import type { RegisterRequest } from '../api/models.js';
 import type { KeyValueStorage } from '../net/session.js';
 import { NativeWebAuthnAdapter } from '../ports/webauthn.js';
 import type { WebAuthnAdapter } from '../ports/webauthn.js';
@@ -204,11 +205,13 @@ export class AuthController {
   }
 
   /** Register a new account. Returns the session on success. */
-  async register(handle: string, password: string): Promise<AuthSession | null> {
+  async register(handle: string, password: string, email?: string): Promise<AuthSession | null> {
     if (this.disposed) return null;
     this.callbacks.onPending(true);
     try {
-      const result = await this.client.auth.register({ handle, password });
+      const trimmed = email?.trim() ?? '';
+      const body: RegisterRequest = trimmed ? { handle, password, email: trimmed } : { handle, password };
+      const result = await this.client.auth.register(body);
       return this.adoptSession(result.user);
     } catch (err) {
       this.callbacks.onError(err instanceof Error ? err.message : String(err));

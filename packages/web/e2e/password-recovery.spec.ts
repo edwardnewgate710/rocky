@@ -119,7 +119,7 @@ test.describe('Password recovery web UI', () => {
       });
     });
 
-    await page.goto('/password-reset?token=secret-token-123');
+    await page.goto('/password-reset#token=secret-token-123');
 
     // Confirm view visible, request view hidden
     await expect(page.locator('#password-reset-confirm-view')).toBeVisible();
@@ -184,7 +184,7 @@ test.describe('Password recovery web UI', () => {
       });
     });
 
-    await page.goto('/password-reset?token=invalid-token');
+    await page.goto('/password-reset#token=invalid-token');
 
     const passInput = page.locator('#password-reset-confirm-password');
     const passConfirmInput = page.locator('#password-reset-confirm-password-confirm');
@@ -229,7 +229,7 @@ test.describe('Password recovery web UI', () => {
       localStorage.setItem('gambit-session', JSON.stringify({ handle: 'alice', userId: 'u1' }));
     });
 
-    await page.goto('/password-reset?token=secret-token-777');
+    await page.goto('/password-reset#token=secret-token-777');
 
     // Verify initial state is signed in as alice
     const authStatus = page.locator('#auth-status');
@@ -252,8 +252,14 @@ test.describe('Password recovery web UI', () => {
     expect(logoutCalls).toBe(0);
   });
 
-  test('token secret hygiene: token stripped from URL before any network call and never leaked in Referer of API requests', async ({ page }) => {
+  test('token secret hygiene: the token never reaches the wire, and is stripped from the URL and Referer', async ({ page }) => {
     const apiReferrers: string[] = [];
+
+    // Every request the browser issued, the document navigation included. The reset token rides the
+    // fragment, which is never transmitted, so it must not appear in the first request line either —
+    // a query-string token reached the web tier (and its access log) before any script could run.
+    const everyRequestUrl: string[] = [];
+    page.on('request', (req) => everyRequestUrl.push(req.url()));
 
     // Intercept API / background requests made by the application
     await page.route('**/v1/**', async (route) => {
@@ -266,7 +272,7 @@ test.describe('Password recovery web UI', () => {
       });
     });
 
-    await page.goto('/password-reset?token=super-secret-token-999');
+    await page.goto('/password-reset#token=super-secret-token-999');
 
     // Token must be stripped from location bar immediately
     await expect(page).toHaveURL(/\/password-reset$/);
@@ -279,6 +285,13 @@ test.describe('Password recovery web UI', () => {
     expect(apiReferrers.length).toBeGreaterThan(0);
     for (const ref of apiReferrers) {
       expect(ref).not.toContain('super-secret-token-999');
+    }
+
+    // And no request URL at all — navigation included — carried it.
+    expect(everyRequestUrl.length).toBeGreaterThan(0);
+    expect(everyRequestUrl.filter((u) => u.includes('/password-reset')).length).toBeGreaterThan(0);
+    for (const url of everyRequestUrl) {
+      expect(url).not.toContain('super-secret-token-999');
     }
   });
 

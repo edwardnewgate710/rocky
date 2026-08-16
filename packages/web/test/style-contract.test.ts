@@ -177,6 +177,19 @@ test('auth actions wrap instead of squeezing button labels on narrow screens', (
   assert.match(authActions.body, /flex-wrap\s*:\s*wrap/);
 });
 
+/**
+ * The retry button is the entire recovery path when verification fails transiently, and it is the
+ * only control on that surface. The app's 44px touch target lives in `@media (pointer: coarse)`,
+ * which a 390px-wide window on a mouse-driven machine does not match — the button rendered 36px
+ * there, and only a browser run at that viewport could see it. Asserting the scoped rule here means
+ * a CSS regression is caught by the unit suite instead of depending on Playwright alone.
+ */
+test('the email-verification retry control keeps a 44px touch target at every pointer type', () => {
+  const retry = rules().find((rule) => rule.selectors.includes('#email-verify .auth-actions button'));
+  assert.ok(retry, 'could not find the scoped email-verification retry rule');
+  assert.match(retry.body, /min-height\s*:\s*44px/);
+});
+
 test('passkey management action is separated from the credential list by one spacing step', () => {
   const passkeysActions = rules().find((rule) => rule.selectors.includes('.passkeys-actions'));
   assert.ok(passkeysActions, 'could not find the passkeys actions rule');

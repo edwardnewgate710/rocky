@@ -46,6 +46,7 @@ import type {
   ConversationList,
   ConversationReadState,
   ConversationView,
+  EmailVerifyRequest,
   MessageList,
   MessageView,
   RatingView,
@@ -335,6 +336,14 @@ export class AuthApi {
       // The response clears the httpOnly refresh cookie. Include credentials so
       // browsers accept that Set-Cookie when the configured API is cross-origin.
       credentials: 'include',
+    });
+  }
+
+  verifyEmail(body: EmailVerifyRequest): Promise<void> {
+    return this.execute<void>({
+      method: 'POST',
+      path: '/v1/auth/email/verify',
+      body,
     });
   }
 

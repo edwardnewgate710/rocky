@@ -127,3 +127,13 @@ test('parses /password-reset route', () => {
 test('serializes /password-reset route back to path', () => {
   assert.equal(routeToPath({ name: 'password-reset' }), '/password-reset');
 });
+
+test('parses /email-verify route and rejects extra segments', () => {
+  assert.deepEqual(parseRoute('/email-verify'), { name: 'email-verify' });
+  assert.deepEqual(parseRoute('/email-verify?token=x'), { name: 'email-verify' });
+  assert.deepEqual(parseRoute('/email-verify/extra'), { name: 'not-found' });
+});
+
+test('serializes /email-verify route back to path', () => {
+  assert.equal(routeToPath({ name: 'email-verify' }), '/email-verify');
+});

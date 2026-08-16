@@ -117,7 +117,7 @@
       <!-- `auth-submit` is type="submit" so Enter in either field signs in, the way every other
            form in this app already behaves. `auth-register` stays type="button": it is the second
            action on a form that has one default. -->
-      <form id="auth-form" class="auth-form">
+      <form id="auth-form" class="auth-form" novalidate>
         <div class="auth-field">
           <label for="auth-handle">Handle</label>
           <input id="auth-handle" type="text" autocomplete="username" required />
@@ -125,6 +125,10 @@
         <div class="auth-field">
           <label for="auth-password">Password</label>
           <input id="auth-password" type="password" autocomplete="current-password" required />
+        </div>
+        <div class="auth-field">
+          <label for="auth-email">Email (optional, for account recovery)</label>
+          <input id="auth-email" type="email" autocomplete="email" maxlength="320" />
         </div>
         <div class="auth-actions">
           <button id="auth-submit" type="submit">Sign in</button>
@@ -166,6 +170,15 @@
       <p id="password-reset-status" class="social-note" role="status" aria-live="polite"></p>
       <p id="password-reset-error" class="error" role="alert" aria-live="polite"></p>
       <p class="auth-meta"><a id="password-reset-back-link" href="/" data-route="lobby">Back to sign in</a></p>
+    </section>
+    <section id="email-verify" class="auth" aria-labelledby="email-verify-heading" hidden>
+      <h2 id="email-verify-heading">Email verification</h2>
+      <p id="email-verify-status" class="social-note" role="status" aria-live="polite"></p>
+      <p id="email-verify-error" class="error" role="alert" aria-live="polite"></p>
+      <div class="auth-actions">
+        <button id="email-verify-retry" type="button" hidden>Try again</button>
+      </div>
+      <p class="auth-meta"><a id="email-verify-back-link" href="/" data-route="lobby">Continue to the lobby</a></p>
     </section>
     <section id="lobby" class="lobby" aria-label="Lobby" hidden>
       <div id="create-game" class="create-game"></div>
