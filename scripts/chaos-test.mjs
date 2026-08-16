@@ -28,6 +28,8 @@
 import { execSync } from 'node:child_process';
 import WebSocket from 'ws';
 
+import { readPrometheusCounter } from './lib/prometheus-text.mjs';
+
 const apiUrl = process.env['API_URL'] ?? 'http://localhost:8080';
 const node1WsUrl = process.env['NODE1_WS_URL'] ?? 'ws://localhost:4175';
 const node1HealthUrl = process.env['NODE1_HEALTH_URL'] ?? 'http://localhost:4176/health';
@@ -92,28 +94,21 @@ async function fetchJson(url) {
   return res.json();
 }
 
-async function fetchMetrics(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Fetch metrics failed (${res.status}) for ${url}`);
-  return res.text();
-}
+const FORWARDED_METRIC = 'gateway_forwarded_commands_total';
 
-function parseMetricValue(metricsText, metricName) {
-  const lines = metricsText.split('\n');
-  let sum = 0;
-  let found = false;
-  for (const line of lines) {
-    if (line.startsWith('#') || !line.trim()) continue;
-    if (line.startsWith(metricName)) {
-      const parts = line.trim().split(/\s+/);
-      const val = parseFloat(parts[parts.length - 1]);
-      if (!isNaN(val)) {
-        sum += val;
-        found = true;
-      }
-    }
-  }
-  return found ? sum : 0;
+/**
+ * The forwarded-command counter one node exposes, reading a counter that is not there as 0.
+ *
+ * Scenario A asserts the count GREW across the moves it played, so a counter this suite cannot
+ * read leaves before and after equal and fails the scenario — the safe direction for evidence
+ * that forwarding happened. Matching the name exactly is what makes the number that evidence:
+ * `gateway_forwarded_commands_total_extra`, or any histogram series later added on the same stem,
+ * would otherwise be counted as forwarded commands (ADR-0010).
+ */
+async function readForwardedCommands(metricsUrl) {
+  const res = await fetch(metricsUrl);
+  if (!res.ok) throw new Error(`Fetch metrics failed (${res.status}) for ${metricsUrl}`);
+  return readPrometheusCounter(await res.text(), FORWARDED_METRIC) ?? 0;
 }
 
 async function registerUser(handle, password) {
@@ -374,10 +369,8 @@ async function scenarioA_CrossNodeCorrectness() {
   const { owner, nonOwner } = await determineOwnerNode(baseline);
   log(`✓ Determined game ownership from health metrics: Node ${owner} is owner, Node ${nonOwner} is non-owner`);
 
-  const initialForwardedCount = await parseMetricValue(
-    await fetchMetrics(nonOwner === 1 ? node1MetricsUrl : node2MetricsUrl),
-    'gateway_forwarded_commands_total'
-  );
+  const nonOwnerMetricsUrl = nonOwner === 1 ? node1MetricsUrl : node2MetricsUrl;
+  const initialForwardedCount = await readForwardedCommands(nonOwnerMetricsUrl);
 
   // Play alternating sequence of legal moves
   const moves = [
@@ -403,13 +396,10 @@ async function scenarioA_CrossNodeCorrectness() {
     throw new Error('Spurious move rejection occurred during cross-node play');
   }
 
-  const finalForwardedCount = await parseMetricValue(
-    await fetchMetrics(nonOwner === 1 ? node1MetricsUrl : node2MetricsUrl),
-    'gateway_forwarded_commands_total'
-  );
+  const finalForwardedCount = await readForwardedCommands(nonOwnerMetricsUrl);
 
   if (finalForwardedCount <= initialForwardedCount) {
-    throw new Error(`Non-owner node did not increment gateway_forwarded_commands_total (before: ${initialForwardedCount}, after: ${finalForwardedCount})`);
+    throw new Error(`Non-owner node did not increment ${FORWARDED_METRIC} (before: ${initialForwardedCount}, after: ${finalForwardedCount})`);
   }
   log(`✓ Measured non-owner command forwarding count metric: ${finalForwardedCount}`);
 

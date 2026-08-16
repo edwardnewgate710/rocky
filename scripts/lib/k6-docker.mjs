@@ -71,14 +71,3 @@ export function readSummaryMetrics(summaryPath) {
   }
   return JSON.parse(readFileSync(summaryPath, 'utf8')).metrics ?? {};
 }
-
-/** Read one exact, unlabelled counter from Prometheus text exposition. */
-export function readPrometheusCounter(exposition, name) {
-  for (const line of exposition.split('\n')) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0 || trimmed.startsWith('#')) continue;
-    const match = /^([a-zA-Z_:][a-zA-Z0-9_:]*)(\{[^}]*\})?\s+(\S+)$/.exec(trimmed);
-    if (match && match[1] === name) return Number(match[3]);
-  }
-  return null;
-}

@@ -30,11 +30,7 @@ import {
   recordPosition,
   wsBaselineK6Config,
 } from '../scenarios/lib/ws-baseline-plan.mjs';
-import {
-  RESULTS_DIR,
-  buildK6Args,
-  readPrometheusCounter,
-} from '../../../scripts/lib/k6-docker.mjs';
+import { RESULTS_DIR, buildK6Args } from '../../../scripts/lib/k6-docker.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const read = (relative) => readFileSync(join(REPO_ROOT, relative), 'utf8');
@@ -386,17 +382,6 @@ test('k6 built-in metric tags exclude raw URLs and name the generated seek route
   assert.equal(K6_SYSTEM_TAGS.includes('name'), true);
   assert.equal(ACCEPT_SEEK_METRIC_NAME, 'POST /v1/seeks/:id/accept');
   assert.equal(/[0-9a-f]{8}-[0-9a-f-]{27}/i.test(ACCEPT_SEEK_METRIC_NAME), false);
-});
-
-test('Prometheus counter parser matches the exact metric and reports absence', () => {
-  const exposition = [
-    '# HELP gateway_forwarded_commands_total Forwarded commands',
-    'gateway_forward_latency_seconds_bucket{le="0.1"} 99',
-    'gateway_forwarded_commands_total 16',
-    'gateway_forwarded_commands_total_extra 200',
-  ].join('\n');
-  assert.equal(readPrometheusCounter(exposition, 'gateway_forwarded_commands_total'), 16);
-  assert.equal(readPrometheusCounter(exposition, 'gateway_missing_total'), null);
 });
 
 test('WebSocket summary serialization excludes setup data and access tokens', () => {

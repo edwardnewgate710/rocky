@@ -29,12 +29,8 @@
  *   SPECTATORS_PER_NODE, MOVE_PLIES, MOVE_INTERVAL_MS   passed through to the scenario
  */
 
-import {
-  fail,
-  readPrometheusCounter,
-  readSummaryMetrics,
-  runK6,
-} from './lib/k6-docker.mjs';
+import { fail, readSummaryMetrics, runK6 } from './lib/k6-docker.mjs';
+import { readPrometheusCounter } from './lib/prometheus-text.mjs';
 import {
   DEFAULTS,
   expectedForwardedCommands,
