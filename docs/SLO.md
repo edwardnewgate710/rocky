@@ -18,25 +18,47 @@ and `docs/RUNBOOKS.md` for what to do when one burns.
 
 ## What can actually be measured
 
-The platform emits ten series, and that bounds what an SLO can honestly say:
+`node scripts/check-observability-drift.mjs` reports **21 metric names registered by the source**,
+and that bounds what an SLO can honestly say. Those are metric families, not time series: the number
+of series actually scraped is larger, because `http_requests_total` fans out across its label
+combinations and every histogram expands into `_bucket`, `_sum` and `_count`.
 
 | Metric | Type | Labels |
 |---|---|---|
 | `http_requests_total` | counter | `method`, `route`, `status` |
 | `http_request_duration_seconds` | histogram | `route` |
+| `span_export_{received,exported,failed,dropped,batches}_total` | counters | — |
 | `gateway_connections_opened_total` | counter | — |
 | `gateway_messages_received_total` | counter | — |
 | `gateway_auth_failures_total` | counter | — |
-| `span_export_{received,exported,failed,dropped,batches}_total` | counters | — |
+| `gateway_owned_games` | gauge | — |
+| `gateway_forwarded_commands_total` | counter | — |
+| `gateway_fast_path_commands_total` | counter | — |
+| `gateway_forward_timeouts_total` | counter | — |
+| `gateway_forward_latency_seconds` | histogram | — |
+| `gateway_ownership_{claims,releases,renewal_failures}_total` | counters | — |
+| `gateway_bot_{moves,move_failures}_total` | counters | — |
+| `gateway_bot_move_seconds` | histogram | — |
 
-`scripts/check-observability-drift.mjs` fails CI if any rule or dashboard references something
-outside this set.
+`scripts/check-observability-drift.mjs` discovers these names from the registration calls in
+`packages/api/src` and `services/gateway/src`, and fails CI when a rule or dashboard references an
+application metric the source does not register. Prometheus built-ins and the recording rules a
+configuration defines for itself resolve separately, so they are not held against this list.
 
 Two consequences worth stating plainly:
 
-- **There is no gateway latency or gateway error metric.** The WebSocket path has connection,
-  message and auth-failure counters only. A "realtime responsiveness" SLO cannot be defined today,
-  and pretending otherwise would mean inventing an SLI with no data behind it.
+- **Gateway latency and failure instrumentation exists, and still does not add up to a realtime
+  SLO.** `gateway_forward_latency_seconds` is a histogram — buckets `0.001, 0.005, 0.01, 0.05, 0.1,
+  0.5, 1, 5` seconds — of the cross-node command-forwarding round trip, and
+  `gateway_forward_timeouts_total` counts the forwarded requests on that path that timed out.
+  Separately, `gateway_ownership_renewal_failures_total` counts failed ownership-lease renewals and
+  `gateway_auth_failures_total` counts rejected tokens at the connection edge. The histogram is a
+  usable SLI for the segment it covers — a command handed to the node that owns the game — but two
+  gaps stand between that and an objective. There is no SLI for end-to-end WebSocket responsiveness
+  as a player perceives it: this measures one hop, and commands served on the local fast path are
+  never observed by it at all. And the gateway path has not been exercised under load (see **What
+  the baseline cannot tell you**), so no production gateway objective has been empirically
+  validated; any objective stated here today would be an unvalidated guess.
 - **`http_request_duration_seconds` has fixed buckets:** `0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5,
   1, 2.5, 5, 10` seconds. A latency threshold that is *not* one of these edges forces
   `histogram_quantile` to interpolate inside a bucket, producing an estimate that reads like a
@@ -167,7 +189,8 @@ exactly why the objective is stated at p99 rather than at the worst observed req
 - **The dataset is nearly empty.** `/v1/search` in particular is measured against almost no rows.
   ADR-0059 recorded that the `id` tie-break defeats the HNSW index, so semantic search is a
   sequential scan whose latency grows with corpus size — this baseline says nothing about that.
-- **No WebSocket load.** The gateway path is not exercised at all.
+- **No WebSocket load.** The gateway path is not exercised at all, so every gateway metric in the
+  table above is registered but has no baseline behind it.
 
 ## Burn-rate alerting
 
