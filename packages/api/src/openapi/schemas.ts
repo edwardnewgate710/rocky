@@ -6,6 +6,7 @@
  */
 
 import { ROLES, SEEK_COLORS, TIME_CONTROL_KINDS, VARIANTS } from '../domain';
+import { DEFAULT_ANALYSIS_LIMITS } from '../analysis/limits';
 import type { ComponentSchemas, JsonSchema } from './types';
 
 const dateTime: JsonSchema = { type: 'string', format: 'date-time' };
@@ -205,7 +206,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     properties: {
       capabilities: {
         type: 'object',
-        required: ['learning', 'studies', 'achievements', 'search', 'social', 'messaging', 'community'],
+        required: ['learning', 'studies', 'achievements', 'search', 'social', 'messaging', 'community', 'analysis'],
         properties: {
           learning: { type: 'boolean' },
           studies: { type: 'boolean' },
@@ -214,6 +215,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
           social: { type: 'boolean' },
           messaging: { type: 'boolean' },
           community: { type: 'boolean' },
+          analysis: { type: 'boolean' },
         },
         additionalProperties: false,
       },
@@ -1530,6 +1532,71 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
         description: 'Values for the variables the query declares',
       },
     },
+  },
+
+  // --- Analysis (ADR-0113) ---
+  AnalyzeRequest: {
+    type: 'object',
+    required: ['fen', 'variant'],
+    properties: {
+      fen: { type: 'string', minLength: 1, maxLength: 200 },
+      variant: { type: 'string', enum: [...VARIANTS] },
+      depth: { type: 'integer', minimum: 1, maximum: DEFAULT_ANALYSIS_LIMITS.maxDepth },
+      nodes: { type: 'integer', minimum: 1, maximum: DEFAULT_ANALYSIS_LIMITS.maxNodes },
+      movetimeMs: { type: 'integer', minimum: 1, maximum: DEFAULT_ANALYSIS_LIMITS.maxTimeMs },
+      multiPv: { type: 'integer', minimum: 1, maximum: DEFAULT_ANALYSIS_LIMITS.maxMultiPv },
+    },
+    additionalProperties: false,
+  },
+
+  AnalysisLine: {
+    type: 'object',
+    required: ['multipv', 'evaluation', 'moves', 'depth', 'nodes', 'timeMs'],
+    properties: {
+      multipv: { type: 'integer' },
+      evaluation: {
+        type: 'object',
+        required: ['type', 'value'],
+        properties: {
+          type: { type: 'string', enum: ['cp', 'mate'] },
+          value: { type: 'number' },
+        },
+        additionalProperties: false,
+      },
+      moves: {
+        type: 'array',
+        items: { type: 'string' },
+      },
+      depth: { type: 'integer' },
+      nodes: { type: 'integer' },
+      timeMs: { type: 'integer' },
+    },
+    additionalProperties: false,
+  },
+
+  AnalysisResponse: {
+    type: 'object',
+    required: ['fen', 'variant', 'applied', 'lines'],
+    properties: {
+      fen: { type: 'string' },
+      variant: { type: 'string', enum: [...VARIANTS] },
+      applied: {
+        type: 'object',
+        required: ['depth', 'movetimeMs', 'multiPv'],
+        properties: {
+          depth: { type: 'integer' },
+          movetimeMs: { type: 'integer' },
+          multiPv: { type: 'integer' },
+          nodes: { type: 'integer' },
+        },
+        additionalProperties: false,
+      },
+      lines: {
+        type: 'array',
+        items: { $ref: '#/components/schemas/AnalysisLine' },
+      },
+    },
+    additionalProperties: false,
   },
 };
 

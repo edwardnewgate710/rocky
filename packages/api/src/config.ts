@@ -81,6 +81,10 @@ export interface RateLimitConfig {
   readonly webauthnRegister: {
     readonly perIp: RateLimitEndpointConfig;
   };
+  readonly analysis: {
+    readonly perUser: RateLimitEndpointConfig;
+    readonly perIp: RateLimitEndpointConfig;
+  };
 }
 
 export const DEFAULT_ACCESS_TOKEN_TTL_SEC = 15 * 60;
@@ -116,6 +120,11 @@ export const DEFAULT_RATE_LIMIT: RateLimitConfig = {
   },
   webauthnRegister: {
     perIp: { maxRequests: 5, windowMs: 60 * 60 * 1000 }, // 5 / 60 min
+  },
+  // Analysis is a CPU-amplification surface, so it is limited more tightly than a read endpoint.
+  analysis: {
+    perUser: { maxRequests: 30, windowMs: 60 * 1000 }, // 30 / min
+    perIp: { maxRequests: 60, windowMs: 60 * 1000 }, // 60 / min
   },
 };
 

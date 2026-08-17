@@ -211,6 +211,7 @@ export interface SystemCapabilities {
   readonly social: boolean;
   readonly messaging: boolean;
   readonly community: boolean;
+  readonly analysis: boolean;
 }
 
 export interface CapabilitiesResponse {

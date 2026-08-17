@@ -29,6 +29,17 @@ FROM node:22-slim AS runtime
 
 WORKDIR /app
 
+# Stockfish is what turns POST /v1/analysis on: `createAnalysisFromEnv` returns undefined unless
+# STOCKFISH_PATH is set, and the route then answers 503 and the capability reports off (ADR-0113).
+# The analysis pool is separate from the gateway's gameplay pool by design, so this image needs its
+# own copy of the binary. Nothing spawns at boot — the pool runs `minWorkers: 0` and warms on the
+# first request, so an image that never analyses pays only the disk. Debian installs to
+# /usr/games/stockfish, as in Dockerfile.gateway.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends stockfish && \
+    rm -rf /var/lib/apt/lists/*
+ENV STOCKFISH_PATH=/usr/games/stockfish
+
 COPY --from=builder --chown=node:node /app/package.json /app/package-lock.json ./
 COPY --from=builder --chown=node:node /app/node_modules/ ./node_modules/
 COPY --from=builder --chown=node:node /app/packages/chess-core/package.json ./packages/chess-core/package.json

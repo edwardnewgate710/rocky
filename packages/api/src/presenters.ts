@@ -892,6 +892,7 @@ export interface CapabilitiesFlags {
   readonly social: boolean;
   readonly messaging: boolean;
   readonly community: boolean;
+  readonly analysis: boolean;
 }
 
 export interface CapabilitiesView {
@@ -917,6 +918,7 @@ export function capabilitiesView(
     | 'socialGraphRepository'
     | 'messagingRepository'
     | 'communityRepository'
+    | 'analysis'
   >,
 ): CapabilitiesView {
   return {
@@ -928,7 +930,60 @@ export function capabilitiesView(
       social: deps.socialGraphRepository !== undefined,
       messaging: deps.messagingRepository !== undefined,
       community: deps.communityRepository !== undefined,
+      analysis: deps.analysis !== undefined,
     },
+  };
+}
+
+export interface AnalysisEvaluationView {
+  readonly type: 'cp' | 'mate';
+  readonly value: number;
+}
+
+export interface AnalysisLineView {
+  readonly multipv: number;
+  readonly evaluation: AnalysisEvaluationView;
+  readonly moves: readonly string[];
+  readonly depth: number;
+  readonly nodes: number;
+  readonly timeMs: number;
+}
+
+export interface AppliedAnalysisLimitsView {
+  readonly depth: number;
+  readonly movetimeMs: number;
+  readonly multiPv: number;
+  readonly nodes?: number;
+}
+
+export interface AnalysisResponseView {
+  readonly fen: string;
+  readonly variant: string;
+  readonly applied: AppliedAnalysisLimitsView;
+  readonly lines: readonly AnalysisLineView[];
+}
+
+export function analysisView(outcome: import('./analysis/service.js').AnalysisOutcome): AnalysisResponseView {
+  return {
+    fen: outcome.fen,
+    variant: outcome.variant,
+    applied: {
+      depth: outcome.applied.depth,
+      movetimeMs: outcome.applied.movetimeMs,
+      multiPv: outcome.applied.multiPv,
+      ...(outcome.applied.nodes !== undefined ? { nodes: outcome.applied.nodes } : {}),
+    },
+    lines: outcome.lines.map((line) => ({
+      multipv: line.multipv,
+      evaluation: {
+        type: line.evaluation.type,
+        value: line.evaluation.value,
+      },
+      moves: [...line.principalVariation],
+      depth: line.depth,
+      nodes: line.nodes,
+      timeMs: line.timeMs,
+    })),
   };
 }
 

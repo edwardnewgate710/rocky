@@ -2265,6 +2265,92 @@
         ]
       }
     },
+    "/v1/analysis": {
+      "post": {
+        "summary": "Analyze a position with the engine",
+        "tags": [
+          "analysis"
+        ],
+        "operationId": "post_v1_analysis",
+        "responses": {
+          "200": {
+            "description": "Engine analysis lines for the position",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid position, variant or limits",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Analysis is not configured, or the engine is saturated or unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalyzeRequest"
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tournaments": {
       "post": {
         "summary": "Create a tournament",
@@ -11852,7 +11938,8 @@
               "search",
               "social",
               "messaging",
-              "community"
+              "community",
+              "analysis"
             ],
             "properties": {
               "learning": {
@@ -11874,6 +11961,9 @@
                 "type": "boolean"
               },
               "community": {
+                "type": "boolean"
+              },
+              "analysis": {
                 "type": "boolean"
               }
             },
@@ -14900,6 +14990,163 @@
             "description": "Values for the variables the query declares"
           }
         }
+      },
+      "AnalyzeRequest": {
+        "type": "object",
+        "required": [
+          "fen",
+          "variant"
+        ],
+        "properties": {
+          "fen": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "variant": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "chess960",
+              "kingofthehill",
+              "atomic",
+              "crazyhouse",
+              "threecheck",
+              "horde",
+              "racingkings"
+            ]
+          },
+          "depth": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20
+          },
+          "nodes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5000000
+          },
+          "movetimeMs": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2000
+          },
+          "multiPv": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5
+          }
+        },
+        "additionalProperties": false
+      },
+      "AnalysisLine": {
+        "type": "object",
+        "required": [
+          "multipv",
+          "evaluation",
+          "moves",
+          "depth",
+          "nodes",
+          "timeMs"
+        ],
+        "properties": {
+          "multipv": {
+            "type": "integer"
+          },
+          "evaluation": {
+            "type": "object",
+            "required": [
+              "type",
+              "value"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "cp",
+                  "mate"
+                ]
+              },
+              "value": {
+                "type": "number"
+              }
+            },
+            "additionalProperties": false
+          },
+          "moves": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "depth": {
+            "type": "integer"
+          },
+          "nodes": {
+            "type": "integer"
+          },
+          "timeMs": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AnalysisResponse": {
+        "type": "object",
+        "required": [
+          "fen",
+          "variant",
+          "applied",
+          "lines"
+        ],
+        "properties": {
+          "fen": {
+            "type": "string"
+          },
+          "variant": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "chess960",
+              "kingofthehill",
+              "atomic",
+              "crazyhouse",
+              "threecheck",
+              "horde",
+              "racingkings"
+            ]
+          },
+          "applied": {
+            "type": "object",
+            "required": [
+              "depth",
+              "movetimeMs",
+              "multiPv"
+            ],
+            "properties": {
+              "depth": {
+                "type": "integer"
+              },
+              "movetimeMs": {
+                "type": "integer"
+              },
+              "multiPv": {
+                "type": "integer"
+              },
+              "nodes": {
+                "type": "integer"
+              }
+            },
+            "additionalProperties": false
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnalysisLine"
+            }
+          }
+        },
+        "additionalProperties": false
       }
     }
   }

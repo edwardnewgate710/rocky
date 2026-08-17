@@ -85,7 +85,9 @@ import {
   courseProgressSummaryView,
   attemptResultView,
   capabilitiesView,
+  analysisView,
 } from './presenters';
+import { DEFAULT_ANALYSIS_LIMITS } from './analysis/limits';
 import { TournamentService } from './tournament/service';
 import { ArenaService } from './tournament/arena.service';
 import { summaryView, tournamentView, roundView, standingView, arenaTournamentView, arenaStandingView } from './tournament/presenters';
@@ -134,6 +136,8 @@ export interface RouteDeps {
   readonly studiesRepository?: import('@chess-platform/studies').StudiesRepository;
   readonly learningRepository?: import('@chess-platform/learning').LearningRepository;
   readonly graphql?: import('./graphql').GraphQLOptions;
+  /** Optional engine analysis (ADR-0113). When absent, `POST /v1/analysis` responds 503. */
+  readonly analysis?: import('./analysis/service').AnalysisService;
 }
 
 const PUBLIC: AuthPolicy = { required: false };
@@ -1310,6 +1314,59 @@ export function buildRouter(deps: RouteDeps): Router {
       const game = await repos.games.findById(ctx.params['id']!);
       if (!game) throw HttpError.notFound('game not found');
       return json(200, gameSummaryView(game));
+    },
+  );
+
+  // --- Analysis -------------------------------------------------------------
+  router.post(
+    '/v1/analysis',
+    doc({
+      summary: 'Analyze a position with the engine',
+      tags: ['analysis'],
+      security: 'bearer',
+      requestSchema: 'AnalyzeRequest',
+      responses: {
+        200: ['AnalysisResponse', 'Engine analysis lines for the position'],
+        401: ['Error', 'Authentication required'],
+        422: ['Error', 'Invalid position, variant or limits'],
+        429: ['Error', 'Rate limit exceeded'],
+        503: ['Error', 'Analysis is not configured, or the engine is saturated or unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const identity = requireAuth(ctx);
+      const service = deps.analysis;
+      if (!service) throw HttpError.unavailable('analysis is not configured');
+
+      if (config.rateLimit.enabled) {
+        const userKey = `analysis:user:${identity.userId}`;
+        const userCheck = await rateLimiter.check(userKey, config.rateLimit.analysis.perUser);
+        if (!userCheck.allowed) throw HttpError.rateLimited(userCheck.retryAfterSeconds);
+
+        const ipKey = `analysis:ip:${ctx.ip ?? 'unknown'}`;
+        const ipCheck = await rateLimiter.check(ipKey, config.rateLimit.analysis.perIp);
+        if (!ipCheck.allowed) throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
+      }
+
+      const body = strictObject(ctx.body, ['fen', 'variant', 'depth', 'nodes', 'movetimeMs', 'multiPv']);
+      const fen = reqString(body, 'fen', { min: 1, max: 200, trim: true });
+      const variant = parseVariant(reqString(body, 'variant'));
+      const depth = optInt(body, 'depth', { min: 1, max: DEFAULT_ANALYSIS_LIMITS.maxDepth });
+      const nodes = optInt(body, 'nodes', { min: 1, max: DEFAULT_ANALYSIS_LIMITS.maxNodes });
+      const movetimeMs = optInt(body, 'movetimeMs', { min: 1, max: DEFAULT_ANALYSIS_LIMITS.maxTimeMs });
+      const multiPv = optInt(body, 'multiPv', { min: 1, max: DEFAULT_ANALYSIS_LIMITS.maxMultiPv });
+
+      const outcome = await service.analyze({
+        fen,
+        variant,
+        ...(depth !== undefined ? { depth } : {}),
+        ...(nodes !== undefined ? { nodes } : {}),
+        ...(movetimeMs !== undefined ? { movetimeMs } : {}),
+        ...(multiPv !== undefined ? { multiPv } : {}),
+      });
+
+      return json(200, analysisView(outcome));
     },
   );
 

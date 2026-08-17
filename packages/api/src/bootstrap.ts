@@ -78,6 +78,7 @@ import { DurableTournamentLiveView } from './tournament/durable-live-view';
 import type { AnalysisProvider } from '@chess-platform/engine';
 import { EngineBackedEvaluator } from '@chess-platform/anti-cheat/engine';
 import { AntiCheatAnalysisService } from './anti-cheat/analysis-service';
+import { createAnalysisFromEnv } from './analysis/composition';
 import { EventStoreGameSource } from './anti-cheat/source';
 import { EventStoreBotTimingSource } from './bot-detection/source';
 
@@ -143,7 +144,10 @@ export interface PgBootstrapOptions {
   readonly gameLauncher?: GameLauncher;
   readonly liveView?: TournamentLiveView;
   readonly emailSender?: EmailSender;
+  /** Backs anti-cheat evaluation. Distinct from {@link PgBootstrapOptions.analysis}. */
   readonly analysisProvider?: AnalysisProvider;
+  /** Engine analysis subsystem (ADR-0113). Defaults to {@link createAnalysisFromEnv}. */
+  readonly analysis?: import('./analysis/composition').AnalysisComposition | undefined;
   readonly searchRepository?: SearchRepository;
   readonly semanticSearchRepository?: SemanticSearchRepository;
   readonly embeddingProvider?: EmbeddingProvider;
@@ -165,10 +169,17 @@ function resolveLogLevel(): LogLevel {
   return raw === 'debug' || raw === 'info' || raw === 'warn' || raw === 'error' ? raw : 'info';
 }
 
-/** Build the {@link ApiDependencies} bundle backed by Postgres. */
+/**
+ * Build the {@link ApiDependencies} bundle backed by Postgres.
+ *
+ * Returns `shutdownAnalysis` alongside the pool because the analysis subsystem owns engine
+ * subprocesses (ADR-0113). A caller that closes the pool and exits without calling it leaves those
+ * processes to be killed rather than drained.
+ */
 export function createPgDependencies(options: PgBootstrapOptions = {}): {
   deps: ApiDependencies;
   pool: Pool;
+  shutdownAnalysis: () => Promise<void>;
 } {
   const pool =
     options.pool ??
@@ -195,6 +206,12 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
         repos.antiCheat,
       )
     : undefined;
+
+  // Engine analysis (ADR-0113) on its own dedicated pool, distinct from `options.analysisProvider`
+  // above — that one backs anti-cheat evaluation and is a different workload with different limits.
+  // Composes only when an engine binary is configured; otherwise `deps.analysis` stays undefined,
+  // `GET /v1/capabilities` reports `analysis: false`, and the route answers 503.
+  const analysisComposition = options.analysis ?? createAnalysisFromEnv();
 
   const searchEnabled = process.env['SEARCH_ENABLED'] !== '0';
   const searchRepository = searchEnabled
@@ -308,6 +325,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ...(studiesRepository ? { studiesRepository } : {}),
     ...(learningRepository ? { learningRepository } : {}),
     ...(graphql ? { graphql } : {}),
+    ...(analysisComposition ? { analysis: analysisComposition.service } : {}),
     botTimingSource: new EventStoreBotTimingSource(eventStore),
     // Production observability (M13): structured logs to stdout, a scrape
     // registry backing GET /v1/metrics, and tracer emitting spans to logs.
@@ -318,20 +336,28 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
       await pool.query('SELECT 1');
     },
   };
-  return { deps, pool };
+  return {
+    deps,
+    pool,
+    shutdownAnalysis: async () => {
+      await analysisComposition?.shutdown();
+    },
+  };
 }
 
 /**
  * One-call production wiring: build Postgres dependencies and the API server.
- * Returns the server plus the pool so the caller can close it on shutdown.
+ * Returns the server, the pool, and the analysis shutdown handle so the caller can close
+ * everything on shutdown.
  */
 export function createPgApiServer(options: PgBootstrapOptions = {}): {
   server: ApiServer;
   pool: Pool;
+  shutdownAnalysis: () => Promise<void>;
 } {
-  const { deps, pool } = createPgDependencies(options);
+  const { deps, pool, shutdownAnalysis } = createPgDependencies(options);
   const server = createApiServer(deps, options.server);
-  return { server, pool };
+  return { server, pool, shutdownAnalysis };
 }
 
 export { uuidv7 };

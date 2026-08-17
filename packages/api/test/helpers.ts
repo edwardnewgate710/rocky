@@ -66,6 +66,7 @@ export interface Harness {
   readonly achievementsRepository?: InMemoryAchievementsRepository;
   readonly studiesRepository?: import('@chess-platform/studies').StudiesRepository;
   readonly learningRepository?: import('@chess-platform/learning').LearningRepository;
+  readonly analysis?: import('../src/analysis/service').AnalysisService;
   readonly clock: ManualClock;
   readonly tokens: AccessTokenService;
   readonly emailSender: InMemoryEmailSender;
@@ -113,6 +114,8 @@ export interface HarnessOptions {
   readonly graphqlIntrospection?: boolean;
   /** Override the anti-cheat evaluator (e.g. to make it throw) for edge-case tests. */
   readonly antiCheatEvaluator?: PositionEvaluator;
+  /** Inject an optional engine analysis service. */
+  readonly analysis?: import('../src/analysis/service').AnalysisService;
 }
 
 export async function startHarness(
@@ -204,6 +207,7 @@ export async function startHarness(
     ...(studiesRepository ? { studiesRepository } : {}),
     ...(learningRepository ? { learningRepository } : {}),
     ...(graphql ? { graphql } : {}),
+    ...(harnessOptions.analysis ? { analysis: harnessOptions.analysis } : {}),
     ...(harnessOptions.readiness ? { readiness: harnessOptions.readiness } : {}),
     ...(harnessOptions.logger ? { logger: harnessOptions.logger } : {}),
     ...(harnessOptions.tracer ? { tracer: harnessOptions.tracer } : {}),
@@ -231,6 +235,7 @@ export async function startHarness(
     achievementsRepository,
     studiesRepository,
     learningRepository,
+    analysis: harnessOptions.analysis,
     clock,
     tokens,
     emailSender,

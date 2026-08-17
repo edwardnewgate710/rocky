@@ -177,6 +177,44 @@ jobs:
       - name: Test API concurrency controls against Postgres
         run: npm test --workspace @chess-platform/api
 
+  # The only job that runs a real engine binary (ADR-0113). Every other analysis test drives a
+  # fake transport or a provider double, which keeps the main suite hermetic but leaves the
+  # production composition — env parsing, subprocess spawn, UCI handshake, capability discovery,
+  # platform-to-engine variant mapping — proven by nothing. ADR-0102 is the record of what that
+  # costs: fifty green engine tests while `standard` failed against a real binary in production.
+  # Installing Stockfish here rather than in build-test keeps that dependency off every other job.
+  analysis-smoke:
+    name: analysis smoke (real Stockfish)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: npm
+
+      - name: Install Stockfish
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends stockfish
+
+      - name: Install dependencies (reproducible)
+        run: npm ci
+
+      - name: Build (dependency order)
+        run: npm run build
+
+      # The test self-skips when STOCKFISH_PATH is unset, so a missing binary would make this job
+      # pass while proving nothing. Assert the binary is really there before trusting the result.
+      - name: Verify the engine binary exists
+        run: test -x /usr/games/stockfish
+
+      - name: Analysis smoke test against a real engine
+        run: npm run test:analysis-smoke --workspace @chess-platform/api
+        env:
+          STOCKFISH_PATH: /usr/games/stockfish
+
   # Builds, typechecks, and tests the deployable gateway service. It is NOT a
   # root workspace, so the build-test job above never compiles it — this job is
   # its only CI coverage. The single-owner command-routing suite (ADR-0010)

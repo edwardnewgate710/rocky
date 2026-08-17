@@ -31,6 +31,10 @@ const NOT_RUNNABLE_LOCALLY = new Map([
   ['npm ci', 'CI installs from a clean checkout; locally node_modules already exists'],
   ['npx vite preview --port 4173 --host 127.0.0.1 &', 'a background server for the Lighthouse job'],
   ['npm install -g lighthouse@11.4.0', 'a global install; the a11y audit stays a CI-only job'],
+  [
+    'npm run test:analysis-smoke --workspace @chess-platform/api',
+    'needs a real Stockfish binary at STOCKFISH_PATH, which CI apt-installs; the test self-skips without one, so running it locally would report a pass having proven nothing',
+  ],
 ]);
 
 /** Every `run:` command in the workflow, flattened, one per line. */

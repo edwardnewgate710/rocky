@@ -42,6 +42,13 @@ services:
       ACCESS_TOKEN_SECRET: ${ACCESS_TOKEN_SECRET:-dev-secret-change-me-in-production-at-least-32-bytes!!}
       PORT: "8080"
       NODE_ENV: production
+      # Engine analysis (ADR-0113). The image installs Stockfish and sets STOCKFISH_PATH, so the
+      # analysis pool is available; these only tighten it. The pool is deliberately small and its
+      # queue short — analysis is a CPU-amplification surface, so saturation should be refused
+      # quickly rather than absorbed. Set ANALYSIS_ENGINE_MAX_WORKERS=1 on a constrained host.
+      # Values above the built-in ceilings are clamped down; env can tighten limits, never loosen.
+      ANALYSIS_ENGINE_MAX_WORKERS: ${ANALYSIS_ENGINE_MAX_WORKERS:-2}
+      ANALYSIS_ENGINE_QUEUE_CAPACITY: ${ANALYSIS_ENGINE_QUEUE_CAPACITY:-32}
     ports:
       - "${PORT:-8080}:8080"
     healthcheck:

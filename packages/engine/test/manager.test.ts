@@ -210,3 +210,41 @@ test('routes the platform name "threecheck" to Fairy, which reports it as "3chec
   const threeCheck = await manager.analyze({ fen: START_FEN, variant: 'threecheck', limits: { depth: 8 } });
   assert.equal(threeCheck[0].evaluation.value, 5);
 });
+
+/**
+ * A search cut short by its time budget must be cached as what it *reached*, not as what it was
+ * asked for.
+ *
+ * `CacheMeta.limits` is documented as the limits the search actually achieved, and `limitsSatisfy`
+ * trusts that when deciding whether an entry can serve a later request. The manager stored the
+ * *requested* limits, so a `depth: 20` request that a `movetime` ceiling stopped at depth 10 was
+ * filed as depth 20 — and the next `depth: 20` request was handed the depth-10 lines without a new
+ * search.
+ *
+ * The damage is not to the first caller, who was always going to get depth 10 for that budget. It
+ * is that answer quality becomes a function of when the first identical request happened to run: one
+ * issued while the machine was loaded poisons the entry for every caller after it, including those
+ * whose own search would have gone deeper. Raised in the Qodo review of PR #132, by the first
+ * consumer to enable a real cache.
+ *
+ * The fake engine here always reports `depth 10`, so asking for 20 is exactly the truncated search.
+ */
+test('a search that falls short of its requested depth is not cached as having reached it', async () => {
+  const clock = new ManualClock();
+  let goCalls = 0;
+  const { manager } = makeManager(clock, () => (goCalls += 1));
+  await manager.warmup();
+
+  const deep = await manager.analyze({ fen: START_FEN, variant: 'chess', limits: { depth: 20 } });
+  assert.equal(deep[0].depth, 10, 'the fake engine reaches depth 10 whatever is requested');
+  assert.equal(goCalls, 1);
+
+  // Asking again for depth 20 must search again, because nothing has yet achieved depth 20.
+  await manager.analyze({ fen: START_FEN, variant: 'chess', limits: { depth: 20 } });
+  assert.equal(goCalls, 2, 'a depth-20 request must not be served by a depth-10 result');
+
+  // A request within what was actually achieved is still a legitimate hit — the fix must not
+  // disable caching, only stop it overstating.
+  await manager.analyze({ fen: START_FEN, variant: 'chess', limits: { depth: 8 } });
+  assert.equal(goCalls, 2, 'a depth-8 request is satisfied by the depth-10 result already held');
+});

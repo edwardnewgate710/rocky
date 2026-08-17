@@ -40,6 +40,7 @@ import type { EmbeddingProvider, SearchRepository, SemanticSearchRepository } fr
 import type { SocialGraphRepository } from '@chess-platform/social';
 import type { MessagingRepository } from '@chess-platform/messaging';
 import type { CommunityRepository } from '@chess-platform/community';
+import type { AnalysisService } from './analysis/service';
 
 /** The full set of repositories the API consumes. */
 export interface Repositories {
@@ -91,6 +92,8 @@ export interface ApiDependencies {
   readonly studiesRepository?: import('@chess-platform/studies').StudiesRepository;
   /** Optional learning repository (M10 inc 7). When absent, `/v1/courses/*` responds 503. */
   readonly learningRepository?: import('@chess-platform/learning').LearningRepository;
+  /** Optional engine analysis (ADR-0113). When absent, `POST /v1/analysis` responds 503. */
+  readonly analysis?: AnalysisService;
   /**
    * Optional GraphQL read layer (M10 inc 8). When absent, `POST /v1/graphql` responds 503.
    *

@@ -338,6 +338,7 @@ test('Capabilities: the served schema describes exactly what the presenter emits
       socialGraphRepository: h.socialGraphRepository,
       messagingRepository: h.messagingRepository,
       communityRepository: h.communityRepository,
+      analysis: h.analysis,
     });
 
     const presenterKeys = Object.keys(view.capabilities).sort();
