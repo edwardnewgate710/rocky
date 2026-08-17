@@ -6,6 +6,8 @@ import {
   applyNavCapabilities,
   NAV_CAPABILITY_MAP,
   routesToRemove,
+  analysisEnabled,
+  analysisSupportsVariant,
 } from '../src/app/capabilities-nav.js';
 
 class FakeElement {
@@ -127,4 +129,95 @@ test('the false capabilities lose their links and the true ones keep them', asyn
   const requestsAfterFirstRun = transport.calls.length;
   await applyNavCapabilities(new FakeDocument([new FakeElement('courses')]) as unknown as Document, api);
   assert.equal(transport.calls.length, requestsAfterFirstRun, 'capabilities must be fetched once per page');
+});
+
+/**
+ * The analysis panel's gate, tested as a pure decision.
+ *
+ * It cannot be tested through the mount: `loadCapabilities` memoises for the page's lifetime with
+ * deliberately no reset seam (see the note in the fetch-once test above), so a second test in the
+ * same process cannot vary the answer. Same reason `routesToRemove` is a pure export.
+ *
+ * The default is the opposite of the nav's on purpose. `routesToRemove` removes a link only on an
+ * explicit `false`, because guessing wrong there costs the visitor a link that works. Here guessing
+ * wrong offers a button whose every request answers 503, so only an explicit `true` will do.
+ */
+test('analysisEnabled requires an explicit true', () => {
+  assert.equal(analysisEnabled({ capabilities: { analysis: true } }), true);
+
+  for (const payload of [
+    { capabilities: { analysis: false } },
+    { capabilities: { analysis: 'true' } },
+    { capabilities: { analysis: 1 } },
+    { capabilities: { analysis: null } },
+    { capabilities: {} },
+    { capabilities: { learning: true } },
+    // The flags object missing entirely, which is what a pre-capabilities response looks like.
+    {},
+    { capabilities: null },
+    null,
+    undefined,
+    'analysis',
+    42,
+  ]) {
+    assert.equal(
+      analysisEnabled(payload),
+      false,
+      `${JSON.stringify(payload)} is not an explicit true and must not enable the panel`,
+    );
+  }
+});
+
+/**
+ * The per-variant gate, tested pure for the same reason `analysisEnabled` is: `loadCapabilities`
+ * memoises for the page with deliberately no reset seam.
+ *
+ * This exists because the deployment-wide flag is not the question that decides whether to offer
+ * the control on a given game. ADR-0113 registers only engines whose binary is configured, so an
+ * image carrying Stockfish alone reports `analysis: true` and answers 422 for six of the eight
+ * variants. Raised in the Qodo review of PR #133.
+ */
+test('analysisSupportsVariant gates on the advertised list, not the flag alone', () => {
+  const stockfishOnly = { capabilities: { analysis: true }, analysisVariants: ['standard', 'chess960'] };
+
+  assert.equal(analysisSupportsVariant(stockfishOnly, 'standard'), true);
+  assert.equal(analysisSupportsVariant(stockfishOnly, 'chess960'), true);
+  for (const variant of ['atomic', 'crazyhouse', 'kingofthehill', 'threecheck', 'horde', 'racingkings']) {
+    assert.equal(
+      analysisSupportsVariant(stockfishOnly, variant),
+      false,
+      `${variant} has no engine in a Stockfish-only deployment and must not be offered`,
+    );
+  }
+
+  // An empty list means the deployment analyses nothing, which is what `analysis: false` produces.
+  assert.equal(
+    analysisSupportsVariant({ capabilities: { analysis: true }, analysisVariants: [] }, 'standard'),
+    false,
+  );
+  // The feature being off outranks any list.
+  assert.equal(
+    analysisSupportsVariant(
+      { capabilities: { analysis: false }, analysisVariants: ['standard'] },
+      'standard',
+    ),
+    false,
+  );
+  // No variant known yet — nothing to offer against.
+  assert.equal(analysisSupportsVariant(stockfishOnly, null), false);
+});
+
+/**
+ * A server predating the field omits it. Reading that as "nothing supported" would silently remove
+ * a working feature from every variant, so a missing list fails *open* and the request-time
+ * rejection stays the backstop — the opposite direction from the flag itself, deliberately.
+ */
+test('analysisSupportsVariant fails open when the list is absent but the flag is on', () => {
+  assert.equal(analysisSupportsVariant({ capabilities: { analysis: true } }, 'atomic'), true);
+  assert.equal(
+    analysisSupportsVariant({ capabilities: { analysis: true }, analysisVariants: 'nope' }, 'atomic'),
+    true,
+  );
+  // But an absent list cannot resurrect a disabled feature.
+  assert.equal(analysisSupportsVariant({ capabilities: { analysis: false } }, 'standard'), false);
 });

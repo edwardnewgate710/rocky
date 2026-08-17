@@ -65,6 +65,7 @@ import {
   CorePositionReader,
   type ApiServer,
   type ApiDependencies,
+  AnalysisService,
 } from '@chess-platform/api';
 import {
   GameAuthority,
@@ -93,6 +94,7 @@ import {
   type GameDocumentInput,
   type TournamentDocumentInput,
 } from '@chess-platform/search';
+import { FakeAnalysisProvider } from './fake-analysis-provider.js';
 import { BotPlayer } from './bot.js';
 import { AuthorityGameLauncher } from './launcher.js';
 import { TournamentBroadcaster } from './broadcaster.js';
@@ -223,7 +225,17 @@ export function createHarness(options: HarnessOptions = {}): Promise<Harness> {
   const achievementsRepository = new InMemoryAchievementsRepository();
   const learningRepository = new InMemoryLearningRepository();
   const studiesRepository = new InMemoryStudiesRepository();
-  const deps: ApiDependencies = { repos, hasher, tokens, clock, ids, config, rateLimiter, tournamentRepo, gameLauncher, liveView: broadcaster, emailSender, messagingRepository, socialGraphRepository, searchRepository, communityRepository, achievementsRepository, learningRepository, studiesRepository, graphql: { introspection: false } };
+  // Engine analysis is OPTIONAL too (ADR-0113): absent, `POST /v1/analysis` answers 503 and
+  // `GET /v1/capabilities` reports `analysis: false`, which makes the game sidebar's analysis panel
+  // hide itself — so an e2e spec could only ever assert that the feature is missing.
+  //
+  // The provider is a deterministic double rather than a real engine on purpose. A real Stockfish
+  // would make the whole Playwright suite depend on a binary CI does not install, and would return
+  // a different evaluation on every run; the point of this harness is to exercise the *product*
+  // path — request, contract, render, lifecycle — not the engine's judgement, which
+  // `packages/api/test/analysis-stockfish-smoke.test.ts` covers against a real binary instead.
+  const analysis = new AnalysisService({ provider: new FakeAnalysisProvider() });
+  const deps: ApiDependencies = { repos, hasher, tokens, clock, ids, config, rateLimiter, tournamentRepo, gameLauncher, liveView: broadcaster, emailSender, messagingRepository, socialGraphRepository, searchRepository, communityRepository, achievementsRepository, learningRepository, studiesRepository, analysis, graphql: { introspection: false } };
   const apiServer = createApiServer(deps);
 
   const tokenVerifier = new ApiTokenVerifier((token: string) => {

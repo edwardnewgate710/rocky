@@ -110,6 +110,23 @@
             <button id="action-decline-draw" type="button" class="button">Decline</button>
           </div>
         </div>
+        <section id="analysis" class="analysis-panel" aria-labelledby="analysis-heading" hidden>
+          <h2 id="analysis-heading" class="analysis-title">Engine</h2>
+          <div class="analysis-controls">
+            <button id="analysis-run" type="button" class="button">Analyse</button>
+            <label class="sr-only" for="analysis-lines">Number of lines</label>
+            <select id="analysis-lines" class="cg-select analysis-lines-select">
+              <option value="1">1 line</option>
+              <option value="3" selected>3 lines</option>
+              <option value="5">5 lines</option>
+            </select>
+          </div>
+          <p id="analysis-note" class="count" role="status" aria-live="polite"></p>
+          <div id="analysis-error" class="error" role="alert" hidden></div>
+          <div id="analysis-results" class="panel-list" aria-busy="false"></div>
+          <p id="analysis-reached" class="count" hidden></p>
+          <p id="analysis-limits" class="count" hidden></p>
+        </section>
       </aside>
     </main>
     <section id="auth" class="auth" aria-labelledby="auth-heading">

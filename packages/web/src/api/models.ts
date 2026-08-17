@@ -215,6 +215,12 @@ export interface SystemCapabilities {
 }
 
 export interface CapabilitiesResponse {
+  /**
+   * Variants this deployment can analyse. The `analysis` flag is deployment-wide, but only engines
+   * with a configured binary are registered server-side, so a deployment can report `analysis: true`
+   * while serving a subset. Optional here because a server predating this field simply omits it.
+   */
+  readonly analysisVariants?: readonly string[];
   readonly capabilities: SystemCapabilities;
 }
 
@@ -821,4 +827,43 @@ export interface WebAuthnLoginVerifyRequest {
     readonly signature: string;
     readonly userHandle?: string;
   };
+}
+
+// --- Engine Analysis (M15 inc 2) -------------------------------------------
+
+export interface AnalysisEvaluation {
+  readonly type: 'cp' | 'mate';
+  readonly value: number;
+}
+
+export interface AnalysisLine {
+  readonly multipv: number;
+  readonly evaluation: AnalysisEvaluation;
+  readonly moves: readonly string[];
+  readonly depth: number;
+  readonly nodes: number;
+  readonly timeMs: number;
+}
+
+export interface AppliedAnalysisLimits {
+  readonly depth: number;
+  readonly movetimeMs: number;
+  readonly multiPv: number;
+  readonly nodes?: number;
+}
+
+export interface AnalysisResponse {
+  readonly fen: string;
+  readonly variant: string;
+  readonly applied: AppliedAnalysisLimits;
+  readonly lines: readonly AnalysisLine[];
+}
+
+export interface AnalyzeRequest {
+  readonly fen: string;
+  readonly variant: string;
+  readonly depth?: number;
+  readonly nodes?: number;
+  readonly movetimeMs?: number;
+  readonly multiPv?: number;
 }

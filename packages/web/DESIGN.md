@@ -145,6 +145,8 @@ The palette is deliberately narrow: two neutrals (dark-mode default, light-mode 
 ### Named Rules
 **The No-Hero Rule.** There is no display-scale heading anywhere in the system. The board is the largest, highest-contrast element on every screen; type never competes with it for size.
 
+**The Aligned-Figures Rule.** `font-variant-numeric: tabular-nums` belongs to any column of numbers the eye reads down, not only to the clock. The **Numeric role** — 600 weight at 1.5rem — remains clock-only; the figure setting is a separate legibility property, and conflating the two is what made this need saying. Proportional digits make a stack of numbers ragged, so a reader comparing them has to re-find the decimal point on every row. Currently: the clock, and the analysis panel's evaluation column (`.analysis-eval`), which sets tabular figures at ordinary `Small` weight and size. A new number column may use tabular figures; it may not use the Numeric role. Raised in the Qodo review of PR #133, where the two were read as the same rule.
+
 ## 4. Elevation
 
 Flat at rest, everywhere. There is no `box-shadow` in the current implementation — depth on static layouts comes entirely from Panel Tint overlays (list rows, the clock module) and outline rings (selection, focus). Going forward, restrained elevation is introduced **only as a response to interaction** — hover and focus/active states on buttons and the promotion picker get a soft, low-spread shadow that resting elements never have. This keeps the "premium, tactile" feel confirmed for interactive components without letting shadows creep into the resting layout, which is exactly the SaaS-dashboard card look this system rejects.

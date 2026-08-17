@@ -11926,9 +11926,26 @@
       "Capabilities": {
         "type": "object",
         "required": [
-          "capabilities"
+          "capabilities",
+          "analysisVariants"
         ],
         "properties": {
+          "analysisVariants": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "standard",
+                "chess960",
+                "kingofthehill",
+                "atomic",
+                "crazyhouse",
+                "threecheck",
+                "horde",
+                "racingkings"
+              ]
+            }
+          },
           "capabilities": {
             "type": "object",
             "required": [

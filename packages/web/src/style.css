@@ -180,6 +180,10 @@ body {
     height: auto;
     align-self: start;
   }
+  .sidebar {
+    overflow-y: auto;
+    min-height: 0;
+  }
 }
 .cb-sq {
   display: flex;
@@ -1070,6 +1074,44 @@ button:disabled {
   background: color-mix(in srgb, var(--sel) 15%, var(--panel));
   font-size: 0.875rem;
   text-align: center;
+}
+
+/* --- Engine Analysis (M15 inc 2) --- */
+.analysis-panel {
+  margin-top: 16px;
+}
+/* The system's Label voice, unmodified. An earlier version added uppercase and letter-spacing,
+   which would have been the only `text-transform` in the stylesheet — a new typographic treatment
+   in a system that deliberately has one label voice and no display scale. Size and the muted colour
+   already separate a heading from the rows under it. */
+.analysis-title {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+.analysis-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.analysis-lines-select {
+  width: 6.5rem;
+}
+/* Tabular figures under the Aligned-Figures Rule in DESIGN.md: this is a column of numbers the eye
+   reads down, and proportional digits would shift the decimal point on every row. The Numeric *role*
+   (600 weight at 1.5rem) stays clock-only; only the figure setting is shared. */
+.analysis-eval {
+  font-variant-numeric: tabular-nums;
+  min-width: 4.5ch;
+  flex-shrink: 0;
+}
+.analysis-moves {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* --- Leaderboard (M14 inc 43) --- */

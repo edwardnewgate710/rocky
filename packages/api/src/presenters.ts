@@ -27,6 +27,7 @@ import type {
 } from '@chess-platform/anti-cheat';
 
 import { classifySpeed } from '@chess-platform/game';
+import { VARIANTS } from './domain.js';
 
 /** Public user view (safe for any caller). */
 export interface PublicUser {
@@ -895,8 +896,26 @@ export interface CapabilitiesFlags {
   readonly analysis: boolean;
 }
 
+/**
+ * The variants this deployment can actually analyse.
+ *
+ * The `analysis` flag alone is deployment-wide, and ADR-0113 registers only engines whose binary is
+ * configured — so an image carrying Stockfish alone reports `analysis: true` while answering 422 for
+ * Atomic, Crazyhouse, King of the Hill, Three-Check, Horde and Racing Kings. A client that knew only
+ * the flag offered a control that could never work on six of the eight variants. Raised in the Qodo
+ * review of PR #133 (ADR-0114 Decision 7).
+ *
+ * Answered without warming a pool: `EngineManager.supportsVariant` falls back to each registered
+ * plugin's declared variants when cold (ADR-0102), so advertising this costs no engine process.
+ *
+ * Empty when analysis is off, so a client never has to read the flag and the list to know it cannot
+ * analyse anything.
+ */
+export type AnalysisVariants = readonly string[];
+
 export interface CapabilitiesView {
   readonly capabilities: CapabilitiesFlags;
+  readonly analysisVariants: AnalysisVariants;
 }
 
 /**
@@ -932,6 +951,9 @@ export function capabilitiesView(
       community: deps.communityRepository !== undefined,
       analysis: deps.analysis !== undefined,
     },
+    analysisVariants: deps.analysis
+      ? VARIANTS.filter((variant) => deps.analysis?.supportsVariant(variant) === true)
+      : [],
   };
 }
 

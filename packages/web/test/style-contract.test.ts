@@ -337,3 +337,26 @@ test('every centred content column claims its width, so flex layout cannot shrin
     `these rules centre and cap themselves but never claim the line, so as flex items they collapse to their content: ${offenders.join(' | ')}`,
   );
 });
+
+test('the sidebar scrolls at the 720px desktop breakpoint to accommodate analysis', () => {
+  const desktop = rules(atRuleBody('@media (min-width: 720px)'));
+  const sidebar = desktop.find((r) => r.selectors.includes('.sidebar'));
+  assert.ok(sidebar, 'the desktop breakpoint must contain a rule for .sidebar');
+  assert.match(sidebar.body, /overflow-y\s*:\s*auto/);
+  assert.match(sidebar.body, /min-height\s*:\s*0/);
+});
+
+test('analysis evaluation column uses tabular figures and moves text truncates', () => {
+  const all = rules();
+  const evalRule = all.find((r) => r.selectors.includes('.analysis-eval'));
+  assert.ok(evalRule, 'could not find .analysis-eval rule');
+  assert.match(evalRule.body, /font-variant-numeric\s*:\s*tabular-nums/);
+  assert.match(evalRule.body, /min-width\s*:\s*4\.5ch/);
+
+  const movesRule = all.find((r) => r.selectors.includes('.analysis-moves'));
+  assert.ok(movesRule, 'could not find .analysis-moves rule');
+  assert.match(movesRule.body, /text-overflow\s*:\s*ellipsis/);
+  assert.match(movesRule.body, /white-space\s*:\s*nowrap/);
+  assert.match(movesRule.body, /overflow\s*:\s*hidden/);
+  assert.match(movesRule.body, /min-width\s*:\s*0/);
+});

@@ -202,8 +202,16 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
 
   Capabilities: {
     type: 'object',
-    required: ['capabilities'],
+    required: ['capabilities', 'analysisVariants'],
     properties: {
+      // The `analysis` flag is deployment-wide, but only engines with a configured binary are
+      // registered (ADR-0113), so a deployment can report `analysis: true` while serving a subset of
+      // variants. A client that read only the flag would offer a control that answers 422 on every
+      // other variant, which is what this list exists to prevent. Empty when analysis is off.
+      analysisVariants: {
+        type: 'array',
+        items: { type: 'string', enum: [...VARIANTS] },
+      },
       capabilities: {
         type: 'object',
         required: ['learning', 'studies', 'achievements', 'search', 'social', 'messaging', 'community', 'analysis'],

@@ -362,6 +362,7 @@ test('bootstrap returns a fresh result with every public named field', () => {
     passwordReset: true,
     emailVerification: true,
     connectivity: true,
+    analysis: true,
     auth: true,
     theme: true,
   };

@@ -37,6 +37,7 @@ export const DISPOSABLE_TEARDOWN_MAP: Record<DisposableKey, true> = {
   passwordReset: true,
   emailVerification: true,
   connectivity: true,
+  analysis: true,
   app: true,
 };
 

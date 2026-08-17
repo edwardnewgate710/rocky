@@ -183,7 +183,13 @@ export function createAnalysisFromEnv(
   if (configuredPlugins(env).length === 0) return undefined;
   const engine = createAnalysisEngine(env);
   const policy = analysisLimitsPolicyFromEnv(env);
-  const service = new AnalysisService({ provider: engine, policy });
+  const service = new AnalysisService({
+    provider: engine,
+    policy,
+    // The manager answers this from its registered plugins without warming a pool, so advertising
+    // the variant list costs no engine process (ADR-0114 Decision 7).
+    supportsVariant: (variant) => engine.supportsVariant(variant),
+  });
   return {
     service,
     shutdown: (options = {}) => engine.shutdown(options),

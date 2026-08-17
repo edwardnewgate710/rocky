@@ -77,6 +77,7 @@ export interface BootstrappedDisposables {
   readonly passwordReset: { dispose: () => void } | null;
   readonly emailVerification: { dispose: () => void } | null;
   readonly connectivity: { dispose: () => void } | null;
+  readonly analysis: { dispose: () => void } | null;
 }
 
 /** Everything the bootstrap wired, returned for later increments and tests. */
@@ -114,6 +115,7 @@ function createBootstrapped(
     passwordReset: null,
     emailVerification: null,
     connectivity: null,
+    analysis: null,
     auth,
     theme,
     ...activeDisposables,
@@ -236,6 +238,7 @@ export function bootstrap(
 
   let selfProfileSessionHandler: ((session: AuthSession | null) => void) | null = null;
   let setPlayBotAuthenticated: ((authenticated: boolean) => void) | null = null;
+  let gameSessionHandler: ((session: AuthSession | null) => void) | null = null;
   const auth = new AuthController({
     client: app.api,
     ...(deps?.webauthnAdapter !== undefined ? { webauthnAdapter: deps.webauthnAdapter } : {}),
@@ -261,6 +264,7 @@ export function bootstrap(
         }
         setPlayBotAuthenticated?.(session !== null);
         selfProfileSessionHandler?.(session);
+        gameSessionHandler?.(session);
       },
       onPending: (pending) => {
         if (authSubmitEl instanceof HTMLButtonElement) {
@@ -353,9 +357,11 @@ export function bootstrap(
       createGameSync: app.createGameSync,
       createGameOracle: app.createGameOracle,
       getAccessToken: () => app.api.session.current?.tokens.accessToken,
+      client: app.api,
       ...(token !== undefined ? { token } : {}),
       restorePromise,
     });
+    gameSessionHandler = mountedGame.onSessionChange;
     return createBootstrapped(app, auth, theme, mountedGame);
   }
 

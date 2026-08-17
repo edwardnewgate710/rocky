@@ -4,7 +4,125 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-16 - M14 Increment 48: email-verification web UI (ADR-0112)._
+_Last updated: 2026-08-17 — M15 Increment 2: user-facing analysis UI in the game sidebar._
+
+## M15 Increment 2 — Engine Analysis UI (game sidebar)
+
+Design mode: **Operate** (ADR-0114) — the visitor is reading an evaluation with a game in front of
+them, so scanability and staying out of the board's way outrank expression.
+
+Made `POST /v1/analysis` reachable from a browser. Increment 1 shipped the endpoint with no UI, so
+the capability existed and nothing consumed it. This is analysis visualisation and interaction only —
+no AI feature, and no board preview of the principal variation.
+
+- **Surface (`packages/web/index.html`, `game-mount.ts`)**: a panel in the existing game sidebar
+  rather than a new route. The board, the live FEN and the variant are already there —
+  `GameController` exposes `get fen()` and an `onPosition` callback — so analysis needs no new state
+  source, no router change and no second board. `bootstrap.ts` gains only wiring; the logic lives in
+  the mount.
+- **Deliberately no board PV preview.** The panel never touches the board, which is a stronger
+  guarantee that analysis cannot mutate authoritative game state or submit a move than any
+  reversibility mechanism would be. Principal variations render as UCI text; converting to SAN would
+  need a rules engine the web client deliberately does not have (ADR-0003).
+- **Evaluation is converted to White's perspective (`analysis-format.ts`)**: the API returns it from
+  the side to move, and every chess interface shows it White-relative. Rendering the raw value would
+  invert the sign on every Black-to-move position, so the eval would appear to swing by twice its
+  value each half-move and a player would read the wrong side as better. The sign is the only cue —
+  colouring an advantage would need a second accent in a system that has one.
+- **Reached is never presented as requested.** `applied` (what was enforced) and `lines[].depth`
+  (what the search reached) are rendered as separate, separately labelled lines, because the
+  wall-clock ceiling routinely cuts a search short of its depth limit.
+- **Lifecycle (`analysis-controller.ts`)**: a generation guard plus an `AbortController`. A repeat
+  request while one is pending is **ignored, not superseded** — the server cannot observe a client
+  disconnect (ADR-0113), so aborting would not free the engine worker and superseding would double
+  real engine load while merely looking responsive. A position change is the opposite case: it
+  aborts and discards, and deliberately does not re-run, or every half-move of a blitz game would
+  put a request on the wire unasked. A remount resets the panel, because its DOM outlives any single
+  mount and a fresh controller has no way to know the rows on screen belong to the previous game.
+- **Gating**: the panel is revealed only on an explicit `analysis: true` from `GET /v1/capabilities`
+  — a missing key or a failed request leaves it hidden, because an unanswered question must not
+  surface a control whose every request would 503. `loadCapabilities` is now a shared memoised read
+  exported from `capabilities-nav.ts`; a second unmemoised caller would have refetched on every SPA
+  navigation, the exact behaviour that memo already existed to prevent. Signed-out visitors see the
+  panel with the control disabled and an explanation, never a dead button.
+- **Limits cannot be widened from the client**: the only control is a line-count `<select>` offering
+  1/3/5, all at or below the server's published MultiPV maximum, and the click handler accepts only
+  those values. There is no depth or time input at all.
+- **Harness (`packages/e2e-harness`)**: composes an `AnalysisService` over a deterministic
+  `FakeAnalysisProvider`, so the browser suite exercises the real product path without depending on
+  a Stockfish binary CI does not install for the Playwright job and without a different evaluation
+  on every run. Engine reality stays covered by the env-gated smoke test against a real binary.
+- **Tests**: request contract, MultiPV rendering and ordering, White-relative sign, reached-vs-limits
+  separation, 429 and 503 as muted states rather than errors, stale-result supersession, disposal
+  during a pending request, SPA remount non-stacking, keyboard reachability, and CSS contract
+  assertions for the tabular eval column and the desktop sidebar scroll. Plus a real-browser
+  `analysis.spec.ts` against the live endpoint. Mutation-verified: removing the request-dedup guard,
+  the generation bump, or the mount-time reset each fails a test.
+
+**Not covered**: no Move Explainer, Puzzle Generator, Mistake Predictor, Opening Explorer, Endgame
+Trainer, Coach or voice features; no board PV preview; no client-disconnect router plumbing.
+
+Prior: _Last updated: 2026-08-17 — M15 Increment 1: engine analysis endpoint on a dedicated pool (ADR-0113)._
+
+## M15 Increment 1 — Engine Analysis Endpoint on a Dedicated Pool (ADR-0113)
+
+Gave users a way to ask the engine a question. `@chess-platform/engine` has been complete since M5
+and composed in production since ADR-0102 (the gateway hosts an `EngineManager` for the bot mover and
+anti-cheat), but nothing exposed analysis: there was no `/v1/analysis` among the API's route
+prefixes, and `packages/ai-features` still has no importer outside its own tests. This increment
+ships the primitive every one of those features needs — evaluate this position, return the lines —
+and nothing feature-specific. No UI.
+
+- **Dedicated pool (`packages/api/src/analysis/composition.ts`)**: analysis gets its own
+  `EngineManager`, never the gateway's gameplay pool. `JobPriority` orders bot moves ahead of
+  analysis, but ordering is not isolation — dispatched analysis jobs still occupy workers and
+  scheduler aging promotes waiting ones, so sharing would degrade bot latency by design. Only engines
+  with a configured binary are registered, so a variant this deployment cannot serve is refused as
+  unsupported (422) rather than failing to spawn and reporting the engine broken (503).
+  `minWorkers: 0`, so no subprocess exists until the first request.
+- **The wall-clock ceiling (`packages/api/src/analysis/limits.ts`)**: `AnalysisLimits` lets a caller
+  bound a search by depth, nodes **or** time, so a request carrying only `depth: 30` has no
+  wall-clock bound at all. `applyAnalysisLimits` injects `timeMs` on every request whether or not the
+  caller mentioned time. Enforced in three layers — 422 at the route, a clamp in the service, and an
+  `AbortController` backstop — and configuration may tighten limits but never loosen them past the
+  built-in ceilings. `Threads` and `Hash` are stated explicitly so the CPU bound is
+  `maxWorkers × threads` by our configuration rather than by an engine default.
+- **Boundary FEN validation (`packages/api/src/analysis/fen-validator.ts`)**: UCI is
+  newline-delimited and `buildPositionCommand` interpolates the FEN, so a terminator in a FEN is an
+  injected engine command — `setoption name Threads value 128` defeats every ceiling above at once.
+  `AnalysisService` validates at the boundary the API owns, not only inside `EngineManager`, because
+  ADR-0113 Decision 2 plans to replace that manager with a remote worker. A king-count check runs
+  too, with counts read from each variant's `Position.initial(...)` so Horde (no white king)
+  validates; `parseFen` decodes but does not adjudicate.
+- **Route (`packages/api/src/routes.ts`)**: `POST /v1/analysis`, authenticated, per-user **and**
+  per-IP rate limited before any work, behind the established optional-dependency → capability
+  pattern (`analysis` in `GET /v1/capabilities`). Transient engine failures reuse the closed
+  `ErrorCode` union's `service_unavailable`, distinguished by message; engine-internal failures
+  return a fixed generic message because `HttpError` messages reach clients.
+- **Composition (`packages/api/src/bootstrap.ts`, `scripts/serve.ts`, `Dockerfile.api`,
+  `docker-compose.yml`)**: `createPgDependencies` builds the subsystem and returns a
+  `shutdownAnalysis` handle wired into SIGTERM, so engine subprocesses are drained rather than
+  killed. The API image installs Stockfish. Review found this wiring missing entirely on the first
+  pass — the endpoint would have answered "analysis is not configured" forever while the image
+  shipped an engine — so `packages/api/test/bootstrap-analysis.test.ts` now asserts the production
+  composition produces the dependency.
+- **Cache correctness (`packages/engine/src/manager.ts`)**: `CacheMeta.limits` is documented as the
+  limits a search *achieved*, but the manager stored the ones it was *asked for*, so a depth-20
+  request cut short at depth 8 was filed as depth 20 and served to the next depth-20 caller.
+  `achievedLimits` derives depth and nodes from the results. This increment was the first consumer
+  to enable a real cache, which is why nothing had noticed.
+- **Tests & ADR**: hermetic coverage via `FakeEngineTransport` and provider doubles, plus one
+  env-gated smoke test driving the real production composition against a real Stockfish binary in a
+  dedicated `analysis-smoke` CI job — asking for the platform's `standard`, the exact mapping
+  ADR-0102 records fifty green engine tests failing to cover. Eight mutants, each proven to fail and
+  be restored. Recorded in `docs/adr/0113-analysis-endpoint.md`.
+
+**Not covered**: no UI, no AI features, no remote worker service, no durable cache (ADR-0003 and the
+`DATABASE.md` contract untouched), and no cancellation on client disconnect — `RequestContext`
+exposes neither an `AbortSignal` nor the raw request, so abandonment is unobservable at the route
+layer. No capacity claims: the defaults are chosen to be obviously affordable, not tuned.
+
+Prior: _Last updated: 2026-08-16 - M14 Increment 48: email-verification web UI (ADR-0112)._
 
 ## M14 Increment 48 - Email-Verification Web UI (ADR-0112)
 

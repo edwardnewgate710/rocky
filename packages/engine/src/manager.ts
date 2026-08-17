@@ -161,6 +161,22 @@ export class EngineManager implements AnalysisProvider {
     return pool?.capabilities;
   }
 
+  /**
+   * Whether any registered engine would serve `variant`, without spawning anything to find out.
+   *
+   * This is deliberately not `capabilitiesFor(variant) !== undefined`: that reads *discovered*
+   * capabilities, which only exist once a pool has warmed, so with `minWorkers: 0` it answers
+   * `undefined` for every variant until the first search. `EnginePool.supportsVariant` falls back to
+   * the plugin's declared variants when cold (ADR-0102), so this is answerable at rest — which is
+   * what lets a caller advertise the variant list without paying for an engine process.
+   *
+   * Takes the platform's variant vocabulary (`standard`), not the engine's (`chess`); the pool maps
+   * between them.
+   */
+  supportsVariant(variant: string): boolean {
+    return this.pools.some((pool) => pool.supportsVariant(variant));
+  }
+
   health(): ManagerHealth {
     const pools = this.pools.map((pool) => pool.health());
     const totalQueueDepth = pools.reduce((sum, pool) => sum + pool.queueDepth, 0);

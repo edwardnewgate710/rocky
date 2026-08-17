@@ -30,6 +30,7 @@ import type { TokenStore } from '../net/session.js';
 import { DEFAULT_RETRY_POLICY } from '../net/retry.js';
 import { SocialApi } from './social.js';
 import { GraphQLApi } from './graphql.js';
+import { AnalysisApi } from './analysis.js';
 import type { RetryPolicy } from '../net/retry.js';
 import type {
   AuthResponse,
@@ -133,6 +134,7 @@ export class GambitClient {
   readonly achievements: AchievementsApi;
   readonly learning: LearningApi;
   readonly studies: StudiesApi;
+  readonly analysis: AnalysisApi;
   /** The read layer (ADR-0073). Degrades to null answers when the flag is off. */
   readonly graphql: GraphQLApi;
   private readonly http: HttpClient;
@@ -173,6 +175,7 @@ export class GambitClient {
     this.achievements = new AchievementsApi(this.execute);
     this.learning = new LearningApi(this.execute);
     this.studies = new StudiesApi(this.execute, options.baseUrl);
+    this.analysis = new AnalysisApi(this.execute);
     this.graphql = new GraphQLApi(this.execute);
   }
 

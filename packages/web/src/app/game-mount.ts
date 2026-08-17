@@ -6,11 +6,31 @@
  * abort, claim flag) for `/game/:id` routes.
  */
 import type { App } from './composition.js';
+import type { GambitClient } from '../api/client.js';
 import { mountBoard } from './board.js';
 import type { MountedBoard } from './board.js';
 import { GameController } from './game-controller.js';
+import { AnalysisController } from './analysis-controller.js';
+import {
+  ANALYSIS_MESSAGES,
+  clearLines,
+  renderError,
+  renderLimits,
+  renderLines,
+  renderNote,
+  renderReached,
+  setBusy,
+} from './analysis-view.js';
+import { analysisEnabled, analysisSupportsVariant, loadCapabilities } from './capabilities-nav.js';
 import { formatClock, formatTimeControl } from './render-helpers.js';
 import type { AuthSession } from './auth-controller.js';
+
+/**
+ * The line counts the panel offers. Every one is at or below the server's published MultiPV
+ * maximum, so no selection this UI can produce is outside the contract.
+ */
+const ANALYSIS_LINE_CHOICES: readonly number[] = [1, 3, 5];
+const DEFAULT_ANALYSIS_LINES = 3;
 
 /** Dependencies required to mount the game route. */
 interface GameMountDependencies {
@@ -20,6 +40,7 @@ interface GameMountDependencies {
   readonly createGameSync: App['createGameSync'];
   readonly createGameOracle: App['createGameOracle'];
   readonly getAccessToken: () => string | undefined;
+  readonly client: GambitClient;
   readonly token?: string;
   readonly restorePromise: Promise<AuthSession | null>;
 }
@@ -29,6 +50,16 @@ interface MountedGame {
   readonly board: MountedBoard;
   readonly controller: GameController;
   readonly connectivity: { dispose: () => void };
+  readonly analysis: { dispose: () => void };
+  /**
+   * Called by bootstrap when the signed-in session changes while this route is mounted.
+   *
+   * Without it, signing in on an open game left Analyse disabled under a stale "Sign in to analyse"
+   * note until something incidental — a move, a failed request — happened to refresh it, and signing
+   * out left it enabled. The lobby and the profile are notified through the same slot; the game route
+   * simply was not.
+   */
+  readonly onSessionChange: (session: AuthSession | null) => void;
 }
 
 /**
@@ -81,10 +112,187 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
   const btnAcceptDraw = doc.getElementById('action-accept-draw');
   const btnDeclineDraw = doc.getElementById('action-decline-draw');
 
-  const gameSync = createGameSync({ gameId, ...(token !== undefined ? { token } : {}) });
-  const oracle = createGameOracle(gameSync);
+  // Engine analysis panel (M15 inc 2)
+  const analysisSectionEl = doc.getElementById('analysis');
+  const analysisRunBtn = doc.getElementById('analysis-run') as HTMLButtonElement | null;
+  const analysisLinesSelect = doc.getElementById('analysis-lines') as HTMLSelectElement | null;
+  const analysisNoteEl = doc.getElementById('analysis-note');
+  const analysisErrorEl = doc.getElementById('analysis-error');
+  const analysisResultsEl = doc.getElementById('analysis-results');
+  const analysisReachedEl = doc.getElementById('analysis-reached');
+  const analysisLimitsEl = doc.getElementById('analysis-limits');
+
+  let currentVariant: string | null = null;
+  let analysisDisposed = false;
+  let analysisAvailable = false;
+  /**
+   * Set when this game's variant has no engine here — either advertised up front by
+   * `analysisVariants`, or learned from a 422 if the advertisement was unavailable. Permanent for
+   * the mount, because a game's variant does not change.
+   */
+  let analysisUnsupported = false;
+  /** The capability payload, once it answers. Held so the variant gate can re-run when the variant lands. */
+  let analysisCapabilities: unknown = null;
+
+  /**
+   * Return the panel to its initial state.
+   *
+   * Called at mount, because the panel's DOM lives in `index.html` and outlives any single mount —
+   * so the rows rendered for the last game are still there when the next one mounts. A fresh
+   * controller cannot detect that: it has never analysed anything, so `positionChanged` correctly
+   * stays quiet, and the previous game's evaluation would sit beside a new board with nothing to
+   * mark it stale. Nothing in the request lifecycle catches it, because no request is involved.
+   */
+  const resetAnalysisPanel = (): void => {
+    if (analysisResultsEl) {
+      clearLines(analysisResultsEl);
+      setBusy(analysisResultsEl, false);
+    }
+    for (const el of [analysisReachedEl, analysisLimitsEl]) {
+      if (el) {
+        el.textContent = '';
+        el.hidden = true;
+      }
+    }
+    if (analysisErrorEl) renderError(analysisErrorEl, null);
+    if (analysisNoteEl) renderNote(analysisNoteEl, ANALYSIS_MESSAGES.idle);
+  };
+
+  resetAnalysisPanel();
+
+  const isUserAuthenticated = (): boolean => {
+    return Boolean(getAccessToken() ?? deps.client.session.current?.tokens.accessToken);
+  };
+
+  /** Whether there is actually something on the board to analyse yet. */
+  const hasPosition = (): boolean => Boolean(currentVariant) && Boolean(controller?.fen);
+
+  /**
+   * The single place the run control's enabled state is decided.
+   *
+   * Three conditions have to hold, and the third is the one that is easy to miss: **there has to be
+   * a position**. The panel is revealed as soon as capabilities answer, which happens well before
+   * the first game snapshot arrives over the socket — so for a moment the button is present,
+   * enabled, and backed by nothing. Clicking it in that window did exactly nothing: `getPosition`
+   * returned `null`, `analyse` returned early, and the user got no request and no message. Caught by
+   * the e2e spec, whose first test only passed because it happened to change the line selector first
+   * and that delay let the snapshot land.
+   *
+   * Keeping it in one function matters as much as the fix: this was previously decided in two places
+   * with two different conditions, which is how they came to disagree.
+   */
+  const refreshAnalysisControls = (): void => {
+    if (analysisDisposed || !analysisAvailable) return;
+
+    // The variant arrives on a game snapshot, which can land either side of the capability answer,
+    // so the gate is evaluated here rather than at either arrival point.
+    if (
+      !analysisUnsupported &&
+      currentVariant !== null &&
+      !analysisSupportsVariant(analysisCapabilities, currentVariant)
+    ) {
+      analysisUnsupported = true;
+      if (analysisNoteEl) renderNote(analysisNoteEl, ANALYSIS_MESSAGES.unsupportedVariant);
+    }
+
+    const authed = isUserAuthenticated();
+    if (analysisRunBtn) {
+      analysisRunBtn.disabled = !authed || analysisUnsupported || analysisController.isPending || !hasPosition();
+    }
+    // The note is owned by whatever last had something to say — a result, a failure, an
+    // invalidation. This function only handles the one message that is a property of the *control*
+    // rather than of a request, and only transitions in and out of exactly that message. An earlier
+    // version also restored the idle text whenever the note was empty, which meant a failure that
+    // had deliberately cleared it got "Analyse the position on the board." printed back underneath
+    // its own error.
+    if (!analysisNoteEl) return;
+    if (!authed) {
+      renderNote(analysisNoteEl, ANALYSIS_MESSAGES.signedOut);
+    } else if (analysisNoteEl.textContent === ANALYSIS_MESSAGES.signedOut) {
+      renderNote(analysisNoteEl, ANALYSIS_MESSAGES.idle);
+    }
+  };
 
   let controller: GameController;
+
+  const analysisController = new AnalysisController({
+    client: deps.client,
+    getPosition: () => {
+      const fen = controller.fen;
+      if (!fen || !currentVariant) return null;
+      return { fen, variant: currentVariant };
+    },
+    callbacks: {
+      onPhase: (phase) => {
+        if (analysisResultsEl) {
+          setBusy(analysisResultsEl, phase === 'loading');
+        }
+        refreshAnalysisControls();
+        if (phase === 'loading') {
+          if (analysisNoteEl) renderNote(analysisNoteEl, ANALYSIS_MESSAGES.loading);
+          if (analysisErrorEl) renderError(analysisErrorEl, null);
+        }
+      },
+      onResult: (result) => {
+        if (analysisResultsEl) renderLines(analysisResultsEl, result);
+        if (analysisReachedEl) renderReached(analysisReachedEl, result);
+        if (analysisLimitsEl) renderLimits(analysisLimitsEl, result);
+        if (analysisNoteEl) renderNote(analysisNoteEl, null);
+        if (analysisErrorEl) renderError(analysisErrorEl, null);
+      },
+      onFailure: (failure) => {
+        if (analysisResultsEl) clearLines(analysisResultsEl);
+        if (analysisReachedEl) {
+          analysisReachedEl.hidden = true;
+          analysisReachedEl.textContent = '';
+        }
+        if (analysisLimitsEl) {
+          analysisLimitsEl.hidden = true;
+          analysisLimitsEl.textContent = '';
+        }
+        if (failure === 'rate-limited') {
+          if (analysisNoteEl) renderNote(analysisNoteEl, ANALYSIS_MESSAGES.rateLimited);
+          if (analysisErrorEl) renderError(analysisErrorEl, null);
+        } else if (failure === 'unavailable') {
+          if (analysisNoteEl) renderNote(analysisNoteEl, ANALYSIS_MESSAGES.unavailable);
+          if (analysisErrorEl) renderError(analysisErrorEl, null);
+        } else if (failure === 'unsupported-variant') {
+          // Permanent for this game, so stop offering the control rather than let it fail the same
+          // way on every click. DESIGN.md's rule for a composer that cannot succeed: hide the
+          // control and name the actual obstacle.
+          analysisUnsupported = true;
+          if (analysisRunBtn) analysisRunBtn.disabled = true;
+          if (analysisNoteEl) renderNote(analysisNoteEl, ANALYSIS_MESSAGES.unsupportedVariant);
+          if (analysisErrorEl) renderError(analysisErrorEl, null);
+        } else if (failure === 'unauthenticated') {
+          if (analysisNoteEl) renderNote(analysisNoteEl, ANALYSIS_MESSAGES.unauthenticated);
+          if (analysisErrorEl) renderError(analysisErrorEl, null);
+        } else if (failure === 'rejected') {
+          if (analysisNoteEl) renderNote(analysisNoteEl, null);
+          if (analysisErrorEl) renderError(analysisErrorEl, ANALYSIS_MESSAGES.rejected);
+        } else {
+          if (analysisNoteEl) renderNote(analysisNoteEl, null);
+          if (analysisErrorEl) renderError(analysisErrorEl, ANALYSIS_MESSAGES.failed);
+        }
+      },
+      onInvalidated: () => {
+        if (analysisResultsEl) clearLines(analysisResultsEl);
+        if (analysisReachedEl) {
+          analysisReachedEl.hidden = true;
+          analysisReachedEl.textContent = '';
+        }
+        if (analysisLimitsEl) {
+          analysisLimitsEl.hidden = true;
+          analysisLimitsEl.textContent = '';
+        }
+        if (analysisErrorEl) renderError(analysisErrorEl, null);
+        if (analysisNoteEl) renderNote(analysisNoteEl, ANALYSIS_MESSAGES.positionChanged);
+      },
+    },
+  });
+
+  const gameSync = createGameSync({ gameId, ...(token !== undefined ? { token } : {}) });
+  const oracle = createGameOracle(gameSync);
 
   const board = mountBoard(
     { boardEl, statusEl, flipEl },
@@ -99,7 +307,11 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
   controller = new GameController({
     gameSync,
     callbacks: {
-      onPosition: (fen: string) => board.setPosition(fen),
+      onPosition: (fen: string) => {
+        board.setPosition(fen);
+        analysisController.positionChanged(fen);
+        refreshAnalysisControls();
+      },
       onTurn: (myTurn: boolean) => board.setTurn(myTurn),
       onClock: (whiteMs: number, blackMs: number) => {
         if (whiteClockEl) whiteClockEl.textContent = formatClock(whiteMs);
@@ -118,6 +330,11 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
         if (color === 'b') board.setOrientation('black');
       },
       onMetadata: (state) => {
+        if (state.variant) {
+          currentVariant = state.variant;
+          refreshAnalysisControls();
+        }
+
         let liveAnnouncement = '';
 
         if (metaConnectionEl) {
@@ -271,6 +488,16 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
   bindClick(btnClaimFlag, () => controller.claimFlag());
   bindClick(btnAcceptDraw, () => controller.acceptDraw());
   bindClick(btnDeclineDraw, () => controller.declineDraw());
+  bindClick(analysisRunBtn, () => {
+    // Read the selector, but trust only the values this UI offers. The `<select>` cannot produce
+    // anything else, so this is not about the user interface — it is about the request never
+    // carrying a `multiPv` outside the published contract even if the option list is edited in the
+    // page. The server clamps and rejects independently; this keeps the client honest at its own
+    // boundary rather than relying on the far side to catch it.
+    const requested = Number.parseInt(analysisLinesSelect?.value ?? '', 10);
+    const lines = ANALYSIS_LINE_CHOICES.includes(requested) ? requested : DEFAULT_ANALYSIS_LINES;
+    void analysisController.analyse(lines);
+  });
 
   if (btnResign && confirmResignEl && confirmResignYes && confirmResignNo) {
     bindClick(btnResign, () => {
@@ -320,6 +547,25 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
 
   controller.start();
 
+  // Capability and auth gating for the analysis panel.
+  //
+  // `loadCapabilities` is the memoised shared read, not a fresh `client.capabilities()`. This mount
+  // runs on every SPA navigation to a game, so an unmemoised call here would ask the same question
+  // on every in-app click — the refetch `capabilities-nav.ts` already documents avoiding.
+  void loadCapabilities(deps.client)
+    .then((flags) => {
+      if (analysisDisposed || !analysisEnabled(flags)) return;
+      analysisCapabilities = flags;
+      analysisAvailable = true;
+      if (analysisSectionEl) {
+        analysisSectionEl.hidden = false;
+      }
+      refreshAnalysisControls();
+    })
+    .catch(() => {
+      // Fail quiet: leave section hidden
+    });
+
   // React to real browser connectivity changes: on `offline`, drop into the
   // reconnect flow immediately (a browser going offline should show
   // "Reconnecting…" now, not after a full heartbeat interval); on `online`,
@@ -347,6 +593,14 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     },
   };
 
+  const analysis = {
+    dispose: (): void => {
+      if (analysisDisposed) return;
+      analysisDisposed = true;
+      analysisController.dispose();
+    },
+  };
+
   if (token !== undefined) {
     gameSync.start();
   } else {
@@ -357,12 +611,23 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
       .then(() => {
         const t = getAccessToken();
         if (t !== undefined) gameSync.setToken(t);
+        if (!analysisDisposed) refreshAnalysisControls();
       })
-      .catch(() => undefined)
+      .catch(() => {
+        if (!analysisDisposed) refreshAnalysisControls();
+      })
       .finally(() => {
         if (gameRouteActive) gameSync.start();
       });
   }
 
-  return { board, controller, connectivity };
+  return {
+    board,
+    controller,
+    connectivity,
+    analysis,
+    onSessionChange: () => {
+      if (!analysisDisposed) refreshAnalysisControls();
+    },
+  };
 }

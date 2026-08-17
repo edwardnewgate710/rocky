@@ -124,6 +124,15 @@ const GAME_ELEMENT_IDS = [
   'draw-offer-received',
   'action-accept-draw',
   'action-decline-draw',
+  'analysis',
+  'analysis-heading',
+  'analysis-run',
+  'analysis-lines',
+  'analysis-note',
+  'analysis-error',
+  'analysis-results',
+  'analysis-reached',
+  'analysis-limits',
 ] as const;
 
 function createGameDocument(): {
@@ -138,7 +147,11 @@ function createGameDocument(): {
       id === 'action-error' ||
       id === 'confirm-resign' ||
       id === 'confirm-abort' ||
-      id === 'draw-offer-received'
+      id === 'draw-offer-received' ||
+      id === 'analysis' ||
+      id === 'analysis-error' ||
+      id === 'analysis-reached' ||
+      id === 'analysis-limits'
     ) {
       el.hidden = true;
     }
@@ -169,6 +182,7 @@ function gameServices(app: ReturnType<typeof createTestApp>) {
     createGameSync: app.createGameSync,
     createGameOracle: app.createGameOracle,
     getAccessToken: () => app.api.session.current?.tokens.accessToken,
+    client: app.api,
   };
 }
 

@@ -41,6 +41,7 @@ function createMockBootstrapped(
     passwordReset: disposables.passwordReset as Bootstrapped['passwordReset'],
     emailVerification: disposables.emailVerification as Bootstrapped['emailVerification'],
     connectivity: disposables.connectivity as Bootstrapped['connectivity'],
+    analysis: disposables.analysis as Bootstrapped['analysis'],
   };
 }
 

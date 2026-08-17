@@ -47,6 +47,19 @@ export interface AnalysisServiceOptions {
    * {@link coreFenValidator}; injectable so tests can drive the failure path.
    */
   readonly fenValidator?: FenValidator;
+  /**
+   * Whether this deployment can analyse a given variant, answered without spawning an engine.
+   *
+   * Supplied by the composition root, which knows which engine binaries are configured — not read
+   * off `AnalysisProvider`, because that interface is implemented by a couple of dozen test doubles
+   * across `ai-features`, `anti-cheat` and this package, and none of them has an opinion about a
+   * deployment's binaries. Putting it here keeps the knowledge where it actually lives.
+   *
+   * Defaults to permitting everything, which is what a provider double should do: it preserves the
+   * behaviour every existing test expects, and the route still rejects an unroutable variant at
+   * request time regardless.
+   */
+  readonly supportsVariant?: (variant: string) => boolean;
 }
 
 export class AnalysisService {
@@ -54,12 +67,24 @@ export class AnalysisService {
   private readonly policy: AnalysisLimitsPolicy;
   private readonly timeoutGraceMs: number;
   private readonly fenValidator: FenValidator;
+  private readonly variantSupported: (variant: string) => boolean;
 
   constructor(options: AnalysisServiceOptions) {
     this.provider = options.provider;
     this.policy = options.policy ?? DEFAULT_ANALYSIS_LIMITS;
     this.timeoutGraceMs = options.timeoutGraceMs ?? 2000;
     this.fenValidator = options.fenValidator ?? coreFenValidator;
+    this.variantSupported = options.supportsVariant ?? (() => true);
+  }
+
+  /**
+   * Whether this deployment has an engine that would serve `variant`.
+   *
+   * Advisory: it lets a caller avoid offering a control that cannot work. It is not the enforcement
+   * point — `analyze` still routes, and an unroutable variant is still rejected there.
+   */
+  supportsVariant(variant: string): boolean {
+    return this.variantSupported(variant);
   }
 
   async analyze(input: {
