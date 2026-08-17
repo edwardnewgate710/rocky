@@ -5,6 +5,8 @@ import type { APIRequestContext, BrowserContext, Page } from '@playwright/test';
 /**
  * Account security: active sessions (M14 inc 46).
  *
+ * Gated: requires GAMBIT_E2E_BACKEND=1 and the e2e harness running.
+ *
  * Runs against the real e2e harness API, so the list, the DELETE and the reload afterwards are all
  * genuine round trips. A mocked list would not show what the increment is for: that a user can see
  * a real session and end it.
@@ -14,6 +16,8 @@ import type { APIRequestContext, BrowserContext, Page } from '@playwright/test';
  * through the UI instead raced the bootstrap that wires the register button, which made an earlier
  * version of this spec intermittently fail on "Not signed in" before reaching any session assertion.
  */
+test.skip(!process.env['GAMBIT_E2E_BACKEND'], 'requires running backend — M14 acceptance gate');
+
 const PASSWORD = 'test-password-sessions-123';
 
 function refreshCookie(value: string) {
