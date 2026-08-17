@@ -62,8 +62,30 @@ export type Message = SystemMessage | UserMessage | AssistantMessage;
 export interface EngineGrounding {
   /** FEN of the position being discussed. */
   readonly fen: string;
+  /**
+   * The variant these facts describe, in the platform's vocabulary (`standard`, `atomic`, …).
+   *
+   * Load-bearing twice over. A FEN does not carry its own rules, so without this the model is asked
+   * to explain a move under rules it was never told — and in Atomic or Racing Kings the same
+   * position and the same engine evaluation mean entirely different things. It is also part of
+   * cache identity: {@link buildCacheKey} hashes the grounding, so two variants sharing a FEN, a
+   * move and an evaluation would otherwise collide on one cached explanation.
+   */
+  readonly variant?: string;
   /** UCI of the move being explained (if applicable). */
   readonly moveUci?: string;
+  /**
+   * Evaluation of the position **after** `moveUci`, normalised to the perspective of the side that
+   * played it. Positive is good for that player.
+   *
+   * Distinct from {@link evalCp}/{@link evalMate}, which describe the position *before* the move and
+   * therefore report what the engine's own best move achieves. Without this pair a caller asking
+   * "was this move good?" is handed the evaluation of a different move — the engine's preference —
+   * and the difference between them is the entire answer.
+   */
+  readonly moveEvalCp?: number;
+  /** Mate-in-N after `moveUci`, from the mover's perspective. See {@link moveEvalCp}. */
+  readonly moveEvalMate?: number;
   /** Engine evaluation in centipawns from the perspective of the side to move. */
   readonly evalCp?: number;
   /** Engine evaluation as mate-in-N (positive = side to move mates). */

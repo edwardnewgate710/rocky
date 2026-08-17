@@ -18,15 +18,19 @@ import type { EngineGrounding, EnginePvLine } from './types.js';
  * @param fen - The FEN of the position being analyzed.
  * @param results - Engine analysis results (from `AnalysisProvider.analyze()`).
  * @param moveUci - Optional: the move being explained (if applicable).
+ * @param variant - Optional: the platform variant these results were produced under. Supply it
+ *   whenever it is known — it tells the model which rules the evaluation was computed against, and
+ *   it separates otherwise-identical positions in the response cache.
  * @returns `EngineGrounding` suitable for `CompletionRequest.grounding`.
  */
 export function engineResultsToGrounding(
   fen: string,
   results: readonly EngineResult[],
   moveUci?: string,
+  variant?: string,
 ): EngineGrounding {
   if (results.length === 0) {
-    return { fen, moveUci };
+    return { fen, moveUci, variant };
   }
 
   const best = results[0]; // multipv=1 is the best line
@@ -43,6 +47,7 @@ export function engineResultsToGrounding(
   return {
     fen,
     moveUci,
+    variant,
     evalCp,
     evalMate,
     bestLine,

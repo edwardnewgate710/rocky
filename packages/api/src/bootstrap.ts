@@ -79,6 +79,7 @@ import type { AnalysisProvider } from '@chess-platform/engine';
 import { EngineBackedEvaluator } from '@chess-platform/anti-cheat/engine';
 import { AntiCheatAnalysisService } from './anti-cheat/analysis-service';
 import { createAnalysisFromEnv } from './analysis/composition';
+import { createAiFromEnv, createMoveExplanation } from './ai/composition';
 import { EventStoreGameSource } from './anti-cheat/source';
 import { EventStoreBotTimingSource } from './bot-detection/source';
 
@@ -148,6 +149,8 @@ export interface PgBootstrapOptions {
   readonly analysisProvider?: AnalysisProvider;
   /** Engine analysis subsystem (ADR-0113). Defaults to {@link createAnalysisFromEnv}. */
   readonly analysis?: import('./analysis/composition').AnalysisComposition | undefined;
+  /** AI subsystem behind Move Explanation (ADR-0115). Defaults to {@link createAiFromEnv}. */
+  readonly ai?: import('./ai/composition').AiComposition | undefined;
   readonly searchRepository?: SearchRepository;
   readonly semanticSearchRepository?: SemanticSearchRepository;
   readonly embeddingProvider?: EmbeddingProvider;
@@ -212,6 +215,20 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
   // Composes only when an engine binary is configured; otherwise `deps.analysis` stays undefined,
   // `GET /v1/capabilities` reports `analysis: false`, and the route answers 503.
   const analysisComposition = options.analysis ?? createAnalysisFromEnv();
+
+  // Move Explanation (ADR-0115) needs *both* halves: an AI provider to write the prose and the
+  // analysis subsystem above to ground it. Either one missing composes nothing, which is the point
+  // — an explanation with no engine behind it is exactly the unfounded verdict this feature exists
+  // to prevent, so "AI configured but no engine" must not degrade into one.
+  //
+  // It borrows `analysisComposition.service` rather than building anything engine-shaped of its own,
+  // so this adds no pool, no worker and no shutdown handle. See `ai/composition.ts` on why the AI
+  // subsystem has no lifecycle to dispose.
+  const aiComposition = options.ai ?? createAiFromEnv();
+  const moveExplanation =
+    aiComposition && analysisComposition
+      ? createMoveExplanation(aiComposition, analysisComposition.service)
+      : undefined;
 
   const searchEnabled = process.env['SEARCH_ENABLED'] !== '0';
   const searchRepository = searchEnabled
@@ -326,6 +343,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ...(learningRepository ? { learningRepository } : {}),
     ...(graphql ? { graphql } : {}),
     ...(analysisComposition ? { analysis: analysisComposition.service } : {}),
+    ...(moveExplanation ? { moveExplanation } : {}),
     botTimingSource: new EventStoreBotTimingSource(eventStore),
     // Production observability (M13): structured logs to stdout, a scrape
     // registry backing GET /v1/metrics, and tracer emitting spans to logs.

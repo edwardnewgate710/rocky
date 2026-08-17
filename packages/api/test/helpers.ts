@@ -67,6 +67,7 @@ export interface Harness {
   readonly studiesRepository?: import('@chess-platform/studies').StudiesRepository;
   readonly learningRepository?: import('@chess-platform/learning').LearningRepository;
   readonly analysis?: import('../src/analysis/service').AnalysisService;
+  readonly moveExplanation?: import('../src/ai/move-explanation-service').MoveExplanationService;
   readonly clock: ManualClock;
   readonly tokens: AccessTokenService;
   readonly emailSender: InMemoryEmailSender;
@@ -116,6 +117,8 @@ export interface HarnessOptions {
   readonly antiCheatEvaluator?: PositionEvaluator;
   /** Inject an optional engine analysis service. */
   readonly analysis?: import('../src/analysis/service').AnalysisService;
+  /** Inject an optional move explanation service. */
+  readonly moveExplanation?: import('../src/ai/move-explanation-service').MoveExplanationService;
 }
 
 export async function startHarness(
@@ -208,6 +211,7 @@ export async function startHarness(
     ...(learningRepository ? { learningRepository } : {}),
     ...(graphql ? { graphql } : {}),
     ...(harnessOptions.analysis ? { analysis: harnessOptions.analysis } : {}),
+    ...(harnessOptions.moveExplanation ? { moveExplanation: harnessOptions.moveExplanation } : {}),
     ...(harnessOptions.readiness ? { readiness: harnessOptions.readiness } : {}),
     ...(harnessOptions.logger ? { logger: harnessOptions.logger } : {}),
     ...(harnessOptions.tracer ? { tracer: harnessOptions.tracer } : {}),
@@ -236,6 +240,7 @@ export async function startHarness(
     studiesRepository,
     learningRepository,
     analysis: harnessOptions.analysis,
+    moveExplanation: harnessOptions.moveExplanation,
     clock,
     tokens,
     emailSender,

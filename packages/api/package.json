@@ -43,6 +43,8 @@
   },
   "dependencies": {
     "@chess-platform/achievements": "file:../achievements",
+    "@chess-platform/ai-features": "file:../ai-features",
+    "@chess-platform/ai-orchestrator": "file:../ai-orchestrator",
     "@chess-platform/anti-cheat": "file:../anti-cheat",
     "@chess-platform/community": "file:../community",
     "@chess-platform/core": "file:../chess-core",

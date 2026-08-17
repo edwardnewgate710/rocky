@@ -2351,6 +2351,92 @@
         }
       }
     },
+    "/v1/ai/move-explanation": {
+      "post": {
+        "summary": "Explain a move in a position with engine grounding",
+        "tags": [
+          "ai"
+        ],
+        "operationId": "post_v1_ai_move_explanation",
+        "responses": {
+          "200": {
+            "description": "Engine-grounded move explanation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MoveExplanationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid position, variant, move, or illegal move",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Move explanation is not configured, or the provider is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveExplanationRequest"
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tournaments": {
       "post": {
         "summary": "Create a tournament",
@@ -11956,7 +12042,8 @@
               "social",
               "messaging",
               "community",
-              "analysis"
+              "analysis",
+              "moveExplanation"
             ],
             "properties": {
               "learning": {
@@ -11981,6 +12068,9 @@
                 "type": "boolean"
               },
               "analysis": {
+                "type": "boolean"
+              },
+              "moveExplanation": {
                 "type": "boolean"
               }
             },
@@ -15161,6 +15251,139 @@
             "items": {
               "$ref": "#/components/schemas/AnalysisLine"
             }
+          }
+        },
+        "additionalProperties": false
+      },
+      "MoveExplanationRequest": {
+        "type": "object",
+        "required": [
+          "fen",
+          "variant",
+          "move"
+        ],
+        "properties": {
+          "fen": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "variant": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "chess960",
+              "kingofthehill",
+              "atomic",
+              "crazyhouse",
+              "threecheck",
+              "horde",
+              "racingkings"
+            ]
+          },
+          "move": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 6
+          }
+        },
+        "additionalProperties": false
+      },
+      "MoveExplanationResponse": {
+        "type": "object",
+        "required": [
+          "fen",
+          "variant",
+          "move",
+          "explanation",
+          "citation",
+          "providerId",
+          "model"
+        ],
+        "properties": {
+          "fen": {
+            "type": "string"
+          },
+          "variant": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "chess960",
+              "kingofthehill",
+              "atomic",
+              "crazyhouse",
+              "threecheck",
+              "horde",
+              "racingkings"
+            ]
+          },
+          "move": {
+            "type": "string"
+          },
+          "explanation": {
+            "type": "string"
+          },
+          "citation": {
+            "type": "object",
+            "required": [
+              "moveEvalKind",
+              "moveEvalValue",
+              "moveEvalLabel",
+              "evalKind",
+              "evalValue",
+              "evalLabel",
+              "bestMove",
+              "bestLine",
+              "depth"
+            ],
+            "properties": {
+              "moveEvalKind": {
+                "type": "string",
+                "enum": [
+                  "cp",
+                  "mate"
+                ]
+              },
+              "moveEvalValue": {
+                "type": "number"
+              },
+              "moveEvalLabel": {
+                "type": "string"
+              },
+              "evalKind": {
+                "type": "string",
+                "enum": [
+                  "cp",
+                  "mate"
+                ]
+              },
+              "evalValue": {
+                "type": "number"
+              },
+              "evalLabel": {
+                "type": "string"
+              },
+              "bestMove": {
+                "type": "string",
+                "nullable": true
+              },
+              "bestLine": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "depth": {
+                "type": "integer"
+              }
+            },
+            "additionalProperties": false
+          },
+          "providerId": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
           }
         },
         "additionalProperties": false

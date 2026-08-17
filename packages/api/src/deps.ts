@@ -95,6 +95,13 @@ export interface ApiDependencies {
   /** Optional engine analysis (ADR-0113). When absent, `POST /v1/analysis` responds 503. */
   readonly analysis?: AnalysisService;
   /**
+   * Optional Move Explanation (ADR-0115). When absent, `POST /v1/ai/move-explanation` responds 503.
+   *
+   * Present only when an AI provider *and* the analysis subsystem above are both configured, since
+   * an explanation is grounded in engine output and there is nothing to ground it in otherwise.
+   */
+  readonly moveExplanation?: import('./ai/move-explanation-service').MoveExplanationService;
+  /**
    * Optional GraphQL read layer (M10 inc 8). When absent, `POST /v1/graphql` responds 503.
    *
    * The subsystem repositories it resolves against are the optional ones above — it adds no data

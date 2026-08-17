@@ -63,6 +63,10 @@ COPY --from=builder --chown=node:node /app/packages/engine/package.json ./packag
 COPY --from=builder --chown=node:node /app/packages/engine/dist/ ./packages/engine/dist/
 COPY --from=builder --chown=node:node /app/packages/anti-cheat/package.json ./packages/anti-cheat/package.json
 COPY --from=builder --chown=node:node /app/packages/anti-cheat/dist/ ./packages/anti-cheat/dist/
+COPY --from=builder --chown=node:node /app/packages/ai-orchestrator/package.json ./packages/ai-orchestrator/package.json
+COPY --from=builder --chown=node:node /app/packages/ai-orchestrator/dist/ ./packages/ai-orchestrator/dist/
+COPY --from=builder --chown=node:node /app/packages/ai-features/package.json ./packages/ai-features/package.json
+COPY --from=builder --chown=node:node /app/packages/ai-features/dist/ ./packages/ai-features/dist/
 COPY --from=builder --chown=node:node /app/packages/game/package.json ./packages/game/package.json
 COPY --from=builder --chown=node:node /app/packages/game/dist/ ./packages/game/dist/
 COPY --from=builder --chown=node:node /app/packages/tournament/package.json ./packages/tournament/package.json

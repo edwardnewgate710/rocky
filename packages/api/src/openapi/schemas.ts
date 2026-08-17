@@ -214,7 +214,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       },
       capabilities: {
         type: 'object',
-        required: ['learning', 'studies', 'achievements', 'search', 'social', 'messaging', 'community', 'analysis'],
+        required: ['learning', 'studies', 'achievements', 'search', 'social', 'messaging', 'community', 'analysis', 'moveExplanation'],
         properties: {
           learning: { type: 'boolean' },
           studies: { type: 'boolean' },
@@ -224,6 +224,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
           messaging: { type: 'boolean' },
           community: { type: 'boolean' },
           analysis: { type: 'boolean' },
+          moveExplanation: { type: 'boolean' },
         },
         additionalProperties: false,
       },
@@ -1603,6 +1604,64 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
         type: 'array',
         items: { $ref: '#/components/schemas/AnalysisLine' },
       },
+    },
+    additionalProperties: false,
+  },
+
+  // --- Move Explanation (ADR-0115) ---
+  MoveExplanationRequest: {
+    type: 'object',
+    required: ['fen', 'variant', 'move'],
+    properties: {
+      fen: { type: 'string', minLength: 1, maxLength: 200 },
+      variant: { type: 'string', enum: [...VARIANTS] },
+      move: { type: 'string', minLength: 2, maxLength: 6 },
+    },
+    additionalProperties: false,
+  },
+
+  MoveExplanationResponse: {
+    type: 'object',
+    required: ['fen', 'variant', 'move', 'explanation', 'citation', 'providerId', 'model'],
+    properties: {
+      fen: { type: 'string' },
+      variant: { type: 'string', enum: [...VARIANTS] },
+      move: { type: 'string' },
+      explanation: { type: 'string' },
+      citation: {
+        type: 'object',
+        required: [
+          'moveEvalKind',
+          'moveEvalValue',
+          'moveEvalLabel',
+          'evalKind',
+          'evalValue',
+          'evalLabel',
+          'bestMove',
+          'bestLine',
+          'depth',
+        ],
+        properties: {
+          // Every evaluation here is from the perspective of the player who made the move.
+          // `moveEval*` is what the move achieved; `eval*` is what the engine's own best move
+          // achieves from the same position. The pair is the judgement.
+          moveEvalKind: { type: 'string', enum: ['cp', 'mate'] },
+          moveEvalValue: { type: 'number' },
+          moveEvalLabel: { type: 'string' },
+          evalKind: { type: 'string', enum: ['cp', 'mate'] },
+          evalValue: { type: 'number' },
+          evalLabel: { type: 'string' },
+          bestMove: nullableString,
+          bestLine: {
+            type: 'array',
+            items: { type: 'string' },
+          },
+          depth: { type: 'integer' },
+        },
+        additionalProperties: false,
+      },
+      providerId: { type: 'string' },
+      model: { type: 'string' },
     },
     additionalProperties: false,
   },

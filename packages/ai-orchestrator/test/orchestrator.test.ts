@@ -1160,6 +1160,56 @@ describe('AiOrchestrator', () => {
     orch.registry.recordFailure('test', 'err2');
     assert.equal(orch.registry.isCircuitOpen('test'), true);
   });
+
+  /**
+   * A tripped breaker must re-arm after a failed probe, not degrade into "always allow".
+   *
+   * The tests above drive `HealthTracker` directly and prove the state machine is correct. Nothing
+   * proved the *orchestrator* ever drove it: `isCircuitOpen` is a pure query that reports false once
+   * the reset timeout elapses while the breaker stays internally open, and no production path called
+   * `tryEnterHalfOpen`. So the tracker never left the open state, `recordFailure` matched neither of
+   * its branches, `circuitOpenedAt` was never refreshed, and a dead provider was retried on every
+   * request from then on — the breaker having fired exactly once, forever.
+   *
+   * This drives it through `complete()`, which is the only way to see that. Raised in the Qodo review
+   * of PR #134, against a library that increment is the first to run in production.
+   */
+  test('a failed probe after the reset timeout re-opens the circuit and restarts the cooldown', async () => {
+    const orch = new AiOrchestrator({
+      config: {
+        providers: [],
+        routing: { failoverEnabled: false, maxFailoverAttempts: 1 },
+        circuitBreaker: { failureThreshold: 1, resetTimeoutMs: 20, successThreshold: 1 },
+      },
+    });
+    // Fails every call: `failOnAttempt` matches one attempt, so a persistently broken provider is
+    // modelled by an id the registry knows and a `complete` that always throws.
+    const provider = new FakeProvider({ id: 'broken' });
+    let calls = 0;
+    provider.complete = async () => {
+      calls += 1;
+      throw new AiError('provider_error', 'down', { retryable: true, providerId: 'broken' });
+    };
+    await orch.registerProvider(provider);
+
+    await assert.rejects(() => orch.complete(makeRequest({ messages: [{ role: 'user', content: 'one' }] })));
+    assert.equal(calls, 1);
+    assert.equal(orch.registry.isCircuitOpen('broken'), true, 'the breaker trips');
+
+    // While open, the provider is not called at all.
+    await assert.rejects(() => orch.complete(makeRequest({ messages: [{ role: 'user', content: 'two' }] })));
+    assert.equal(calls, 1, 'an open circuit blocks without touching the provider');
+
+    // After the reset timeout one probe is allowed — and it fails.
+    await new Promise((r) => setTimeout(r, 40));
+    await assert.rejects(() => orch.complete(makeRequest({ messages: [{ role: 'user', content: 'three' }] })));
+    assert.equal(calls, 2, 'exactly one probe');
+
+    // The cooldown must have restarted. Before the fix the breaker stayed latched-but-permissive
+    // here, so this request was a third call rather than a blocked one.
+    await assert.rejects(() => orch.complete(makeRequest({ messages: [{ role: 'user', content: 'four' }] })));
+    assert.equal(calls, 2, 'the failed probe re-opened the circuit');
+  });
 });
 
 // ---------------------------------------------------------------------------

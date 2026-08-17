@@ -99,6 +99,7 @@ export function createApiServer(deps: ApiDependencies, options: ApiServerOptions
     learningRepository: deps.learningRepository,
     graphql: deps.graphql,
     analysis: deps.analysis,
+    moveExplanation: deps.moveExplanation,
   });
 
   const authenticate = (authorization: string | undefined): Identity | null => {

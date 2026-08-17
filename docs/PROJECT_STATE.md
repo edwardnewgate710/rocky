@@ -4,7 +4,60 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-17 — M15 Increment 2: user-facing analysis UI in the game sidebar._
+_Last updated: 2026-08-17 — M15 Increment 3: Move Explanation productized as an API capability._
+
+## M15 Increment 3 — Move Explanation API (ADR-0115)
+
+Turned `MoveExplainer` from library code into a reachable product capability:
+`POST /v1/ai/move-explanation`, authenticated, rate-limited per user, engine-grounded.
+
+**The starting position was worth recording.** M8 is marked complete in the ROADMAP and shipped eight
+AI features — as a *library*. Before this increment nothing outside `@chess-platform/ai-features`
+imported it, `new AiOrchestrator` appeared only in that package's own tests, and there was no
+env-driven AI configuration anywhere in the repo. The roadmap entry was true about the domain layer
+and silent about composition. ADR-0115 records the distinction; `FEATURE_PARITY_AUDIT.md` had already
+said "Library/test implementation only" and needed no correction.
+
+- **No second engine pool.** The service calls the existing `AnalysisService` from ADR-0113,
+  inheriting its limits policy, FEN validation, timeout, queue and pool. `MoveExplainer` is composed
+  **without an engine at all** (`engine` is now optional), so a second pool is not discouraged — it
+  is unrepresentable.
+- **Two defects fixed in the M8 library.** Grounding was applied *twice*: the explainer built grounded
+  messages and also passed `grounding`, which `AiOrchestrator.complete` renders again. The covering
+  assertion was `systemMessages.length >= 1`, true of one copy and of two. And `EngineGrounding`
+  carried no variant, so the model was never told which rules applied and two variants sharing a
+  FEN + move + eval collided on one cached explanation. Both fixed at the owning layer; both
+  mutation-verified. The other seven features have the same grounding shape and remain library-only —
+  a known follow-up, not a discovery.
+- **Three-field request body.** `fen`, `variant`, `move`. `strictObject` rejects everything else, so
+  no caller can reach a model, provider, temperature, token count, cost ceiling, latency budget,
+  depth or movetime. All are fixed at composition time, each env var clamped to the compiled default
+  as a ceiling. `side` is derived from the FEN, never accepted.
+- **The move is analysed, not just the position.** The first cut validated the requested move and
+  then analysed the *unchanged* position, so with `multiPv: 1` the citation described whatever the
+  engine would have played — a quiet move showed the eval of a tactic never made, a blunder showed
+  the eval of the best reply. Grounded, in facts about a different move. `Position.play` already
+  returned the resulting position and the code discarded it. Each request now runs **two** searches,
+  before and after, both normalised to the mover's perspective (mate scores included); the gap
+  between them is the judgement. Raised by Qodo on PR #134.
+- **Bounded amplification.** Two engine searches and at most `maxFailoverAttempts` provider calls
+  (default 2), each under a 15s budget. Auth, variant support, FEN validity and **authoritative move
+  legality** (`Position.play`) resolve before either subsystem is touched, and the rate limit is
+  charged *between* them via an `onAccepted` seam — so a malformed or illegal request costs a move
+  generation and none of the caller's 10/min budget.
+- **Opaque provider failures.** Every `toHttpError` branch returns a fixed string; `AiError.message`
+  is built from the vendor's response body and is never forwarded. All map to 503, including
+  `auth_failed` — a rejected key is our misconfiguration, and 401 would be a false claim about the
+  caller's credentials.
+- **Composition does no I/O.** Capabilities are registered statically rather than discovered over
+  HTTP, so boot cannot depend on a vendor being reachable; a test fails if `fetch` is called during
+  composition. No `AI_*` variables means nothing is composed — there is no fallback vendor.
+- **Capability implies analysis.** `moveExplanation` is true only when both halves exist; "AI but no
+  engine" composes nothing rather than degrading to an ungrounded opinion. Its servable variants are
+  exactly `analysisVariants`, asserted rather than duplicated.
+
+Not covered: no UI (Inc 4), no cost accounting, no client-disconnect cancellation, no capacity
+claims, no paid provider in CI, and the other seven M8 features stay library-only.
 
 ## M15 Increment 2 — Engine Analysis UI (game sidebar)
 

@@ -35,6 +35,7 @@ export * from './search/index-worker';
 export * from './achievements/award-worker';
 export * from './studies/position-reader';
 export * from './analysis/index';
+export * from './ai/index';
 
 
 

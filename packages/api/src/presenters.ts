@@ -894,6 +894,15 @@ export interface CapabilitiesFlags {
   readonly messaging: boolean;
   readonly community: boolean;
   readonly analysis: boolean;
+  /**
+   * Engine-grounded move explanation (ADR-0115).
+   *
+   * Implies `analysis`, and cannot be true without it: an explanation is grounded in engine output,
+   * so the composition root builds the feature only when both an AI provider and the analysis
+   * subsystem are configured. The variants it can serve are therefore exactly `analysisVariants` —
+   * a second list would be the same list, kept in a second place, free to drift.
+   */
+  readonly moveExplanation: boolean;
 }
 
 /**
@@ -938,6 +947,7 @@ export function capabilitiesView(
     | 'messagingRepository'
     | 'communityRepository'
     | 'analysis'
+    | 'moveExplanation'
   >,
 ): CapabilitiesView {
   return {
@@ -950,6 +960,7 @@ export function capabilitiesView(
       messaging: deps.messagingRepository !== undefined,
       community: deps.communityRepository !== undefined,
       analysis: deps.analysis !== undefined,
+      moveExplanation: deps.moveExplanation !== undefined,
     },
     analysisVariants: deps.analysis
       ? VARIANTS.filter((variant) => deps.analysis?.supportsVariant(variant) === true)
@@ -1008,6 +1019,53 @@ export function analysisView(outcome: import('./analysis/service.js').AnalysisOu
     })),
   };
 }
+
+export interface MoveExplanationCitationView {
+  readonly moveEvalKind: 'cp' | 'mate';
+  readonly moveEvalValue: number;
+  readonly moveEvalLabel: string;
+  readonly evalKind: 'cp' | 'mate';
+  readonly evalValue: number;
+  readonly evalLabel: string;
+  readonly bestMove: string | null;
+  readonly bestLine: readonly string[];
+  readonly depth: number;
+}
+
+export interface MoveExplanationView {
+  readonly fen: string;
+  readonly variant: string;
+  readonly move: string;
+  readonly explanation: string;
+  readonly citation: MoveExplanationCitationView;
+  readonly providerId: string;
+  readonly model: string;
+}
+
+export function moveExplanationView(
+  outcome: import('./ai/move-explanation-service.js').MoveExplanationOutcome,
+): MoveExplanationView {
+  return {
+    fen: outcome.fen,
+    variant: outcome.variant,
+    move: outcome.move,
+    explanation: outcome.explanation,
+    citation: {
+      moveEvalKind: outcome.citation.moveEvalKind,
+      moveEvalValue: outcome.citation.moveEvalValue,
+      moveEvalLabel: outcome.citation.moveEvalLabel,
+      evalKind: outcome.citation.evalKind,
+      evalValue: outcome.citation.evalValue,
+      evalLabel: outcome.citation.evalLabel,
+      bestMove: outcome.citation.bestMove,
+      bestLine: [...outcome.citation.bestLine],
+      depth: outcome.citation.depth,
+    },
+    providerId: outcome.providerId,
+    model: outcome.model,
+  };
+}
+
 
 
 

@@ -1,9 +1,10 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { startHarness } from './helpers';
-import { joinRequestView, learnerStepView, teamView, teamDetailView, attemptResultView, capabilitiesView, sessionView } from '../src/presenters';
+import { joinRequestView, learnerStepView, teamView, teamDetailView, attemptResultView, capabilitiesView, sessionView, moveExplanationView } from '../src/presenters';
 import type { JoinRequest, Team } from '@chess-platform/community';
 import type { AttemptResult, LessonStep } from '@chess-platform/learning';
+import type { JsonSchema } from '../src/openapi/types';
 
 function collectRefs(node: unknown, acc: string[]): void {
   if (Array.isArray(node)) {
@@ -440,3 +441,49 @@ test('DELETE /v1/auth/sessions/{id} is declared with bearer security', async () 
     await h.close();
   }
 });
+
+/**
+ * MoveExplanationResponse: the served schema describes exactly what the presenter emits.
+ */
+test('MoveExplanationResponse: the served schema describes exactly what the presenter emits', async () => {
+  const h = await startHarness();
+  try {
+    const doc = h.server.openapiDocument();
+    const components = doc['components'] as { schemas: Record<string, JsonSchema> };
+    const schema = components.schemas['MoveExplanationResponse'];
+    assert.ok(schema && schema.properties && schema.required);
+
+    const view = moveExplanationView({
+      fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+      variant: 'standard',
+      move: 'e2e4',
+      explanation: 'e4 controls central squares.',
+      citation: {
+        moveEvalKind: 'cp',
+        moveEvalValue: 20,
+        moveEvalLabel: '+0.20',
+        evalKind: 'cp',
+        evalValue: 30,
+        evalLabel: '+0.30',
+        bestMove: 'e2e4',
+        bestLine: ['e2e4', 'e7e5'],
+        depth: 16,
+      },
+      providerId: 'test-provider',
+      model: 'test-model',
+    });
+
+    const presenterKeys = Object.keys(view).sort();
+    assert.deepEqual(presenterKeys, Object.keys(schema.properties).sort());
+    assert.deepEqual(presenterKeys, [...schema.required].sort());
+
+    const citationSchema = schema.properties['citation'];
+    assert.ok(citationSchema && citationSchema.properties && citationSchema.required);
+    const citationKeys = Object.keys(view.citation).sort();
+    assert.deepEqual(citationKeys, Object.keys(citationSchema.properties).sort());
+    assert.deepEqual(citationKeys, [...citationSchema.required].sort());
+  } finally {
+    await h.close();
+  }
+});
+

@@ -28,7 +28,7 @@ export interface ExplainRequest {
   readonly fen: string;
   /** The move to explain, in UCI long algebraic notation (e.g. `e2e4`). */
   readonly move: MoveUci;
-  /** Chess variant (defaults to `chess`). */
+  /** Chess variant in the platform's vocabulary — `standard`, `atomic`, … (defaults to `standard`). */
   readonly variant?: string;
   /**
    * Pre-computed engine analysis for the position.  If omitted, the
@@ -37,6 +37,18 @@ export interface ExplainRequest {
    * live eval bar) and avoids redundant engine work.
    */
   readonly analysis?: readonly EngineResult[];
+  /**
+   * Pre-computed engine analysis of the position **after** {@link move} has been played.
+   *
+   * Without it the only evaluation available describes the position before the move, which is the
+   * engine's assessment of its *own* preferred continuation — so a request to explain any move the
+   * engine did not choose would be answered with facts about a different move. Supplying this is
+   * what lets an explanation say whether the move played was good, and by how much.
+   *
+   * Optional because a caller may only want the position's assessment; when omitted the citation
+   * carries no post-move evaluation and the prompt says nothing about one.
+   */
+  readonly analysisAfterMove?: readonly EngineResult[];
   /** Engine search limits (used only when `analysis` is not supplied). */
   readonly limits?: AnalysisLimits;
   /** Cooperative cancellation. */
@@ -64,6 +76,26 @@ export interface EngineCitation {
   readonly bestLine: readonly string[];
   /** Search depth the engine reached. */
   readonly depth: number;
+  /**
+   * The engine's own preferred move in this position — the first move of {@link bestLine}.
+   *
+   * Present so a caller can tell at a glance whether {@link move} *is* the engine's choice, without
+   * comparing strings against a line it also has to interpret.
+   */
+  readonly bestMove?: string;
+  /**
+   * Evaluation after {@link move}, normalised to the perspective of the player who made it.
+   *
+   * Absent when the caller supplied no post-move analysis. When present, this and the fields above
+   * are the two halves of the only claim that matters: what the move achieves, and what the engine
+   * would have achieved instead. `evalValue` alone describes the engine's preference, not the
+   * player's move.
+   */
+  readonly moveEvalKind?: 'cp' | 'mate';
+  /** Evaluation value after {@link move}, mover-relative. See {@link moveEvalKind}. */
+  readonly moveEvalValue?: number;
+  /** Human-readable post-move eval (e.g. `-1.20`). See {@link moveEvalKind}. */
+  readonly moveEvalLabel?: string;
 }
 
 /**

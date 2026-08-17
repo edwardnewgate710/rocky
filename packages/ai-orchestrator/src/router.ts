@@ -51,6 +51,19 @@ function filterCandidates(ctx: RoutingContext): readonly RegisteredProvider[] {
   return all.filter((p) => {
     if (ctx.triedProviderIds.includes(p.provider.id)) return false;
     if (p.healthTracker.isCircuitOpen()) return false;
+    // Latch the open→half-open transition, don't just read past it.
+    //
+    // `isCircuitOpen` is a pure query: once the reset timeout elapses it reports false while the
+    // breaker stays internally open, and nothing else in the library called `tryEnterHalfOpen`. The
+    // tracker therefore never left the open state, so `recordFailure` took neither branch —
+    // `halfOpen` was false and `circuitOpen` was already true — and the cooldown was never
+    // restarted. A provider that failed once was then retried on every request forever, with the
+    // breaker permanently reporting itself tripped. Raised in the Qodo review of PR #134, against a
+    // library this increment is the first to run in production.
+    //
+    // Calling it here makes the elapsed timeout an actual probe: a failure now re-opens the circuit
+    // and resets the clock, and a success closes it.
+    p.healthTracker.tryEnterHalfOpen();
     if (ctx.request.modality && !p.capabilities.modalities.includes(ctx.request.modality)) {
       return false;
     }

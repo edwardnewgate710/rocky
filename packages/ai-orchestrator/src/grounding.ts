@@ -29,6 +29,12 @@ export function buildGroundedMessages(
   return [groundingMessage, ...messages];
 }
 
+/** Centipawns as pawns, always signed, so `+0.35` and `-0.35` read as a pair. */
+function formatCp(centipawns: number): string {
+  const pawns = centipawns / 100;
+  return pawns >= 0 ? `+${pawns.toFixed(2)}` : pawns.toFixed(2);
+}
+
 /** Format engine grounding as a human-readable system message. */
 export function formatGrounding(grounding: EngineGrounding): string {
   const lines: string[] = [
@@ -37,17 +43,36 @@ export function formatGrounding(grounding: EngineGrounding): string {
     `Position FEN: ${grounding.fen}`,
   ];
 
+  // Before the move and the evaluation, because it changes what both of them mean: a FEN carries no
+  // rules of its own, and "winning" under Atomic or Racing Kings is not the same claim as under
+  // standard chess.
+  if (grounding.variant) {
+    lines.push(`Variant: ${grounding.variant}`);
+  }
+
   if (grounding.moveUci) {
     lines.push(`Move to explain: ${grounding.moveUci}`);
+  }
+
+  // The move's own evaluation, before the engine's — because when a move is being explained, what
+  // it achieves is the subject and what the engine would have preferred is the comparison. Stated
+  // first so the two are not read as one number.
+  if (grounding.moveEvalMate !== undefined) {
+    lines.push(
+      `Evaluation after ${grounding.moveUci ?? 'the move'}: mate in ${Math.abs(grounding.moveEvalMate)} ` +
+        `(${grounding.moveEvalMate > 0 ? 'the player who moved mates' : 'the player who moved gets mated'})`,
+    );
+  } else if (grounding.moveEvalCp !== undefined) {
+    lines.push(
+      `Evaluation after ${grounding.moveUci ?? 'the move'}: ${formatCp(grounding.moveEvalCp)} ` +
+        `(from the perspective of the player who moved)`,
+    );
   }
 
   if (grounding.evalMate !== undefined) {
     lines.push(`Engine evaluation: mate in ${Math.abs(grounding.evalMate)} (${grounding.evalMate > 0 ? 'side to move wins' : 'side to move loses'})`);
   } else if (grounding.evalCp !== undefined) {
-    const evalStr = grounding.evalCp >= 0
-      ? `+${(grounding.evalCp / 100).toFixed(2)}`
-      : `${(grounding.evalCp / 100).toFixed(2)}`;
-    lines.push(`Engine evaluation: ${evalStr} (from side to move's perspective)`);
+    lines.push(`Engine evaluation: ${formatCp(grounding.evalCp)} (from side to move's perspective)`);
   }
 
   if (grounding.depth !== undefined) {
@@ -93,6 +118,9 @@ export function formatGrounding(grounding: EngineGrounding): string {
  * (which includes engine output that may vary by depth).
  */
 export function positionHash(grounding: EngineGrounding): string {
-  const base = `${grounding.fen}|${grounding.moveUci ?? ''}`;
+  // Variant is part of the identity, not decoration: the same FEN and move under Atomic and under
+  // standard chess are different positions with different best play, and a hash documented as
+  // usable for cache keys must not conflate them.
+  const base = `${grounding.fen}|${grounding.variant ?? ''}|${grounding.moveUci ?? ''}`;
   return hashString(base);
 }

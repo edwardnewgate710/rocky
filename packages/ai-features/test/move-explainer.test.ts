@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 
 import type { AnalysisProvider, AnalysisRequest, EngineResult, PlayRequest, PlayResult, EngineCapabilities } from '@chess-platform/engine';
 import { FakeEngineTransport, UciEngineInstance, JobPriority } from '@chess-platform/engine';
-import { FakeProvider, engineResultsToGrounding } from '@chess-platform/ai-orchestrator';
+import { AiOrchestrator, FakeProvider, engineResultsToGrounding } from '@chess-platform/ai-orchestrator';
 
 import { MoveExplainer } from '../src/index.js';
 
@@ -262,20 +262,28 @@ describe('MoveExplainer (hermetic)', () => {
     assert.deepEqual([...call.grounding!.bestLine!], ['e7e5', 'g1f3', 'b8c6', 'f1b5']);
   });
 
+  /**
+   * Composed through the orchestrator, because that is the layer that renders grounding.
+   *
+   * This test used to drive a bare `FakeProvider` and still saw a grounding system message, because
+   * the explainer built one itself *and* passed `grounding` for the orchestrator to build another.
+   * Reaching the assertion through the real completion path is what makes the count below mean
+   * something.
+   */
   test('grounded messages include the engine evaluation and best line', async () => {
     const engine = createFakeAnalysisProvider(fakeGoHandler);
     const ai = new FakeProvider({ id: 'fake-ai', content: 'Explanation.' });
+    const orchestrator = new AiOrchestrator();
+    await orchestrator.registerProvider(ai);
 
-    const explainer = new MoveExplainer({ engine, ai });
+    const explainer = new MoveExplainer({ engine, ai: orchestrator });
     await explainer.explain({
       fen: STARTPOS_AFTER_E4,
       move: 'e7e5',
     });
 
-    // The FakeProvider's call log has the messages that were sent.
     const call = ai.calls[0];
     const systemMessages = call.messages.filter(m => m.role === 'system');
-    assert.ok(systemMessages.length >= 1);
 
     // The grounding system message should contain the eval and best line.
     const groundingMsg = systemMessages.find(m =>
@@ -285,6 +293,114 @@ describe('MoveExplainer (hermetic)', () => {
     assert.ok(groundingMsg!.content.includes('-0.35'));
     assert.ok(groundingMsg!.content.includes('e7e5 g1f3 b8c6 f1b5'));
     assert.ok(groundingMsg!.content.includes(STARTPOS_AFTER_E4));
+  });
+
+  /**
+   * Grounding reaches the model exactly once.
+   *
+   * `MoveExplainer` used to call `buildGroundedMessages` itself and *also* set
+   * `CompletionRequest.grounding`; `AiOrchestrator.complete` builds grounded messages whenever
+   * `grounding` is present, and `buildGroundedMessages` inserts after a leading system message — so
+   * the prompt that reached the provider carried the same block of engine facts twice. The old
+   * assertion was `systemMessages.length >= 1`, which is true of one copy and of two, so nothing
+   * failed. This asserts the count.
+   */
+  test('engine facts reach the provider exactly once, not duplicated', async () => {
+    const engine = createFakeAnalysisProvider(fakeGoHandler);
+    const ai = new FakeProvider({ id: 'fake-ai', content: 'Explanation.' });
+    const orchestrator = new AiOrchestrator();
+    await orchestrator.registerProvider(ai);
+
+    const explainer = new MoveExplainer({ engine, ai: orchestrator });
+    await explainer.explain({ fen: STARTPOS_AFTER_E4, move: 'e7e5' });
+
+    const call = ai.calls[0];
+    const grounded = call.messages.filter(
+      m => m.role === 'system' && m.content.includes('Engine evaluation'),
+    );
+    assert.equal(grounded.length, 1, 'grounding must be rendered by exactly one layer');
+
+    // And the facts themselves appear once inside that message, so a future change that concatenates
+    // rather than prepends is caught too.
+    const occurrences = grounded[0]!.content.split('Best line (UCI):').length - 1;
+    assert.equal(occurrences, 1);
+  });
+
+  /**
+   * The variant is a fact the model needs and a component of cache identity.
+   *
+   * Without it the model is asked to judge a move under rules it was never told — and in Atomic or
+   * Racing Kings the same position and the same evaluation mean something entirely different. It
+   * also separates otherwise-identical requests in the orchestrator's response cache, which hashes
+   * the grounding.
+   */
+  test('the variant is grounded, so the model is told which rules apply', async () => {
+    const engine = createFakeAnalysisProvider(fakeGoHandler);
+    const ai = new FakeProvider({ id: 'fake-ai', content: 'Explanation.' });
+    const orchestrator = new AiOrchestrator();
+    await orchestrator.registerProvider(ai);
+
+    const explainer = new MoveExplainer({ engine, ai: orchestrator });
+    await explainer.explain({ fen: STARTPOS_AFTER_E4, move: 'e7e5', variant: 'atomic' });
+
+    const call = ai.calls[0];
+    assert.equal(call.grounding!.variant, 'atomic');
+    const grounded = call.messages.find(
+      m => m.role === 'system' && m.content.includes('Engine evaluation'),
+    );
+    assert.ok(grounded!.content.includes('Variant: atomic'));
+  });
+
+  /**
+   * The default variant has to be a name this platform can actually route.
+   *
+   * It was `chess`, which is not a member of the API's `VARIANTS` and matches no engine pool — so
+   * the default named a variant that could not be served anywhere in this system.
+   */
+  test('the default variant is the platform vocabulary, not the legacy "chess"', async () => {
+    const engine = createFakeAnalysisProvider(fakeGoHandler);
+    const ai = new FakeProvider({ id: 'fake-ai', content: 'Explanation.' });
+
+    const explainer = new MoveExplainer({ engine, ai });
+    await explainer.explain({ fen: STARTPOS_AFTER_E4, move: 'e7e5' });
+
+    assert.equal(ai.calls[0]!.grounding!.variant, 'standard');
+  });
+
+  /**
+   * Composing without an engine is the guarantee that there is no second engine pool.
+   *
+   * The API owns one dedicated analysis subsystem (ADR-0113) and supplies its results on every call.
+   * Handing the explainer an engine of its own would give the process a second route to a chess
+   * engine and quietly double the CPU ceiling the deployment publishes.
+   */
+  test('an engineless explainer serves pre-computed analysis and refuses to run its own', async () => {
+    const ai = new FakeProvider({ id: 'fake-ai', content: 'Explanation.' });
+    const explainer = new MoveExplainer({ ai });
+
+    const preComputed: readonly EngineResult[] = [
+      {
+        multipv: 1,
+        evaluation: { type: 'cp', value: 50 },
+        principalVariation: ['e7e5', 'g1f3'],
+        depth: 22,
+        nodes: 1000,
+        nps: 10_000,
+        timeMs: 100,
+      },
+    ];
+
+    const result = await explainer.explain({
+      fen: STARTPOS_AFTER_E4,
+      move: 'e7e5',
+      analysis: preComputed,
+    });
+    assert.equal(result.citation.depth, 22);
+
+    await assert.rejects(
+      () => explainer.explain({ fen: STARTPOS_AFTER_E4, move: 'e7e5' }),
+      /composed without an engine/,
+    );
   });
 
   test('uses default variant and limits when not specified', async () => {

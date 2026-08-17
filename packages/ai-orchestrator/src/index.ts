@@ -54,7 +54,7 @@ export {
 export type { AiErrorCode } from './errors.js';
 
 // Provider contract
-export type { AiProvider } from './provider.js';
+export type { AiProvider, CompletionPort } from './provider.js';
 
 // Configuration
 export type {

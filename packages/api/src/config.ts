@@ -85,6 +85,10 @@ export interface RateLimitConfig {
     readonly perUser: RateLimitEndpointConfig;
     readonly perIp: RateLimitEndpointConfig;
   };
+  readonly moveExplanation: {
+    readonly perUser: RateLimitEndpointConfig;
+    readonly perIp: RateLimitEndpointConfig;
+  };
 }
 
 export const DEFAULT_ACCESS_TOKEN_TTL_SEC = 15 * 60;
@@ -125,6 +129,14 @@ export const DEFAULT_RATE_LIMIT: RateLimitConfig = {
   analysis: {
     perUser: { maxRequests: 30, windowMs: 60 * 1000 }, // 30 / min
     perIp: { maxRequests: 60, windowMs: 60 * 1000 }, // 60 / min
+  },
+  // Move explanation costs an engine search *and* a paid completion, so it is limited well below
+  // analysis. The per-user limit is the one that matters: the per-IP limit is deliberately not a
+  // multiple of it, because a shared NAT or a university network puts many legitimate accounts
+  // behind one address, and an IP-only ceiling would ration them collectively.
+  moveExplanation: {
+    perUser: { maxRequests: 10, windowMs: 60 * 1000 }, // 10 / min
+    perIp: { maxRequests: 30, windowMs: 60 * 1000 }, // 30 / min
   },
 };
 

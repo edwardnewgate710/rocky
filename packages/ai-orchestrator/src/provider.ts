@@ -17,19 +17,34 @@ import type {
 } from './types.js';
 
 /**
+ * What a *feature* needs: somewhere to send a completion request.
+ *
+ * Narrower than {@link AiProvider} on purpose. `AiOrchestrator` is the thing application code is
+ * meant to depend on — it owns routing, failover, caching, rate limiting and, critically, the
+ * rendering of {@link CompletionRequest.grounding} into prompt messages — but it is not an
+ * `AiProvider` and never should be: it has no `id`, no capabilities to discover, and no health of
+ * its own to report. Typing features against `AiProvider` therefore forced them to hold a single
+ * raw vendor adapter, bypassing every one of those controls.
+ *
+ * Both satisfy this port, so a feature can be composed against the orchestrator in production and
+ * against a `FakeProvider` in a hermetic test.
+ *
+ * **Implementations own grounding.** A feature passes structured facts on `grounding`; whatever is
+ * behind this port decides how they reach the model. A bare provider does not render them, which is
+ * why production composes the orchestrator.
+ */
+export interface CompletionPort {
+  complete(request: CompletionRequest): Promise<CompletionResponse>;
+}
+
+/**
  * The provider contract.  Every adapter (OpenAI, Anthropic, etc.) implements
  * this.  The orchestrator routes to providers, never calling them directly
  * from application code.
  */
-export interface AiProvider {
+export interface AiProvider extends CompletionPort {
   /** Stable, unique identifier (e.g. `"openai"`, `"anthropic"`). */
   readonly id: string;
-
-  /**
-   * Generate a completion.  Throws {@link AiError} on failure.
-   * The orchestrator handles retry/failover — providers should fail fast.
-   */
-  complete(request: CompletionRequest): Promise<CompletionResponse>;
 
   /**
    * Stream a completion.  Yields chunks in order, ending with a `done` or

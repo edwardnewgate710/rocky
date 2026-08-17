@@ -86,6 +86,7 @@ import {
   attemptResultView,
   capabilitiesView,
   analysisView,
+  moveExplanationView,
 } from './presenters';
 import { DEFAULT_ANALYSIS_LIMITS } from './analysis/limits';
 import { TournamentService } from './tournament/service';
@@ -138,6 +139,8 @@ export interface RouteDeps {
   readonly graphql?: import('./graphql').GraphQLOptions;
   /** Optional engine analysis (ADR-0113). When absent, `POST /v1/analysis` responds 503. */
   readonly analysis?: import('./analysis/service').AnalysisService;
+  /** Optional Move Explanation (ADR-0115). When absent, `POST /v1/ai/move-explanation` responds 503. */
+  readonly moveExplanation?: import('./ai/move-explanation-service').MoveExplanationService;
 }
 
 const PUBLIC: AuthPolicy = { required: false };
@@ -1367,6 +1370,57 @@ export function buildRouter(deps: RouteDeps): Router {
       });
 
       return json(200, analysisView(outcome));
+    },
+  );
+
+  // --- Move Explanation ------------------------------------------------------
+  router.post(
+    '/v1/ai/move-explanation',
+    doc({
+      summary: 'Explain a move in a position with engine grounding',
+      tags: ['ai'],
+      security: 'bearer',
+      requestSchema: 'MoveExplanationRequest',
+      responses: {
+        200: ['MoveExplanationResponse', 'Engine-grounded move explanation'],
+        401: ['Error', 'Authentication required'],
+        422: ['Error', 'Invalid position, variant, move, or illegal move'],
+        429: ['Error', 'Rate limit exceeded'],
+        503: ['Error', 'Move explanation is not configured, or the provider is unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const identity = requireAuth(ctx);
+      const service = deps.moveExplanation;
+      if (!service) throw HttpError.unavailable('move explanation is not configured');
+
+      const body = strictObject(ctx.body, ['fen', 'variant', 'move']);
+      const fen = reqString(body, 'fen', { min: 1, max: 200, trim: true });
+      const variant = parseVariant(reqString(body, 'variant'));
+      const move = reqString(body, 'move', { min: 2, max: 6, trim: true });
+
+      // Charged after the request is known to be real, not on arrival.
+      //
+      // The quota here is deliberately low (10/min) because each accepted request costs two engine
+      // searches and a paid completion. Spending it at the top of the handler let a stream of
+      // malformed FENs or illegal moves — none of which reach an engine — empty a user's budget, and
+      // with the shared per-IP bucket, their neighbours' too. `explain` runs this once validation
+      // and legality pass and before any of the expensive work. Raised in the Qodo review of PR #134.
+      const charge = async (): Promise<void> => {
+        if (!config.rateLimit.enabled) return;
+        const userKey = `move-explanation:user:${identity.userId}`;
+        const userCheck = await rateLimiter.check(userKey, config.rateLimit.moveExplanation.perUser);
+        if (!userCheck.allowed) throw HttpError.rateLimited(userCheck.retryAfterSeconds);
+
+        const ipKey = `move-explanation:ip:${ctx.ip ?? 'unknown'}`;
+        const ipCheck = await rateLimiter.check(ipKey, config.rateLimit.moveExplanation.perIp);
+        if (!ipCheck.allowed) throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
+      };
+
+      const outcome = await service.explain({ fen, variant, move }, charge);
+
+      return json(200, moveExplanationView(outcome));
     },
   );
 
