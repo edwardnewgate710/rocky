@@ -989,11 +989,23 @@ export interface AppliedAnalysisLimitsView {
   readonly nodes?: number;
 }
 
+export interface TerminalOutcomeView {
+  readonly reason: string;
+  readonly result: string;
+}
+
 export interface AnalysisResponseView {
   readonly fen: string;
   readonly variant: string;
   readonly applied: AppliedAnalysisLimitsView;
   readonly lines: readonly AnalysisLineView[];
+  /**
+   * Present when the position is already decided, in which case `lines` is empty and no engine ran.
+   *
+   * A client seeing this must render the result rather than an evaluation: there is no score for a
+   * finished game, and the placeholder the engine emits for one reads as dead level (ADR-0116).
+   */
+  readonly terminal?: TerminalOutcomeView;
 }
 
 export function analysisView(outcome: import('./analysis/service.js').AnalysisOutcome): AnalysisResponseView {
@@ -1017,13 +1029,33 @@ export function analysisView(outcome: import('./analysis/service.js').AnalysisOu
       nodes: line.nodes,
       timeMs: line.timeMs,
     })),
+    ...(outcome.terminal
+      ? { terminal: { reason: outcome.terminal.reason, result: outcome.terminal.result } }
+      : {}),
   };
 }
 
+/**
+ * What the requested move achieved: an evaluation, or a finished game.
+ *
+ * Tagged with `kind` so a client never has to infer which it got. The alternative — an evaluation
+ * carrying a sentinel — is what produced `+0.00` for checkmate (ADR-0116).
+ */
+export type MoveOutcomeView =
+  | {
+      readonly kind: 'evaluation';
+      readonly evalKind: 'cp' | 'mate';
+      readonly evalValue: number;
+      readonly evalLabel: string;
+    }
+  | {
+      readonly kind: 'terminal';
+      readonly reason: string;
+      readonly result: string;
+    };
+
 export interface MoveExplanationCitationView {
-  readonly moveEvalKind: 'cp' | 'mate';
-  readonly moveEvalValue: number;
-  readonly moveEvalLabel: string;
+  readonly moveOutcome: MoveOutcomeView;
   readonly evalKind: 'cp' | 'mate';
   readonly evalValue: number;
   readonly evalLabel: string;
@@ -1051,9 +1083,7 @@ export function moveExplanationView(
     move: outcome.move,
     explanation: outcome.explanation,
     citation: {
-      moveEvalKind: outcome.citation.moveEvalKind,
-      moveEvalValue: outcome.citation.moveEvalValue,
-      moveEvalLabel: outcome.citation.moveEvalLabel,
+      moveOutcome: outcome.citation.moveOutcome,
       evalKind: outcome.citation.evalKind,
       evalValue: outcome.citation.evalValue,
       evalLabel: outcome.citation.evalLabel,

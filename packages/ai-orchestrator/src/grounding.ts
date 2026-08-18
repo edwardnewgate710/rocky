@@ -54,10 +54,16 @@ export function formatGrounding(grounding: EngineGrounding): string {
     lines.push(`Move to explain: ${grounding.moveUci}`);
   }
 
-  // The move's own evaluation, before the engine's — because when a move is being explained, what
-  // it achieves is the subject and what the engine would have preferred is the comparison. Stated
-  // first so the two are not read as one number.
-  if (grounding.moveEvalMate !== undefined) {
+  // The move's own result, before the engine's evaluation — because when a move is being explained,
+  // what it achieves is the subject and what the engine would have preferred is the comparison.
+  // Stated first so the two are not read as one number.
+  //
+  // An ended game is reported as an outcome and never as a score: there is no evaluation of a
+  // finished position, and the placeholder an engine emits for one reads as "equal".
+  if (grounding.moveOutcome !== undefined) {
+    lines.push(`Result after ${grounding.moveUci ?? 'the move'}: ${grounding.moveOutcome}`);
+    lines.push('The game is over after this move. Do not describe the position as ongoing.');
+  } else if (grounding.moveEvalMate !== undefined) {
     lines.push(
       `Evaluation after ${grounding.moveUci ?? 'the move'}: mate in ${Math.abs(grounding.moveEvalMate)} ` +
         `(${grounding.moveEvalMate > 0 ? 'the player who moved mates' : 'the player who moved gets mated'})`,

@@ -15207,6 +15207,36 @@
           "lines"
         ],
         "properties": {
+          "terminal": {
+            "type": "object",
+            "required": [
+              "reason",
+              "result"
+            ],
+            "properties": {
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "checkmate",
+                  "stalemate",
+                  "insufficient_material",
+                  "fifty_move",
+                  "threefold",
+                  "variant_win",
+                  "variant_draw"
+                ]
+              },
+              "result": {
+                "type": "string",
+                "enum": [
+                  "1-0",
+                  "0-1",
+                  "1/2-1/2"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
           "fen": {
             "type": "string"
           },
@@ -15326,9 +15356,7 @@
           "citation": {
             "type": "object",
             "required": [
-              "moveEvalKind",
-              "moveEvalValue",
-              "moveEvalLabel",
+              "moveOutcome",
               "evalKind",
               "evalValue",
               "evalLabel",
@@ -15337,18 +15365,77 @@
               "depth"
             ],
             "properties": {
-              "moveEvalKind": {
-                "type": "string",
-                "enum": [
-                  "cp",
-                  "mate"
+              "moveOutcome": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "evalKind",
+                      "evalValue",
+                      "evalLabel"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "evaluation"
+                        ]
+                      },
+                      "evalKind": {
+                        "type": "string",
+                        "enum": [
+                          "cp",
+                          "mate"
+                        ]
+                      },
+                      "evalValue": {
+                        "type": "number"
+                      },
+                      "evalLabel": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "reason",
+                      "result"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "terminal"
+                        ]
+                      },
+                      "reason": {
+                        "type": "string",
+                        "enum": [
+                          "checkmate",
+                          "stalemate",
+                          "insufficient_material",
+                          "fifty_move",
+                          "threefold",
+                          "variant_win",
+                          "variant_draw"
+                        ]
+                      },
+                      "result": {
+                        "type": "string",
+                        "enum": [
+                          "1-0",
+                          "0-1",
+                          "1/2-1/2"
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  }
                 ]
-              },
-              "moveEvalValue": {
-                "type": "number"
-              },
-              "moveEvalLabel": {
-                "type": "string"
               },
               "evalKind": {
                 "type": "string",

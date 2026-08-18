@@ -25,6 +25,7 @@ export type {
   MoveExplanationResponse,
   EngineCitation,
   MoveUci,
+  TerminalAfterMove,
 } from './types.js';
 export type { EngineResult, Evaluation, AnalysisLimits } from '@chess-platform/engine';
 export type { TokenUsage } from '@chess-platform/ai-orchestrator';

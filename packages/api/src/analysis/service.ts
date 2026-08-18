@@ -12,8 +12,11 @@ import type {
 } from '@chess-platform/engine';
 import { EngineError, JobPriority } from '@chess-platform/engine';
 import type { FenValidator } from '@chess-platform/engine';
+import type { Variant } from '@chess-platform/core';
 import { HttpError } from '../http/errors.js';
 import { coreFenValidator } from './fen-validator.js';
+import type { TerminalOutcome } from './terminal.js';
+import { terminalOutcome } from './terminal.js';
 import type {
   AnalysisLimitsPolicy,
   AppliedAnalysisLimits,
@@ -28,6 +31,14 @@ export interface AnalysisOutcome {
   readonly variant: string;
   readonly applied: AppliedAnalysisLimits;
   readonly lines: readonly EngineResult[];
+  /**
+   * Set when the position is already decided, in which case `lines` is empty and no engine ran.
+   *
+   * A finished game has an outcome, not an evaluation, and the two are different kinds of fact —
+   * hence a separate field rather than a sentinel score. See `terminal.ts` for why the engine's own
+   * placeholder must not be presented as one.
+   */
+  readonly terminal?: TerminalOutcome;
 }
 
 export interface AnalysisServiceOptions {
@@ -109,6 +120,22 @@ export class AnalysisService {
       this.fenValidator.validate(input.fen, input.variant);
     } catch (err: unknown) {
       throw toHttpError(err);
+    }
+
+    // Decide the position before asking anything to search it.
+    //
+    // A position with no legal moves gives the engine nothing to score, and it answers with a
+    // placeholder `{ cp: 0, depth: 0 }` that reads as "dead level" — so checkmate was served to
+    // clients as `+0.00`. Resolving it here fixes the answer and removes the search: there is no
+    // move to find, so the cheapest correct request is the one that never reaches a worker.
+    //
+    // Deliberately *after* validation above: by here the FEN has passed the character allowlist,
+    // `parseFen` and the king-count check, so adjudication is reading a position rather than a
+    // guess. `input.variant` has already passed `parseVariant` at the route, so the cast names the
+    // type the value already has.
+    const terminal = terminalOutcome(input.fen, input.variant as Variant);
+    if (terminal) {
+      return { fen: input.fen, variant: input.variant, applied, lines: [], terminal };
     }
 
     const controller = new AbortController();

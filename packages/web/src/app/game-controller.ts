@@ -61,6 +61,13 @@ export interface GameControllerCallbacks {
    */
   onLastMove?: (from: string | null, to: string | null) => void;
   /**
+   * Called when {@link GameController.lastReplayedMove} changes, including when it becomes `null`.
+   *
+   * Separate from {@link onPosition} because the two are not the same event: a resync at the
+   * position already on screen changes the explainable move without changing the FEN.
+   */
+  onExplainableChange?: () => void;
+  /**
    * Called when the controller's color is first resolved from the server's
    * `joined` message (via `GameSyncState.myColor`). The bootstrap uses this
    * to set board orientation. Called once, with `null` for spectators.
@@ -111,6 +118,8 @@ export class GameController {
 
   private unsubscribe: (() => void) | null = null;
   private currentFen = '';
+  /** Backing field for {@link lastReplayedMove}. */
+  private lastReplayed: { readonly fen: string; readonly uci: string } | null = null;
   private currentMyTurn: boolean | undefined = undefined;
   private currentLastMove: { from: string; to: string } | null | undefined = undefined;
   private currentClock: { w: number; b: number } | undefined = undefined;
@@ -151,6 +160,25 @@ export class GameController {
   /** The current projected FEN (valid at the latest applied ply). */
   get fen(): string {
     return this.currentFen;
+  }
+
+  /**
+   * The last move this controller replayed, with the position it was played from — or `null` when
+   * there is no such move.
+   *
+   * `null` is common and not an error. The server's snapshot is authoritative *at its own ply*, and
+   * `MoveView` carries no per-move FEN, so the position before a move is recoverable only for moves
+   * this controller applied itself. Joining a game mid-play therefore has nothing to explain until
+   * the next move arrives, and a finished game reviewed from a snapshot has nothing to explain at
+   * all.
+   *
+   * That limit is deliberate rather than worked around: recovering earlier positions means either a
+   * parallel move-history model on the client or replaying from a starting position the server does
+   * not send (and which Chess960 does not have a fixed value for). Explaining arbitrary past moves is
+   * its own increment; this is the honest subset that needs no new state.
+   */
+  get lastReplayedMove(): { readonly fen: string; readonly uci: string } | null {
+    return this.lastReplayed;
   }
 
   /**
@@ -269,11 +297,22 @@ export class GameController {
     // --- Position projection ---
     if (state.snapshot !== null) {
       let fen = state.snapshot.fen;
+      // The position immediately before the most recently replayed move, and that move in full.
+      // Kept because explaining a move needs the position it was played *from*, and applying a move
+      // is one-way — once `fen` advances, the position it came from is gone.
+      let previousFen: string | null = null;
+      let lastUci: string | null = null;
       // Replay only moves that came after the snapshot ply. The snapshot FEN
       // is already the position at snapshot.ply; the moves ledger includes
       // snapshot moves + live broadcasts, so we must skip the pre-snapshot ones.
       for (const move of state.moves) {
         if (move.ply > state.snapshot.ply) {
+          previousFen = fen;
+          // The whole UCI, promotion suffix included. The `onLastMove` highlight below deliberately
+          // keeps only the two squares because that is all a highlight needs, but `e7e8q` and `e7e8n`
+          // are different moves and an explanation of the wrong one would be wrong about everything
+          // downstream of it.
+          lastUci = move.uci;
           fen = applyMove(fen, {
             from: move.uci.slice(0, 2),
             to: move.uci.slice(2, 4),
@@ -281,6 +320,21 @@ export class GameController {
           });
         }
       }
+      const replayed = previousFen !== null && lastUci !== null
+        ? { fen: previousFen, uci: lastUci }
+        : null;
+      // Announced separately from `onPosition`, because the two can change independently. An
+      // authoritative snapshot taken at the position already on screen clears the replayed move —
+      // there is nothing after the snapshot ply to replay — while the FEN is unchanged, so
+      // `onPosition` stays silent and a consumer keyed on it would keep offering to explain a move
+      // it can no longer identify. Raised in the Qodo review of PR #135.
+      const changed =
+        (replayed === null) !== (this.lastReplayed === null) ||
+        (replayed !== null &&
+          this.lastReplayed !== null &&
+          (replayed.fen !== this.lastReplayed.fen || replayed.uci !== this.lastReplayed.uci));
+      this.lastReplayed = replayed;
+      if (changed) this.callbacks.onExplainableChange?.();
       if (fen !== this.currentFen) {
         this.currentFen = fen;
         this.callbacks.onPosition(fen);

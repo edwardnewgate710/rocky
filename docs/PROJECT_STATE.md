@@ -4,7 +4,54 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-17 — M15 Increment 3: Move Explanation productized as an API capability._
+_Last updated: 2026-08-18 — M15 Increment 4: terminal-position semantics, and Move Explanation in the UI._
+
+## M15 Increment 4 — Terminal semantics + Move Explanation UI (ADR-0116, ADR-0117)
+
+Two pieces, in order: fix a correctness defect the merged Increment 3 exposed, then build the UI on
+top of the fixed contract.
+
+### Decided positions are results, not `+0.00` (ADR-0116)
+
+A position with no legal moves gives a UCI engine nothing to score, so it answers `bestmove (none)`
+with no `info` line and `assembleResults` substitutes a placeholder `{ cp: 0, depth: 0 }`. Sound
+internally; a lie once served. **Checkmate was reported as `+0.00`, dead level** — by `POST
+/v1/analysis` since ADR-0113, and by Move Explanation, which grounded its prose in the same number.
+Found in the independent review of the merged PR #134.
+
+- **Adjudicated at the API boundary**, delegating to `Position.status()` — already authoritative and
+  variant-aware. `EngineResult` semantics are untouched, because anti-cheat and the bot mover consume
+  them too.
+- **No second terminal implementation.** "Zero legal moves" would look equivalent and is not: a King
+  of the Hill win with material on the board is over *and* has legal moves, and standard rules call
+  the same position ongoing. A test pins that pair.
+- **Explicit discriminator, no sentinel.** `AnalysisResponse.terminal` (with `lines: []`), and a
+  tagged `citation.moveOutcome` (`evaluation` | `terminal`). `reason` mirrors core's `GameStatus`;
+  `result` is the existing `ResultString`. This changed the `citation` shape ADR-0115 published hours
+  earlier — correctness over preserving a false evaluation.
+- **The cost contract is now conditional:** 0 searches rejected, **1** when the move ends the game,
+  **2** otherwise. All three pinned by tests; ADR-0115's flat "exactly two" is superseded.
+
+### Explain last move (ADR-0117)
+
+The endpoint became reachable: a single control in the existing Engine panel, no new route and no
+second capability-fetch mechanism.
+
+- **Evidence above prose, in separate elements.** Every number comes from `citation`; a test feeds
+  contradictory numbers in the prose and asserts the evidence still matches the engine.
+- **The promotion suffix is kept.** `onLastMove` drops it because a highlight needs two squares, and
+  reusing that is the obvious way to build this — but `e7e8q` and `e7e8n` are different moves, and a
+  bare `e7e8` is not legal UCI at all.
+- **Known limit:** only moves the client itself replayed can be explained. The snapshot is
+  authoritative at its own ply and `MoveView` carries no per-move FEN, so joining mid-play has
+  nothing to explain until the next move. Accepted rather than worked around — the alternative is a
+  parallel move-history model or a starting position Chess960 does not have.
+- Same lifecycle as the analysis panel: generation guard, `AbortController`, `settle()` before
+  terminal callbacks, reset at mount, stale results withdrawn.
+
+Not covered: arbitrary past-move navigation, streaming, cost display, the other seven M8 features.
+
+_Prior: 2026-08-17 — M15 Increment 3: Move Explanation productized as an API capability._
 
 ## M15 Increment 3 — Move Explanation API (ADR-0115)
 

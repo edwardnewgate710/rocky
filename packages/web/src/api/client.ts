@@ -99,6 +99,8 @@ import type {
   WebAuthnLoginOptionsRequest,
   WebAuthnLoginOptions,
   WebAuthnLoginVerifyRequest,
+  MoveExplanationRequest,
+  MoveExplanationResponse,
 } from './models.js';
 
 /** A request spec plus whether it requires authentication. */
@@ -193,6 +195,10 @@ export class GambitClient {
       path: `/v1/leaderboard/${encodeURIComponent(variant)}`,
       ...(opts.limit !== undefined ? { query: { limit: opts.limit } } : {}),
     });
+  }
+
+  explainMove(body: MoveExplanationRequest, signal?: AbortSignal): Promise<MoveExplanationResponse> {
+    return this.analysis.explainMove(body, signal);
   }
 
   /**

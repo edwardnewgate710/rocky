@@ -148,6 +148,14 @@ export const GAME_ELEMENT_IDS = [
   'analysis-results',
   'analysis-reached',
   'analysis-limits',
+  'explain',
+  'explain-run',
+  'explain-note',
+  'explain-error',
+  'explain-result',
+  'explain-evidence',
+  'explain-prose',
+  'explain-source',
 ] as const;
 
 export function createGameDocument(): {
@@ -166,7 +174,12 @@ export function createGameDocument(): {
       id === 'analysis' ||
       id === 'analysis-error' ||
       id === 'analysis-reached' ||
-      id === 'analysis-limits'
+      id === 'analysis-limits' ||
+      // Mirrors index.html: the explain block and its result group ship hidden, so a test asserting
+      // the capability reveals them starts from the same state the browser does.
+      id === 'explain' ||
+      id === 'explain-error' ||
+      id === 'explain-result'
     ) {
       el.hidden = true;
     }

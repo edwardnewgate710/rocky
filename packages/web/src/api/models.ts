@@ -852,11 +852,20 @@ export interface AppliedAnalysisLimits {
   readonly nodes?: number;
 }
 
+export interface TerminalOutcome {
+  readonly reason: string;
+  readonly result: string;
+}
+
 export interface AnalysisResponse {
   readonly fen: string;
   readonly variant: string;
   readonly applied: AppliedAnalysisLimits;
   readonly lines: readonly AnalysisLine[];
+  /**
+   * Present when the position is already decided, in which case `lines` is empty and no engine ran.
+   */
+  readonly terminal?: TerminalOutcome;
 }
 
 export interface AnalyzeRequest {
@@ -866,4 +875,36 @@ export interface AnalyzeRequest {
   readonly nodes?: number;
   readonly movetimeMs?: number;
   readonly multiPv?: number;
+}
+
+// --- Move Explanation (M15 inc 4) ------------------------------------------
+
+export type MoveOutcome =
+  | { readonly kind: 'evaluation'; readonly evalKind: 'cp' | 'mate'; readonly evalValue: number; readonly evalLabel: string }
+  | { readonly kind: 'terminal'; readonly reason: string; readonly result: string };
+
+export interface MoveExplanationCitation {
+  readonly moveOutcome: MoveOutcome;
+  readonly evalKind: 'cp' | 'mate';
+  readonly evalValue: number;
+  readonly evalLabel: string;
+  readonly bestMove: string | null;
+  readonly bestLine: readonly string[];
+  readonly depth: number;
+}
+
+export interface MoveExplanationResponse {
+  readonly fen: string;
+  readonly variant: string;
+  readonly move: string;
+  readonly explanation: string;
+  readonly citation: MoveExplanationCitation;
+  readonly providerId: string;
+  readonly model: string;
+}
+
+export interface MoveExplanationRequest {
+  readonly fen: string;
+  readonly variant: string;
+  readonly move: string;
 }

@@ -2,7 +2,12 @@
  * Engine analysis REST API surface (M15 inc 2).
  */
 import type { Execute } from './client.js';
-import type { AnalysisResponse, AnalyzeRequest } from './models.js';
+import type {
+  AnalysisResponse,
+  AnalyzeRequest,
+  MoveExplanationRequest,
+  MoveExplanationResponse,
+} from './models.js';
 
 export class AnalysisApi {
   private readonly execute: Execute;
@@ -25,6 +30,31 @@ export class AnalysisApi {
       method: 'POST',
       path: '/v1/analysis',
       body,
+      auth: true,
+      ...(signal !== undefined ? { signal } : {}),
+    });
+  }
+
+  /**
+   * Request an engine-grounded explanation of a move (M15 inc 4).
+   *
+   * POST /v1/ai/move-explanation, auth: true.
+   *
+   * Sends only `fen`, `variant`, `move` — the server rejects any other property.
+   * No retry logic. No caching.
+   */
+  explainMove(
+    body: MoveExplanationRequest,
+    signal?: AbortSignal,
+  ): Promise<MoveExplanationResponse> {
+    return this.execute<MoveExplanationResponse>({
+      method: 'POST',
+      path: '/v1/ai/move-explanation',
+      body: {
+        fen: body.fen,
+        variant: body.variant,
+        move: body.move,
+      },
       auth: true,
       ...(signal !== undefined ? { signal } : {}),
     });

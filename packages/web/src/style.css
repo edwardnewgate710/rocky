@@ -1114,6 +1114,41 @@ button:disabled {
   white-space: nowrap;
 }
 
+/* --- Move Explanation (M15 inc 4) ---
+   Part of the Engine panel, not a second panel. A hairline separates it from the analysis rows
+   above; a heading and a border would announce a new surface for one button and a paragraph. */
+.explain-block {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.explain-result {
+  margin-top: 8px;
+}
+/* Same treatment as `.analysis-eval`, and for the same reason: this column is read downward against
+   the analysis rows directly above it, so the figures have to align with them. */
+.explain-value {
+  font-variant-numeric: tabular-nums;
+  min-width: 4.5ch;
+  flex-shrink: 0;
+  text-align: right;
+}
+.explain-move {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The one place in this panel with running prose, so it gets a readable measure and leading while
+   the rows keep theirs. Body colour, not muted: it is the answer the reader asked for, and the
+   attribution under it is what carries the caveat. */
+.explain-prose {
+  margin: 8px 0 4px;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--text);
+}
+
 /* --- Leaderboard (M14 inc 43) --- */
 .leaderboard {
   max-width: 600px;

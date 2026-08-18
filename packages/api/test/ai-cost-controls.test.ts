@@ -197,8 +197,13 @@ test('the citation evaluates the requested move, not the engine preference', asy
   const service = serviceOver(engine, provider);
   const outcome = await service.explain({ fen: START_FEN, variant: 'standard', move: 'e2e4' });
 
-  assert.equal(outcome.citation.moveEvalValue, -80, 'negated into the mover’s frame');
-  assert.equal(outcome.citation.moveEvalLabel, '-0.80');
+  assert.equal(outcome.citation.moveOutcome.kind, 'evaluation');
+  assert.deepEqual(outcome.citation.moveOutcome, {
+    kind: 'evaluation',
+    evalKind: 'cp',
+    evalValue: -80,
+    evalLabel: '-0.80',
+  }, 'negated into the mover’s frame');
   assert.equal(outcome.citation.evalValue, 35, 'what the engine would have achieved instead');
   assert.equal(outcome.citation.bestMove, 'd2d4');
 
@@ -222,8 +227,12 @@ test('a mate delivered by the requested move is reported as mate for the mover',
   const service = serviceOver(engine, provider);
   const outcome = await service.explain({ fen: START_FEN, variant: 'standard', move: 'e2e4' });
 
-  assert.equal(outcome.citation.moveEvalKind, 'mate');
-  assert.equal(outcome.citation.moveEvalValue, 2, 'the mover mates in 2, not gets mated in 2');
+  assert.deepEqual(outcome.citation.moveOutcome, {
+    kind: 'evaluation',
+    evalKind: 'mate',
+    evalValue: 2,
+    evalLabel: 'mate in 2',
+  }, 'the mover mates in 2, not gets mated in 2');
 });
 
 /**

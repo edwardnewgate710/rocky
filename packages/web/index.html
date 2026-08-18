@@ -126,6 +126,18 @@
           <div id="analysis-results" class="panel-list" aria-busy="false"></div>
           <p id="analysis-reached" class="count" hidden></p>
           <p id="analysis-limits" class="count" hidden></p>
+          <div id="explain" class="explain-block" hidden>
+            <button id="explain-run" type="button" class="button">Explain last move</button>
+            <p id="explain-note" class="count" role="status" aria-live="polite"></p>
+            <div id="explain-error" class="error" role="alert" hidden></div>
+            <div id="explain-result" class="explain-result" aria-busy="false" hidden>
+              <!-- Engine fact first, then the model's prose. The order is the point: the reader
+                   meets the verifiable number before the sentence that interprets it. -->
+              <div id="explain-evidence" class="panel-list"></div>
+              <p id="explain-prose" class="explain-prose"></p>
+              <p id="explain-source" class="count"></p>
+            </div>
+          </div>
         </section>
       </aside>
     </main>

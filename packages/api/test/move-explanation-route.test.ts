@@ -114,9 +114,7 @@ test('POST /v1/ai/move-explanation: authenticated request returns 200 with prose
       citation: {
         // The stub answers both searches identically, so the move's evaluation is the negation of
         // the position's. Real engines differ; `ai-cost-controls.test.ts` scripts that case.
-        moveEvalKind: 'cp',
-        moveEvalValue: -35,
-        moveEvalLabel: '-0.35',
+        moveOutcome: { kind: 'evaluation', evalKind: 'cp', evalValue: -35, evalLabel: '-0.35' },
         evalKind: 'cp',
         evalValue: 35,
         evalLabel: '+0.35',

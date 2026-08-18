@@ -11,6 +11,34 @@ import type { ComponentSchemas, JsonSchema } from './types';
 
 const dateTime: JsonSchema = { type: 'string', format: 'date-time' };
 const nullableString: JsonSchema = { type: 'string', nullable: true };
+
+/**
+ * The terminal vocabulary, kept in one place because two schemas publish it.
+ *
+ * Mirrors `TerminalReason` in `analysis/terminal.ts`, which in turn mirrors core's `GameStatus`
+ * reasons; `RESULT_STRINGS` is the platform's existing `ResultString`.
+ */
+const TERMINAL_REASONS = [
+  'checkmate',
+  'stalemate',
+  'insufficient_material',
+  'fifty_move',
+  'threefold',
+  'variant_win',
+  'variant_draw',
+] as const;
+const RESULT_STRINGS = ['1-0', '0-1', '1/2-1/2'] as const;
+
+/** Shared shape for a decided position's outcome. */
+const terminalOutcomeSchema: JsonSchema = {
+  type: 'object',
+  required: ['reason', 'result'],
+  properties: {
+    reason: { type: 'string', enum: [...TERMINAL_REASONS] },
+    result: { type: 'string', enum: [...RESULT_STRINGS] },
+  },
+  additionalProperties: false,
+};
 const nullableInt: JsonSchema = { type: 'integer', nullable: true };
 
 const timeControl: JsonSchema = {
@@ -1587,6 +1615,8 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     type: 'object',
     required: ['fen', 'variant', 'applied', 'lines'],
     properties: {
+      // `terminal` present => `lines` is empty and no engine ran (ADR-0116).
+      terminal: terminalOutcomeSchema,
       fen: { type: 'string' },
       variant: { type: 'string', enum: [...VARIANTS] },
       applied: {
@@ -1630,24 +1660,40 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       explanation: { type: 'string' },
       citation: {
         type: 'object',
-        required: [
-          'moveEvalKind',
-          'moveEvalValue',
-          'moveEvalLabel',
-          'evalKind',
-          'evalValue',
-          'evalLabel',
-          'bestMove',
-          'bestLine',
-          'depth',
-        ],
+        required: ['moveOutcome', 'evalKind', 'evalValue', 'evalLabel', 'bestMove', 'bestLine', 'depth'],
         properties: {
-          // Every evaluation here is from the perspective of the player who made the move.
-          // `moveEval*` is what the move achieved; `eval*` is what the engine's own best move
-          // achieves from the same position. The pair is the judgement.
-          moveEvalKind: { type: 'string', enum: ['cp', 'mate'] },
-          moveEvalValue: { type: 'number' },
-          moveEvalLabel: { type: 'string' },
+          // What the move achieved, tagged by `kind`: an evaluation from the perspective of the
+          // player who moved, or a finished game. `eval*` alongside is what the engine's own best
+          // move achieves from the same position; the pair is the judgement.
+          // A real union, not an object with everything optional. Requiring only `kind` accepted a
+          // half-filled evaluation, a terminal outcome with no result, and objects mixing both —
+          // none of which the presenter can emit — so generated clients and schema tests could not
+          // rely on either shape. Raised in the Qodo review of PR #135.
+          moveOutcome: {
+            oneOf: [
+              {
+                type: 'object',
+                required: ['kind', 'evalKind', 'evalValue', 'evalLabel'],
+                properties: {
+                  kind: { type: 'string', enum: ['evaluation'] },
+                  evalKind: { type: 'string', enum: ['cp', 'mate'] },
+                  evalValue: { type: 'number' },
+                  evalLabel: { type: 'string' },
+                },
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                required: ['kind', 'reason', 'result'],
+                properties: {
+                  kind: { type: 'string', enum: ['terminal'] },
+                  reason: { type: 'string', enum: [...TERMINAL_REASONS] },
+                  result: { type: 'string', enum: [...RESULT_STRINGS] },
+                },
+                additionalProperties: false,
+              },
+            ],
+          },
           evalKind: { type: 'string', enum: ['cp', 'mate'] },
           evalValue: { type: 'number' },
           evalLabel: { type: 'string' },

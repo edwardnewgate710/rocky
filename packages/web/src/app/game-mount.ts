@@ -21,7 +21,25 @@ import {
   renderReached,
   setBusy,
 } from './analysis-view.js';
-import { analysisEnabled, analysisSupportsVariant, loadCapabilities } from './capabilities-nav.js';
+import {
+  analysisEnabled,
+  analysisSupportsVariant,
+  loadCapabilities,
+  moveExplanationEnabled,
+  moveExplanationSupportsVariant,
+} from './capabilities-nav.js';
+import { ExplainController } from './explain-controller.js';
+import {
+  clearExplanation,
+  EXPLAIN_MESSAGES,
+  renderError as renderExplainError,
+  renderEvidence,
+  renderNote as renderExplainNote,
+  renderProse,
+  renderSource,
+  setBusy as setExplainBusy,
+  setResultVisible as setExplainResultVisible,
+} from './explain-view.js';
 import { formatClock, formatTimeControl } from './render-helpers.js';
 import type { AuthSession } from './auth-controller.js';
 
@@ -213,7 +231,141 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     }
   };
 
+  // Move Explanation block (M15 inc 4), inside the same panel.
+  const explainBlockEl = doc.getElementById('explain');
+  const explainRunBtn = doc.getElementById('explain-run') as HTMLButtonElement | null;
+  const explainNoteEl = doc.getElementById('explain-note');
+  const explainErrorEl = doc.getElementById('explain-error');
+  const explainResultEl = doc.getElementById('explain-result');
+  const explainEvidenceEl = doc.getElementById('explain-evidence');
+  const explainProseEl = doc.getElementById('explain-prose');
+  const explainSourceEl = doc.getElementById('explain-source');
+
+  let explainAvailable = false;
+  /** The capability payload, held so the variant gate can re-run when the variant lands. */
+  let explainCapabilities: unknown = null;
+
+  /**
+   * Clear the block, for the same reason the analysis panel is reset at mount: this DOM lives in
+   * `index.html` and outlives any single mount, so last game's explanation is still sitting there
+   * when the next one mounts. No request is involved, so nothing in the request lifecycle catches
+   * it.
+   */
+  const resetExplainBlock = (): void => {
+    if (explainEvidenceEl && explainProseEl && explainSourceEl && explainResultEl) {
+      clearExplanation({
+        evidence: explainEvidenceEl,
+        prose: explainProseEl,
+        source: explainSourceEl,
+        result: explainResultEl,
+      });
+    }
+    if (explainErrorEl) renderExplainError(explainErrorEl, null);
+    if (explainNoteEl) renderExplainNote(explainNoteEl, EXPLAIN_MESSAGES.idle);
+  };
+
+  resetExplainBlock();
+
+  /** The move to explain, or `null` — see `GameController.lastReplayedMove` for when that happens. */
+  const explainTarget = (): { fen: string; variant: string; move: string } | null => {
+    const last = controller?.lastReplayedMove;
+    if (!last || !currentVariant) return null;
+    return { fen: last.fen, variant: currentVariant, move: last.uci };
+  };
+
+  /**
+   * The single place the explain control's enabled state is decided — same rule as
+   * `refreshAnalysisControls`, and split out for the same reason: two places deciding it is how they
+   * came to disagree last time.
+   */
+  const refreshExplainControls = (): void => {
+    if (analysisDisposed || !explainAvailable) return;
+
+    // The variant gate is evaluated here rather than once at capability time, because the two
+    // arrivals race: the capability answer and the game snapshot can land in either order, and only
+    // this function runs on both. Deciding it at capability time treated an unknown variant as
+    // supported and never revisited it, so a Crazyhouse game on a Stockfish-only deployment got an
+    // enabled control whose every request answers 422 — the exact failure ADR-0114 Decision 7 was
+    // written about. Raised in the Qodo review of PR #135.
+    const servable =
+      currentVariant === null || moveExplanationSupportsVariant(explainCapabilities, currentVariant);
+    if (explainBlockEl) explainBlockEl.hidden = !servable;
+    if (!servable) return;
+
+    const authed = isUserAuthenticated();
+    const target = explainTarget();
+    if (explainRunBtn) {
+      explainRunBtn.disabled = !authed || target === null || explainController.isPending;
+    }
+    if (!explainNoteEl) return;
+    // Only the two messages that are properties of the *control* rather than of a request, and only
+    // transitions between them — anything a request had to say owns the note until something else
+    // does.
+    const owned = new Set<string>([
+      EXPLAIN_MESSAGES.idle,
+      EXPLAIN_MESSAGES.signedOut,
+      EXPLAIN_MESSAGES.noMove,
+      '',
+    ]);
+    if (!owned.has(explainNoteEl.textContent ?? '')) return;
+    if (!authed) {
+      renderExplainNote(explainNoteEl, EXPLAIN_MESSAGES.signedOut);
+    } else if (target === null) {
+      renderExplainNote(explainNoteEl, EXPLAIN_MESSAGES.noMove);
+    } else {
+      renderExplainNote(explainNoteEl, EXPLAIN_MESSAGES.idle);
+    }
+  };
+
   let controller: GameController;
+
+  const explainController = new ExplainController({
+    client: deps.client,
+    getTarget: explainTarget,
+    callbacks: {
+      onPhase: (phase) => {
+        if (explainResultEl) setExplainBusy(explainResultEl, phase === 'loading');
+        refreshExplainControls();
+        if (phase === 'loading') {
+          if (explainNoteEl) renderExplainNote(explainNoteEl, EXPLAIN_MESSAGES.running);
+          if (explainErrorEl) renderExplainError(explainErrorEl, null);
+        }
+      },
+      onResult: (result) => {
+        if (explainEvidenceEl) renderEvidence(explainEvidenceEl, result);
+        if (explainProseEl) renderProse(explainProseEl, result);
+        if (explainSourceEl) renderSource(explainSourceEl, result);
+        if (explainResultEl) setExplainResultVisible(explainResultEl, true);
+        if (explainNoteEl) renderExplainNote(explainNoteEl, null);
+        if (explainErrorEl) renderExplainError(explainErrorEl, null);
+      },
+      onFailure: (failure) => {
+        resetExplainBlock();
+        const noteFor: Partial<Record<typeof failure, string>> = {
+          'rate-limited': EXPLAIN_MESSAGES.rateLimited,
+          unavailable: EXPLAIN_MESSAGES.unavailable,
+          unauthenticated: EXPLAIN_MESSAGES.signedOut,
+        };
+        const note = noteFor[failure];
+        if (note !== undefined) {
+          if (explainNoteEl) renderExplainNote(explainNoteEl, note);
+          return;
+        }
+        // `rejected` and `failed` are the ones the player did not cause and cannot act on, so they
+        // read as errors rather than notes.
+        if (explainNoteEl) renderExplainNote(explainNoteEl, null);
+        if (explainErrorEl) {
+          renderExplainError(
+            explainErrorEl,
+            failure === 'rejected' ? EXPLAIN_MESSAGES.rejected : EXPLAIN_MESSAGES.failed,
+          );
+        }
+      },
+      onInvalidated: () => {
+        resetExplainBlock();
+      },
+    },
+  });
 
   const analysisController = new AnalysisController({
     client: deps.client,
@@ -310,7 +462,13 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
       onPosition: (fen: string) => {
         board.setPosition(fen);
         analysisController.positionChanged(fen);
+        explainController.targetChanged();
         refreshAnalysisControls();
+        refreshExplainControls();
+      },
+      onExplainableChange: () => {
+        explainController.targetChanged();
+        refreshExplainControls();
       },
       onTurn: (myTurn: boolean) => board.setTurn(myTurn),
       onClock: (whiteMs: number, blackMs: number) => {
@@ -333,6 +491,10 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
         if (state.variant) {
           currentVariant = state.variant;
           refreshAnalysisControls();
+          // Both gates depend on the variant, and this is the arrival that supplies it. Refreshing
+          // only the analysis one left the explain control offered on a variant with no engine
+          // whenever capabilities answered first.
+          refreshExplainControls();
         }
 
         let liveAnnouncement = '';
@@ -484,6 +646,13 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     unbinds.push(() => el.removeEventListener('click', listener));
   };
 
+  // Route-scoped, like every other control here. A bare `addEventListener` on this element stacked a
+  // new listener — each holding a disposed controller — on every SPA navigation to a game, because
+  // the panel's DOM lives in index.html and outlives the mount. Raised in the Qodo review of PR #135.
+  bindClick(explainRunBtn, () => {
+    void explainController.explain();
+  });
+
   bindClick(btnOfferDraw, () => controller.offerDraw());
   bindClick(btnClaimFlag, () => controller.claimFlag());
   bindClick(btnAcceptDraw, () => controller.acceptDraw());
@@ -561,6 +730,11 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
         analysisSectionEl.hidden = false;
       }
       refreshAnalysisControls();
+      // Revealed on its own capability, not on the analysis one: a deployment can serve analysis
+      // without an AI provider, and the server only reports this true when both halves exist.
+      explainCapabilities = flags;
+      explainAvailable = moveExplanationEnabled(flags);
+      refreshExplainControls();
     })
     .catch(() => {
       // Fail quiet: leave section hidden
@@ -598,6 +772,7 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
       if (analysisDisposed) return;
       analysisDisposed = true;
       analysisController.dispose();
+      explainController.dispose();
     },
   };
 
@@ -627,7 +802,12 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     connectivity,
     analysis,
     onSessionChange: () => {
-      if (!analysisDisposed) refreshAnalysisControls();
+      if (analysisDisposed) return;
+      refreshAnalysisControls();
+      // Both controls depend on live authentication; refreshing only one left Explain disabled under
+      // a stale sign-in note after signing in, and enabled after signing out, until some unrelated
+      // event happened to refresh it. Raised in the Qodo review of PR #135.
+      refreshExplainControls();
     },
   };
 }

@@ -86,6 +86,15 @@ export interface EngineGrounding {
   readonly moveEvalCp?: number;
   /** Mate-in-N after `moveUci`, from the mover's perspective. See {@link moveEvalCp}. */
   readonly moveEvalMate?: number;
+  /**
+   * The game's outcome after `moveUci`, when the move ended it — a short phrase such as
+   * `"checkmate — White wins"`.
+   *
+   * Mutually exclusive with the evaluation fields above: a decided game has a result, not a score.
+   * Supplying it instead of a fabricated `0` is what stops a model being told that a checkmate is a
+   * level position and then reasoning from that.
+   */
+  readonly moveOutcome?: string;
   /** Engine evaluation in centipawns from the perspective of the side to move. */
   readonly evalCp?: number;
   /** Engine evaluation as mate-in-N (positive = side to move mates). */

@@ -91,6 +91,32 @@ export function capabilityFlags(payload: unknown): Record<string, unknown> | und
 }
 
 /**
+ * Whether this deployment serves engine-grounded move explanation.
+ *
+ * Same fail-closed rule as {@link analysisEnabled}, and for a sharper reason: an explanation costs a
+ * paid provider call, so a control offered on a guess is a control whose every click answers 503.
+ * The server sets this only when an AI provider *and* an engine are both configured (ADR-0115), so
+ * `true` already implies analysis is on — this never has to be combined with the analysis flag.
+ */
+export function moveExplanationEnabled(payload: unknown): boolean {
+  return capabilityFlags(payload)?.['moveExplanation'] === true;
+}
+
+/**
+ * Whether this deployment can explain a move in a specific variant.
+ *
+ * Explanation is grounded in engine output, so it serves exactly the variants analysis serves — the
+ * server asserts that equality rather than publishing a second list. Reusing `analysisVariants` here
+ * is therefore reading the authoritative answer, not approximating it.
+ */
+export function moveExplanationSupportsVariant(payload: unknown, variant: string | null): boolean {
+  if (!moveExplanationEnabled(payload) || variant === null) return false;
+  const variants = (payload as { analysisVariants?: unknown } | null)?.analysisVariants;
+  if (!Array.isArray(variants)) return true;
+  return variants.includes(variant);
+}
+
+/**
  * Whether this deployment can analyse a specific variant.
  *
  * `analysisEnabled` answers the deployment-wide question; this answers the one that decides whether

@@ -15,6 +15,8 @@ import { AiError } from '@chess-platform/ai-orchestrator';
 import { HttpError } from '../http/errors.js';
 import type { AnalysisService } from '../analysis/service.js';
 import { coreFenValidator } from '../analysis/fen-validator.js';
+import type { TerminalReason } from '../analysis/terminal.js';
+import { describeTerminal, fromStatus, terminalOutcome } from '../analysis/terminal.js';
 
 export interface MoveExplanationInput {
   readonly fen: string;
@@ -47,11 +49,27 @@ export interface MoveExplanationOutcome {
    * two numbers below would silently be in opposite frames and their difference would be noise.
    */
   readonly citation: {
-    /** Evaluation of the position after the requested move. */
-    readonly moveEvalKind: 'cp' | 'mate';
-    readonly moveEvalValue: number;
-    readonly moveEvalLabel: string;
-    /** Evaluation the engine's own best move achieves from the same position. */
+    /**
+     * What the requested move achieved — either an evaluation or a finished game.
+     *
+     * A discriminated union rather than an evaluation with sentinel values, because a decided
+     * position has no evaluation to report and saying `+0.00` about checkmate is not a rounding
+     * error, it is the opposite of the truth (ADR-0116). Clients switch on `kind`; there is no
+     * magic score, no magic depth, and no empty string to interpret.
+     */
+    readonly moveOutcome:
+      | {
+          readonly kind: 'evaluation';
+          readonly evalKind: 'cp' | 'mate';
+          readonly evalValue: number;
+          readonly evalLabel: string;
+        }
+      | {
+          readonly kind: 'terminal';
+          readonly reason: TerminalReason;
+          readonly result: '1-0' | '0-1' | '1/2-1/2';
+        };
+    /** Evaluation the engine's own best move achieves from the position before the move. */
     readonly evalKind: 'cp' | 'mate';
     readonly evalValue: number;
     readonly evalLabel: string;
@@ -138,6 +156,20 @@ export class MoveExplanationService {
       throw HttpError.validation('invalid FEN', { fen: 'invalid FEN' });
     }
 
+    // A game that is already over has no move to explain.
+    //
+    // Checkmate and stalemate cannot reach here — `play` would have rejected the move — but a draw
+    // by the fifty-move rule, by insufficient material, or by a variant rule leaves legal moves on
+    // the board while the game is decided. Those moves used to be accepted: the request was charged,
+    // the pre-move search then returned a terminal outcome with no lines, and the caller got a
+    // retryable 503 for a permanent condition. Rejecting here says what is actually wrong, and says
+    // it before anything is spent. Raised in the Qodo review of PR #135.
+    if (terminalOutcome(input.fen, input.variant)) {
+      throw HttpError.validation('the game is already over in this position', {
+        fen: 'position is terminal',
+      });
+    }
+
     // Authoritative legality, at the boundary the API owns.
     //
     // `Position.play` resolves the UCI against `generateLegalMoves`, so this rejects a move that is
@@ -157,21 +189,27 @@ export class MoveExplanationService {
     // Everything above is pure and cheap. Only now is the request worth charging for.
     if (onAccepted) await onAccepted();
 
-    // Two searches, and both are needed.
+    // Does the move end the game? Then there is nothing to search after it.
     //
-    // The first describes the position as the player found it, so its evaluation and best line are
-    // what the *engine* would have done. The second describes the position they actually created.
-    // Analysing only the first — as this did until the Qodo review of PR #134 — answers "explain
-    // e2e4" with the evaluation of whatever move the engine preferred, so any move that is not the
-    // engine's choice gets facts about a different move, and a blunder is cited with the numbers of
-    // the best reply. The gap between the two is the entire judgement.
+    // Adjudicated from the position we just constructed, by the same authoritative rules that
+    // accepted the move — not inferred from what an engine says about it. A decided position gives a
+    // search nothing to score, and the engine's placeholder for that case reads as `+0.00`, so
+    // checkmate was being explained as dead level (ADR-0116). Deciding it here is both the correct
+    // answer and one search cheaper.
+    const moveTerminal = fromStatus(afterMove.status());
+
+    // The pre-move search always runs: it is what the *engine* would have played instead, and the
+    // gap between that and what the move achieved is the whole judgement. The post-move search runs
+    // only when there is something left to evaluate — so an accepted move costs two searches
+    // normally and one when it ends the game.
     //
-    // Both run through `AnalysisService`: the server's limits policy, FEN validation, deterministic
-    // timeout and the one dedicated pool of ADR-0113 apply to each. The cost is two searches per
-    // request, stated plainly in ADR-0115 rather than left implied by "one".
+    // Both go through `AnalysisService`: the server's limits policy, FEN validation, deterministic
+    // timeout and the one dedicated pool of ADR-0113 apply to each.
     const [outcome, afterOutcome] = await Promise.all([
       this.analysis.analyze({ fen: input.fen, variant: input.variant, multiPv: 1 }),
-      this.analysis.analyze({ fen: afterMove.fen(), variant: input.variant, multiPv: 1 }),
+      moveTerminal
+        ? Promise.resolve(undefined)
+        : this.analysis.analyze({ fen: afterMove.fen(), variant: input.variant, multiPv: 1 }),
     ]);
 
     // No lines means no evidence, and no evidence means no explanation.
@@ -184,7 +222,7 @@ export class MoveExplanationService {
     // zero-value citation reports `+0.00` at depth 0, a number no engine produced, attached to prose
     // the model wrote with nothing to defer to. Refusing is the only answer consistent with the
     // feature's premise.
-    if (outcome.lines.length === 0 || afterOutcome.lines.length === 0) {
+    if (outcome.lines.length === 0 || (afterOutcome !== undefined && afterOutcome.lines.length === 0)) {
       throw new HttpError(503, 'service_unavailable', 'the engine returned no evaluation to explain', undefined, {
         'Retry-After': '1',
       });
@@ -199,7 +237,18 @@ export class MoveExplanationService {
         // Always supplied, so the explainer never reaches for an engine — it is composed without
         // one, so there is none to reach for.
         analysis: outcome.lines,
-        analysisAfterMove: afterOutcome.lines,
+        ...(afterOutcome ? { analysisAfterMove: afterOutcome.lines } : {}),
+        ...(moveTerminal
+          ? {
+              terminalAfterMove: {
+                reason: moveTerminal.reason,
+                result: moveTerminal.result,
+                // The phrase is built here, where the vocabulary lives. `ai-features` sits below the
+                // API and should not be deciding how a chess result reads in English.
+                describe: describeTerminal(moveTerminal),
+              },
+            }
+          : {}),
         // Derived from the position, never accepted from the caller: the FEN already determines who
         // is to move, and taking a second opinion on it would let a request tell the model that the
         // other side played the move.
@@ -215,12 +264,17 @@ export class MoveExplanationService {
       move: input.move,
       explanation: explanation.explanation,
       citation: {
-        // Non-null by construction: both searches returned at least one line, so the explainer
-        // populated the post-move fields. The fallbacks keep the wire shape total rather than
-        // letting a future change quietly emit a response missing its central number.
-        moveEvalKind: explanation.citation.moveEvalKind ?? explanation.citation.evalKind,
-        moveEvalValue: explanation.citation.moveEvalValue ?? explanation.citation.evalValue,
-        moveEvalLabel: explanation.citation.moveEvalLabel ?? explanation.citation.evalLabel,
+        moveOutcome: moveTerminal
+          ? { kind: 'terminal', reason: moveTerminal.reason, result: moveTerminal.result }
+          : {
+              kind: 'evaluation',
+              // Non-null by construction: with no terminal outcome the post-move search ran and
+              // returned a line, so the explainer populated these. The fallbacks keep the wire shape
+              // total rather than letting a future change emit a response missing its central fact.
+              evalKind: explanation.citation.moveEvalKind ?? explanation.citation.evalKind,
+              evalValue: explanation.citation.moveEvalValue ?? explanation.citation.evalValue,
+              evalLabel: explanation.citation.moveEvalLabel ?? explanation.citation.evalLabel,
+            },
         evalKind: explanation.citation.evalKind,
         evalValue: explanation.citation.evalValue,
         evalLabel: explanation.citation.evalLabel,

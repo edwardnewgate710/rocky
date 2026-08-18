@@ -459,9 +459,7 @@ test('MoveExplanationResponse: the served schema describes exactly what the pres
       move: 'e2e4',
       explanation: 'e4 controls central squares.',
       citation: {
-        moveEvalKind: 'cp',
-        moveEvalValue: 20,
-        moveEvalLabel: '+0.20',
+        moveOutcome: { kind: 'evaluation', evalKind: 'cp', evalValue: 20, evalLabel: '+0.20' },
         evalKind: 'cp',
         evalValue: 30,
         evalLabel: '+0.30',

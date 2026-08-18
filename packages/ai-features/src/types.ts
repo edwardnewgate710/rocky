@@ -15,6 +15,20 @@ import type { TokenUsage } from '@chess-platform/ai-orchestrator';
 export type MoveUci = string;
 
 /**
+ * A finished game's outcome, as adjudicated by the caller.
+ *
+ * Deliberately structural rather than an import from the API: this package sits below it and knows
+ * nothing about HTTP. `reason` is the platform's `GameStatus` vocabulary and `result` its
+ * `ResultString`; `describe` is the phrase to ground the model with, so this package never has to
+ * decide how an outcome should read.
+ */
+export interface TerminalAfterMove {
+  readonly reason: string;
+  readonly result: string;
+  readonly describe: string;
+}
+
+/**
  * Request for a move explanation.
  *
  * The caller supplies a position (FEN) and a move (UCI).  The explainer
@@ -49,6 +63,14 @@ export interface ExplainRequest {
    * carries no post-move evaluation and the prompt says nothing about one.
    */
   readonly analysisAfterMove?: readonly EngineResult[];
+  /**
+   * The game's outcome when {@link move} ends it, adjudicated by the caller's rules engine.
+   *
+   * Supplied *instead of* {@link analysisAfterMove}: a decided position has no evaluation, and a
+   * search of one returns a placeholder that reads as `+0.00`. When this is present the explainer
+   * grounds the explanation in the result and reports it as the move's outcome.
+   */
+  readonly terminalAfterMove?: TerminalAfterMove;
   /** Engine search limits (used only when `analysis` is not supplied). */
   readonly limits?: AnalysisLimits;
   /** Cooperative cancellation. */

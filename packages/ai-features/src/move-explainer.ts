@@ -136,11 +136,16 @@ export class MoveExplainer {
     // move, that second evaluation is what actually answers "was this move good" — and it arrives
     // from the opponent's perspective, because they are the side to move once the move is made.
     // Negating it puts both numbers in one frame: the mover's.
-    const afterMove = request.analysisAfterMove?.[0];
+    // A move that ends the game has an outcome, not an evaluation. The caller adjudicates that —
+    // it owns the rules engine — and when it does, no post-move score is consulted even if one was
+    // supplied, because a search of a decided position returns a placeholder that reads as level.
+    const terminal = request.terminalAfterMove;
+    const afterMove = terminal ? undefined : request.analysisAfterMove?.[0];
     const moverRelative = afterMove ? negate(afterMove.evaluation) : undefined;
 
     const grounding: EngineGrounding = {
       ...engineResultsToGrounding(request.fen, results, request.move, variant),
+      ...(terminal ? { moveOutcome: terminal.describe } : {}),
       ...(moverRelative?.type === 'cp' ? { moveEvalCp: moverRelative.value } : {}),
       ...(moverRelative?.type === 'mate' ? { moveEvalMate: moverRelative.value } : {}),
     };
@@ -155,9 +160,11 @@ export class MoveExplainer {
 
     // The comparison is the whole judgement, so it is asked for explicitly rather than left to be
     // inferred from two numbers in the grounding block.
-    const comparison = moverRelative
-      ? ` Compare the evaluation after ${request.move} with the engine's own best move and say whether the move loses ground.`
-      : '';
+    const comparison = terminal
+      ? ` This move ends the game (${terminal.describe}). Explain how it finishes the game; do not describe the resulting position as ongoing or assign it an evaluation.`
+      : moverRelative
+        ? ` Compare the evaluation after ${request.move} with the engine's own best move and say whether the move loses ground.`
+        : '';
 
     // 4. Hand the facts to the completion port, which renders them.
     //
