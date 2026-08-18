@@ -289,3 +289,80 @@ also no instance in this document, so nothing was built for it.
   longest, removing the conditional guard so a refusal writes again, accepting duplicate keys, and
   moving the retry lookup back inside the admitting statement are each caught here and by nothing
   else.
+- `packages/api/test/pg-observer.ts` and its focused tests — the deterministic synchronisation the
+  creation-race test uses, added in the follow-up below.
+
+## Follow-up (2026-08-18, M15 Increment 7): the creation-race test now proves it raced
+
+The bucket-creation-race test above shipped in Increment 6 sequenced by a wall-clock sleep: start
+the losing admission, `setTimeout(…, 300)`, then commit the holder. That was raised as a nitpick in
+the CodeRabbit review of PR #137 and is recorded here because it was a real hole, not a style
+preference.
+
+A sleep cannot fail loudly. If the losing statement had not yet reached the server when the holder
+committed, the race simply did not happen — and the test passed anyway, because both orderings end
+with the same stored row, the same refusal and the same `Retry-After`. No assertion in the test
+could distinguish them. So the test that existed to prove the snapshot fix worked could go green
+without exercising the snapshot at all, and would have kept doing so under CI load, which is
+exactly when the ordering is least likely to hold.
+
+That is now measured rather than assumed. `packages/api/test/pg-observer.ts` polls
+`pg_stat_activity` from a third connection and resolves only once the specific backend running the
+admission is reported blocked, on a lock of the expected kind, **by the specific backend holding
+the row**. All three conditions are required: `wait_event_type = Lock` alone would also match a
+lock no part of the test created.
+
+The lock is a `transactionid` lock, not a row lock. A conflicting `ON CONFLICT` waits on the
+*transaction* that inserted the uncommitted tuple, because until that transaction ends nobody can
+say whether the key is taken. A helper looking for a literal row lock would have waited forever;
+this was verified against PostgreSQL 16.14 rather than reasoned about.
+
+The wait is bounded (5s default) by a ceiling that sits **outside** the polling loop. The first
+version read the clock only between polls, which bounds nothing if a poll never returns: an
+exhausted pool or a stalled server would have hung the run rather than failed it — the opposite
+of the one guarantee the helper exists to give, and a claim this ADR was already making. Raised
+in the Qodo review of PR #138 and pinned by a test that occupies the observer pool.
+
+It throws on expiry with the expected backend, the expected
+blocker, the last observed wait state, the elapsed time and the poll count — and deliberately
+without `pg_stat_activity.query`, connection strings, or any other session, so a CI failure does
+not print credentials or unrelated activity into a public log. The bound is a failure ceiling, not
+a duration: measured over 10 runs the blocked state became visible in 2.1-3.4 ms, on the first
+poll every time. The test got faster as well as honest.
+
+The observation is asserted, which is what makes it load-bearing rather than decorative. Mutation
+testing pins that, and the two controls are the interesting half:
+
+| Mutation | Result |
+| --- | --- |
+| The wait call is deleted, assertions kept | caught (compiler: nothing assigns the evidence) |
+| The observer returns on its first poll without checking anything | caught by its focused tests |
+| The wrong backend is observed | caught |
+| The holder commits before the block is observed | caught |
+| The observer treats its own timeout as success | caught by its focused tests |
+| The ceiling moves back inside the loop, so a stalled poll is unbounded | caught |
+| The lock row stops being required, so the evidence can be incomplete | caught (compiler) |
+| *Control:* the assertions are deleted, the wait kept | survives — the wait still throws, so the assertion is not what enforces it |
+| *Control:* no synchronisation at all, and the holder commits before the admission is even issued | **survives** |
+
+The last row is the point. With the race made impossible, the test still passes — which is direct
+evidence that the sleep-based version could report success having proved nothing. Neither control
+is a gap: they delete the guard rather than the behaviour, and they are listed because they are
+what shows the guard earns its place.
+
+Each focused test builds its own uuid-named scratch table. A fixed name would let one test drop a
+table another was using and would make the cleanup capable of destroying a pre-existing table of
+the same name; also raised in the Qodo review of PR #138.
+
+The returned evidence is **total**: the wait does not report success until the ungranted `pg_locks`
+row is visible alongside the activity row, and both fields are non-nullable so the compiler rejects
+any version that stops requiring it. `pg_stat_activity`, `pg_blocking_pids()` and `pg_locks` are
+three separate reads of server state inside one statement and are not atomic with respect to each
+other, so the lock row can in principle lag. The first version tolerated that in the helper while
+the test asserted the row was always present — two claims that cannot both be true, and one of them
+had to be a latent flake. Requiring the row makes them agree, at a cost of at most one extra 5 ms
+poll; it was not reproducible in 200 forced races, which bounds the risk rather than disproving it.
+Raised in the Qodo review of PR #138.
+
+No production code changed in this follow-up. The limiter, the port, the SQL and the HTTP contract
+are exactly as this ADR describes them.

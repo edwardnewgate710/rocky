@@ -4,7 +4,47 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-18 — M15 Increment 6: truthful OpenAPI 3.1 nullability and all-or-nothing rate-limit admission._
+_Last updated: 2026-08-18 — M15 Increment 7: deterministic PostgreSQL concurrency synchronisation._
+
+## M15 Increment 7 — Deterministic PostgreSQL Concurrency Synchronisation (ADR-0119 follow-up)
+
+Test-infrastructure hardening. No production code changed: the limiter, the port, the SQL and the
+HTTP contract are untouched.
+
+The bucket-creation-race test from Increment 6 sequenced its race with `setTimeout(…, 300)`. A
+sleep cannot fail loudly — if the losing statement had not reached the server before the holder
+committed, the race did not happen and the test passed anyway, because both orderings end with the
+same stored row and the same refusal. The test written to prove the snapshot fix could go green
+without exercising it, and would be likeliest to do so under CI load. Raised as a nitpick in the
+CodeRabbit review of PR #137 and carried forward deliberately rather than dropped.
+
+It is now sequenced on PostgreSQL itself. `packages/api/test/pg-observer.ts` polls
+`pg_stat_activity` from a third connection and resolves only when the backend running the
+admission is reported blocked, on a `transactionid` lock, **by the backend holding the row** —
+all three, since `wait_event_type = Lock` alone would match a lock the test never created. The
+conflict is a transaction-id lock rather than a row lock, which is what PostgreSQL actually
+exposes and was verified against 16.14 rather than assumed. The limiter runs on a `max: 1` pool so
+the backend under observation is known by identity instead of guessed.
+
+The wait is bounded by a ceiling outside the polling loop — checking the clock only between polls
+bounds nothing when a poll itself hangs, which `pg-observer.integration.test.ts` pins by occupying
+the observer pool's only connection so no poll can return. It throws with diagnostics: expected
+backend, expected blocker, last observed state, elapsed, polls, and deliberately without query text
+or connection strings, so a CI failure prints no credentials. The bound is a ceiling, not a
+duration: the blocked state becomes visible in 2-3 ms, on the first poll, so the test also got
+faster than the sleep it replaced.
+
+**Proof it has teeth.** Seven breaking mutations are caught (deleting the wait; an observer that
+returns without observing; watching the wrong backend; committing before observing; treating the
+timeout as success; moving the ceiling back inside the polling loop; dropping the requirement that
+the lock row be visible). Two controls survive on
+purpose, and the second is the finding: with no
+synchronisation and the holder committing before the admission is issued — the race made
+impossible — the test still passes. That is direct evidence the sleep-based version could report
+success having proved nothing.
+
+Verified against a real PostgreSQL 16.14 server: 25 consecutive clean runs, 8 more under
+deliberate CPU contention, and no leaked sessions or idle-in-transaction rows afterwards.
 
 ## M15 Increment 6 — Contract and Rate-Limit Correctness (ADR-0119)
 

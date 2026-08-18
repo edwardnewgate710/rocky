@@ -9,6 +9,7 @@ import {
   PgUsersRepository,
 } from '@chess-platform/persistence/pg';
 import { PgRateLimiter } from '../src/ports/pg-rate-limiter';
+import { backendPid, waitForBackendBlocked } from './pg-observer';
 
 const skip = process.env['DATABASE_URL'] ? false : 'DATABASE_URL not set';
 
@@ -299,19 +300,35 @@ test('Postgres single-bucket refusals leave the stored counter untouched', { ski
  * statement (taking its snapshot) and blocks on the uncommitted unique key, then A commits and B
  * proceeds. Nothing about this is visible without a real server. Raised independently by both the
  * Qodo and CodeRabbit reviews of PR #137.
+ *
+ * Increment 6 sequenced that with a 300ms sleep, which could only ever be a guess: if the losing
+ * statement had not reached the server before the holder committed, the race did not happen and
+ * the test passed anyway — both orderings end with the same stored row and the same refusal, so
+ * no assertion below could tell them apart. It is now sequenced on PostgreSQL's own report that
+ * the backend is blocked, and that observation is asserted, so a run which did not race fails
+ * instead of passing quietly. Raised in the CodeRabbit review of PR #137; see ADR-0119.
  */
 test('Postgres tells the loser of a bucket-creation race the real remaining window', { skip }, async () => {
-  const pool = createPool();
+  const admin = createPool();
+  // The limiter gets its own single-connection pool so the backend running the blocked statement
+  // is known by identity. Without that the observer would be guessing which of the pool's clients
+  // to watch, and "some backend somewhere is blocked" is not the claim this test needs to make.
+  const limiterPool = createPool({ max: 1 });
+  const observerPool = createPool({ max: 1 });
   try {
-    await migrate(pool, join(process.cwd(), '../persistence/migrations'));
-    const limiter = new PgRateLimiter(pool);
+    await migrate(admin, join(process.cwd(), '../persistence/migrations'));
+    const limiter = new PgRateLimiter(limiterPool);
     const key = `integration:create-race:${uuidv7()}`;
     const windowMs = 600_000;
     const bucket = { key, limit: { maxRequests: 1, windowMs } };
 
     // A holds the row uncommitted; B then starts and blocks on the unique key.
-    const holder = await pool.connect();
+    const holder = await admin.connect();
     let loser;
+    let evidence;
+    let pending;
+    const holderPid = await backendPid(holder);
+    const limiterPid = await backendPid(limiterPool);
     try {
       await holder.query('BEGIN');
       await holder.query(
@@ -320,13 +337,32 @@ test('Postgres tells the loser of a bucket-creation race the real remaining wind
         [key, windowMs],
       );
 
-      const pending = limiter.admit([bucket]);
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      pending = limiter.admit([bucket]);
+      // Wait for the server to report the limiter blocked on this holder's transaction. Throws
+      // rather than continuing if that never happens, so the race cannot be skipped in silence.
+      evidence = await waitForBackendBlocked(observerPool, {
+        pid: limiterPid,
+        blockedBy: holderPid,
+      });
       await holder.query('COMMIT');
       loser = await pending;
     } finally {
+      // An assertion failing between BEGIN and COMMIT leaves this transaction open with the
+      // admission still blocked on it. Rolling back before release keeps a failing test from
+      // handing a poisoned client back to the pool, and unblocks the pending statement so its
+      // rejection is awaited here rather than surfacing as an unhandled one later.
+      await holder.query('ROLLBACK').catch(() => undefined);
       holder.release();
+      await pending?.catch(() => undefined);
     }
+
+    // Load-bearing. This is what separates a run that raced from one that reached the same
+    // numbers sequentially; remove the wait above and there is nothing left to assert here.
+    assert.equal(evidence.waitEvent, 'transactionid');
+    assert.ok(
+      evidence.blockingPids.includes(holderPid),
+      `the admission must have been blocked by backend ${holderPid}, not merely slower than it`,
+    );
 
     assert.equal(loser.allowed, false, 'the bucket was already full when the race resolved');
     assert.ok(
@@ -335,7 +371,7 @@ test('Postgres tells the loser of a bucket-creation race the real remaining wind
     );
     assert.ok(loser.retryAfterSeconds <= 600);
   } finally {
-    await pool.end();
+    await Promise.all([admin.end(), limiterPool.end(), observerPool.end()]);
   }
 });
 
