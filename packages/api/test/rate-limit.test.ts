@@ -10,14 +10,14 @@ describe('InMemoryRateLimiter', () => {
     const limiter = new InMemoryRateLimiter(clock);
     const limit = { maxRequests: 2, windowMs: 10000 };
 
-    const r1 = limiter.check('k1', limit);
+    const r1 = limiter.admit([{ key: 'k1', limit }]);
     assert.equal(r1.allowed, true);
     assert.equal(r1.retryAfterSeconds, 0);
 
-    const r2 = limiter.check('k1', limit);
+    const r2 = limiter.admit([{ key: 'k1', limit }]);
     assert.equal(r2.allowed, true);
 
-    const r3 = limiter.check('k1', limit);
+    const r3 = limiter.admit([{ key: 'k1', limit }]);
     assert.equal(r3.allowed, false);
     // windowStart=1000, now=1000, windowMs=10000 -> resetMs = 1000+10000-1000 = 10000ms -> 10s
     assert.equal(r3.retryAfterSeconds, 10);
@@ -28,12 +28,12 @@ describe('InMemoryRateLimiter', () => {
     const limiter = new InMemoryRateLimiter(clock);
     const limit = { maxRequests: 1, windowMs: 10000 };
 
-    limiter.check('k2', limit); // count=1
-    assert.equal(limiter.check('k2', limit).allowed, false);
+    limiter.admit([{ key: 'k2', limit }]); // count=1
+    assert.equal(limiter.admit([{ key: 'k2', limit }]).allowed, false);
 
     clock.advance(10000); // now=11000 (past 11000 boundary)
 
-    const r3 = limiter.check('k2', limit);
+    const r3 = limiter.admit([{ key: 'k2', limit }]);
     assert.equal(r3.allowed, true, 'Allowed after window expires');
   });
 
@@ -45,7 +45,7 @@ describe('InMemoryRateLimiter', () => {
     // Fill many distinct one-off keys — their buckets should not survive
     // past their own window once the sweep threshold is crossed.
     for (let i = 0; i < 500; i += 1) {
-      limiter.check(`flood-${i}`, limit);
+      limiter.admit([{ key: `flood-${i}`, limit }]);
     }
     assert.equal(limiter.size, 500, 'all 500 buckets tracked before the sweep threshold');
 
@@ -53,7 +53,7 @@ describe('InMemoryRateLimiter', () => {
     // past SWEEP_INTERVAL_CALLS (500) to trigger the opportunistic sweep.
     clock.advance(2000);
     for (let i = 0; i < 500; i += 1) {
-      limiter.check(`other-${i}`, limit);
+      limiter.admit([{ key: `other-${i}`, limit }]);
     }
 
     // Only the 500 fresh 'other-*' buckets (created at the new time) should

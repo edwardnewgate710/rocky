@@ -11750,8 +11750,10 @@
             "type": "string"
           },
           "country": {
-            "type": "string",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "createdAt": {
             "type": "string",
@@ -11777,8 +11779,10 @@
             "type": "string"
           },
           "country": {
-            "type": "string",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "createdAt": {
             "type": "string",
@@ -11832,9 +11836,11 @@
             "type": "number"
           },
           "updatedAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -11899,30 +11905,42 @@
             "format": "date-time"
           },
           "revokedAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           },
           "lastSeenAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           },
           "lastIp": {
-            "type": "string",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "lastUserAgent": {
-            "type": "string",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "createdIp": {
-            "type": "string",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "createdUserAgent": {
-            "type": "string",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -11980,25 +11998,33 @@
             ]
           },
           "minRating": {
-            "type": "integer",
-            "nullable": true
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "maxRating": {
-            "type": "integer",
-            "nullable": true
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "createdAt": {
             "type": "string",
             "format": "date-time"
           },
           "gameId": {
-            "type": "string",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "acceptedAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -12042,22 +12068,30 @@
             "type": "string"
           },
           "whiteId": {
-            "type": "string",
-            "format": "uuid",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           },
           "blackId": {
-            "type": "string",
-            "format": "uuid",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           },
           "result": {
-            "type": "string",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "termination": {
-            "type": "string",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "plyCount": {
             "type": "integer"
@@ -12067,9 +12101,11 @@
             "format": "date-time"
           },
           "endedAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -12441,9 +12477,11 @@
                   "format": "uuid"
                 },
                 "gameId": {
-                  "type": "string",
-                  "format": "uuid",
-                  "nullable": true
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
                 },
                 "player": {
                   "type": "string",
@@ -12631,20 +12669,27 @@
                 "type": "boolean"
               },
               "result": {
-                "type": "string",
-                "nullable": true
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "termination": {
-                "type": "string",
-                "nullable": true
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "winner": {
-                "type": "string",
+                "type": [
+                  "string",
+                  "null"
+                ],
                 "enum": [
                   "w",
-                  "b"
-                ],
-                "nullable": true
+                  "b",
+                  null
+                ]
               }
             }
           }
@@ -12687,9 +12732,11 @@
             "maxLength": 1024
           },
           "email": {
-            "type": "string",
-            "format": "email",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "email"
           }
         },
         "additionalProperties": false
@@ -12773,12 +12820,16 @@
             "description": "Creator's color preference. Defaults to 'random'."
           },
           "minRating": {
-            "type": "integer",
-            "nullable": true
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "maxRating": {
-            "type": "integer",
-            "nullable": true
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         },
         "additionalProperties": false
@@ -13020,9 +13071,11 @@
             "format": "date-time"
           },
           "lastUsedAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -13745,9 +13798,11 @@
             "format": "date-time"
           },
           "respondedAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -13922,14 +13977,18 @@
             "format": "date-time"
           },
           "editedAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           },
           "deletedAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -14149,13 +14208,16 @@
             "format": "date-time"
           },
           "viewerRole": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "enum": [
               "owner",
               "admin",
-              "member"
-            ],
-            "nullable": true
+              "member",
+              null
+            ]
           }
         }
       },
@@ -14283,9 +14345,11 @@
             "format": "date-time"
           },
           "respondedAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -14356,9 +14420,11 @@
             "format": "date-time"
           },
           "deletedAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -14427,14 +14493,18 @@
             "format": "date-time"
           },
           "editedAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           },
           "deletedAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -14560,9 +14630,11 @@
             "type": "integer"
           },
           "unlockedAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -14642,9 +14714,11 @@
             "format": "date-time"
           },
           "deletedAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -14757,9 +14831,11 @@
             "type": "string"
           },
           "deletedAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -14798,9 +14874,11 @@
             "format": "uuid"
           },
           "parentId": {
-            "type": "string",
-            "format": "uuid",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           },
           "san": {
             "type": "string"
@@ -14895,9 +14973,11 @@
             "format": "date-time"
           },
           "deletedAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -14943,9 +15023,11 @@
             "type": "integer"
           },
           "deletedAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -15008,9 +15090,11 @@
             "type": "integer"
           },
           "deletedAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -15067,9 +15151,11 @@
             }
           },
           "deletedAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -15106,9 +15192,11 @@
             "format": "uuid"
           },
           "completedAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           },
           "attempts": {
             "type": "integer"
@@ -15162,9 +15250,11 @@
             "type": "boolean"
           },
           "completedAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           },
           "attempts": {
             "type": "integer"
@@ -15541,8 +15631,10 @@
                 "type": "string"
               },
               "bestMove": {
-                "type": "string",
-                "nullable": true
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "bestLine": {
                 "type": "array",
@@ -15743,12 +15835,16 @@
             ]
           },
           "centipawnLoss": {
-            "type": "integer",
-            "nullable": true
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "bestMove": {
-            "type": "string",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "bestLine": {
             "type": "array",

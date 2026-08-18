@@ -3,9 +3,11 @@
  * approved M4 API contract (`packages/api/openapi.json`).
  *
  * These are the request/response shapes the typed client (`api/client.ts`)
- * consumes. They are kept deliberately minimal and read-only. Fields the
- * contract marks `nullable` are `T | null` (always present, possibly null);
- * fields that are truly optional in the request body use `?`.
+ * consumes. They are kept deliberately minimal and read-only. Fields whose
+ * contract type admits null — spelled `"type": ["string", "null"]` since
+ * ADR-0119 retired the OpenAPI 3.0 `nullable` keyword — are `T | null` here:
+ * always present, possibly null. Fields that are truly optional in the request
+ * body use `?`. The two are independent, and this file keeps them so.
  *
  * Scope note (M6 increment 3A): only the endpoints the networking foundation
  * needs are modeled — health, auth/session, users/profile, ratings,

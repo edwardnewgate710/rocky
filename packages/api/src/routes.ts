@@ -27,7 +27,7 @@ import {
   REFRESH_COOKIE_NAME,
 } from './http/cookie';
 import { strictObject, oneOf, optBoolean, optInt, optString, parseLimit, reqBoolean, reqString } from './http/validate';
-import type { RateLimiter } from './ports/rate-limiter';
+import type { RateLimiter, RateLimitRequest } from './ports/rate-limiter';
 import type { Metrics } from './ports/metrics';
 import type { Tracer } from './ports/tracer';
 import type { ApiConfig } from './config';
@@ -172,6 +172,34 @@ export function buildRouter(deps: RouteDeps): Router {
 
 
 
+  /**
+   * Admit a request against every bucket that guards it, or refuse it having charged none.
+   *
+   * This is the only caller of `rateLimiter.admit` in the file, and routes reach the limiter
+   * only through it. That is deliberate: the defect this replaced was six routes each calling
+   * the limiter twice in sequence, charging the first bucket before learning that the second
+   * refused. Handing every bucket over in one call is what lets the limiter decide before it
+   * commits; a second `await admit(...)` in the same handler would be two independent
+   * decisions again and would reintroduce exactly that bug. `rate-limit-structure.test.ts`
+   * fails if one appears.
+   *
+   * `retryAfterSeconds` is whatever the limiter reports, which for a multi-bucket refusal is
+   * the longest wait among the buckets that refused rather than the first one it looked at.
+   *
+   * A limiter that *faults* — rather than refusing — propagates, and the request fails closed
+   * with a 500. That is deliberate: this call is the only thing between the caller and real
+   * engine or provider work, and a limiter whose answer is unknown must not be read as a yes.
+   * The Postgres multi-bucket path opens a transaction and checks out a pooled client, so the
+   * five migrated routes have more ways to fault than the single statement they replaced;
+   * `/v1/auth/refresh` keeps that single statement and its exposure is unchanged. Raised in the
+   * CodeRabbit review of PR #137.
+   */
+  const admit = async (buckets: readonly RateLimitRequest[]): Promise<void> => {
+    if (!config.rateLimit.enabled) return;
+    const result = await rateLimiter.admit(buckets);
+    if (!result.allowed) throw HttpError.rateLimited(result.retryAfterSeconds);
+  };
+
   const cookieOpts = { secure: config.cookieSecure };
   const refreshTokenTtlSec = config.refreshTokenTtlSec;
 
@@ -254,13 +282,9 @@ export function buildRouter(deps: RouteDeps): Router {
     }),
     PUBLIC,
     async (ctx) => {
-      if (config.rateLimit.enabled) {
-        const ipKey = `register:ip:${ctx.ip ?? 'unknown'}`;
-        const ipCheck = await rateLimiter.check(ipKey, config.rateLimit.register.perIp);
-        if (!ipCheck.allowed) {
-          throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
-        }
-      }
+      await admit([
+        { key: `register:ip:${ctx.ip ?? 'unknown'}`, limit: config.rateLimit.register.perIp },
+      ]);
 
       const body = strictObject(ctx.body, ['handle', 'password', 'email']);
       const handle = reqString(body, 'handle', { trim: true, pattern: HANDLE_PATTERN });
@@ -296,16 +320,10 @@ export function buildRouter(deps: RouteDeps): Router {
       const handle = reqString(body, 'handle', { trim: true });
       const password = reqString(body, 'password');
 
-      if (config.rateLimit.enabled) {
-        const ipKey = `login:ip:${ctx.ip ?? 'unknown'}`;
-        const handleKey = `login:handle:${handle.toLowerCase()}`;
-        
-        const ipCheck = await rateLimiter.check(ipKey, config.rateLimit.login.perIp);
-        if (!ipCheck.allowed) throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
-
-        const handleCheck = await rateLimiter.check(handleKey, config.rateLimit.login.perHandle);
-        if (!handleCheck.allowed) throw HttpError.rateLimited(handleCheck.retryAfterSeconds);
-      }
+      await admit([
+        { key: `login:ip:${ctx.ip ?? 'unknown'}`, limit: config.rateLimit.login.perIp },
+        { key: `login:handle:${handle.toLowerCase()}`, limit: config.rateLimit.login.perHandle },
+      ]);
 
       const result = await auth.login({ handle, password }, meta(ctx));
       return json(200, {
@@ -327,13 +345,9 @@ export function buildRouter(deps: RouteDeps): Router {
     }),
     PUBLIC,
     async (ctx) => {
-      if (config.rateLimit.enabled) {
-        const ipKey = `refresh:ip:${ctx.ip ?? 'unknown'}`;
-        const ipCheck = await rateLimiter.check(ipKey, config.rateLimit.refresh.perIp);
-        if (!ipCheck.allowed) {
-          throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
-        }
-      }
+      await admit([
+        { key: `refresh:ip:${ctx.ip ?? 'unknown'}`, limit: config.rateLimit.refresh.perIp },
+      ]);
 
       // Prefer the cookie; fall back to the JSON body for non-browser API clients.
       const refreshToken = resolveRefreshToken(ctx);
@@ -426,16 +440,16 @@ export function buildRouter(deps: RouteDeps): Router {
       const body = strictObject(ctx.body, ['handleOrEmail']);
       const handleOrEmail = reqString(body, 'handleOrEmail', { trim: true });
 
-      if (config.rateLimit.enabled) {
-        const ipKey = `password-reset:ip:${ctx.ip ?? 'unknown'}`;
-        const targetKey = `password-reset:target:${handleOrEmail.toLowerCase()}`;
-        
-        const ipCheck = await rateLimiter.check(ipKey, config.rateLimit.passwordResetRequest.perIp);
-        if (!ipCheck.allowed) throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
-
-        const targetCheck = await rateLimiter.check(targetKey, config.rateLimit.passwordResetRequest.perTarget);
-        if (!targetCheck.allowed) throw HttpError.rateLimited(targetCheck.retryAfterSeconds);
-      }
+      await admit([
+        {
+          key: `password-reset:ip:${ctx.ip ?? 'unknown'}`,
+          limit: config.rateLimit.passwordResetRequest.perIp,
+        },
+        {
+          key: `password-reset:target:${handleOrEmail.toLowerCase()}`,
+          limit: config.rateLimit.passwordResetRequest.perTarget,
+        },
+      ]);
 
       await auth.requestPasswordReset(handleOrEmail, meta(ctx));
       return { status: 202 };
@@ -534,11 +548,12 @@ export function buildRouter(deps: RouteDeps): Router {
     }),
     AUTHED,
     async (ctx) => {
-      if (config.rateLimit.enabled) {
-        const ipKey = `webauthn-register:ip:${ctx.ip ?? 'unknown'}`;
-        const ipCheck = await rateLimiter.check(ipKey, config.rateLimit.webauthnRegister.perIp);
-        if (!ipCheck.allowed) throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
-      }
+      await admit([
+        {
+          key: `webauthn-register:ip:${ctx.ip ?? 'unknown'}`,
+          limit: config.rateLimit.webauthnRegister.perIp,
+        },
+      ]);
 
       const identity = requireAuth(ctx);
       const options = await auth.generateWebAuthnRegisterOptions(identity.userId);
@@ -557,11 +572,12 @@ export function buildRouter(deps: RouteDeps): Router {
     }),
     AUTHED,
     async (ctx) => {
-      if (config.rateLimit.enabled) {
-        const ipKey = `webauthn-register:ip:${ctx.ip ?? 'unknown'}`;
-        const ipCheck = await rateLimiter.check(ipKey, config.rateLimit.webauthnRegister.perIp);
-        if (!ipCheck.allowed) throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
-      }
+      await admit([
+        {
+          key: `webauthn-register:ip:${ctx.ip ?? 'unknown'}`,
+          limit: config.rateLimit.webauthnRegister.perIp,
+        },
+      ]);
 
       const identity = requireAuth(ctx);
       const result = await auth.verifyWebAuthnRegister(identity.userId, ctx.body, meta(ctx));
@@ -582,16 +598,13 @@ export function buildRouter(deps: RouteDeps): Router {
       const body = strictObject(ctx.body, ['handle']);
       const handle = reqString(body, 'handle', { trim: true });
 
-      if (config.rateLimit.enabled) {
-        const ipKey = `webauthn-login:ip:${ctx.ip ?? 'unknown'}`;
-        const handleKey = `webauthn-login:handle:${handle.toLowerCase()}`;
-
-        const ipCheck = await rateLimiter.check(ipKey, config.rateLimit.webauthnLogin.perIp);
-        if (!ipCheck.allowed) throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
-
-        const handleCheck = await rateLimiter.check(handleKey, config.rateLimit.webauthnLogin.perHandle);
-        if (!handleCheck.allowed) throw HttpError.rateLimited(handleCheck.retryAfterSeconds);
-      }
+      await admit([
+        { key: `webauthn-login:ip:${ctx.ip ?? 'unknown'}`, limit: config.rateLimit.webauthnLogin.perIp },
+        {
+          key: `webauthn-login:handle:${handle.toLowerCase()}`,
+          limit: config.rateLimit.webauthnLogin.perHandle,
+        },
+      ]);
 
       const options = await auth.generateWebAuthnLoginOptions(handle);
       return json(200, options);
@@ -608,11 +621,9 @@ export function buildRouter(deps: RouteDeps): Router {
     }),
     PUBLIC,
     async (ctx) => {
-      if (config.rateLimit.enabled) {
-        const ipKey = `webauthn-login:ip:${ctx.ip ?? 'unknown'}`;
-        const ipCheck = await rateLimiter.check(ipKey, config.rateLimit.webauthnLogin.perIp);
-        if (!ipCheck.allowed) throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
-      }
+      await admit([
+        { key: `webauthn-login:ip:${ctx.ip ?? 'unknown'}`, limit: config.rateLimit.webauthnLogin.perIp },
+      ]);
 
       const result = await auth.verifyWebAuthnLogin(ctx.body, meta(ctx));
       return json(200, {
@@ -1348,16 +1359,6 @@ export function buildRouter(deps: RouteDeps): Router {
       const service = deps.analysis;
       if (!service) throw HttpError.unavailable('analysis is not configured');
 
-      if (config.rateLimit.enabled) {
-        const userKey = `analysis:user:${identity.userId}`;
-        const userCheck = await rateLimiter.check(userKey, config.rateLimit.analysis.perUser);
-        if (!userCheck.allowed) throw HttpError.rateLimited(userCheck.retryAfterSeconds);
-
-        const ipKey = `analysis:ip:${ctx.ip ?? 'unknown'}`;
-        const ipCheck = await rateLimiter.check(ipKey, config.rateLimit.analysis.perIp);
-        if (!ipCheck.allowed) throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
-      }
-
       const body = strictObject(ctx.body, ['fen', 'variant', 'depth', 'nodes', 'movetimeMs', 'multiPv']);
       const fen = reqString(body, 'fen', { min: 1, max: 200, trim: true });
       const variant = parseVariant(reqString(body, 'variant'));
@@ -1365,6 +1366,16 @@ export function buildRouter(deps: RouteDeps): Router {
       const nodes = optInt(body, 'nodes', { min: 1, max: DEFAULT_ANALYSIS_LIMITS.maxNodes });
       const movetimeMs = optInt(body, 'movetimeMs', { min: 1, max: DEFAULT_ANALYSIS_LIMITS.maxTimeMs });
       const multiPv = optInt(body, 'multiPv', { min: 1, max: DEFAULT_ANALYSIS_LIMITS.maxMultiPv });
+
+      // Charged after the body is known to be well-formed, which is the ordering the Qodo review
+      // of PR #134 established for the two endpoints that came later — this one predates it and
+      // never got the same treatment. Spending quota above the parsing meant a stream of
+      // malformed FENs or an out-of-range `multiPv`, none of which reach an engine, emptied a
+      // user's budget and, through the shared per-IP bucket, their neighbours' too.
+      await admit([
+        { key: `analysis:user:${identity.userId}`, limit: config.rateLimit.analysis.perUser },
+        { key: `analysis:ip:${ctx.ip ?? 'unknown'}`, limit: config.rateLimit.analysis.perIp },
+      ]);
 
       const outcome = await service.analyze({
         fen,
@@ -1418,16 +1429,16 @@ export function buildRouter(deps: RouteDeps): Router {
       // review established. An accepted request costs one or two engine searches; a malformed FEN or
       // an illegal move costs nothing and must therefore spend nothing, or a stream of them would
       // empty a user's budget and, through the shared per-IP bucket, their neighbours' too.
-      const charge = async (): Promise<void> => {
-        if (!config.rateLimit.enabled) return;
-        const userKey = `mistake-prediction:user:${identity.userId}`;
-        const userCheck = await rateLimiter.check(userKey, config.rateLimit.mistakePrediction.perUser);
-        if (!userCheck.allowed) throw HttpError.rateLimited(userCheck.retryAfterSeconds);
-
-        const ipKey = `mistake-prediction:ip:${ctx.ip ?? 'unknown'}`;
-        const ipCheck = await rateLimiter.check(ipKey, config.rateLimit.mistakePrediction.perIp);
-        if (!ipCheck.allowed) throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
-      };
+      const charge = (): Promise<void> => admit([
+        {
+          key: `mistake-prediction:user:${identity.userId}`,
+          limit: config.rateLimit.mistakePrediction.perUser,
+        },
+        {
+          key: `mistake-prediction:ip:${ctx.ip ?? 'unknown'}`,
+          limit: config.rateLimit.mistakePrediction.perIp,
+        },
+      ]);
 
       const outcome = await service.predict({ fen, variant, move }, charge);
 
@@ -1469,16 +1480,16 @@ export function buildRouter(deps: RouteDeps): Router {
       // malformed FENs or illegal moves — none of which reach an engine — empty a user's budget, and
       // with the shared per-IP bucket, their neighbours' too. `explain` runs this once validation
       // and legality pass and before any of the expensive work. Raised in the Qodo review of PR #134.
-      const charge = async (): Promise<void> => {
-        if (!config.rateLimit.enabled) return;
-        const userKey = `move-explanation:user:${identity.userId}`;
-        const userCheck = await rateLimiter.check(userKey, config.rateLimit.moveExplanation.perUser);
-        if (!userCheck.allowed) throw HttpError.rateLimited(userCheck.retryAfterSeconds);
-
-        const ipKey = `move-explanation:ip:${ctx.ip ?? 'unknown'}`;
-        const ipCheck = await rateLimiter.check(ipKey, config.rateLimit.moveExplanation.perIp);
-        if (!ipCheck.allowed) throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
-      };
+      const charge = (): Promise<void> => admit([
+        {
+          key: `move-explanation:user:${identity.userId}`,
+          limit: config.rateLimit.moveExplanation.perUser,
+        },
+        {
+          key: `move-explanation:ip:${ctx.ip ?? 'unknown'}`,
+          limit: config.rateLimit.moveExplanation.perIp,
+        },
+      ]);
 
       const outcome = await service.explain({ fen, variant, move }, charge);
 

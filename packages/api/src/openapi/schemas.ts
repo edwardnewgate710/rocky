@@ -8,9 +8,10 @@
 import { ROLES, SEEK_COLORS, TIME_CONTROL_KINDS, VARIANTS } from '../domain';
 import { DEFAULT_ANALYSIS_LIMITS } from '../analysis/limits';
 import type { ComponentSchemas, JsonSchema } from './types';
+import { nullable } from './types';
 
 const dateTime: JsonSchema = { type: 'string', format: 'date-time' };
-const nullableString: JsonSchema = { type: 'string', nullable: true };
+const nullableString: JsonSchema = nullable({ type: 'string' });
 
 /**
  * The terminal vocabulary, kept in one place because two schemas publish it.
@@ -39,7 +40,7 @@ const terminalOutcomeSchema: JsonSchema = {
   },
   additionalProperties: false,
 };
-const nullableInt: JsonSchema = { type: 'integer', nullable: true };
+const nullableInt: JsonSchema = nullable({ type: 'integer' });
 
 const timeControl: JsonSchema = {
   type: 'object',
@@ -117,7 +118,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       rating: { type: 'number' },
       rd: { type: 'number' },
       vol: { type: 'number' },
-      updatedAt: { ...dateTime, nullable: true },
+      updatedAt: nullable(dateTime),
     },
   },
 
@@ -149,8 +150,8 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       id: { type: 'string', format: 'uuid' },
       createdAt: dateTime,
       expiresAt: dateTime,
-      revokedAt: { ...dateTime, nullable: true },
-      lastSeenAt: { ...dateTime, nullable: true },
+      revokedAt: nullable(dateTime),
+      lastSeenAt: nullable(dateTime),
       lastIp: nullableString,
       lastUserAgent: nullableString,
       createdIp: nullableString,
@@ -184,7 +185,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       maxRating: nullableInt,
       createdAt: dateTime,
       gameId: nullableString,
-      acceptedAt: { ...dateTime, nullable: true },
+      acceptedAt: nullable(dateTime),
     },
   },
 
@@ -208,13 +209,13 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       variant: { type: 'string', enum: [...VARIANTS] },
       rated: { type: 'boolean' },
       speed: { type: 'string' },
-      whiteId: { type: 'string', format: 'uuid', nullable: true },
-      blackId: { type: 'string', format: 'uuid', nullable: true },
+      whiteId: nullable({ type: 'string', format: 'uuid' }),
+      blackId: nullable({ type: 'string', format: 'uuid' }),
       result: nullableString,
       termination: nullableString,
       plyCount: { type: 'integer' },
       startedAt: dateTime,
-      endedAt: { ...dateTime, nullable: true },
+      endedAt: nullable(dateTime),
     },
   },
 
@@ -342,7 +343,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
             kind: { type: 'string', enum: ['game', 'bye'] },
             white: { type: 'string', format: 'uuid' },
             black: { type: 'string', format: 'uuid' },
-            gameId: { type: 'string', format: 'uuid', nullable: true },
+            gameId: nullable({ type: 'string', format: 'uuid' }),
             player: { type: 'string', format: 'uuid' },
           },
         },
@@ -415,9 +416,9 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
         required: ['over'],
         properties: {
           over: { type: 'boolean' },
-          result: { type: 'string', nullable: true },
-          termination: { type: 'string', nullable: true },
-          winner: { type: 'string', enum: ['w', 'b'], nullable: true },
+          result: nullable({ type: 'string' }),
+          termination: nullable({ type: 'string' }),
+          winner: nullable({ type: 'string', enum: ['w', 'b'] }),
         },
       },
     },
@@ -439,7 +440,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     properties: {
       handle: { type: 'string', minLength: 3, maxLength: 30, description: 'Alphanumeric, _ and -.' },
       password: { type: 'string', minLength: 8, maxLength: 1024 },
-      email: { type: 'string', format: 'email', nullable: true },
+      email: nullable({ type: 'string', format: 'email' }),
     },
     additionalProperties: false,
   },
@@ -482,8 +483,8 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
         enum: [...SEEK_COLORS],
         description: "Creator's color preference. Defaults to 'random'.",
       },
-      minRating: { type: 'integer', nullable: true },
-      maxRating: { type: 'integer', nullable: true },
+      minRating: nullable({ type: 'integer' }),
+      maxRating: nullable({ type: 'integer' }),
     },
     additionalProperties: false,
   },
@@ -589,7 +590,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       id: { type: 'string', description: 'Base64URL encoded credential ID' },
       name: { type: 'string' },
       createdAt: dateTime,
-      lastUsedAt: { ...dateTime, nullable: true },
+      lastUsedAt: nullable(dateTime),
     },
   },
 
@@ -927,7 +928,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       addresseeId: { type: 'string', format: 'uuid' },
       status: { type: 'string', enum: ['pending', 'accepted', 'declined', 'cancelled', 'ended'] },
       createdAt: dateTime,
-      respondedAt: { ...dateTime, nullable: true },
+      respondedAt: nullable(dateTime),
     },
   },
 
@@ -1007,8 +1008,8 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       senderId: { type: 'string', format: 'uuid' },
       body: { type: 'string' },
       sentAt: dateTime,
-      editedAt: { ...dateTime, nullable: true },
-      deletedAt: { ...dateTime, nullable: true },
+      editedAt: nullable(dateTime),
+      deletedAt: nullable(dateTime),
     },
   },
 
@@ -1118,7 +1119,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       visibility: { type: 'string', enum: ['public', 'private'] },
       createdBy: { type: 'string', format: 'uuid' },
       createdAt: dateTime,
-      viewerRole: { type: 'string', enum: ['owner', 'admin', 'member'], nullable: true },
+      viewerRole: nullable({ type: 'string', enum: ['owner', 'admin', 'member'] }),
     },
   },
 
@@ -1176,7 +1177,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       playerId: { type: 'string', format: 'uuid' },
       status: { type: 'string', enum: ['pending', 'accepted', 'declined', 'cancelled'] },
       createdAt: dateTime,
-      respondedAt: { ...dateTime, nullable: true },
+      respondedAt: nullable(dateTime),
     },
   },
 
@@ -1205,7 +1206,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       createdAt: dateTime,
       updatedAt: dateTime,
       lastPostAt: dateTime,
-      deletedAt: { ...dateTime, nullable: true },
+      deletedAt: nullable(dateTime),
     },
   },
 
@@ -1242,8 +1243,8 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       authorId: { type: 'string', format: 'uuid' },
       body: { type: 'string' },
       createdAt: dateTime,
-      editedAt: { ...dateTime, nullable: true },
-      deletedAt: { ...dateTime, nullable: true },
+      editedAt: nullable(dateTime),
+      deletedAt: nullable(dateTime),
     },
   },
 
@@ -1298,7 +1299,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       hidden: { type: 'boolean' },
       target: { type: 'integer' },
       progress: { type: 'integer' },
-      unlockedAt: { ...dateTime, nullable: true },
+      unlockedAt: nullable(dateTime),
     },
   },
 
@@ -1334,7 +1335,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       visibility: { type: 'string', enum: ['public', 'unlisted', 'private'] },
       createdAt: dateTime,
       updatedAt: dateTime,
-      deletedAt: { ...dateTime, nullable: true },
+      deletedAt: nullable(dateTime),
     },
   },
 
@@ -1385,7 +1386,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       name: { type: 'string' },
       orderIndex: { type: 'integer' },
       startingFen: { type: 'string' },
-      deletedAt: { ...dateTime, nullable: true },
+      deletedAt: nullable(dateTime),
     },
   },
 
@@ -1403,7 +1404,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     properties: {
       id: { type: 'string', format: 'uuid' },
       chapterId: { type: 'string', format: 'uuid' },
-      parentId: { type: 'string', format: 'uuid', nullable: true },
+      parentId: nullable({ type: 'string', format: 'uuid' }),
       san: { type: 'string' },
       fenAfter: { type: 'string' },
       comment: { type: 'string' },
@@ -1440,7 +1441,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       published: { type: 'boolean' },
       createdAt: dateTime,
       updatedAt: dateTime,
-      deletedAt: { ...dateTime, nullable: true },
+      deletedAt: nullable(dateTime),
     },
   },
 
@@ -1461,7 +1462,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       courseId: { type: 'string', format: 'uuid' },
       title: { type: 'string' },
       orderIndex: { type: 'integer' },
-      deletedAt: { ...dateTime, nullable: true },
+      deletedAt: nullable(dateTime),
     },
   },
 
@@ -1485,7 +1486,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       question: { type: 'string' },
       options: { type: 'array', items: { type: 'string' } },
       correctIndex: { type: 'integer' },
-      deletedAt: { ...dateTime, nullable: true },
+      deletedAt: nullable(dateTime),
     },
   },
 
@@ -1507,7 +1508,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       hint: { type: 'string' },
       question: { type: 'string' },
       options: { type: 'array', items: { type: 'string' } },
-      deletedAt: { ...dateTime, nullable: true },
+      deletedAt: nullable(dateTime),
     },
   },
 
@@ -1524,7 +1525,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       courseId: { type: 'string', format: 'uuid' },
       lessonId: { type: 'string', format: 'uuid' },
       stepId: { type: 'string', format: 'uuid' },
-      completedAt: { ...dateTime, nullable: true },
+      completedAt: nullable(dateTime),
       attempts: { type: 'integer' },
     },
   },
@@ -1551,7 +1552,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     properties: {
       stepId: { type: 'string', format: 'uuid' },
       correct: { type: 'boolean' },
-      completedAt: { ...dateTime, nullable: true },
+      completedAt: nullable(dateTime),
       attempts: { type: 'integer' },
     },
   },
