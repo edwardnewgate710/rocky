@@ -344,8 +344,18 @@ export class Coach {
     }
 
     if (mistake) {
-      lines.push(`Mistake assessment: ${mistake.classification} (cp loss: ${mistake.centipawnLoss}). ` +
-        `Better move: ${mistake.betterMove}.`);
+      // Both fields are nullable since M15 increment 5: a transition touching a mate score has no
+      // centipawn measure, and a search that reported no line has no better move. Interpolating them
+      // raw put the literal token `null` into text a model is asked to reason from — which is worse
+      // than saying nothing, because it reads as a value.
+      const loss =
+        mistake.centipawnLoss === null
+          ? 'not applicable on the centipawn scale'
+          : String(mistake.centipawnLoss);
+      lines.push(
+        `Mistake assessment: ${mistake.classification} (cp loss: ${loss}).` +
+          (mistake.betterMove === null ? '' : ` Better move: ${mistake.betterMove}.`),
+      );
     }
 
     if (explanation) {

@@ -553,3 +553,40 @@ describe('BundledEndgameDatabase', () => {
     assert.ok(entry.id.length > 0);
   });
 });
+
+/**
+ * The learner was already being mated, and their move made it worse.
+ *
+ * This is the case M15 increment 5 briefly changed by accident. Mistake Prediction's
+ * `assessEvaluation` deliberately puts "already lost" ahead of "walked into mate" — it measures what
+ * a *move* cost, and a player being forcibly mated before it lost nothing by it. Routing this feature
+ * through that helper flipped this case from `Infinity`/`throws_result` to `0`/`optimal`, which is
+ * exactly backwards for an exercise whose whole subject is technique: converting mate-in-2-against-you
+ * into mate-in-1-against-you is the failure being graded. Raised in the Qodo review of PR #136.
+ */
+test('evaluateAttempt: worsening an already-lost mate still throws the result', async () => {
+  const db = new BundledEndgameDatabase();
+  const engine = createFakeAnalysisProvider((_go, fen) => {
+    if (fen === KQ_FEN) {
+      // The learner is already being mated in 2.
+      return {
+        info: ['info depth 25 multipv 1 score mate -2 nodes 500000 nps 250000 time 1000 pv g6g7'],
+        bestmove: 'g6g7',
+      };
+    }
+    // After the move the opponent mates in 1; negated, the learner is mated in 1 — worse.
+    return {
+      info: ['info depth 25 multipv 1 score mate 1 nodes 300000 nps 200000 time 800 pv h8h7'],
+      bestmove: 'h8h7',
+    };
+  });
+
+  const trainer = new EndgameTrainer({ database: db, engine });
+  const result = await trainer.evaluateAttempt({ entry: KQ_ENTRY, move: 'g6g7' });
+
+  assert.equal(result.evalAfterMoverPerspective.type, 'mate');
+  assert.equal(result.evalAfterMoverPerspective.value, -1, 'the learner is the one being mated');
+  assert.equal(result.centipawnLoss, Infinity, 'this feature still publishes Infinity, not 0');
+  assert.equal(result.classification, 'throws_result');
+  assert.equal(result.goalPreserved, false);
+});

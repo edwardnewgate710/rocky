@@ -107,7 +107,11 @@ describe('MistakePredictor integration (OpenAI)', () => {
     assert.equal(result.centipawnLoss, 400); // 200 - (-200) = 400
     assert.equal(result.betterMove, 'g1f3');
     assert.equal(result.evalBefore.value, 200);
-    assert.equal(result.evalAfterMoverPerspective.value, -200);
+    assert.equal(result.moveOutcome.kind, 'evaluation');
+    assert.deepEqual(
+      result.moveOutcome.kind === 'evaluation' ? result.moveOutcome.evaluation : null,
+      { type: 'cp', value: -200 },
+    );
 
     // LLM fields should be populated by the real provider.
     assert.ok(result.coaching);

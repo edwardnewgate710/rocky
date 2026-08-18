@@ -360,3 +360,37 @@ test('analysis evaluation column uses tabular figures and moves text truncates',
   assert.match(movesRule.body, /overflow\s*:\s*hidden/);
   assert.match(movesRule.body, /min-width\s*:\s*0/);
 });
+
+test('the assess figures align with the analysis column above them', () => {
+  const all = rules();
+  const valueRule = all.find((r) => r.selectors.includes('.assess-value'));
+  assert.ok(valueRule, 'could not find .assess-value rule');
+  // The Aligned-Figures Rule. This column is read downward against the analysis rows and the
+  // explain row, so it has to sit in the same tabular column at the same width as theirs.
+  assert.match(valueRule.body, /font-variant-numeric\s*:\s*tabular-nums/);
+  assert.match(valueRule.body, /min-width\s*:\s*4\.5ch/);
+
+  const moveRule = all.find((r) => r.selectors.includes('.assess-move'));
+  assert.ok(moveRule, 'could not find .assess-move rule');
+  assert.match(moveRule.body, /text-overflow\s*:\s*ellipsis/);
+  assert.match(moveRule.body, /min-width\s*:\s*0/);
+});
+
+test('the mistake classification is a word, never a colour', () => {
+  const verdictRule = rules().find((r) => r.selectors.includes('.assess-verdict'));
+  assert.ok(verdictRule, 'could not find .assess-verdict rule');
+
+  // DESIGN.md's Single Accent Rule, and its worked example: achievement tiers are `bronze`/`silver`/
+  // `gold` in the muted voice rather than three metal colours, because a system with one accent
+  // cannot grow a second, third and fourth, and meaning encoded in hue alone fails colourblind
+  // readers. `ok`/`inaccuracy`/`mistake`/`blunder` is a four-value ordinal and takes the same answer:
+  // emphasis by weight, severity by the word itself.
+  assert.match(verdictRule.body, /font-weight\s*:\s*600/);
+  assert.match(verdictRule.body, /color\s*:\s*var\(--text\)/);
+
+  // Ember specifically. It means the *application* failed — a validation error, a failed action — and
+  // a blunder is data the player asked for. Borrowing it here would give one hue two meanings, which
+  // is the exact drift that split error colour off from the accent in the first place.
+  assert.equal(/--danger|--err|ember|#e5484d|#b42318/i.test(verdictRule.body), false,
+    'a blunder must not be painted in the error colour');
+});

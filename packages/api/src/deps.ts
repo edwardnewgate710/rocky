@@ -102,6 +102,14 @@ export interface ApiDependencies {
    */
   readonly moveExplanation?: import('./ai/move-explanation-service').MoveExplanationService;
   /**
+   * Optional Mistake Prediction (ADR-0118). When absent, `POST /v1/analysis/mistake-prediction`
+   * responds 503.
+   *
+   * Present whenever the analysis subsystem above is — and only then. It needs no AI provider: the
+   * verdict is a rules-and-engine fact, so this capability tracks the engine alone.
+   */
+  readonly mistakePrediction?: import('./analysis/mistake-prediction-service').MistakePredictionService;
+  /**
    * Optional GraphQL read layer (M10 inc 8). When absent, `POST /v1/graphql` responds 503.
    *
    * The subsystem repositories it resolves against are the optional ones above — it adds no data

@@ -138,6 +138,17 @@
               <p id="explain-source" class="count"></p>
             </div>
           </div>
+          <div id="assess" class="assess-block" hidden>
+            <button id="assess-run" type="button" class="button">Assess last move</button>
+            <p id="assess-note" class="count" role="status" aria-live="polite"></p>
+            <div id="assess-error" class="error" role="alert" hidden></div>
+            <!-- No prose element, and none is missing: this feature makes no provider call, so every
+                 value in these rows is a structured field of the response. Explanation lives in the
+                 block above. -->
+            <div id="assess-result" class="assess-result" aria-busy="false" hidden>
+              <div id="assess-rows" class="panel-list"></div>
+            </div>
+          </div>
         </section>
       </aside>
     </main>

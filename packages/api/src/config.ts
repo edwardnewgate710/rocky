@@ -89,6 +89,10 @@ export interface RateLimitConfig {
     readonly perUser: RateLimitEndpointConfig;
     readonly perIp: RateLimitEndpointConfig;
   };
+  readonly mistakePrediction: {
+    readonly perUser: RateLimitEndpointConfig;
+    readonly perIp: RateLimitEndpointConfig;
+  };
 }
 
 export const DEFAULT_ACCESS_TOKEN_TTL_SEC = 15 * 60;
@@ -137,6 +141,15 @@ export const DEFAULT_RATE_LIMIT: RateLimitConfig = {
   moveExplanation: {
     perUser: { maxRequests: 10, windowMs: 60 * 1000 }, // 10 / min
     perIp: { maxRequests: 30, windowMs: 60 * 1000 }, // 30 / min
+  },
+  // Mistake prediction costs up to two engine searches and no provider call, so it sits between the
+  // two above: tighter than a single analysis because an accepted request can be two of them, and
+  // looser than move explanation because there is no money in it. Its own bucket rather than a share
+  // of the analysis one — a user assessing moves must not be able to exhaust their own ability to
+  // analyse a position, and the two limits describe different costs.
+  mistakePrediction: {
+    perUser: { maxRequests: 20, windowMs: 60 * 1000 }, // 20 / min
+    perIp: { maxRequests: 40, windowMs: 60 * 1000 }, // 40 / min
   },
 };
 

@@ -24,7 +24,15 @@ export type MoveUci = string;
  */
 export interface TerminalAfterMove {
   readonly reason: string;
-  readonly result: string;
+  /**
+   * The game result.
+   *
+   * Narrowed from `string` in M15 increment 5. `ResultString` has exactly three values and every
+   * caller already supplies one; leaving it open let a consumer branch on a fourth that cannot
+   * exist, and made the one shape this package has for a finished game disagree with itself.
+   * Raised in the CodeRabbit review of PR #136.
+   */
+  readonly result: '1-0' | '0-1' | '1/2-1/2';
   readonly describe: string;
 }
 

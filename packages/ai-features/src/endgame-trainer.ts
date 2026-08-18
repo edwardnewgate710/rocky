@@ -40,7 +40,7 @@ import type {
 } from './endgame-types.js';
 
 // Reuse the perspective-flip logic from MistakePredictor.
-import { negateEval, evalToCpLoss } from './mistake-predictor.js';
+import { negateEval } from './mistake-predictor.js';
 
 // ---------------------------------------------------------------------------
 // Options
@@ -241,8 +241,8 @@ export class EndgameTrainer {
     // 4. Normalise evalAfter to the mover's perspective (perspective flip).
     const evalAfterMoverPerspective = negateEval(evalAfterRaw);
 
-    // 5. Compute centipawn loss.
-    const centipawnLoss = evalToCpLoss(evalBefore, evalAfterMoverPerspective);
+    // 5. Compute centipawn loss, on this feature's own terms.
+    const centipawnLoss = legacyCpLoss(evalBefore, evalAfterMoverPerspective);
 
     // 6. Determine mate distance after the move (if applicable).
     let mateDistanceAfter: number | null = null;
@@ -327,6 +327,50 @@ export class EndgameTrainer {
 // ---------------------------------------------------------------------------
 // Pure helper functions
 // ---------------------------------------------------------------------------
+
+/**
+ * The centipawn loss, on the terms this feature has always used.
+ *
+ * A verbatim copy of `evalToCpLoss` as it stood before M15 increment 5, kept here rather than shared,
+ * and that is the point. The shared version now applies a rule this one does not: **"already lost"
+ * outranks "walked into mate"**, because Mistake Prediction measures what a *move* cost and a player
+ * who was being forcibly mated before it lost nothing by it. That rule is right for assessing a move
+ * and wrong for grading an endgame attempt, where converting mate-in-2-against-you into
+ * mate-in-1-against-you is precisely the technique failure the exercise is testing.
+ *
+ * An earlier draft of this increment routed this call through the shared helper and claimed in a
+ * comment to preserve the old value exactly. It did not: that case flipped from `Infinity`
+ * (`throws_result`) to `0` (`optimal`) — a silent behaviour change to a feature this increment does
+ * not touch, hidden behind a comment saying nothing had changed. Raised in the Qodo review of
+ * PR #136.
+ *
+ * `Infinity` is retained deliberately: `AttemptEvaluation.centipawnLoss` is a plain number and no
+ * caller serialises it. Giving this feature the nullable contract belongs with productionising it.
+ */
+function legacyCpLoss(evalBefore: Evaluation, evalAfterMoverPerspective: Evaluation): number {
+  if (evalAfterMoverPerspective.type === 'mate' && evalAfterMoverPerspective.value < 0) {
+    return Infinity;
+  }
+  if (
+    evalBefore.type === 'mate' &&
+    evalBefore.value > 0 &&
+    evalAfterMoverPerspective.type !== 'mate'
+  ) {
+    return Infinity;
+  }
+  if (
+    evalBefore.type === 'mate' &&
+    evalBefore.value > 0 &&
+    evalAfterMoverPerspective.type === 'mate' &&
+    evalAfterMoverPerspective.value > 0
+  ) {
+    return 0;
+  }
+  if (evalBefore.type === 'cp' && evalAfterMoverPerspective.type === 'cp') {
+    return evalBefore.value - evalAfterMoverPerspective.value;
+  }
+  return 0;
+}
 
 /** Format an endgame goal as a human-readable string. */
 function formatGoal(goal: EndgameGoal): string {

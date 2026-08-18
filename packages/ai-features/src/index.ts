@@ -45,13 +45,31 @@ export type {
   PuzzleDifficulty,
 } from './puzzle-types.js';
 
-// Mistake Predictor (M8 increment 3)
-export { MistakePredictor, negateEval, evalToCpLoss, classify, DEFAULT_INACCURACY_THRESHOLD, DEFAULT_MISTAKE_THRESHOLD, DEFAULT_BLUNDER_THRESHOLD } from './mistake-predictor.js';
-export type { MistakePredictorOptions } from './mistake-predictor.js';
+// Mistake Predictor (M8 increment 3; productionised in M15 increment 5, ADR-0118)
+export {
+  MistakePredictor,
+  negateEval,
+  evalToCpLoss,
+  classify,
+  assessEvaluation,
+  assessTerminal,
+  moverResultOf,
+  DEFAULT_INACCURACY_THRESHOLD,
+  DEFAULT_MISTAKE_THRESHOLD,
+  DEFAULT_BLUNDER_THRESHOLD,
+  DEFAULT_MISTAKE_THRESHOLDS,
+} from './mistake-predictor.js';
+export type {
+  MistakePredictorOptions,
+  MistakeThresholds,
+  MistakeAssessment,
+} from './mistake-predictor.js';
 export type {
   PredictRequest,
   MistakeVerdict,
   MistakeClassification,
+  MoveOutcome as MistakeMoveOutcome,
+  TerminalAfterMove as MistakeTerminalAfterMove,
 } from './mistake-types.js';
 
 // Opening Explorer (M8 increment 4)

@@ -4,7 +4,89 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-18 — M15 Increment 4: terminal-position semantics, and Move Explanation in the UI._
+_Last updated: 2026-08-18 — M15 Increment 5: Mistake Prediction productionised as an engine-only capability._
+
+## M15 Increment 5 — Mistake Prediction (ADR-0118)
+
+Took the M8 `MistakePredictor` — library-only since it was written, with no importer outside its own
+two test files — and made it a product: `POST /v1/analysis/mistake-prediction` plus an "Assess last
+move" control in the Engine panel, beside "Explain last move".
+
+### Six defects the investigation found, four of them correctness
+
+- **The variant never reached the rules engine.** `Position.fromFen(request.fen)` with no variant,
+  while `variant` went separately to the engine. Legality, the resulting FEN and any adjudication ran
+  under *standard* rules on Atomic, Horde and Racing Kings positions the engine was analysing as
+  themselves. One request, two disagreeing opinions about which game was being played.
+- **Delivering checkmate was classified as a `blunder`.** It always ran a post-move search; a decided
+  position answers with the ADR-0116 `{ cp: 0, depth: 0 }` placeholder; negated and subtracted from a
+  winning `evalBefore`, mate-in-one scored as a several-hundred-centipawn loss.
+- **`centipawnLoss` could be `Infinity`**, which `JSON.stringify` renders as `null` — the same
+  absence with none of the intent, and no way to tell it from a field never set.
+- **Legacy `chess` vocabulary**, which `parseVariant` rejects and no engine pool matches. Its tests
+  asserted `chess` too, so the suite was evidence *for* the defect rather than against it.
+- Classification thresholds were caller-supplied, and grounding was built twice — the `MoveExplainer`
+  defect removed in ADR-0115, still present here.
+
+Plus two structural: `engine` was a **required** option, so the class could not be composed without
+one; and `resultsBefore[0].evaluation` was indexed unguarded, which compiles because this package has
+no `noUncheckedIndexedAccess` and throws at runtime on an empty result set.
+
+### No AI provider, deliberately
+
+"Explain last move" already ships in the same panel, reads the same target, and already writes
+engine-grounded prose about that exact move. A second paid completion producing a second paragraph
+six pixels away is duplicate spend with no distinct role — so the coaching call is dropped and
+**provider calls per request is 0**. The payoff is reach rather than saving: the capability now
+depends on the engine alone, so any deployment with an engine gets the whole feature, where Move
+Explanation needs both halves and goes dark without either.
+
+### Contract
+
+- `classification`: `ok | inaccuracy | mistake | blunder`, thresholds fixed server-side at 50/100/300
+  cp with no request field and no env override. No `brilliant`/`great`/`excellent` — those are claims
+  about *why* a move is good that no centipawn difference supports.
+- `after` is tagged `evaluation | terminal` (ADR-0116). `centipawnLoss` is `number | null`, never
+  `Infinity`. **A draw is the one terminal result with a real measure** — zero is exactly where the
+  engine's own scale puts an equal game — so throwing away +5.00 into stalemate is a 500 cp blunder
+  while holding a draw from −8.00 reads as `ok`. A win and a loss report no number rather than an
+  invented one. "Already being forcibly mated" outranks everything but winning: the move cost nothing
+  when every move loses.
+- `bestMove` is nullable, never `(none)`. Equality with `move` is how "you found the engine's own
+  choice" is expressed — no second boolean that could disagree with it.
+- **Cost: 0 engine searches rejected, 1 when the move ends the game, 2 otherwise.** All three pinned
+  by tests. Quota charged after validation and before any search. Its own bucket, 20/min per user and
+  40/min per IP. No capacity claim.
+- Under `/v1/analysis/` rather than `/v1/ai/`, because the prefix is a claim about what serves the
+  request and no provider does.
+
+### UI
+
+One control, one panel, no new route, no second capability fetch. The verdict is rows of structured
+fields and **no prose at all** — nothing is parsed out of a sentence, because no sentence is fetched.
+**The classification is a word, never a colour**, following DESIGN.md's worked example for
+achievement tiers; a blunder in particular never borrows Ember, which means the *application* failed.
+
+`ExplainController` and `AssessController` now share one `MoveRequestController`, and both read one
+`lastMoveTarget()`. The single defect the independent review of PR #135 found was a copy-paste
+divergence between two hand-maintained copies of that lifecycle; a third copy would have been a third
+chance at it.
+
+- **Tests**: request shape (three fields, nothing else), previous-FEN targeting, promotion suffix,
+  classification and terminal rendering, the capability gate, the variant-gate race, signed-out,
+  429/503/422 as muted states, stale suppression on a further move, resync invalidation, disposal,
+  remount non-stacking, repeat-click deduplication, CSS contract for the aligned figure column and
+  the word-not-colour rule, and Explain still working alongside Assess.
+- **API tests** pin the 0/1/2 search counts, FEN injection reaching no engine, an already-decided
+  position costing nothing, the legacy `chess` rejection, policy fields rejected by `strictObject`,
+  quota charged after validation, and no engine detail in any error body. One test drives the same
+  position and move under three variants and gets three different answers.
+
+Not covered: no arbitrary past-move assessment, no whole-game accuracy summary, no cost dashboard, no
+capacity claim, no client-disconnect cancellation. Repetition is still not adjudicable from a bare
+FEN. The other seven M8 features remain library-only.
+
+_Prior: 2026-08-18 — M15 Increment 4: terminal-position semantics, and Move Explanation in the UI._
 
 ## M15 Increment 4 — Terminal semantics + Move Explanation UI (ADR-0116, ADR-0117)
 

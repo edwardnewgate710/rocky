@@ -69,8 +69,11 @@ function fakeCoachingResponse(
       centipawnLoss: classification === 'blunder' ? 400 : classification === 'mistake' ? 150 : classification === 'inaccuracy' ? 60 : 5,
       evalBefore: { type: 'cp', value: 200 },
       evalBeforeLabel: '+2.00',
-      evalAfterMoverPerspective: { type: 'cp', value: classification === 'blunder' ? -200 : 50 },
-      evalAfterLabel: classification === 'blunder' ? '-2.00' : '+0.50',
+      moveOutcome: {
+        kind: 'evaluation',
+        evaluation: { type: 'cp', value: classification === 'blunder' ? -200 : 50 },
+        label: classification === 'blunder' ? '-2.00' : '+0.50',
+      },
       betterMove: 'g1f3',
       bestLine: ['g1f3'],
       depth: 20,

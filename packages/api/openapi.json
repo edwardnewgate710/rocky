@@ -2351,6 +2351,92 @@
         }
       }
     },
+    "/v1/analysis/mistake-prediction": {
+      "post": {
+        "summary": "Classify a candidate move as ok, inaccuracy, mistake or blunder",
+        "tags": [
+          "analysis"
+        ],
+        "operationId": "post_v1_analysis_mistake_prediction",
+        "responses": {
+          "200": {
+            "description": "Engine-derived verdict for the move",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MistakePredictionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid position, variant, move, illegal move, or a decided position",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Analysis is not configured, or the engine is saturated or unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MistakePredictionRequest"
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/ai/move-explanation": {
       "post": {
         "summary": "Explain a move in a position with engine grounding",
@@ -12043,7 +12129,8 @@
               "messaging",
               "community",
               "analysis",
-              "moveExplanation"
+              "moveExplanation",
+              "mistakePrediction"
             ],
             "properties": {
               "learning": {
@@ -12071,6 +12158,9 @@
                 "type": "boolean"
               },
               "moveExplanation": {
+                "type": "boolean"
+              },
+              "mistakePrediction": {
                 "type": "boolean"
               }
             },
@@ -15471,6 +15561,203 @@
           },
           "model": {
             "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MistakePredictionRequest": {
+        "type": "object",
+        "required": [
+          "fen",
+          "variant",
+          "move"
+        ],
+        "properties": {
+          "fen": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "variant": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "chess960",
+              "kingofthehill",
+              "atomic",
+              "crazyhouse",
+              "threecheck",
+              "horde",
+              "racingkings"
+            ]
+          },
+          "move": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 6
+          }
+        },
+        "additionalProperties": false
+      },
+      "MistakePredictionResponse": {
+        "type": "object",
+        "required": [
+          "fen",
+          "variant",
+          "move",
+          "classification",
+          "before",
+          "after",
+          "centipawnLoss",
+          "bestMove",
+          "bestLine",
+          "depth"
+        ],
+        "properties": {
+          "fen": {
+            "type": "string"
+          },
+          "variant": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "chess960",
+              "kingofthehill",
+              "atomic",
+              "crazyhouse",
+              "threecheck",
+              "horde",
+              "racingkings"
+            ]
+          },
+          "move": {
+            "type": "string"
+          },
+          "classification": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "inaccuracy",
+              "mistake",
+              "blunder"
+            ]
+          },
+          "before": {
+            "type": "object",
+            "required": [
+              "evalKind",
+              "evalValue",
+              "evalLabel"
+            ],
+            "properties": {
+              "evalKind": {
+                "type": "string",
+                "enum": [
+                  "cp",
+                  "mate"
+                ]
+              },
+              "evalValue": {
+                "type": "number"
+              },
+              "evalLabel": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "after": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "kind",
+                  "evalKind",
+                  "evalValue",
+                  "evalLabel"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "evaluation"
+                    ]
+                  },
+                  "evalKind": {
+                    "type": "string",
+                    "enum": [
+                      "cp",
+                      "mate"
+                    ]
+                  },
+                  "evalValue": {
+                    "type": "number"
+                  },
+                  "evalLabel": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": [
+                  "kind",
+                  "reason",
+                  "result",
+                  "label"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "terminal"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "enum": [
+                      "checkmate",
+                      "stalemate",
+                      "insufficient_material",
+                      "fifty_move",
+                      "threefold",
+                      "variant_win",
+                      "variant_draw"
+                    ]
+                  },
+                  "result": {
+                    "type": "string",
+                    "enum": [
+                      "1-0",
+                      "0-1",
+                      "1/2-1/2"
+                    ]
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
+          },
+          "centipawnLoss": {
+            "type": "integer",
+            "nullable": true
+          },
+          "bestMove": {
+            "type": "string",
+            "nullable": true
+          },
+          "bestLine": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "depth": {
+            "type": "integer"
           }
         },
         "additionalProperties": false

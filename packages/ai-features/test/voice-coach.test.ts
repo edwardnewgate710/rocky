@@ -65,8 +65,11 @@ function fakeCoachingResponse(overrides: Partial<CoachingResponse> = {}): Coachi
       centipawnLoss: 400,
       evalBefore: { type: 'cp', value: 200 },
       evalBeforeLabel: '+2.00',
-      evalAfterMoverPerspective: { type: 'cp', value: -200 },
-      evalAfterLabel: '-2.00',
+      moveOutcome: {
+        kind: 'evaluation',
+        evaluation: { type: 'cp', value: -200 },
+        label: '-2.00',
+      },
       betterMove: 'g1f3',
       bestLine: ['g1f3'],
       depth: 20,
@@ -288,8 +291,11 @@ describe('VoiceCoach.verbalize (hermetic)', () => {
         centipawnLoss: 400,
         evalBefore: { type: 'cp', value: 200 },
         evalBeforeLabel: '+2.00',
-        evalAfterMoverPerspective: { type: 'cp', value: -200 },
-        evalAfterLabel: '-2.00',
+        moveOutcome: {
+          kind: 'evaluation',
+          evaluation: { type: 'cp', value: -200 },
+          label: '-2.00',
+        },
         betterMove: 'g1f3',
         bestLine: ['g1f3'],
         depth: 20,
@@ -546,4 +552,73 @@ describe('VoiceCoach — with AI provider', () => {
     assert.ok(narrativeSeg, 'Should have narrative segment from Coach');
     assert.equal(narrativeSeg!.text, 'Coach narrative.');
   });
+});
+
+/**
+ * A verdict with no centipawn measure never puts the token `null` into the model's prompt.
+ *
+ * `centipawnLoss` became nullable in M15 increment 5: a transition touching a mate score, or a game
+ * decided in a win or a loss, has no centipawn count to report. `buildSummary` interpolated it
+ * unconditionally, so those verdicts reached the model as "cp loss: null" — a token that reads as a
+ * value rather than as an absence, in the one text the narrative is derived from.
+ *
+ * This drives `buildSummary`, which is reachable **only** with an AI provider attached: the spoken
+ * segments come from `speakMistake`, which never mentions the figure. An earlier version of this
+ * test asserted on `spoken.segments` with no provider and therefore could not fail — caught by
+ * mutating the fix back out and watching it still pass.
+ */
+test('a verdict with no centipawn measure reaches the model without the word null', async () => {
+  const engine = createFakeEngine(200, 'g1f3');
+  const coach = new Coach({ engine });
+
+  const prompts: string[] = [];
+  const inner = new FakeProvider({ id: 'fake-ai', content: 'A smooth narrative.' });
+  const recording = {
+    id: inner.id,
+    complete: async (request: Parameters<typeof inner.complete>[0]) => {
+      prompts.push(request.messages.map((m) => m.content).join('\n'));
+      return inner.complete(request);
+    },
+  } as unknown as typeof inner;
+
+  const voiceCoach = new VoiceCoach({ coach, ai: recording });
+
+  const coaching = fakeCoachingResponse({
+    fen: STARTPOS,
+    move: 'a2a3',
+    narrative: null,
+    providerId: null,
+    model: null,
+    mistakeVerdict: {
+      fen: STARTPOS,
+      move: 'a2a3',
+      fenAfter: 'rnbqkbnr/pppppppp/8/8/8/P7/1PPPPPPP/RNBQKBNR b KQkq - 0 1',
+      classification: 'blunder',
+      // The move walked into a forced mate: a real verdict, with no centipawn count behind it.
+      centipawnLoss: null,
+      evalBefore: { type: 'cp', value: 200 },
+      evalBeforeLabel: '+2.00',
+      moveOutcome: {
+        kind: 'evaluation',
+        evaluation: { type: 'mate', value: -3 },
+        label: 'mate in -3',
+      },
+      betterMove: null,
+      bestLine: [],
+      depth: 20,
+      coaching: null,
+      providerId: null,
+      model: null,
+      usage: null,
+      latencyMs: null,
+    },
+  });
+
+  await voiceCoach.verbalize(coaching);
+
+  assert.equal(prompts.length, 1, 'precondition: the narrative path ran');
+  const prompt = prompts[0]!;
+  assert.match(prompt, /blunder/i, 'the verdict itself still reaches the model');
+  assert.equal(/\bnull\b/i.test(prompt), false, 'no literal null in the prompt');
+  assert.equal(/Infinity/i.test(prompt), false, 'and no leftover sentinel either');
 });

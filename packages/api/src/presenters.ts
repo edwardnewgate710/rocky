@@ -903,6 +903,16 @@ export interface CapabilitiesFlags {
    * a second list would be the same list, kept in a second place, free to drift.
    */
   readonly moveExplanation: boolean;
+  /**
+   * Engine-grounded mistake prediction (ADR-0118).
+   *
+   * Implies `analysis` and is implied *by* it: the verdict is a rules-and-engine fact with no
+   * provider call anywhere on its path, so this is true on exactly the deployments that can analyse.
+   * It is still published as its own flag rather than left for a client to infer from `analysis`,
+   * because a client that infers a capability is a client that keeps working after the inference
+   * stops being true. The variants it can serve are `analysisVariants`.
+   */
+  readonly mistakePrediction: boolean;
 }
 
 /**
@@ -948,6 +958,7 @@ export function capabilitiesView(
     | 'communityRepository'
     | 'analysis'
     | 'moveExplanation'
+    | 'mistakePrediction'
   >,
 ): CapabilitiesView {
   return {
@@ -961,6 +972,7 @@ export function capabilitiesView(
       community: deps.communityRepository !== undefined,
       analysis: deps.analysis !== undefined,
       moveExplanation: deps.moveExplanation !== undefined,
+      mistakePrediction: deps.mistakePrediction !== undefined,
     },
     analysisVariants: deps.analysis
       ? VARIANTS.filter((variant) => deps.analysis?.supportsVariant(variant) === true)
@@ -1072,6 +1084,57 @@ export interface MoveExplanationView {
   readonly citation: MoveExplanationCitationView;
   readonly providerId: string;
   readonly model: string;
+}
+
+/**
+ * What the assessed move achieved, mover-relative (ADR-0118).
+ *
+ * Re-exported from the service rather than restated here. The other views in this file restate their
+ * shapes because they widen a domain type to something wire-shaped — but this one is already exactly
+ * the wire shape, and a second copy of a discriminated union is a second copy free to drift by one
+ * member. It carries a `label` where {@link MoveOutcomeView} does not, because a terminal result here
+ * has no prose beside it to say what happened.
+ */
+export type { MistakeMoveOutcomeView } from './analysis/mistake-prediction-service.js';
+
+export interface MistakePredictionView {
+  readonly fen: string;
+  readonly variant: string;
+  readonly move: string;
+  readonly classification: 'ok' | 'inaccuracy' | 'mistake' | 'blunder';
+  readonly before: {
+    readonly evalKind: 'cp' | 'mate';
+    readonly evalValue: number;
+    readonly evalLabel: string;
+  };
+  readonly after: import('./analysis/mistake-prediction-service.js').MistakeMoveOutcomeView;
+  /** `null` when the transition has no centipawn measure — never `Infinity`, never a stand-in. */
+  readonly centipawnLoss: number | null;
+  /** `null` when the engine reported no line. Equal to `move` when the player found it. */
+  readonly bestMove: string | null;
+  readonly bestLine: readonly string[];
+  readonly depth: number;
+}
+
+export function mistakePredictionView(
+  outcome: import('./analysis/mistake-prediction-service.js').MistakePredictionOutcome,
+): MistakePredictionView {
+  return {
+    fen: outcome.fen,
+    variant: outcome.variant,
+    move: outcome.move,
+    classification: outcome.classification,
+    before: {
+      evalKind: outcome.before.evalKind,
+      evalValue: outcome.before.evalValue,
+      evalLabel: outcome.before.evalLabel,
+    },
+    after: outcome.after,
+    centipawnLoss: outcome.centipawnLoss,
+    bestMove: outcome.bestMove,
+    bestLine: [...outcome.bestLine],
+    depth: outcome.depth,
+  };
 }
 
 export function moveExplanationView(

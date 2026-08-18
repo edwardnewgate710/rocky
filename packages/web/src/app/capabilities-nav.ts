@@ -117,6 +117,34 @@ export function moveExplanationSupportsVariant(payload: unknown, variant: string
 }
 
 /**
+ * Whether this deployment can assess a move for mistakes (ADR-0118).
+ *
+ * Fail-closed like its neighbours, but note what it does *not* depend on: an AI provider. The
+ * verdict is a rules-and-engine fact with no provider call on its path, so the server sets this on
+ * exactly the deployments that can analyse — which makes it strictly more available than
+ * {@link moveExplanationEnabled}, not equally so. Read as its own flag rather than inferred from
+ * `analysis`, because a client that infers a capability keeps working after the inference stops
+ * being true.
+ */
+export function mistakePredictionEnabled(payload: unknown): boolean {
+  return capabilityFlags(payload)?.['mistakePrediction'] === true;
+}
+
+/**
+ * Whether this deployment can assess a move in a specific variant.
+ *
+ * The same `analysisVariants` list the other two gates read, for the same reason: the assessment is
+ * derived from an engine search, so it serves exactly the variants analysis serves, and a second
+ * list would be the same list kept in a second place.
+ */
+export function mistakePredictionSupportsVariant(payload: unknown, variant: string | null): boolean {
+  if (!mistakePredictionEnabled(payload) || variant === null) return false;
+  const variants = (payload as { analysisVariants?: unknown } | null)?.analysisVariants;
+  if (!Array.isArray(variants)) return true;
+  return variants.includes(variant);
+}
+
+/**
  * Whether this deployment can analyse a specific variant.
  *
  * `analysisEnabled` answers the deployment-wide question; this answers the one that decides whether

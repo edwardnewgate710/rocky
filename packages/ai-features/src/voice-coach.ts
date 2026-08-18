@@ -262,7 +262,13 @@ export class VoiceCoach {
 
     if (coaching.mistakeVerdict) {
       const v = coaching.mistakeVerdict;
-      lines.push(`Assessment: ${v.classification} (cp loss: ${v.centipawnLoss}).`);
+      // `centipawnLoss` is nullable since M15 increment 5. Spoken aloud, the literal token `null`
+      // is worse than omitting the figure entirely.
+      lines.push(
+        v.centipawnLoss === null
+          ? `Assessment: ${v.classification}.`
+          : `Assessment: ${v.classification} (cp loss: ${v.centipawnLoss}).`,
+      );
       if (v.betterMove && v.betterMove !== '(none)') {
         const spokenBetter = verbalizeUci(coaching.fen, v.betterMove);
         lines.push(`Better move: ${spokenBetter} (UCI: ${v.betterMove}).`);

@@ -242,7 +242,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       },
       capabilities: {
         type: 'object',
-        required: ['learning', 'studies', 'achievements', 'search', 'social', 'messaging', 'community', 'analysis', 'moveExplanation'],
+        required: ['learning', 'studies', 'achievements', 'search', 'social', 'messaging', 'community', 'analysis', 'moveExplanation', 'mistakePrediction'],
         properties: {
           learning: { type: 'boolean' },
           studies: { type: 'boolean' },
@@ -253,6 +253,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
           community: { type: 'boolean' },
           analysis: { type: 'boolean' },
           moveExplanation: { type: 'boolean' },
+          mistakePrediction: { type: 'boolean' },
         },
         additionalProperties: false,
       },
@@ -1711,7 +1712,86 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     },
     additionalProperties: false,
   },
+
+  // --- Mistake Prediction (ADR-0118) ---
+  MistakePredictionRequest: {
+    type: 'object',
+    required: ['fen', 'variant', 'move'],
+    properties: {
+      fen: { type: 'string', minLength: 1, maxLength: 200 },
+      variant: { type: 'string', enum: [...VARIANTS] },
+      move: { type: 'string', minLength: 2, maxLength: 6 },
+    },
+    additionalProperties: false,
+  },
+
+  MistakePredictionResponse: {
+    type: 'object',
+    required: [
+      'fen',
+      'variant',
+      'move',
+      'classification',
+      'before',
+      'after',
+      'centipawnLoss',
+      'bestMove',
+      'bestLine',
+      'depth',
+    ],
+    properties: {
+      fen: { type: 'string' },
+      variant: { type: 'string', enum: [...VARIANTS] },
+      move: { type: 'string' },
+      classification: { type: 'string', enum: ['ok', 'inaccuracy', 'mistake', 'blunder'] },
+      before: {
+        type: 'object',
+        required: ['evalKind', 'evalValue', 'evalLabel'],
+        properties: {
+          evalKind: { type: 'string', enum: ['cp', 'mate'] },
+          evalValue: { type: 'number' },
+          evalLabel: { type: 'string' },
+        },
+        additionalProperties: false,
+      },
+      after: {
+        oneOf: [
+          {
+            type: 'object',
+            required: ['kind', 'evalKind', 'evalValue', 'evalLabel'],
+            properties: {
+              kind: { type: 'string', enum: ['evaluation'] },
+              evalKind: { type: 'string', enum: ['cp', 'mate'] },
+              evalValue: { type: 'number' },
+              evalLabel: { type: 'string' },
+            },
+            additionalProperties: false,
+          },
+          {
+            type: 'object',
+            required: ['kind', 'reason', 'result', 'label'],
+            properties: {
+              kind: { type: 'string', enum: ['terminal'] },
+              reason: { type: 'string', enum: [...TERMINAL_REASONS] },
+              result: { type: 'string', enum: [...RESULT_STRINGS] },
+              label: { type: 'string' },
+            },
+            additionalProperties: false,
+          },
+        ],
+      },
+      centipawnLoss: nullableInt,
+      bestMove: nullableString,
+      bestLine: {
+        type: 'array',
+        items: { type: 'string' },
+      },
+      depth: { type: 'integer' },
+    },
+    additionalProperties: false,
+  },
 };
+
 
 
 

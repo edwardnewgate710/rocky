@@ -87,6 +87,7 @@ import {
   capabilitiesView,
   analysisView,
   moveExplanationView,
+  mistakePredictionView,
 } from './presenters';
 import { DEFAULT_ANALYSIS_LIMITS } from './analysis/limits';
 import { TournamentService } from './tournament/service';
@@ -141,6 +142,11 @@ export interface RouteDeps {
   readonly analysis?: import('./analysis/service').AnalysisService;
   /** Optional Move Explanation (ADR-0115). When absent, `POST /v1/ai/move-explanation` responds 503. */
   readonly moveExplanation?: import('./ai/move-explanation-service').MoveExplanationService;
+  /**
+   * Optional Mistake Prediction (ADR-0118). When absent, `POST /v1/analysis/mistake-prediction`
+   * responds 503. Tracks the analysis subsystem alone — no AI provider is involved.
+   */
+  readonly mistakePrediction?: import('./analysis/mistake-prediction-service').MistakePredictionService;
 }
 
 const PUBLIC: AuthPolicy = { required: false };
@@ -1370,6 +1376,62 @@ export function buildRouter(deps: RouteDeps): Router {
       });
 
       return json(200, analysisView(outcome));
+    },
+  );
+
+  // --- Mistake Prediction ----------------------------------------------------
+  //
+  // Under `/v1/analysis/` and not `/v1/ai/`, because the prefix is a claim about what serves the
+  // request and no AI provider does. The verdict is derived from the rules and one or two engine
+  // searches; a deployment with an engine and no provider configured serves this endpoint in full.
+  router.post(
+    '/v1/analysis/mistake-prediction',
+    doc({
+      summary: 'Classify a candidate move as ok, inaccuracy, mistake or blunder',
+      tags: ['analysis'],
+      security: 'bearer',
+      requestSchema: 'MistakePredictionRequest',
+      responses: {
+        200: ['MistakePredictionResponse', 'Engine-derived verdict for the move'],
+        401: ['Error', 'Authentication required'],
+        422: ['Error', 'Invalid position, variant, move, illegal move, or a decided position'],
+        429: ['Error', 'Rate limit exceeded'],
+        503: ['Error', 'Analysis is not configured, or the engine is saturated or unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const identity = requireAuth(ctx);
+      const service = deps.mistakePrediction;
+      if (!service) throw HttpError.unavailable('mistake prediction is not configured');
+
+      // Only a position and a move. No thresholds, no depth, no movetime, no MultiPV: what counts as
+      // a blunder is server-owned policy, and a request that could widen it would be declaring its
+      // own verdict. There is no provider, model, temperature or token field either, because nothing
+      // on this path calls one.
+      const body = strictObject(ctx.body, ['fen', 'variant', 'move']);
+      const fen = reqString(body, 'fen', { min: 1, max: 200, trim: true });
+      const variant = parseVariant(reqString(body, 'variant'));
+      const move = reqString(body, 'move', { min: 2, max: 6, trim: true });
+
+      // Charged after the request is known to be real, not on arrival — the ordering PR #134's Qodo
+      // review established. An accepted request costs one or two engine searches; a malformed FEN or
+      // an illegal move costs nothing and must therefore spend nothing, or a stream of them would
+      // empty a user's budget and, through the shared per-IP bucket, their neighbours' too.
+      const charge = async (): Promise<void> => {
+        if (!config.rateLimit.enabled) return;
+        const userKey = `mistake-prediction:user:${identity.userId}`;
+        const userCheck = await rateLimiter.check(userKey, config.rateLimit.mistakePrediction.perUser);
+        if (!userCheck.allowed) throw HttpError.rateLimited(userCheck.retryAfterSeconds);
+
+        const ipKey = `mistake-prediction:ip:${ctx.ip ?? 'unknown'}`;
+        const ipCheck = await rateLimiter.check(ipKey, config.rateLimit.mistakePrediction.perIp);
+        if (!ipCheck.allowed) throw HttpError.rateLimited(ipCheck.retryAfterSeconds);
+      };
+
+      const outcome = await service.predict({ fen, variant, move }, charge);
+
+      return json(200, mistakePredictionView(outcome));
     },
   );
 

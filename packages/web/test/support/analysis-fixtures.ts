@@ -156,6 +156,12 @@ export const GAME_ELEMENT_IDS = [
   'explain-evidence',
   'explain-prose',
   'explain-source',
+  'assess',
+  'assess-run',
+  'assess-note',
+  'assess-error',
+  'assess-result',
+  'assess-rows',
 ] as const;
 
 export function createGameDocument(): {
@@ -179,11 +185,14 @@ export function createGameDocument(): {
       // the capability reveals them starts from the same state the browser does.
       id === 'explain' ||
       id === 'explain-error' ||
-      id === 'explain-result'
+      id === 'explain-result' ||
+      id === 'assess' ||
+      id === 'assess-error' ||
+      id === 'assess-result'
     ) {
       el.hidden = true;
     }
-    if (id === 'analysis-results') {
+    if (id === 'analysis-results' || id === 'assess-result') {
       el.setAttribute('aria-busy', 'false');
     }
     elements.set(id, el);

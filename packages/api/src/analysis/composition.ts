@@ -16,10 +16,12 @@ import {
   createEngineManager,
   InMemoryLruCache,
 } from '@chess-platform/engine';
+import { DEFAULT_MISTAKE_THRESHOLDS, MistakePredictor } from '@chess-platform/ai-features';
 import { coreFenValidator } from './fen-validator.js';
 import type { AnalysisLimitsPolicy } from './limits.js';
 import { DEFAULT_ANALYSIS_LIMITS } from './limits.js';
 import { AnalysisService } from './service.js';
+import { MistakePredictionService } from './mistake-prediction-service.js';
 
 export interface AnalysisEngineSettings {
   readonly maxWorkers: number;
@@ -194,4 +196,25 @@ export function createAnalysisFromEnv(
     service,
     shutdown: (options = {}) => engine.shutdown(options),
   };
+}
+
+/**
+ * Assemble Mistake Prediction over the analysis subsystem it borrows (ADR-0118).
+ *
+ * Note what is *not* passed to `MistakePredictor`: an engine. It is composed against nothing at all
+ * for analysis, so the only path to a chess engine in this process remains the one `AnalysisService`
+ * owns. A second pool is not prevented here by convention or by review — there is no parameter
+ * through which one could arrive. The same technique ADR-0115 used for `MoveExplainer`.
+ *
+ * Note also what is not passed: an AI provider. The verdict is a rules-and-engine fact and is
+ * complete without prose, so this feature makes no provider call, costs no provider money, and is
+ * available on any deployment with an engine. `thresholds` is fixed here because it is server-owned
+ * policy, and the request body has no field that reaches it.
+ */
+export function createMistakePrediction(analysis: AnalysisService): MistakePredictionService {
+  const predictor = new MistakePredictor({
+    defaultVariant: 'standard',
+    thresholds: DEFAULT_MISTAKE_THRESHOLDS,
+  });
+  return new MistakePredictionService({ analysis, predictor });
 }

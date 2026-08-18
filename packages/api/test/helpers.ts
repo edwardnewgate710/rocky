@@ -68,6 +68,7 @@ export interface Harness {
   readonly learningRepository?: import('@chess-platform/learning').LearningRepository;
   readonly analysis?: import('../src/analysis/service').AnalysisService;
   readonly moveExplanation?: import('../src/ai/move-explanation-service').MoveExplanationService;
+  readonly mistakePrediction?: import('../src/analysis/mistake-prediction-service').MistakePredictionService;
   readonly clock: ManualClock;
   readonly tokens: AccessTokenService;
   readonly emailSender: InMemoryEmailSender;
@@ -119,6 +120,8 @@ export interface HarnessOptions {
   readonly analysis?: import('../src/analysis/service').AnalysisService;
   /** Inject an optional move explanation service. */
   readonly moveExplanation?: import('../src/ai/move-explanation-service').MoveExplanationService;
+  /** Inject an optional mistake prediction service. */
+  readonly mistakePrediction?: import('../src/analysis/mistake-prediction-service').MistakePredictionService;
 }
 
 export async function startHarness(
@@ -212,6 +215,7 @@ export async function startHarness(
     ...(graphql ? { graphql } : {}),
     ...(harnessOptions.analysis ? { analysis: harnessOptions.analysis } : {}),
     ...(harnessOptions.moveExplanation ? { moveExplanation: harnessOptions.moveExplanation } : {}),
+    ...(harnessOptions.mistakePrediction ? { mistakePrediction: harnessOptions.mistakePrediction } : {}),
     ...(harnessOptions.readiness ? { readiness: harnessOptions.readiness } : {}),
     ...(harnessOptions.logger ? { logger: harnessOptions.logger } : {}),
     ...(harnessOptions.tracer ? { tracer: harnessOptions.tracer } : {}),
@@ -241,6 +245,7 @@ export async function startHarness(
     learningRepository,
     analysis: harnessOptions.analysis,
     moveExplanation: harnessOptions.moveExplanation,
+    mistakePrediction: harnessOptions.mistakePrediction,
     clock,
     tokens,
     emailSender,

@@ -25,9 +25,21 @@ import {
   analysisEnabled,
   analysisSupportsVariant,
   loadCapabilities,
+  mistakePredictionEnabled,
+  mistakePredictionSupportsVariant,
   moveExplanationEnabled,
   moveExplanationSupportsVariant,
 } from './capabilities-nav.js';
+import { AssessController } from './assess-controller.js';
+import {
+  ASSESS_MESSAGES,
+  clearVerdict,
+  renderAssessError,
+  renderAssessNote,
+  renderVerdict,
+  setAssessBusy,
+  setVerdictVisible,
+} from './assess-view.js';
 import { ExplainController } from './explain-controller.js';
 import {
   clearExplanation,
@@ -266,8 +278,16 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
 
   resetExplainBlock();
 
-  /** The move to explain, or `null` — see `GameController.lastReplayedMove` for when that happens. */
-  const explainTarget = (): { fen: string; variant: string; move: string } | null => {
+  /**
+   * The move both controls ask about, or `null` — see `GameController.lastReplayedMove` for when
+   * that happens.
+   *
+   * **One function, two consumers.** Explain and Assess need the identical thing: the position the
+   * last move was played from, that move in full UCI, and the variant. A second copy would be a
+   * second place for the promotion suffix to get dropped, and a second thing to remember to update
+   * when the replay rules change.
+   */
+  const lastMoveTarget = (): { fen: string; variant: string; move: string } | null => {
     const last = controller?.lastReplayedMove;
     if (!last || !currentVariant) return null;
     return { fen: last.fen, variant: currentVariant, move: last.uci };
@@ -293,7 +313,7 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     if (!servable) return;
 
     const authed = isUserAuthenticated();
-    const target = explainTarget();
+    const target = lastMoveTarget();
     if (explainRunBtn) {
       explainRunBtn.disabled = !authed || target === null || explainController.isPending;
     }
@@ -317,11 +337,119 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     }
   };
 
+  // Mistake Prediction block (M15 inc 5), the third in the same panel.
+  const assessBlockEl = doc.getElementById('assess');
+  const assessRunBtn = doc.getElementById('assess-run') as HTMLButtonElement | null;
+  const assessNoteEl = doc.getElementById('assess-note');
+  const assessErrorEl = doc.getElementById('assess-error');
+  const assessResultEl = doc.getElementById('assess-result');
+  const assessRowsEl = doc.getElementById('assess-rows');
+
+  let assessAvailable = false;
+  /** The capability payload, held so the variant gate can re-run when the variant lands. */
+  let assessCapabilities: unknown = null;
+
+  /** Clear the block, for the same reason the other two are reset at mount: this DOM outlives it. */
+  const resetAssessBlock = (): void => {
+    if (assessRowsEl && assessResultEl) {
+      clearVerdict({ rows: assessRowsEl, result: assessResultEl });
+    }
+    if (assessErrorEl) renderAssessError(assessErrorEl, null);
+    if (assessNoteEl) renderAssessNote(assessNoteEl, ASSESS_MESSAGES.idle);
+  };
+
+  resetAssessBlock();
+
+  /**
+   * The single place the assess control's enabled state is decided — the same rule and the same
+   * structure as `refreshExplainControls`, including the variant gate being evaluated here rather
+   * than once at capability time, because the capability answer and the game snapshot race and only
+   * this function runs on both (ADR-0114 Decision 7).
+   */
+  const refreshAssessControls = (): void => {
+    if (analysisDisposed || !assessAvailable) return;
+
+    const servable =
+      currentVariant === null || mistakePredictionSupportsVariant(assessCapabilities, currentVariant);
+    if (assessBlockEl) assessBlockEl.hidden = !servable;
+    if (!servable) return;
+
+    const authed = isUserAuthenticated();
+    const target = lastMoveTarget();
+    if (assessRunBtn) {
+      assessRunBtn.disabled = !authed || target === null || assessController.isPending;
+    }
+    if (!assessNoteEl) return;
+    // Only the messages that are properties of the *control* rather than of a request, and only
+    // transitions between them — anything a request had to say owns the note until something else
+    // does.
+    const owned = new Set<string>([
+      ASSESS_MESSAGES.idle,
+      ASSESS_MESSAGES.signedOut,
+      ASSESS_MESSAGES.noMove,
+      '',
+    ]);
+    if (!owned.has(assessNoteEl.textContent ?? '')) return;
+    if (!authed) {
+      renderAssessNote(assessNoteEl, ASSESS_MESSAGES.signedOut);
+    } else if (target === null) {
+      renderAssessNote(assessNoteEl, ASSESS_MESSAGES.noMove);
+    } else {
+      renderAssessNote(assessNoteEl, ASSESS_MESSAGES.idle);
+    }
+  };
+
   let controller: GameController;
+
+  const assessController = new AssessController({
+    client: deps.client,
+    getTarget: lastMoveTarget,
+    callbacks: {
+      onPhase: (phase) => {
+        if (assessResultEl) setAssessBusy(assessResultEl, phase === 'loading');
+        refreshAssessControls();
+        if (phase === 'loading') {
+          if (assessNoteEl) renderAssessNote(assessNoteEl, ASSESS_MESSAGES.running);
+          if (assessErrorEl) renderAssessError(assessErrorEl, null);
+        }
+      },
+      onResult: (result) => {
+        if (assessRowsEl) renderVerdict(assessRowsEl, result);
+        if (assessResultEl) setVerdictVisible(assessResultEl, true);
+        if (assessNoteEl) renderAssessNote(assessNoteEl, null);
+        if (assessErrorEl) renderAssessError(assessErrorEl, null);
+      },
+      onFailure: (failure) => {
+        resetAssessBlock();
+        const noteFor: Partial<Record<typeof failure, string>> = {
+          'rate-limited': ASSESS_MESSAGES.rateLimited,
+          unavailable: ASSESS_MESSAGES.unavailable,
+          unauthenticated: ASSESS_MESSAGES.signedOut,
+        };
+        const note = noteFor[failure];
+        if (note !== undefined) {
+          if (assessNoteEl) renderAssessNote(assessNoteEl, note);
+          return;
+        }
+        // `rejected` and `failed` are the ones the player did not cause and cannot act on, so they
+        // read as errors rather than notes.
+        if (assessNoteEl) renderAssessNote(assessNoteEl, null);
+        if (assessErrorEl) {
+          renderAssessError(
+            assessErrorEl,
+            failure === 'rejected' ? ASSESS_MESSAGES.rejected : ASSESS_MESSAGES.failed,
+          );
+        }
+      },
+      onInvalidated: () => {
+        resetAssessBlock();
+      },
+    },
+  });
 
   const explainController = new ExplainController({
     client: deps.client,
-    getTarget: explainTarget,
+    getTarget: lastMoveTarget,
     callbacks: {
       onPhase: (phase) => {
         if (explainResultEl) setExplainBusy(explainResultEl, phase === 'loading');
@@ -463,12 +591,18 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
         board.setPosition(fen);
         analysisController.positionChanged(fen);
         explainController.targetChanged();
+        assessController.targetChanged();
         refreshAnalysisControls();
         refreshExplainControls();
+        refreshAssessControls();
       },
+      // Both controls key on the same replayed move, so both are told when it changes — including
+      // the resync case where an authoritative snapshot clears it while the FEN stays put.
       onExplainableChange: () => {
         explainController.targetChanged();
+        assessController.targetChanged();
         refreshExplainControls();
+        refreshAssessControls();
       },
       onTurn: (myTurn: boolean) => board.setTurn(myTurn),
       onClock: (whiteMs: number, blackMs: number) => {
@@ -491,10 +625,11 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
         if (state.variant) {
           currentVariant = state.variant;
           refreshAnalysisControls();
-          // Both gates depend on the variant, and this is the arrival that supplies it. Refreshing
+          // Every gate depends on the variant, and this is the arrival that supplies it. Refreshing
           // only the analysis one left the explain control offered on a variant with no engine
           // whenever capabilities answered first.
           refreshExplainControls();
+          refreshAssessControls();
         }
 
         let liveAnnouncement = '';
@@ -653,6 +788,13 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     void explainController.explain();
   });
 
+  // Route-scoped for the same reason. A bare `addEventListener` here would stack a new listener —
+  // each holding a disposed controller — on every SPA navigation to a game, because this panel's
+  // DOM lives in index.html and outlives the mount.
+  bindClick(assessRunBtn, () => {
+    void assessController.assess();
+  });
+
   bindClick(btnOfferDraw, () => controller.offerDraw());
   bindClick(btnClaimFlag, () => controller.claimFlag());
   bindClick(btnAcceptDraw, () => controller.acceptDraw());
@@ -735,6 +877,12 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
       explainCapabilities = flags;
       explainAvailable = moveExplanationEnabled(flags);
       refreshExplainControls();
+      // Its own capability again, and a strictly broader one: assessment needs no AI provider, so a
+      // deployment with an engine and no provider offers this control while the explain block above
+      // it stays hidden.
+      assessCapabilities = flags;
+      assessAvailable = mistakePredictionEnabled(flags);
+      refreshAssessControls();
     })
     .catch(() => {
       // Fail quiet: leave section hidden
@@ -773,6 +921,7 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
       analysisDisposed = true;
       analysisController.dispose();
       explainController.dispose();
+      assessController.dispose();
     },
   };
 
@@ -804,10 +953,11 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     onSessionChange: () => {
       if (analysisDisposed) return;
       refreshAnalysisControls();
-      // Both controls depend on live authentication; refreshing only one left Explain disabled under
+      // Every control depends on live authentication; refreshing only one left Explain disabled under
       // a stale sign-in note after signing in, and enabled after signing out, until some unrelated
       // event happened to refresh it. Raised in the Qodo review of PR #135.
       refreshExplainControls();
+      refreshAssessControls();
     },
   };
 }

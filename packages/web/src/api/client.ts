@@ -101,6 +101,8 @@ import type {
   WebAuthnLoginVerifyRequest,
   MoveExplanationRequest,
   MoveExplanationResponse,
+  MistakePredictionRequest,
+  MistakePredictionResponse,
 } from './models.js';
 
 /** A request spec plus whether it requires authentication. */
@@ -199,6 +201,10 @@ export class GambitClient {
 
   explainMove(body: MoveExplanationRequest, signal?: AbortSignal): Promise<MoveExplanationResponse> {
     return this.analysis.explainMove(body, signal);
+  }
+
+  predictMistake(body: MistakePredictionRequest, signal?: AbortSignal): Promise<MistakePredictionResponse> {
+    return this.analysis.predictMistake(body, signal);
   }
 
   /**

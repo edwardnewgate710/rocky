@@ -62,6 +62,15 @@ function setup(opts?: {
   moveExplanation?: boolean;
   analysisVariants?: readonly string[];
   onExplain?: (req: HttpRequest) => unknown;
+  /**
+   * Mount into an existing document instead of a fresh one.
+   *
+   * The panel DOM lives in `index.html` and outlives any single mount, so a remount in the browser
+   * binds to the *same* button element the previous mount bound to. A test that builds a new
+   * document per mount cannot observe a leaked listener at all — the second mount is clicking an
+   * element the first had never seen.
+   */
+  shared?: { readonly doc: Document; readonly elements: Map<string, FakeElement> };
 }) {
   const sockets = new FakeSocketFactory();
   const requests: HttpRequest[] = [];
@@ -96,7 +105,7 @@ function setup(opts?: {
     },
   });
 
-  const { doc, elements } = createGameDocument();
+  const { doc, elements } = opts?.shared ?? createGameDocument();
   const mounted = mountGame({
     doc,
     boardEl: elements.get('board')! as unknown as HTMLElement,
@@ -474,7 +483,14 @@ test('a resync that clears the explainable move withdraws the explanation', asyn
  */
 test('remounting the route does not stack click handlers', async () => {
   const afterE4 = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1';
-  const first = setup();
+  // One document across both mounts, because that is the situation being tested: the panel lives in
+  // index.html and outlives the route, so the second mount binds to the *same* button element the
+  // first one did. This test built a fresh document per mount until M15 increment 5, which made it
+  // unable to fail — the second mount was clicking an element the first had never touched, so
+  // replacing `bindClick` with a bare `addEventListener` passed it.
+  const shared = createGameDocument();
+
+  const first = setup({ shared });
   await tick();
   joinAndPlay(first.sockets, 'e2e4', afterE4);
   await tick();
@@ -484,18 +500,29 @@ test('remounting the route does not stack click handlers', async () => {
   first.mounted.analysis.dispose();
   first.mounted.connectivity.dispose();
 
-  const second = setup();
+  const second = setup({ shared });
   await tick();
   joinAndPlay(second.sockets, 'e2e4', afterE4);
   await tick();
 
-  second.elements.get('explain-run')!.click();
+  shared.elements.get('explain-run')!.click();
   await tick();
 
   assert.equal(second.requests.length, 1, 'one click, one request');
 
+  // The count of *listeners*, not of requests. A request count cannot see this leak: the stranded
+  // handler still fires, it just calls a disposed controller which correctly refuses, so nothing
+  // reaches the network. What leaks is the handler itself — and through it the whole disposed
+  // mount — once per navigation to a game, for the life of the page.
+  assert.equal(
+    shared.elements.get('explain-run')!.listeners['click']?.length ?? 0,
+    1,
+    'the previous mount\u2019s handler was removed, not left stacked beneath this one',
+  );
+
   second.mounted.controller.dispose();
   second.mounted.analysis.dispose();
+  second.mounted.connectivity.dispose();
 });
 
 /**

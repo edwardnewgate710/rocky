@@ -7,6 +7,8 @@ import type {
   AnalyzeRequest,
   MoveExplanationRequest,
   MoveExplanationResponse,
+  MistakePredictionRequest,
+  MistakePredictionResponse,
 } from './models.js';
 
 export class AnalysisApi {
@@ -59,4 +61,30 @@ export class AnalysisApi {
       ...(signal !== undefined ? { signal } : {}),
     });
   }
+
+  /**
+   * Request an engine-grounded mistake prediction for a move (M15 inc 5).
+   *
+   * POST /v1/analysis/mistake-prediction, auth: true.
+   *
+   * Sends only `fen`, `variant`, `move` — the server rejects any other property.
+   * No retry logic. No caching.
+   */
+  predictMistake(
+    body: MistakePredictionRequest,
+    signal?: AbortSignal,
+  ): Promise<MistakePredictionResponse> {
+    return this.execute<MistakePredictionResponse>({
+      method: 'POST',
+      path: '/v1/analysis/mistake-prediction',
+      body: {
+        fen: body.fen,
+        variant: body.variant,
+        move: body.move,
+      },
+      auth: true,
+      ...(signal !== undefined ? { signal } : {}),
+    });
+  }
 }
+

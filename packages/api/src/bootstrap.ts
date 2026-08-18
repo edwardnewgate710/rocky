@@ -78,7 +78,7 @@ import { DurableTournamentLiveView } from './tournament/durable-live-view';
 import type { AnalysisProvider } from '@chess-platform/engine';
 import { EngineBackedEvaluator } from '@chess-platform/anti-cheat/engine';
 import { AntiCheatAnalysisService } from './anti-cheat/analysis-service';
-import { createAnalysisFromEnv } from './analysis/composition';
+import { createAnalysisFromEnv, createMistakePrediction } from './analysis/composition';
 import { createAiFromEnv, createMoveExplanation } from './ai/composition';
 import { EventStoreGameSource } from './anti-cheat/source';
 import { EventStoreBotTimingSource } from './bot-detection/source';
@@ -230,6 +230,15 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
       ? createMoveExplanation(aiComposition, analysisComposition.service)
       : undefined;
 
+  // Mistake Prediction (ADR-0118) needs only the analysis subsystem. Unlike Move Explanation it makes
+  // no provider call at all — the classification is derived from the rules and the engine — so a
+  // deployment with an engine and no AI configuration gets the whole feature rather than a degraded
+  // one. It borrows the same `AnalysisService`, so this adds no pool, no worker and no shutdown
+  // handle.
+  const mistakePrediction = analysisComposition
+    ? createMistakePrediction(analysisComposition.service)
+    : undefined;
+
   const searchEnabled = process.env['SEARCH_ENABLED'] !== '0';
   const searchRepository = searchEnabled
     ? (options.searchRepository ?? new PgSearchRepository(pool))
@@ -344,6 +353,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ...(graphql ? { graphql } : {}),
     ...(analysisComposition ? { analysis: analysisComposition.service } : {}),
     ...(moveExplanation ? { moveExplanation } : {}),
+    ...(mistakePrediction ? { mistakePrediction } : {}),
     botTimingSource: new EventStoreBotTimingSource(eventStore),
     // Production observability (M13): structured logs to stdout, a scrape
     // registry backing GET /v1/metrics, and tracer emitting spans to logs.

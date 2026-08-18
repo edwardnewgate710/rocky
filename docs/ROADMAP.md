@@ -318,6 +318,15 @@ configurable). A move that walks into a forced mate is always a blunder.
   - Clean-tree verification: `rm -rf node_modules packages/*/dist packages/*/dist-test && npm ci && npm run build && npm test && npm run lint` — all green.
   - ROADMAP updated; ADR-0006 unchanged (follows the established template).
 
+> **Superseded in part by M15 Increment 5 (ADR-0118).** The account above is what M8 shipped and
+> stays as written. Productionising this feature found that four of its behaviours were defects:
+> the requested variant never reached `Position`, so legality and adjudication ran under standard
+> rules whatever the caller asked for; the post-move search always ran, so a decided position
+> returned the engine placeholder and **delivering checkmate classified as a `blunder`**;
+> `centipawnLoss` could be `Infinity`; and the thresholds described as "configurable" above were
+> configurable *by the caller*, which let a request declare its own blunder acceptable. All four are
+> fixed, and the thresholds are now server-owned at the same 50/100/300 values.
+
 ### Increment 4: Opening Explorer ✅
 
 `OpeningExplorer` — given a game's move sequence (from the start), identifies

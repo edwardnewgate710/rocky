@@ -908,3 +908,45 @@ export interface MoveExplanationRequest {
   readonly variant: string;
   readonly move: string;
 }
+
+// --- Mistake Prediction (M15 inc 5) ----------------------------------------
+
+export type MistakeClassification = 'ok' | 'inaccuracy' | 'mistake' | 'blunder';
+
+export type MistakeMoveOutcome =
+  | {
+      readonly kind: 'evaluation';
+      readonly evalKind: 'cp' | 'mate';
+      readonly evalValue: number;
+      readonly evalLabel: string;
+    }
+  | {
+      readonly kind: 'terminal';
+      readonly reason: string;
+      readonly result: '1-0' | '0-1' | '1/2-1/2';
+      readonly label: string;
+    };
+
+export interface MistakePredictionResponse {
+  readonly fen: string;
+  readonly variant: string;
+  readonly move: string;
+  readonly classification: MistakeClassification;
+  readonly before: {
+    readonly evalKind: 'cp' | 'mate';
+    readonly evalValue: number;
+    readonly evalLabel: string;
+  };
+  readonly after: MistakeMoveOutcome;
+  readonly centipawnLoss: number | null;
+  readonly bestMove: string | null;
+  readonly bestLine: readonly string[];
+  readonly depth: number;
+}
+
+export interface MistakePredictionRequest {
+  readonly fen: string;
+  readonly variant: string;
+  readonly move: string;
+}
+

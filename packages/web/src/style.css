@@ -1149,6 +1149,41 @@ button:disabled {
   color: var(--text);
 }
 
+/* --- Mistake Prediction (M15 inc 5) ---
+   The third block in the Engine panel, separated by the same hairline the explain block uses. Still
+   not a new surface: one panel, three questions about the same board. */
+.assess-block {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.assess-result {
+  margin-top: 8px;
+}
+/* The Aligned-Figures Rule: this column is read downward against the analysis rows and the explain
+   row above it, so its figures have to sit in the same tabular column as theirs. */
+.assess-value {
+  font-variant-numeric: tabular-nums;
+  min-width: 4.5ch;
+  flex-shrink: 0;
+  text-align: right;
+}
+.assess-move {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The classification is the answer the player asked for, so it carries weight — and only weight.
+   DESIGN.md settles the alternative: achievement tiers render as words in the muted voice rather
+   than as three metals, because a one-accent system cannot grow a second, third and fourth, and
+   meaning in hue alone fails colourblind readers. A blunder is emphatically not Ember either: Ember
+   means the application failed, and a blunder is data the player requested. */
+.assess-verdict {
+  font-weight: 600;
+  color: var(--text);
+}
+
 /* --- Leaderboard (M14 inc 43) --- */
 .leaderboard {
   max-width: 600px;
