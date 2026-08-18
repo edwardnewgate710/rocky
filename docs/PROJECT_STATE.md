@@ -4,7 +4,67 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-18 — M15 Increment 7: deterministic PostgreSQL concurrency synchronisation._
+_Last updated: 2026-08-18 — M15 Increment 8: three-check state preserved across `Position.snapshot()`._
+
+## M15 Increment 8 — Three-check State Preserved Across `Position.snapshot()`
+
+A one-line production change that fixed a wrong game result, and a correction to three documents
+that had recorded the bug as harmless.
+
+### A three-check game could be drawn while a player was one check from winning
+
+`repetitionKey` in `packages/chess-core/src/repetition.ts` folds the delivered-check counters into
+the key for `threecheck`, and it is right to: a player wins on the third check, so two identical
+boards are different positions if one side is two checks closer to winning. But the key is built
+from `Position.snapshot()`, which round-tripped through FEN — and FEN is the six standard fields,
+which do not include the counters. Every three-check position therefore reported `0+0`, and the
+counters could never tell two keys apart.
+
+The result was a lost game, not a lost annotation. From `4k3/8/8/8/8/8/8/3R3K w - - 0 1`, the line
+`Re1+ Kf8 Rd1 Ke8 Re1+ Kf8 Rd1 Ke8` returns the board to its start three times while White delivers
+two checks. The three occurrences are genuinely different positions — `0+0`, `1+0`, `2+0` — but all
+three keys read `0+0`, so the game was declared a **threefold draw** with White one check from
+winning. It now continues, and White wins **1-0 on the third check**. Both the live path
+(`Game.playMove`) and the replay reducer build the key from the same snapshot, so both were wrong
+together, and both are now right together.
+
+### The fix, and what it deliberately does not do
+
+`Position.snapshot()` returns `cloneState(this.state)` — the existing authoritative deep copy in
+`packages/chess-core/src/fen.ts` — instead of `parseFen(this.fen(), variant)`. No field is
+hand-copied and no second clone helper was introduced, so the one place that knows what a
+`PositionState` contains stays the one place that has to be updated when it gains a field.
+
+Serialising the counters into FEN is **not** part of this. That needs a seventh field, a decision
+between the "checks delivered" and "checks remaining" conventions, and agreement with
+Fairy-Stockfish, which is an external interoperability question. It is deferred to M15 Increment 9
+so a live wrong-result bug did not have to wait on it.
+
+### The documentation was wrong, and is corrected rather than quietly rewritten
+
+ADR-0099 §4, `docs/ROADMAP.md` and this file all recorded the loss as "latent, not live", reasoning
+that a repetition key uses only the first four FEN fields. It does not, and had not since
+2026-07-13 — three weeks before the Increment 33 audit that wrote that sentence. The audit read
+`repetition.ts`'s summary docblock, which said the first four fields; its code appended the
+counters three lines further down. That docblock now says what the code does, and says why the
+distinction matters. The original assessment is left in place in ADR-0099 with a dated correction
+beneath it.
+
+### Guards
+
+- `packages/chess-core/test/snapshot.test.ts` — the counters survive a snapshot; every
+  `PositionState` field is present, asserted against the field list so a new field that is not
+  cloned fails here; the snapshot is detached, proven by writing over `board`, both pockets and
+  both counters and re-reading the position; and all eight variants round-trip.
+- `packages/game/test/threecheck-repetition.test.ts` — `0+0` / `1+0` / `2+0` produce three distinct
+  keys; identical boards with identical counters still collide, so repetition remains reachable; the
+  reproduced line no longer draws and is won on the third check; a knight shuffle with no checks
+  still draws by threefold; and replay reproduces the live counters, result and repetition map.
+- Verified by mutation: reverting `snapshot()` to the FEN round-trip, zeroing the counters in the
+  clone, aliasing the counters, aliasing the Crazyhouse pockets, and dropping the counters from
+  `repetitionKey` are each caught. A sixth composite mutant weakens the headline key assertion *and*
+  reintroduces the defect, and is still caught by the game-path tests — the regression does not rest
+  on a single assertion.
 
 ## M15 Increment 7 — Deterministic PostgreSQL Concurrency Synchronisation (ADR-0119 follow-up)
 
@@ -638,7 +698,7 @@ Chess960 was selectable in the lobby with no implementation behind it. `Position
 - **Withheld, not deleted**: `VARIANTS` still mirrors the server enum; a new `OFFERED_VARIANTS` in `packages/web/src/api/models.ts` is what the lobby renders. They were the same array, which is why a hollow variant stayed selectable — there was no way to withhold one without misstating the contract. Restoring it is one line, and the test says so.
 - **Audit of all eight variants**: Chess960 was the only hollow one. `horde` and `racingkings` start correctly and enforce their win conditions; the rest were verified in Increment 32.
 - **Corrections worth keeping**: `racingkings` first looked broken — the probe position had both kings on rank 8, which is genuinely a draw. `threecheck` first looked as though it never counted checks — the reading was taken through `snapshot()`, which round-trips via FEN and drops `checkCount`.
-- **Found, not fixed**: `Position.snapshot()` loses three-check counters. Latent, since its only production callers build repetition keys, which use the first four FEN fields. Tracked in `docs/ROADMAP.md`.
+- **Found, not fixed**: `Position.snapshot()` loses three-check counters. Recorded at the time as latent, since its only production callers build repetition keys, which were believed to use only the first four FEN fields. That belief was wrong — the key already included the counters for `threecheck`, so this was a live wrong-result bug. Corrected and fixed in M15 Increment 8; see that section and the correction note in ADR-0099 §4.
 - **Open**: implementing Chess960 properly — 960-position generation, castling from arbitrary squares, Shredder/X-FEN, UCI king-takes-rook encoding, SAN, perft against published values.
 
 ## M14 Increment 32 - Perft coverage for the chess variants (ADR-0098)

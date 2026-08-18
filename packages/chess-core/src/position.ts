@@ -5,7 +5,7 @@
  */
 
 import { fileOf, opposite, rankOf, squareFromName, squareName, typeOf } from './board';
-import { START_FEN, parseFen, toFen } from './fen';
+import { START_FEN, cloneState, parseFen, toFen } from './fen';
 import {
   applyMove,
   findKing,
@@ -57,9 +57,26 @@ export class Position {
     return toFen(this.state);
   }
 
-  /** Raw, defensively-cloned state (for engines/serialization). */
+  /**
+   * Raw, defensively-cloned state.
+   *
+   * Cloned directly rather than round-tripped through FEN. The FEN form is deliberately the
+   * standard six fields, and Three-Check counters are not among them, so serialising and
+   * reparsing silently reset both to zero — a snapshot that quietly disagreed with the position
+   * it came from. That was not merely lossy in theory: `repetitionKey` includes the counters for
+   * `threecheck`, and it is built from this snapshot, so every three-check position compared
+   * equal on counters that were always zero and a game could be declared a threefold draw across
+   * positions whose real check counts differed. See ADR-0099 §4.
+   *
+   * `cloneState` is the existing authoritative deep copy and stays the single place that knows
+   * which fields a `PositionState` has; extending the state without extending it there is the
+   * mistake this method must not make again.
+   *
+   * Serialising a three-check position to FEN is still lossy. That is a separate, external
+   * question — it needs a wire format and an engine convention — and is deferred.
+   */
   snapshot(): PositionState {
-    return parseFen(this.fen(), this.state.variant);
+    return cloneState(this.state);
   }
 
   /** All legal moves in the current position. Memoized; the returned array is frozen at runtime. */

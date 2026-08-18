@@ -109,6 +109,24 @@ their event log, not by restoring a snapshot.
 Recorded rather than fixed. It is a real trap for the next feature that snapshots a position, and it
 belongs with whatever work makes the FEN round-trip lossless.
 
+> **Correction (2026-08-18, M15 Increment 8).** The paragraph above is wrong where it says the
+> check count plays no part, and the conclusion drawn from it — "latent rather than live" — is
+> wrong with it. `packages/chess-core/src/repetition.ts` had appended the delivered-check counters
+> to the key for `threecheck` since 2026-07-13, three weeks before this ADR was written. Its
+> summary docblock said the key was the first four FEN fields; its code appended the counters
+> three lines further down, and this audit took the docblock at its word.
+>
+> The consequence was a live, player-visible wrong result. Because the key was built from the
+> lossy snapshot, every three-check position reported `0+0`, so boards that repeated while the
+> check counts climbed compared equal. `Re1+ Kf8 Rd1 Ke8 Re1+ Kf8 Rd1 Ke8` was declared a threefold
+> draw with White two checks in and one from winning; it now correctly continues, and White wins
+> `1-0` on the third check.
+>
+> Increment 8 fixed the fidelity of `Position.snapshot()`, which now clones the live state instead
+> of round-tripping through FEN. The FEN round-trip is still lossy for three-check, exactly as
+> described above — that part of the finding stands, and making it lossless needs a wire format and
+> an engine convention, which is deferred to M15 Increment 9.
+
 ## Consequences
 
 - The lobby offers seven variants. Every one of them does what its label says.

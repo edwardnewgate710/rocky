@@ -25,7 +25,14 @@ import { toFen } from './fen';
  * castling rights, en-passant square) with the en-passant square normalised
  * to "-" when no legal en-passant capture exists. For Crazyhouse the pocket
  * pieces are part of the placement field and are therefore included. For
- * Three-Check the check counters are appended as an extra component.
+ * Three-Check the check counters are appended as an extra component, so the
+ * key is **not** only the first four fields for that variant.
+ *
+ * That distinction is load-bearing and was read the other way once: an audit
+ * took the summary above at its word, concluded the counters played no part,
+ * and so recorded the lossy `Position.snapshot()` as harmless. It was not —
+ * the snapshot fed this function counters that were always zero. Callers must
+ * pass a state that still carries its real counters.
  */
 export function repetitionKey(state: PositionState): string {
   const fields = toFen(state).split(' ');
