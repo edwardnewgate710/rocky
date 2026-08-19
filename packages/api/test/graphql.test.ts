@@ -457,6 +457,29 @@ describe('GraphQL read layer', () => {
         await introspecting.close();
       }
     });
+
+    it('exposes variant on Study without adding it to Team', async () => {
+      const introspecting = await startHarness({}, { graphqlIntrospection: true });
+      try {
+        const res = await introspecting.json('POST', '/v1/graphql', {
+          body: {
+            query: '{ __schema { types { name fields { name } } } }',
+          },
+        });
+        assert.equal(res.status, 200);
+        const described = res.body.data.__schema as {
+          types: { name: string; fields: { name: string }[] }[];
+        };
+        const study = described.types.find((type) => type.name === 'Study');
+        const team = described.types.find((type) => type.name === 'Team');
+        assert.ok(study);
+        assert.ok(team);
+        assert.ok(study.fields.some((field) => field.name === 'variant'));
+        assert.equal(team.fields.some((field) => field.name === 'variant'), false);
+      } finally {
+        await introspecting.close();
+      }
+    });
   });
 
   describe('subsystem availability', () => {

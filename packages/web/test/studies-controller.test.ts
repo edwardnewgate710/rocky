@@ -10,6 +10,7 @@ const STUDY: StudyView = {
   name: 'Ruy Lopez Study',
   description: 'Classic Ruy Lopez lines.',
   visibility: 'public',
+  variant: 'standard',
   createdAt: '2026-08-05T00:00:00Z',
   updatedAt: '2026-08-05T00:00:00Z',
 };

@@ -55,6 +55,7 @@ function createFakeEngine(evalCp: number = 200, bestMove: string = 'g1f3'): Anal
 function fakeCoachingResponse(overrides: Partial<CoachingResponse> = {}): CoachingResponse {
   return {
     fen: STARTPOS,
+    variant: 'standard',
     move: 'a2a3',
     featuresFired: ['mistakePredictor'],
     mistakeVerdict: {
@@ -265,6 +266,11 @@ describe('verbalizeUci', () => {
     const fen = '8/P7/8/4k3/8/8/8/4K3 w - - 0 1';
     const spoken = verbalizeUci(fen, 'a7a8q');
     assert.equal(spoken, 'a eight, promotes to queen');
+  });
+
+  test('uses the supplied variant when the FEN layout is variant-specific', () => {
+    const fen = '4k3/8/8/8/8/8/8/3R3K w - - 3+3 0 1';
+    assert.equal(verbalizeUci(fen, 'd1e1', 'threecheck'), 'Rook to e one, check');
   });
 });
 

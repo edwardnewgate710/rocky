@@ -11,6 +11,7 @@ const STUDY: StudyView = {
   name: 'Openings',
   description: 'A study',
   visibility: 'public',
+  variant: 'standard',
   createdAt: '2026-08-14T00:00:00Z',
   updatedAt: '2026-08-14T00:00:00Z',
 };

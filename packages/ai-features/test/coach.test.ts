@@ -401,4 +401,35 @@ describe('Coach (hermetic)', () => {
     assert.ok(moveExplainerCalled, 'Coach should call MoveExplainer.explain');
     assert.ok(puzzleGeneratorCalled, 'Coach should call PuzzleGenerator.generate');
   });
+
+  test('canonical Three-Check FEN is coached under the requested rule set', async () => {
+    const threeCheckFen = '4k3/8/8/8/8/8/8/3R3K w - - 3+3 0 1';
+    const before: EngineResult = {
+      multipv: 1,
+      evaluation: { type: 'cp', value: 100 },
+      principalVariation: ['d1e1'],
+      depth: 20,
+      selDepth: 22,
+      nodes: 1000,
+      nps: 1000,
+      timeMs: 10,
+    };
+    const engine: AnalysisProvider = {
+      async analyze(): Promise<readonly EngineResult[]> {
+        return [{ ...before, evaluation: { type: 'cp', value: -100 } }];
+      },
+      async play(): Promise<PlayResult> { return { move: 'd1e1' }; },
+      capabilitiesFor(): EngineCapabilities | undefined { return undefined; },
+    };
+
+    const coaching = await new Coach({ engine }).coach({
+      fen: threeCheckFen,
+      variant: 'threecheck',
+      move: 'd1e1',
+      analysis: [before],
+    });
+
+    assert.equal(coaching.variant, 'threecheck');
+    assert.match(coaching.mistakeVerdict?.fenAfter ?? '', / 2\+3 1 1$/);
+  });
 });

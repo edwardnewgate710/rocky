@@ -6,6 +6,17 @@ export type StudyVisibility = 'public' | 'unlisted' | 'private';
 /** Roles a collaborator can hold in a study. */
 export type StudyRole = 'owner' | 'contributor' | 'viewer';
 
+/** Rule set shared by every chapter in a study. */
+export type StudyVariant =
+  | 'standard'
+  | 'chess960'
+  | 'kingofthehill'
+  | 'atomic'
+  | 'crazyhouse'
+  | 'threecheck'
+  | 'horde'
+  | 'racingkings';
+
 /**
  * Numeric authority rank: owner (3) > contributor (2) > viewer (1).
  */
@@ -29,6 +40,7 @@ export interface Study {
   readonly name: string;
   readonly description: string;
   readonly visibility: StudyVisibility;
+  readonly variant: StudyVariant;
   readonly createdAt: Date;
   readonly updatedAt: Date;
   readonly deletedAt?: Date;
@@ -72,6 +84,9 @@ export interface Collaborator {
 /** Standard starting FEN. */
 export const DEFAULT_STARTING_FEN =
   'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+
+/** Existing studies and callers without an explicit rule set remain standard chess. */
+export const DEFAULT_STUDY_VARIANT: StudyVariant = 'standard';
 
 /** Longest name a study or chapter may carry, after trimming. */
 export const MAX_NAME_LENGTH = 255;

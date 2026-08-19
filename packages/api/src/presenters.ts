@@ -640,6 +640,7 @@ export interface StudyView {
   readonly name: string;
   readonly description: string;
   readonly visibility: string;
+  readonly variant: string;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly deletedAt?: string;
@@ -652,6 +653,7 @@ export function studyView(s: import('@chess-platform/studies').Study): StudyView
     name: s.name,
     description: s.description,
     visibility: s.visibility,
+    variant: s.variant,
     createdAt: s.createdAt.toISOString(),
     updatedAt: s.updatedAt.toISOString(),
     ...(s.deletedAt ? { deletedAt: s.deletedAt.toISOString() } : {}),

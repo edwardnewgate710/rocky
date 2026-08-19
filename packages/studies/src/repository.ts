@@ -4,6 +4,7 @@ import type {
   Collaborator,
   Study,
   StudyRole,
+  StudyVariant,
   StudyVisibility,
   TreeNode,
 } from './model';
@@ -11,6 +12,7 @@ import {
   normalizeChapterName,
   normalizeStudyName,
   DEFAULT_STARTING_FEN,
+  DEFAULT_STUDY_VARIANT,
   roleRank,
 } from './model';
 import {
@@ -60,7 +62,8 @@ export interface StudiesRepository {
     name: string,
     description: string,
     visibility: StudyVisibility,
-    at?: Date
+    at?: Date,
+    options?: { variant?: StudyVariant },
   ): Promise<Study>;
 
   getStudy(studyId: string, actorId?: string): Promise<Study>;
@@ -263,7 +266,8 @@ export class InMemoryStudiesRepository implements StudiesRepository {
     name: string,
     description: string,
     visibility: StudyVisibility,
-    at = new Date()
+    at = new Date(),
+    options?: { variant?: StudyVariant },
   ): Promise<Study> {
     const validName = normalizeStudyName(name);
 
@@ -277,6 +281,7 @@ export class InMemoryStudiesRepository implements StudiesRepository {
       name: validName,
       description: description.trim(),
       visibility,
+      variant: options?.variant ?? DEFAULT_STUDY_VARIANT,
       createdAt: at,
       updatedAt: at,
     };
@@ -659,7 +664,7 @@ export class InMemoryStudiesRepository implements StudiesRepository {
       parentFen = parentNode.fenAfter;
     }
 
-    const resolvedSan = resolveSan(reader, parentFen, san);
+    const resolvedSan = resolveSan(reader, parentFen, san, study.variant);
 
     // Rule 4: Appending a move that already exists as a child returns that child instead of duplicating it
     for (const node of this.treeNodes.values()) {
@@ -670,7 +675,7 @@ export class InMemoryStudiesRepository implements StudiesRepository {
       }
     }
 
-    const fenAfter = reader.play(parentFen, resolvedSan);
+    const fenAfter = reader.play(parentFen, resolvedSan, study.variant);
     const siblings = Array.from(this.treeNodes.values()).filter(
       (n) => n.chapterId === chapterId && n.parentId === parentId
     );
@@ -748,7 +753,7 @@ export class InMemoryStudiesRepository implements StudiesRepository {
     reader: PositionReader,
     at = new Date()
   ): Promise<readonly Chapter[]> {
-    this.findVisibleStudy(studyId, actorId);
+    const study = this.findVisibleStudy(studyId, actorId);
     this.assertAuthority(studyId, actorId, 'contributor');
 
     if (Buffer.byteLength(pgnString, 'utf8') > MAX_PGN_BYTES) {
@@ -769,8 +774,21 @@ export class InMemoryStudiesRepository implements StudiesRepository {
 
       const startingFen = tagValue(game, 'FEN') || DEFAULT_STARTING_FEN;
 
+      // The starting position itself, before the movetext. A game with moves already reaches the
+      // reader on its first SAN, so this is load-bearing only for a game with none — and that is
+      // exactly the case that used to slip through: `[FEN "... 2+3 17 42"]` with an empty movetext
+      // was never parsed by anyone, so the import returned 200 and stored a chapter holding a FEN
+      // this server cannot read. Every later append to it then failed, permanently. The direct
+      // chapter route validates its `startingFen` at the input for the same reason; the import path
+      // reached `createChapter` underneath that check. Raised in the CodeRabbit review of PR #140.
+      //
+      // Through the existing port rather than a FEN parser: this package is deliberately free of an
+      // engine dependency, and asking the reader about the position is the seam that already exists.
+      // The call runs in the dry-run loop, so nothing is written before it throws.
+      reader.legalSans(startingFen, study.variant);
+
       // Dry run move resolution to ensure the entire movetext is valid
-      this.validatePlayableMovetext(game.moves, startingFen, reader);
+      this.validatePlayableMovetext(game.moves, startingFen, reader, study.variant);
 
       validatedGames.push({ name, startingFen, moves: game.moves });
     }
@@ -787,17 +805,22 @@ export class InMemoryStudiesRepository implements StudiesRepository {
     return importedChapters;
   }
 
-  private validatePlayableMovetext(moves: readonly PgnMoveNode[], fen: string, reader: PositionReader): void {
+  private validatePlayableMovetext(
+    moves: readonly PgnMoveNode[],
+    fen: string,
+    reader: PositionReader,
+    variant: StudyVariant,
+  ): void {
     let currentFen = fen;
     for (const moveNode of moves) {
       // Validate variations from the position BEFORE moveNode
       for (const varLine of moveNode.variations) {
-        this.validatePlayableMovetext(varLine, currentFen, reader);
+        this.validatePlayableMovetext(varLine, currentFen, reader, variant);
       }
 
       // Validate mainline move
-      const resolvedSan = resolveSan(reader, currentFen, moveNode.san);
-      currentFen = reader.play(currentFen, resolvedSan);
+      const resolvedSan = resolveSan(reader, currentFen, moveNode.san, variant);
+      currentFen = reader.play(currentFen, resolvedSan, variant);
     }
   }
 
@@ -835,7 +858,7 @@ export class InMemoryStudiesRepository implements StudiesRepository {
   }
 
   async exportPgn(studyId: string, actorId?: string, chapterId?: string): Promise<string> {
-    this.findVisibleStudy(studyId, actorId);
+    const study = this.findVisibleStudy(studyId, actorId);
 
     const activeChapters = Array.from(this.chapters.values())
       .filter((c) => c.studyId === studyId && c.deletedAt === undefined)
@@ -859,6 +882,7 @@ export class InMemoryStudiesRepository implements StudiesRepository {
       const moves = this.serializeNodeTree(nodes, null);
       const tags = [
         { key: 'Event', value: chapter.name },
+        ...(study.variant !== DEFAULT_STUDY_VARIANT ? [{ key: 'Variant', value: study.variant }] : []),
         ...(chapter.startingFen !== DEFAULT_STARTING_FEN ? [{ key: 'FEN', value: chapter.startingFen }] : []),
       ];
 

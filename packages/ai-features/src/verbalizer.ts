@@ -17,7 +17,7 @@
  */
 
 import { Position } from '@chess-platform/core';
-import type { Move } from '@chess-platform/core';
+import type { Move, Variant } from '@chess-platform/core';
 import type { MoveUci } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -216,16 +216,17 @@ function verbalizeSanCore(san: string): string {
 /**
  * Convert a UCI move to spoken English, given the position FEN.
  *
- * Uses `Position.fromFen(fen).toSan(move)` to get standard SAN, then
+ * Uses the variant-aware position to convert the move to SAN, then
  * transforms it to the spoken form via `verbalizeSan`.
  *
  * @param fen - FEN of the position in which the move is played.
  * @param uci - UCI move string (e.g. `"e2e4"`, `"e7e8q").
+ * @param variant - Rule set used to parse the FEN (defaults to `standard`).
  * @returns Natural spoken English, or the raw UCI if the move cannot be parsed.
  */
-export function verbalizeUci(fen: string, uci: MoveUci): string {
+export function verbalizeUci(fen: string, uci: MoveUci, variant: Variant = 'standard'): string {
   try {
-    const position = Position.fromFen(fen);
+    const position = Position.fromFen(fen, variant);
     // Find the legal move matching this UCI.
     const legalMoves = position.legalMoves();
     const matching = legalMoves.find((m: Move) => position.toUci(m) === uci);

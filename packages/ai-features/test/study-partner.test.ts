@@ -59,6 +59,7 @@ function fakeCoachingResponse(
 ): CoachingResponse {
   return {
     fen: STARTPOS,
+    variant: 'standard',
     move: 'a2a3',
     featuresFired,
     mistakeVerdict: classification ? {

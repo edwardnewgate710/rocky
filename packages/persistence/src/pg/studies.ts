@@ -8,6 +8,7 @@ import type {
   StudiesRepository,
   Study,
   StudyRole,
+  StudyVariant,
   StudyVisibility,
   TreeNode,
   PgnMoveNode,
@@ -16,6 +17,7 @@ import type {
 import {
   StudyRuleError,
   DEFAULT_STARTING_FEN,
+  DEFAULT_STUDY_VARIANT,
   MAX_GAMES_PER_IMPORT,
   MAX_PGN_BYTES,
   normalizeChapterName,
@@ -43,6 +45,7 @@ interface StudyRow {
   name: string;
   description: string;
   visibility: StudyVisibility;
+  variant: StudyVariant;
   created_at: Date;
   updated_at: Date;
   deleted_at: Date | null;
@@ -81,6 +84,7 @@ function mapStudy(row: StudyRow): Study {
     name: row.name,
     description: row.description,
     visibility: row.visibility,
+    variant: row.variant,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(row.deleted_at ? { deletedAt: row.deleted_at } : {}),
@@ -199,7 +203,7 @@ export class PgStudiesRepository implements StudiesRepository {
   ): Promise<Study> {
     const lockClause = forUpdate ? ' FOR UPDATE' : '';
     const res = await client.query<StudyRow>(
-      `SELECT id, owner_id, name, description, visibility, created_at, updated_at, deleted_at
+      `SELECT id, owner_id, name, description, visibility, variant, created_at, updated_at, deleted_at
        FROM studies
        WHERE id = $1${lockClause}`,
       [studyId]
@@ -272,7 +276,8 @@ export class PgStudiesRepository implements StudiesRepository {
     name: string,
     description: string,
     visibility: StudyVisibility,
-    at = new Date()
+    at = new Date(),
+    options?: { variant?: StudyVariant },
   ): Promise<Study> {
     const validName = normalizeStudyName(name);
     const client = await this.pool.connect();
@@ -286,10 +291,10 @@ export class PgStudiesRepository implements StudiesRepository {
       }
 
       const res = await client.query<StudyRow>(
-        `INSERT INTO studies (id, owner_id, name, description, visibility, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $6)
-         RETURNING id, owner_id, name, description, visibility, created_at, updated_at, deleted_at`,
-        [id, ownerId, validName, description.trim(), visibility, at]
+        `INSERT INTO studies (id, owner_id, name, description, visibility, variant, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+         RETURNING id, owner_id, name, description, visibility, variant, created_at, updated_at, deleted_at`,
+        [id, ownerId, validName, description.trim(), visibility, options?.variant ?? DEFAULT_STUDY_VARIANT, at]
       );
 
       await client.query(
@@ -348,7 +353,7 @@ export class PgStudiesRepository implements StudiesRepository {
         `UPDATE studies
          SET name = $2, description = $3, visibility = $4, updated_at = $5
          WHERE id = $1
-         RETURNING id, owner_id, name, description, visibility, created_at, updated_at, deleted_at`,
+         RETURNING id, owner_id, name, description, visibility, variant, created_at, updated_at, deleted_at`,
         [studyId, updatedName, updatedDesc, updatedVis, at]
       );
 
@@ -379,7 +384,7 @@ export class PgStudiesRepository implements StudiesRepository {
         `UPDATE studies
          SET deleted_at = $2, updated_at = $2
          WHERE id = $1
-         RETURNING id, owner_id, name, description, visibility, created_at, updated_at, deleted_at`,
+         RETURNING id, owner_id, name, description, visibility, variant, created_at, updated_at, deleted_at`,
         [studyId, at]
       );
 
@@ -444,7 +449,7 @@ export class PgStudiesRepository implements StudiesRepository {
       }
 
       const query = `
-        SELECT s.id, s.owner_id, s.name, s.description, s.visibility, s.created_at, s.updated_at, s.deleted_at
+        SELECT s.id, s.owner_id, s.name, s.description, s.visibility, s.variant, s.created_at, s.updated_at, s.deleted_at
         FROM studies s
         WHERE ${whereClause}
         ORDER BY s.created_at DESC, s.id ASC
@@ -621,7 +626,7 @@ export class PgStudiesRepository implements StudiesRepository {
         `UPDATE studies
          SET owner_id = $2, updated_at = $3
          WHERE id = $1
-         RETURNING id, owner_id, name, description, visibility, created_at, updated_at, deleted_at`,
+         RETURNING id, owner_id, name, description, visibility, variant, created_at, updated_at, deleted_at`,
         [studyId, newOwnerId, at]
       );
 
@@ -966,7 +971,7 @@ export class PgStudiesRepository implements StudiesRepository {
         throw new StudyRuleError('not_found', `Chapter '${chapterId}' not found`);
       }
 
-      await this.findVisibleStudyInternal(client, studyId, actorId, false, true);
+      const study = await this.findVisibleStudyInternal(client, studyId, actorId, false, true);
       await this.assertAuthorityInternal(client, studyId, actorId, 'contributor', true);
 
       let parentFen = chapterRes.rows[0].starting_fen;
@@ -981,7 +986,7 @@ export class PgStudiesRepository implements StudiesRepository {
         parentFen = parentRes.rows[0].fen_after;
       }
 
-      const resolvedSan = resolveSan(reader, parentFen, san);
+      const resolvedSan = resolveSan(reader, parentFen, san, study.variant);
 
       // Rule 4: Return existing child if move already exists under parent
       const siblingsRes = await client.query<TreeNodeRow>(
@@ -999,7 +1004,7 @@ export class PgStudiesRepository implements StudiesRepository {
         }
       }
 
-      const fenAfter = reader.play(parentFen, resolvedSan);
+      const fenAfter = reader.play(parentFen, resolvedSan, study.variant);
       const newNodeId = options?.nodeId ?? uuidv7();
       const orderIndex = siblingsRes.rows.length;
 
@@ -1140,6 +1145,8 @@ export class PgStudiesRepository implements StudiesRepository {
       throw new StudyRuleError('too_large', `Import exceeds max limit of ${MAX_GAMES_PER_IMPORT} games`);
     }
 
+    const study = await this.findVisibleStudyInternal(this.pool, studyId, actorId);
+
     // Dry-run validate playability BEFORE opening transaction or writing rows!
     const validatedGames: { name: string; startingFen: string; moves: readonly PgnMoveNode[] }[] = [];
     for (let i = 0; i < games.length; i++) {
@@ -1147,7 +1154,8 @@ export class PgStudiesRepository implements StudiesRepository {
       const name = chapterNameFor(game, i);
 
       const startingFen = tagValue(game, 'FEN') || DEFAULT_STARTING_FEN;
-      this.validatePlayableMovetext(game.moves, startingFen, reader);
+      reader.legalSans(startingFen, study.variant);
+      this.validatePlayableMovetext(game.moves, startingFen, reader, study.variant);
       validatedGames.push({ name, startingFen, moves: game.moves });
     }
 
@@ -1177,7 +1185,15 @@ export class PgStudiesRepository implements StudiesRepository {
         );
         const chapter = mapChapter(chRes.rows[0]);
 
-        await this.buildTreeFromMovetextInternal(client, chapter.id, null, g.moves, g.startingFen, reader);
+        await this.buildTreeFromMovetextInternal(
+          client,
+          chapter.id,
+          null,
+          g.moves,
+          g.startingFen,
+          reader,
+          study.variant,
+        );
         importedChapters.push(chapter);
       }
 
@@ -1193,14 +1209,19 @@ export class PgStudiesRepository implements StudiesRepository {
     }
   }
 
-  private validatePlayableMovetext(moves: readonly PgnMoveNode[], fen: string, reader: PositionReader): void {
+  private validatePlayableMovetext(
+    moves: readonly PgnMoveNode[],
+    fen: string,
+    reader: PositionReader,
+    variant: StudyVariant,
+  ): void {
     let currentFen = fen;
     for (const moveNode of moves) {
       for (const varLine of moveNode.variations) {
-        this.validatePlayableMovetext(varLine, currentFen, reader);
+        this.validatePlayableMovetext(varLine, currentFen, reader, variant);
       }
-      const resolvedSan = resolveSan(reader, currentFen, moveNode.san);
-      currentFen = reader.play(currentFen, resolvedSan);
+      const resolvedSan = resolveSan(reader, currentFen, moveNode.san, variant);
+      currentFen = reader.play(currentFen, resolvedSan, variant);
     }
   }
 
@@ -1210,7 +1231,8 @@ export class PgStudiesRepository implements StudiesRepository {
     parentId: string | null,
     moves: readonly PgnMoveNode[],
     fen: string,
-    reader: PositionReader
+    reader: PositionReader,
+    variant: StudyVariant,
   ): Promise<void> {
     let currentParentId = parentId;
     let currentFen = fen;
@@ -1229,8 +1251,8 @@ export class PgStudiesRepository implements StudiesRepository {
       const parentForVariations = currentParentId;
       const fenForVariations = currentFen;
 
-      const resolvedSan = resolveSan(reader, currentFen, moveNode.san);
-      const fenAfter = reader.play(currentFen, resolvedSan);
+      const resolvedSan = resolveSan(reader, currentFen, moveNode.san, variant);
+      const fenAfter = reader.play(currentFen, resolvedSan, variant);
       const nodeId = uuidv7();
 
       const sibCountRes = await client.query<{ count: string }>(
@@ -1253,7 +1275,8 @@ export class PgStudiesRepository implements StudiesRepository {
           parentForVariations,
           varLine,
           fenForVariations,
-          reader
+          reader,
+          variant,
         );
       }
 
@@ -1264,7 +1287,7 @@ export class PgStudiesRepository implements StudiesRepository {
 
   async exportPgn(studyId: string, actorId?: string, chapterId?: string): Promise<string> {
     try {
-      await this.findVisibleStudyInternal(this.pool, studyId, actorId);
+      const study = await this.findVisibleStudyInternal(this.pool, studyId, actorId);
 
       const activeChaptersRes = await this.pool.query<ChapterRow>(
         `SELECT id, study_id, name, order_index, starting_fen, deleted_at
@@ -1299,6 +1322,7 @@ export class PgStudiesRepository implements StudiesRepository {
         const moves = this.serializeNodeTree(nodes, null);
         const tags = [
           { key: 'Event', value: chapter.name },
+          ...(study.variant !== DEFAULT_STUDY_VARIANT ? [{ key: 'Variant', value: study.variant }] : []),
           ...(chapter.startingFen !== DEFAULT_STARTING_FEN ? [{ key: 'FEN', value: chapter.startingFen }] : []),
         ];
 

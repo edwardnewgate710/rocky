@@ -4,7 +4,90 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-18 — M15 Increment 8: three-check state preserved across `Position.snapshot()`._
+_Last updated: 2026-08-19 — M15 Increment 9 review follow-up: persisted study and Coach variant propagation._
+
+## M15 Increment 9 — Lossless Three-check FEN and Fairy-Stockfish Interoperability (ADR-0120)
+
+### Review follow-up: the variant now survives study persistence and coaching composition
+
+CodeRabbit identified that a canonical Three-Check FEN could still lose its counters after entering
+a study: the study model, PostgreSQL row, `PositionReader`, PGN import and append paths carried no
+variant. Migration `0022_study_variant.sql` adds a constrained `variant` column with a `standard`
+default for existing data and mixed-version inserts. Study creation, chapter validation, append,
+PGN import/export, REST, GraphQL and OpenAPI now use the persisted rule set. Regression tests append
+`Re1+` to a `3+3` study position and require `2+3` after both the in-memory and PostgreSQL paths.
+
+`CoachRequest` also carries the variant through mistake prediction, move explanation, puzzle
+generation and model grounding; `CoachingResponse` retains it for Voice Coach's FEN parsing and UCI
+verbalisation. The CI Fairy-Stockfish download already uses `curl --fail` and verifies the release
+asset against the SHA-256 pinned in ADR-0120.
+
+Increment 8 stopped `Position.snapshot()` losing the three-check counters. This makes the FEN
+carry them, and closes the engine defect the missing field had been causing.
+
+### Fairy-Stockfish reads a missing counter field as "one check remaining", not "none delivered"
+
+Measured against **Fairy-Stockfish 14**, the release the plugin already declares as its minimum:
+a bare six-field three-check FEN is understood as `1+1` — either player wins with a single check.
+The Italian Game under `3check` came back **`score mate 1`** on the six-field FEN and a real
+six-ply line on the canonical one. Every three-check evaluation the platform could produce was
+reporting a forced mate that does not exist.
+
+Not reachable in production, and the reason is worth recording rather than assuming: no deployment
+sets `FAIRY_STOCKFISH_PATH`, the images install only vanilla Stockfish, and `configuredPlugins()`
+registers only engines with a configured binary — so `threecheck` currently answers `422
+unsupported variant`. The defect was waiting for the day someone deployed Fairy.
+
+### The contract
+
+The canonical field is `N+M`, in **field five** between the en-passant square and the halfmove
+clock, counting **remaining** checks down from three, White first. That is what the engine emits;
+it was read off the real binary rather than assumed. `toFen` now emits it for `threecheck` and
+leaves the other seven variants at six fields. `parseFen` accepts the canonical form, the trailing
+`+N+M` delivered form Fairy also takes, and the legacy six-field form (meaning none delivered),
+and canonicalises on output. Malformed or out-of-range counters throw rather than falling through
+to the legacy reading, which would shift the clocks one position and rewrite the fifty-move state.
+
+Internal state still counts checks **delivered**; the FEN counts **remaining**. That inversion
+lives in one module, `packages/chess-core/src/check-counters.ts`, so `3 - x` appears nowhere else.
+
+`AnalysisService` re-serialises three-check FENs before they reach a provider. `toFen` alone was
+not enough — the analysis API takes a FEN *from the caller* and forwarded it verbatim, so a client
+sending the legacy form would still have reached Fairy as `1+1`.
+
+### Rolling deployment, mapped rather than assumed
+
+The canonical field shifts the clocks right, and an older parser reads `N+M` as the halfmove clock.
+Game events remain safe because no production path supplies a custom `initialFen`; the start
+position reads to a byte-identical state under the old parser. Studies now persist their variant,
+so rollout order is migration, all API instances, then non-standard study creation. The additive
+column defaults old rows and old-process inserts to `standard`. Gateway pub/sub forwards FENs
+without parsing, repetition keys use fields 0-3 plus their own counter component, and the web study
+helper uses the transported variant to distinguish canonical, legacy and trailing Three-Check
+layouts. A guard test fails the build if another file starts indexing FEN clock fields unnoticed.
+
+### Consequences
+
+Three-check analysis-cache entries stored under the old counterless FEN become unreachable — they
+held evaluations made with the wrong counters, so that is the point. `fenHash` now changes when a
+check is delivered, where a repeated board previously hashed identically. Stored FEN columns remain
+`TEXT` and need no rewrite; migration `0022` only adds the study variant with a `standard` default.
+Production Fairy deployment stays out of scope; CI provides the binary so the contract is tested.
+
+### Guards
+
+- `packages/chess-core/test/threecheck-fen.test.ts` — round trips for every delivered pair, clock
+  positions in all three spellings, canonicalisation on output, refusal of malformed and
+  out-of-range counters, and the other seven variants unchanged.
+- `packages/chess-core/test/fen-field-index-guard.test.ts` — no new file may read FEN field 4 or 5
+  by index without joining an audit list that must stay accurate.
+- `packages/api/test/threecheck-engine-fen.test.ts` — what leaves the service, cache-key
+  separation, and the validator still refusing malformed counters and newline injection.
+- `packages/realtime-gateway/test/threecheck-fen-hash.test.ts` — a delivered check changes the
+  position hash even with the board unchanged.
+- `packages/api/test/analysis-fairy-threecheck-smoke.test.ts` — the real binary, env-gated like the
+  Stockfish smoke test, asserting semantic engine state rather than centipawn values.
+- Verified by mutation: ten mutants, all caught by tests rather than by the compiler.
 
 ## M15 Increment 8 — Three-check State Preserved Across `Position.snapshot()`
 

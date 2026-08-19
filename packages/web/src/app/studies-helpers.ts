@@ -1,7 +1,7 @@
 /**
  * Studies pure helpers — NAG mapping, tree building from flat list, and move numbering formatting.
  */
-import type { TreeNodeView } from '../api/models.js';
+import type { TreeNodeView, Variant } from '../api/models.js';
 
 /**
  * Map PGN NAG code (1-6) to traditional chess annotation symbol.
@@ -37,10 +37,17 @@ export function formatNags(nags: readonly number[]): string {
 /**
  * Parse active turn ('w' | 'b') and fullmove number from starting FEN string.
  */
-export function parseStartingFen(startingFen: string): { turn: 'w' | 'b'; fullmove: number } {
+export function parseStartingFen(
+  startingFen: string,
+  variant: Variant = 'standard',
+): { turn: 'w' | 'b'; fullmove: number } {
   const parts = startingFen.trim().split(/\s+/);
   const turn = parts[1] === 'b' ? 'b' : 'w';
-  const fullmove = parts[5] ? parseInt(parts[5], 10) : 1;
+  // Three-Check accepts canonical counters in field five, plus legacy six-field and trailing
+  // delivered-counter forms. Only the canonical spelling shifts the clock fields.
+  const hasCanonicalCounter = variant === 'threecheck' && /^\d+\+\d+$/.test(parts[4] ?? '');
+  const fullmoveIndex = hasCanonicalCounter ? 6 : 5;
+  const fullmove = parts[fullmoveIndex] ? parseInt(parts[fullmoveIndex], 10) : 1;
   return { turn, fullmove: isNaN(fullmove) || fullmove < 1 ? 1 : fullmove };
 }
 
@@ -60,6 +67,7 @@ export interface TreeBranchNode {
 export function buildMoveTree(
   flatTree: readonly TreeNodeView[],
   startingFen: string,
+  variant: Variant = 'standard',
 ): readonly TreeBranchNode[] {
   if (!flatTree || flatTree.length === 0) return [];
 
@@ -77,7 +85,7 @@ export function buildMoveTree(
     list.sort((a, b) => a.orderIndex - b.orderIndex);
   }
 
-  const { turn: startTurn, fullmove: startFullmove } = parseStartingFen(startingFen);
+  const { turn: startTurn, fullmove: startFullmove } = parseStartingFen(startingFen, variant);
 
   function buildBranch(
     parentId: string | null,

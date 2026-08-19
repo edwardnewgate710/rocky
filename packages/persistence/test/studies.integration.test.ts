@@ -6,19 +6,19 @@ import { createPool } from '../src/pg/pool';
 import { migrate } from '../src/pg/migrate';
 import { PgStudiesRepository } from '../src/pg/studies';
 import { uuidv7 } from '../src/ids';
-import { StudyRuleError, type PositionReader } from '@chess-platform/studies';
+import { StudyRuleError, type PositionReader, type StudyVariant } from '@chess-platform/studies';
 import { Position } from '@chess-platform/core';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
 const skip = DATABASE_URL ? false : 'DATABASE_URL not set';
 
 class CorePositionReader implements PositionReader {
-  legalSans(fen: string): readonly string[] {
-    const pos = Position.fromFen(fen);
+  legalSans(fen: string, variant: StudyVariant = 'standard'): readonly string[] {
+    const pos = Position.fromFen(fen, variant);
     return pos.legalMoves().map((m) => pos.toSan(m));
   }
-  play(fen: string, san: string): string {
-    const pos = Position.fromFen(fen);
+  play(fen: string, san: string, variant: StudyVariant = 'standard'): string {
+    const pos = Position.fromFen(fen, variant);
     const moves = pos.legalMoves();
     const move = moves.find((m) => pos.toSan(m) === san);
     if (!move) {
@@ -61,6 +61,7 @@ test('pg studies repository integration tests', { skip }, async () => {
     const study1 = await repo.createStudy(studyId1, alice, 'Sicilian Defense', 'Repertoire for Black', 'public', t0);
     assert.equal(study1.id, studyId1);
     assert.equal(study1.ownerId, alice);
+    assert.equal(study1.variant, 'standard');
 
     // Partial unique index enforcement on study_collaborators (one owner per study)
     await assert.rejects(
@@ -156,6 +157,32 @@ test('pg studies repository integration tests', { skip }, async () => {
     const node2 = await repo.appendNode(chId1, bob, node1.id, 'c5', reader, { comment: 'Sicilian' });
     assert.equal(node2.san, 'c5');
     assert.equal(node2.comment, 'Sicilian');
+
+    // A persisted variant must control FEN parsing and move application after the study is re-read.
+    const threeCheckStudyId = uuidv7();
+    const threeCheckStudy = await repo.createStudy(
+      threeCheckStudyId,
+      alice,
+      'Three-Check',
+      'Counter preservation',
+      'private',
+      t0,
+      { variant: 'threecheck' },
+    );
+    assert.equal(threeCheckStudy.variant, 'threecheck');
+    assert.equal((await repo.getStudy(threeCheckStudyId, alice)).variant, 'threecheck');
+
+    const threeCheckChapterId = uuidv7();
+    await repo.createChapter(
+      threeCheckChapterId,
+      threeCheckStudyId,
+      alice,
+      'Counter line',
+      '4k3/8/8/8/8/8/8/3R3K w - - 3+3 0 1',
+      t0,
+    );
+    const checkingNode = await repo.appendNode(threeCheckChapterId, alice, null, 'Re1+', reader);
+    assert.match(checkingNode.fenAfter, / 2\+3 1 1$/);
 
     // Delete root node cascades to sub-move
     await repo.deleteNode(node1.id, bob);

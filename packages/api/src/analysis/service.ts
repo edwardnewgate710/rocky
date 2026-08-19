@@ -13,6 +13,7 @@ import type {
 import { EngineError, JobPriority } from '@chess-platform/engine';
 import type { FenValidator } from '@chess-platform/engine';
 import type { Variant } from '@chess-platform/core';
+import { parseFen, toFen } from '@chess-platform/core';
 import { HttpError } from '../http/errors.js';
 import { coreFenValidator } from './fen-validator.js';
 import type { TerminalOutcome } from './terminal.js';
@@ -25,6 +26,29 @@ import {
   applyAnalysisLimits,
   DEFAULT_ANALYSIS_LIMITS,
 } from './limits.js';
+
+/**
+ * The FEN the engine is actually asked about.
+ *
+ * A caller may send a Three-Check position in any accepted spelling, including the legacy
+ * six-field one that carries no counters at all. Fairy-Stockfish does not read a missing counter
+ * field as "nothing delivered yet" — it defaults to **one check remaining for each side**, so a
+ * fresh position was analysed as though either player could win with a single check. Measured
+ * against Fairy-Stockfish 14: the Italian Game under `3check` came back `mate 1` with the
+ * six-field FEN and a real six-ply line with the canonical one.
+ *
+ * Re-serialising through the codec puts the counters in the canonical field. That is also what
+ * makes the analysis cache key carry them, so two boards differing only in checks delivered can
+ * no longer share an entry — and anything cached under the old wrong reading becomes unreachable
+ * rather than being served again.
+ *
+ * Only Three-Check is rewritten. Every other variant reaches the engine exactly as the caller
+ * wrote it, so no other cache identity moves. See ADR-0120.
+ */
+function engineFenFor(fen: string, variant: Variant): string {
+  if (variant !== 'threecheck') return fen;
+  return toFen(parseFen(fen, variant));
+}
 
 export interface AnalysisOutcome {
   readonly fen: string;
@@ -152,7 +176,7 @@ export class AnalysisService {
       };
 
       const request: AnalysisRequest = {
-        fen: input.fen,
+        fen: engineFenFor(input.fen, input.variant as Variant),
         variant: input.variant,
         limits,
         multiPv: applied.multiPv,

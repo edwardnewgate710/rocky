@@ -123,9 +123,11 @@ belongs with whatever work makes the FEN round-trip lossless.
 > `1-0` on the third check.
 >
 > Increment 8 fixed the fidelity of `Position.snapshot()`, which now clones the live state instead
-> of round-tripping through FEN. The FEN round-trip is still lossy for three-check, exactly as
-> described above — that part of the finding stands, and making it lossless needs a wire format and
-> an engine convention, which is deferred to M15 Increment 9.
+> of round-tripping through FEN. The FEN round-trip remained lossy for three-check at that point,
+> exactly as described above — that part of the finding stood, and making it lossless needed a wire
+> format and an engine convention. Both were settled in M15 Increment 9
+> ([ADR-0120](0120-threecheck-fen-and-engine-interop.md)): the FEN now carries the counters in the
+> canonical Fairy-Stockfish field, and the paragraph above is fully resolved.
 
 ## Consequences
 
@@ -137,5 +139,5 @@ belongs with whatever work makes the FEN round-trip lossless.
 ## Out of scope
 
 - Implementing Chess960. Tracked in `docs/ROADMAP.md` with the scope named in §1.
-- Making the FEN round-trip lossless for three-check (§4).
+- Making the FEN round-trip lossless for three-check (§4). *(Out of scope at the time; done in M15 Increment 9 — see the correction note in §4 and [ADR-0120](0120-threecheck-fen-and-engine-interop.md).)*
 - `horde` and `racingkings` perft values, still pending published references (ADR-0098 §4).

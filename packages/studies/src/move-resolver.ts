@@ -1,4 +1,5 @@
 import { StudyRuleError } from './errors';
+import { DEFAULT_STUDY_VARIANT, type StudyVariant } from './model';
 
 /**
  * The single thing this package needs from a chess engine: given a position, which moves are legal
@@ -10,9 +11,9 @@ import { StudyRuleError } from './errors';
  */
 export interface PositionReader {
   /** SAN for every legal move from this position, in any order. */
-  legalSans(fen: string): readonly string[];
+  legalSans(fen: string, variant?: StudyVariant): readonly string[];
   /** The position after playing a SAN move. Throws if the move is not legal. */
-  play(fen: string, san: string): string;
+  play(fen: string, san: string, variant?: StudyVariant): string;
 }
 
 /**
@@ -46,10 +47,11 @@ function bare(san: string): string {
 export function resolveSan(
   reader: PositionReader,
   fen: string,
-  san: string
+  san: string,
+  variant: StudyVariant = DEFAULT_STUDY_VARIANT,
 ): string {
   const wanted = bare(san);
-  const legal = reader.legalSans(fen);
+  const legal = reader.legalSans(fen, variant);
 
   for (const candidate of legal) {
     if (bare(candidate) === wanted) {

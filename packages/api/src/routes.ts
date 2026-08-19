@@ -7,6 +7,8 @@
  */
 
 import type { Variant } from '@chess-platform/core';
+import { FenError } from '@chess-platform/core';
+import { coreFenValidator } from './analysis/fen-validator.js';
 import type { TiebreakKey } from '@chess-platform/tournament';
 import type { RatingRow, TournamentsRepository } from '@chess-platform/persistence';
 import { AuthService } from './auth/service';
@@ -3339,15 +3341,24 @@ export function buildRouter(deps: RouteDeps): Router {
     async (ctx) => {
       const repo = checkStudiesRepo();
       const actorId = requireAuth(ctx).userId;
-      const body = strictObject(ctx.body, ['id', 'name', 'description', 'visibility']);
+      const body = strictObject(ctx.body, ['id', 'name', 'description', 'visibility', 'variant']);
       const rawId = optString(body, 'id');
       const studyId = rawId !== undefined ? parseUuid(rawId, 'id') : deps.ids.next();
       const name = reqString(body, 'name');
       const description = optString(body, 'description') ?? '';
       const visibility = oneOf(reqString(body, 'visibility'), ['public', 'unlisted', 'private'] as const, 'visibility');
+      const variant = parseVariant(optString(body, 'variant') ?? 'standard');
 
       try {
-        const study = await repo.createStudy(studyId, actorId, name, description, visibility);
+        const study = await repo.createStudy(
+          studyId,
+          actorId,
+          name,
+          description,
+          visibility,
+          undefined,
+          { variant },
+        );
         return json(201, studyView(study));
       } catch (err) {
         mapStudyError(err);
@@ -3709,6 +3720,29 @@ export function buildRouter(deps: RouteDeps): Router {
       const chapterId = rawId !== undefined ? parseUuid(rawId, 'id') : deps.ids.next();
       const name = reqString(body, 'name');
       const startingFen = optString(body, 'startingFen');
+      // Validate before it is stored, rather than on the first append. A chapter created with a
+      // FEN this server cannot read is unusable from the moment it exists, and rejecting it here
+      // is the difference between a 422 on the request that caused it and a 500 much later.
+      // The study owns the rule set for every chapter, so validate the FEN under that persisted
+      // variant before storing it. Parsing a Three-Check counter as standard shifts both clocks.
+      //
+      // `coreFenValidator` rather than a bare `parseFen`, because parsing only proves the string
+      // decodes. It accepts an empty board and a position with no black king — shapes that are not
+      // chess positions, would be persisted unchanged, and would accept moves. The shared
+      // validator adds the structural allowlist and the king-count check, and is the same one the
+      // analysis boundary uses, so studies do not grow a second opinion about what a position is.
+      // Raised in the Qodo review of PR #140.
+      if (startingFen !== undefined) {
+        const study = await repo.getStudy(studyId, actorId).catch((err: unknown) => mapStudyError(err));
+        try {
+          coreFenValidator.validate(startingFen, study.variant);
+        } catch (err: unknown) {
+          const detail = err instanceof Error ? err.message : 'unparseable';
+          throw HttpError.validation(`startingFen is not a valid FEN: ${detail}`, {
+            startingFen: 'invalid FEN',
+          });
+        }
+      }
 
       try {
         const chapter = await repo.createChapter(chapterId, studyId, actorId, name, startingFen);
@@ -5061,6 +5095,15 @@ function parseNags(raw: unknown): readonly number[] | undefined {
 }
 
 function mapStudyError(err: unknown): never {
+  // A study can already hold a starting FEN this server will not parse — one stored before the
+  // codec learned to refuse Three-Check counters read without their variant, for instance. Left
+  // unmapped that surfaces as a 500 on every later append, which reads as "the server is broken"
+  // about a chapter whose data is simply unusable. Raised in the Qodo review of PR #140.
+  if (err instanceof FenError) {
+    // "position", not "chapter position": this mapper is shared by every study route, including
+    // PGN import, where naming a chapter would be wrong. Raised in the CodeRabbit review of PR #140.
+    throw HttpError.validation(`position is not a valid FEN: ${err.message}`);
+  }
   if (err instanceof StudyRuleError) {
     switch (err.code) {
       case 'not_found':

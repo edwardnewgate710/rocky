@@ -1326,13 +1326,14 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
 
   StudyView: {
     type: 'object',
-    required: ['id', 'ownerId', 'name', 'description', 'visibility', 'createdAt', 'updatedAt'],
+    required: ['id', 'ownerId', 'name', 'description', 'visibility', 'variant', 'createdAt', 'updatedAt'],
     properties: {
       id: { type: 'string', format: 'uuid' },
       ownerId: { type: 'string', format: 'uuid' },
       name: { type: 'string' },
       description: { type: 'string' },
       visibility: { type: 'string', enum: ['public', 'unlisted', 'private'] },
+      variant: { type: 'string', enum: [...VARIANTS] },
       createdAt: dateTime,
       updatedAt: dateTime,
       deletedAt: nullable(dateTime),

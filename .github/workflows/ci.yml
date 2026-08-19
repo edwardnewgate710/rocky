@@ -184,7 +184,7 @@ jobs:
   # costs: fifty green engine tests while `standard` failed against a real binary in production.
   # Installing Stockfish here rather than in build-test keeps that dependency off every other job.
   analysis-smoke:
-    name: analysis smoke (real Stockfish)
+    name: analysis smoke (real Stockfish + Fairy-Stockfish)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -199,21 +199,46 @@ jobs:
       - name: Install Stockfish
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends stockfish
 
+      # Fairy-Stockfish is the engine every variant routes to, and Debian does not package it.
+      # Pinned to the release the Three-Check FEN contract was verified against (ADR-0120): the
+      # counter field is engine behaviour, so an unpinned upgrade could change what "3+3" means
+      # without any change of ours. A single ~2MB download, not a build.
+      #
+      # Checksummed because a release asset is mutable and CI executes this as a native binary.
+      # The UCI name check below cannot stand in for it: a replaced asset would report whatever
+      # name it liked. Raised in the Qodo and CodeRabbit reviews of PR #140.
+      - name: Install Fairy-Stockfish
+        env:
+          FAIRY_SHA256: ab6b85823152e78654092dc2fbb154956a559c6ef0455d728268544390ee150f
+        run: |
+          set -euo pipefail
+          curl -sSL --fail --retry 3 -o /tmp/fairy-stockfish \
+            https://github.com/fairy-stockfish/Fairy-Stockfish/releases/download/fairy_sf_14/fairy-stockfish_x86-64
+          echo "${FAIRY_SHA256}  /tmp/fairy-stockfish" | sha256sum --check --strict -
+          chmod +x /tmp/fairy-stockfish
+
       - name: Install dependencies (reproducible)
         run: npm ci
 
       - name: Build (dependency order)
         run: npm run build
 
-      # The test self-skips when STOCKFISH_PATH is unset, so a missing binary would make this job
-      # pass while proving nothing. Assert the binary is really there before trusting the result.
-      - name: Verify the engine binary exists
-        run: test -x /usr/games/stockfish
+      # Both smoke files self-skip when their binary is unset, so a missing one would make this
+      # job pass while proving nothing. Assert each is really there, and that Fairy is the pinned
+      # version offering the 3check variant, before trusting the result.
+      - name: Verify the engine binaries exist
+        run: |
+          test -x /usr/games/stockfish
+          test -x /tmp/fairy-stockfish
+          printf "uci\nquit\n" | /tmp/fairy-stockfish | tee /tmp/fairy-uci.txt > /dev/null
+          grep -q "id name Fairy-Stockfish 14" /tmp/fairy-uci.txt
+          grep -q "var 3check" /tmp/fairy-uci.txt
 
-      - name: Analysis smoke test against a real engine
+      - name: Analysis smoke test against real engines
         run: npm run test:analysis-smoke --workspace @chess-platform/api
         env:
           STOCKFISH_PATH: /usr/games/stockfish
+          FAIRY_STOCKFISH_PATH: /tmp/fairy-stockfish
 
   # Builds, typechecks, and tests the deployable gateway service. It is NOT a
   # root workspace, so the build-test job above never compiles it — this job is

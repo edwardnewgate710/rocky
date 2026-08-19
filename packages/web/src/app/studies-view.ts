@@ -207,7 +207,7 @@ export function renderChapterDetail(
   if (elements.treeEl) {
     elements.treeEl.replaceChildren();
 
-    const tree = buildMoveTree(flatTree, chapter.startingFen);
+    const tree = buildMoveTree(flatTree, chapter.startingFen, study.variant);
     let activeNodeId: string | null = null;
 
     const updateActiveButton = (selectedId: string | null): void => {

@@ -11,6 +11,11 @@
 export * from './types';
 export * from './board';
 export * from './fen';
+// Deliberately not `export *`. The field-shape predicates and the counter-field parsers are how
+// the codec reads a FEN, and `check-counters.ts` exists so that the conversion lives in one
+// place; publishing them invites a second one. Raised in the CodeRabbit review of PR #140.
+export { THREE_CHECK_LIMIT, deliveredFromRemaining, remainingFromDelivered } from './check-counters';
+export type { CheckCounters } from './check-counters';
 export {
   findKing,
   inCheck,

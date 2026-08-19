@@ -107,12 +107,12 @@ export class VoiceCoach {
 
     // 2. Mistake assessment (if a move was played).
     if (coaching.mistakeVerdict) {
-      segments.push(this.speakMistake(coaching.mistakeVerdict, coaching.fen));
+      segments.push(this.speakMistake(coaching.mistakeVerdict, coaching.fen, coaching.variant));
     }
 
     // 3. Better move (if the engine found a better move).
     if (coaching.mistakeVerdict && coaching.mistakeVerdict.betterMove && coaching.mistakeVerdict.betterMove !== '(none)') {
-      const spoken = verbalizeUci(coaching.fen, coaching.mistakeVerdict.betterMove);
+      const spoken = verbalizeUci(coaching.fen, coaching.mistakeVerdict.betterMove, coaching.variant);
       segments.push(this.segment('better-move', `Instead, consider ${spoken}.`));
     }
 
@@ -128,7 +128,7 @@ export class VoiceCoach {
 
     // 6. Puzzle detection.
     if (coaching.puzzle && coaching.puzzle.kind === 'puzzle') {
-      segments.push(this.speakPuzzle(coaching.puzzle, coaching.fen));
+      segments.push(this.speakPuzzle(coaching.puzzle, coaching.fen, coaching.variant));
     }
 
     // 7. Endgame training.
@@ -162,10 +162,14 @@ export class VoiceCoach {
   /**
    * Speak a mistake verdict.
    */
-  private speakMistake(verdict: MistakeVerdict, fen: string): SpokenSegment {
+  private speakMistake(
+    verdict: MistakeVerdict,
+    fen: string,
+    variant: CoachingResponse['variant'],
+  ): SpokenSegment {
     const assessment = speakClassification(verdict.classification);
     if (verdict.move) {
-      const spokenMove = verbalizeUci(fen, verdict.move);
+      const spokenMove = verbalizeUci(fen, verdict.move, variant);
       return this.segment('assessment', `${assessment} You played ${spokenMove}.`);
     }
     return this.segment('assessment', assessment);
@@ -193,8 +197,12 @@ export class VoiceCoach {
   /**
    * Speak a puzzle detection.
    */
-  private speakPuzzle(puzzle: { kind: 'puzzle'; solutionMove: MoveUci; theme: string | null; difficulty: string }, fen: string): SpokenSegment {
-    const spokenSolution = verbalizeUci(fen, puzzle.solutionMove);
+  private speakPuzzle(
+    puzzle: { kind: 'puzzle'; solutionMove: MoveUci; theme: string | null; difficulty: string },
+    fen: string,
+    variant: CoachingResponse['variant'],
+  ): SpokenSegment {
+    const spokenSolution = verbalizeUci(fen, puzzle.solutionMove, variant);
     const theme = puzzle.theme ? ` The theme is ${puzzle.theme}.` : '';
     return this.segment('puzzle', `There is a tactical puzzle here.${theme} The solution is ${spokenSolution}. Difficulty: ${puzzle.difficulty}.`);
   }
@@ -228,7 +236,7 @@ export class VoiceCoach {
     if (!this.ai) return null;
 
     const summary = this.buildSummary(coaching);
-    const grounding: EngineGrounding = { fen: coaching.fen };
+    const grounding: EngineGrounding = { fen: coaching.fen, variant: coaching.variant };
 
     const userContent =
       'You are a voice chess coach. Convert the following engine-verified analysis ' +
@@ -256,7 +264,7 @@ export class VoiceCoach {
     const lines: string[] = [`Position FEN: ${coaching.fen}`];
 
     if (coaching.move) {
-      const spokenMove = verbalizeUci(coaching.fen, coaching.move);
+      const spokenMove = verbalizeUci(coaching.fen, coaching.move, coaching.variant);
       lines.push(`Move played: ${spokenMove} (UCI: ${coaching.move})`);
     }
 
@@ -270,7 +278,7 @@ export class VoiceCoach {
           : `Assessment: ${v.classification} (cp loss: ${v.centipawnLoss}).`,
       );
       if (v.betterMove && v.betterMove !== '(none)') {
-        const spokenBetter = verbalizeUci(coaching.fen, v.betterMove);
+        const spokenBetter = verbalizeUci(coaching.fen, v.betterMove, coaching.variant);
         lines.push(`Better move: ${spokenBetter} (UCI: ${v.betterMove}).`);
       }
     }
@@ -284,7 +292,7 @@ export class VoiceCoach {
     }
 
     if (coaching.puzzle && coaching.puzzle.kind === 'puzzle') {
-      const spokenSolution = verbalizeUci(coaching.fen, coaching.puzzle.solutionMove);
+      const spokenSolution = verbalizeUci(coaching.fen, coaching.puzzle.solutionMove, coaching.variant);
       lines.push(`Puzzle: theme ${coaching.puzzle.theme ?? 'tactics'}, solution ${spokenSolution}, difficulty ${coaching.puzzle.difficulty}.`);
     }
 

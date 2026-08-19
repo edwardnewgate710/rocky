@@ -335,6 +335,7 @@ export const schema: Schema = {
       name: scalar('name'),
       description: scalar('description'),
       visibility: scalar('visibility'),
+      variant: scalar('variant'),
       createdAt: dateScalar('createdAt'),
       updatedAt: dateScalar('updatedAt'),
       owner: {

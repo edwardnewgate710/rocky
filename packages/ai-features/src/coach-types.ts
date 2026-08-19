@@ -14,6 +14,7 @@ import type { PuzzleResult } from './puzzle-types.js';
 import type { TrainingPosition } from './endgame-types.js';
 import type { TokenUsage } from '@chess-platform/ai-orchestrator';
 import type { MoveUci } from './types.js';
+import type { Variant } from '@chess-platform/core';
 
 // ---------------------------------------------------------------------------
 // Request
@@ -33,6 +34,8 @@ import type { MoveUci } from './types.js';
 export interface CoachRequest {
   /** FEN of the current position. */
   readonly fen: string;
+  /** Rule set used to interpret the FEN and moves (defaults to `standard`). */
+  readonly variant?: Variant;
   /** Optional: the move the player just made or is considering (UCI). */
   readonly move?: MoveUci;
   /** Optional: the game's move sequence from the start (for opening identification). */
@@ -57,6 +60,8 @@ export interface CoachRequest {
 export interface CoachingResponse {
   /** FEN of the position. */
   readonly fen: string;
+  /** Rule set used for every variant-sensitive coaching operation. */
+  readonly variant: Variant;
   /** The move that was evaluated, or `null` if no move was supplied. */
   readonly move: MoveUci | null;
   /** Which features produced a non-null result. */

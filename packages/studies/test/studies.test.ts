@@ -232,6 +232,43 @@ describe('Domain Rule 6: Tombstones and transition locks', () => {
 });
 
 describe('Domain Rule 7: Import PGN validation and atomicity', () => {
+  it('passes the persisted study variant through PGN import and export', async () => {
+    const repo = new InMemoryStudiesRepository();
+    await repo.createStudy(
+      's-threecheck',
+      'p-owner',
+      'Three-Check Study',
+      '',
+      'public',
+      undefined,
+      { variant: 'threecheck' },
+    );
+
+    const reader: PositionReader = {
+      legalSans(_fen, variant) {
+        return variant === 'threecheck' ? ['Re1+'] : [];
+      },
+      play(fen, _san, variant) {
+        if (variant !== 'threecheck') throw new Error('wrong rule set');
+        return fen.replace(' 3+3 ', ' 2+3 ');
+      },
+    };
+    const pgn = [
+      '[Event "Counter preservation"]',
+      '[FEN "4k3/8/8/8/8/8/8/3R3K w - - 3+3 0 1"]',
+      '',
+      '1. Re1+ *',
+    ].join('\n');
+
+    const [chapter] = await repo.importPgn('s-threecheck', 'p-owner', pgn, reader);
+    assert.ok(chapter);
+    const detail = await repo.getChapter(chapter.id, 'p-owner');
+    assert.match(detail.tree[0]!.fenAfter, / 2\+3 0 1$/);
+
+    const exported = await repo.exportPgn('s-threecheck', 'p-owner', chapter.id);
+    assert.match(exported, /\[Variant "threecheck"\]/);
+  });
+
   it('creates one chapter per game and rejects invalid moves with invalid_move without partial import', async () => {
     const repo = new InMemoryStudiesRepository();
     await repo.createStudy('s1', 'p-owner', 'Study 1', 'Desc', 'public');

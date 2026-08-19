@@ -134,6 +134,7 @@ export class Coach {
    */
   async coach(request: CoachRequest): Promise<CoachingResponse> {
     const featuresFired: string[] = [];
+    const variant = request.variant ?? 'standard';
 
     // 1. If a move was supplied, run MistakePredictor and MoveExplainer.
     let mistakeVerdict: MistakeVerdict | null = null;
@@ -143,6 +144,7 @@ export class Coach {
       mistakeVerdict = await this.mistakePredictor.predict({
         fen: request.fen,
         move: request.move,
+        variant,
         ...(request.analysis ? { analysisBefore: request.analysis } : {}),
         signal: request.signal,
       });
@@ -154,6 +156,7 @@ export class Coach {
         moveExplanation = await this.moveExplainer.explain({
           fen: request.fen,
           move: betterMove,
+          variant,
           ...(request.analysis ? { analysis: request.analysis } : {}),
           signal: request.signal,
         });
@@ -180,6 +183,7 @@ export class Coach {
     let puzzle: PuzzleResult | null = null;
     puzzle = await this.puzzleGenerator.generate({
       fen: request.fen,
+      variant,
       ...(request.analysis ? { analysis: request.analysis } : {}),
       signal: request.signal,
     });
@@ -225,7 +229,7 @@ export class Coach {
         endgame,
       );
 
-      const grounding: EngineGrounding = { fen: request.fen };
+      const grounding: EngineGrounding = { fen: request.fen, variant };
 
       const userContent = `You are a chess coach. Synthesize the following engine-verified analysis ` +
         `into a brief, encouraging coaching narrative. Do not invent assessments — ` +
@@ -255,6 +259,7 @@ export class Coach {
 
     return {
       fen: request.fen,
+      variant,
       move: request.move ?? null,
       featuresFired,
       mistakeVerdict,

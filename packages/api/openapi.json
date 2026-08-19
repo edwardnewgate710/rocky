@@ -14679,6 +14679,7 @@
           "name",
           "description",
           "visibility",
+          "variant",
           "createdAt",
           "updatedAt"
         ],
@@ -14703,6 +14704,19 @@
               "public",
               "unlisted",
               "private"
+            ]
+          },
+          "variant": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "chess960",
+              "kingofthehill",
+              "atomic",
+              "crazyhouse",
+              "threecheck",
+              "horde",
+              "racingkings"
             ]
           },
           "createdAt": {

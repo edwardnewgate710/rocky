@@ -215,6 +215,154 @@ describe('Studies REST API', () => {
       chapterId = res.body.id;
     });
 
+    it('rejects a starting FEN this server cannot parse, at the input rather than later', async () => {
+      // A Three-Check FEN carries its counters where the halfmove clock belongs, so the codec
+      // refuses to read one as standard. This particular study owns the standard rule set, so left
+      // unvalidated the chapter would be created and fail on its first append. Raised in the Qodo
+      // review of PR #140; see ADR-0120.
+      //
+      // Both spellings, and deliberately one of each length. The seven-field form is what an
+      // analysis response actually emits, so it is the realistic paste; the six-field form has no
+      // surplus field at all, so nothing but the counter itself can be what refuses it. Keeping
+      // only the first would leave the test passing if the rejection ever came from a field-count
+      // rule instead of the counter guard. Raised in the CodeRabbit review of PR #140.
+      const pasted = [
+        '4k3/8/8/8/8/8/8/3R3K w - - 2+3 17 42', // canonical, seven fields
+        '4k3/8/8/8/8/8/8/3R3K w - - 2+3 17', // the counter alone, six fields
+        '4k3/8/8/8/8/8/8/3R3K w - - 17 42 +1+0', // the trailing delivered spelling
+      ];
+      for (const startingFen of pasted) {
+        const res = await harness.json('POST', `/v1/studies/${studyId}/chapters`, {
+          token: owner.token,
+          body: { name: 'pasted from an analysis panel', startingFen },
+        });
+        assert.equal(res.status, 422, `"${startingFen}" must not be stored`);
+      }
+
+      const listed = await harness.json('GET', `/v1/studies/${studyId}/chapters`);
+      assert.equal(listed.body.items.length, 1, 'and no chapter is left behind');
+    });
+
+    it('rejects a starting FEN that parses but is not a chess position', async () => {
+      // Parsing only proves the string decodes: an empty board and a position with no black king
+      // both decode fine, and would be persisted and would accept moves. The shared validator adds
+      // the king-count check. Raised in the Qodo review of PR #140.
+      const notPositions = [
+        '8/8/8/8/8/8/8/8 w - - 0 1', // an empty board
+        'rnbq1bnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQ - 0 1', // no black king
+        'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNK w - - 0 1', // two white kings, no black
+      ];
+      for (const startingFen of notPositions) {
+        const res = await harness.json('POST', `/v1/studies/${studyId}/chapters`, {
+          token: owner.token,
+          body: { name: 'not a position', startingFen },
+        });
+        assert.equal(res.status, 422, `"${startingFen}" must not be stored`);
+      }
+
+      const listed = await harness.json('GET', `/v1/studies/${studyId}/chapters`);
+      assert.equal(listed.body.items.length, 1, 'and none of them created a chapter');
+    });
+
+    it('rejects a PGN whose FEN header this server cannot parse, before any chapter exists', async () => {
+      // The import path reached `createChapter` from inside the domain, underneath the input check on
+      // the direct chapter route. A game with movetext hits the reader on its first SAN and was
+      // always refused; a game with *none* was never parsed by anyone, so this returned 200 and
+      // stored a chapter holding an unreadable FEN. Reproduced before the fix: status 200, one
+      // chapter created, and every later append to it failed 422 — permanently unusable, from a
+      // request that reported success. Raised in the CodeRabbit review of PR #140.
+      const study = await harness.json('POST', '/v1/studies', {
+        token: owner.token,
+        body: { name: 'PGN FEN Header Study', visibility: 'public' },
+      });
+      const pgn = [
+        '[Event "?"]',
+        '[SetUp "1"]',
+        '[FEN "4k3/8/8/8/8/8/8/3R3K w - - 2+3 17 42"]',
+        '',
+        '*',
+        '',
+      ].join('\n');
+
+      const res = await harness.json('POST', `/v1/studies/${study.body.id}/import`, {
+        token: owner.token,
+        body: { pgn },
+      });
+      assert.equal(res.status, 422, 'the import is refused, not reported as a success');
+
+      const listed = await harness.json('GET', `/v1/studies/${study.body.id}/chapters`);
+      assert.equal(listed.body.items.length, 0, 'and no chapter is left behind to fail later');
+    });
+
+    it('still imports a PGN carrying an ordinary FEN header', async () => {
+      // The guard must refuse an unreadable starting position, not every FEN header. A game with no
+      // movetext is the case the guard newly reaches, so that is the case pinned here.
+      const study = await harness.json('POST', '/v1/studies', {
+        token: owner.token,
+        body: { name: 'Ordinary FEN Header Study', visibility: 'public' },
+      });
+      const fen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1';
+      const pgn = ['[Event "?"]', '[SetUp "1"]', `[FEN "${fen}"]`, '', '*', ''].join('\n');
+
+      const res = await harness.json('POST', `/v1/studies/${study.body.id}/import`, {
+        token: owner.token,
+        body: { pgn },
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.items.length, 1, 'one chapter');
+      assert.equal(res.body.items[0].startingFen, fen, 'holding the position the PGN named');
+    });
+
+    it('still accepts an ordinary starting FEN', async () => {
+      // In a study of its own: the chapters of `studyId` are a fixture the reorder test depends on,
+      // and a test that quietly adds to another test's fixture is a test that breaks it later.
+      const study = await harness.json('POST', '/v1/studies', {
+        token: owner.token,
+        body: { name: 'Starting FEN Study', visibility: 'public' },
+      });
+      const res = await harness.json('POST', `/v1/studies/${study.body.id}/chapters`, {
+        token: owner.token,
+        body: {
+          name: 'from a real position',
+          startingFen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1',
+        },
+      });
+      assert.equal(res.status, 201);
+    });
+
+    it('preserves Three-Check counters when a study appends a move', async () => {
+      const study = await harness.json('POST', '/v1/studies', {
+        token: owner.token,
+        body: {
+          name: 'Three-Check Study',
+          visibility: 'public',
+          variant: 'threecheck',
+        },
+      });
+      assert.equal(study.status, 201);
+      assert.equal(study.body.variant, 'threecheck');
+
+      const chapter = await harness.json('POST', `/v1/studies/${study.body.id}/chapters`, {
+        token: owner.token,
+        body: {
+          name: 'One check delivered',
+          startingFen: '4k3/8/8/8/8/8/8/3R3K w - - 3+3 0 1',
+        },
+      });
+      assert.equal(chapter.status, 201);
+
+      const node = await harness.json(
+        'POST',
+        `/v1/studies/${study.body.id}/chapters/${chapter.body.id}/nodes`,
+        {
+          token: owner.token,
+          body: { parentId: null, san: 'Re1+' },
+        },
+      );
+      assert.equal(node.status, 201);
+      assert.match(node.body.fenAfter, / 2\+3 1 1$/);
+    });
+
     it('lists chapters', async () => {
       const res = await harness.json('GET', `/v1/studies/${studyId}/chapters`);
       assert.equal(res.status, 200);

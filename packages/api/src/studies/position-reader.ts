@@ -1,14 +1,18 @@
 import { Position } from '@chess-platform/core';
-import type { PositionReader } from '@chess-platform/studies';
+import {
+  DEFAULT_STUDY_VARIANT,
+  type PositionReader,
+  type StudyVariant,
+} from '@chess-platform/studies';
 
 export class CorePositionReader implements PositionReader {
-  legalSans(fen: string): readonly string[] {
-    const pos = Position.fromFen(fen);
+  legalSans(fen: string, variant: StudyVariant = DEFAULT_STUDY_VARIANT): readonly string[] {
+    const pos = Position.fromFen(fen, variant);
     return pos.legalMoves().map((m) => pos.toSan(m));
   }
 
-  play(fen: string, san: string): string {
-    const pos = Position.fromFen(fen);
+  play(fen: string, san: string, variant: StudyVariant = DEFAULT_STUDY_VARIANT): string {
+    const pos = Position.fromFen(fen, variant);
     const legalMoves = pos.legalMoves();
     let move = legalMoves.find((m) => pos.toSan(m) === san);
     if (!move) {

@@ -40,6 +40,15 @@ test('parseStartingFen extracts turn and fullmove number', () => {
 
   const move3 = 'r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3';
   assert.deepEqual(parseStartingFen(move3), { turn: 'b', fullmove: 3 });
+
+  const threeCheckMove12 = '4k3/8/8/8/8/8/8/3R3K b - - 2+3 7 12';
+  assert.deepEqual(parseStartingFen(threeCheckMove12, 'threecheck'), { turn: 'b', fullmove: 12 });
+
+  const legacyThreeCheck = '4k3/8/8/8/8/8/8/3R3K b - - 7 12';
+  assert.deepEqual(parseStartingFen(legacyThreeCheck, 'threecheck'), { turn: 'b', fullmove: 12 });
+
+  const trailingThreeCheck = '4k3/8/8/8/8/8/8/3R3K b - - 7 12 +1+0';
+  assert.deepEqual(parseStartingFen(trailingThreeCheck, 'threecheck'), { turn: 'b', fullmove: 12 });
 });
 
 test('buildMoveTree constructs mainline chain, variations, and orders by orderIndex', () => {

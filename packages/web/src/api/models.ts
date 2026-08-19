@@ -725,6 +725,7 @@ export interface StudyView {
   readonly name: string;
   readonly description: string;
   readonly visibility: StudyVisibility;
+  readonly variant: Variant;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly deletedAt?: string;
