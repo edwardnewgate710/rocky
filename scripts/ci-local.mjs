@@ -37,6 +37,7 @@ const CORE = [
   ['ADR claims', 'npm run check:adr-claims'],
   ['CI parity', 'npm run check:ci-parity'],
   ['variant parity', 'npm run check:variant-parity'],
+  ['guard script tests', 'npm run test:scripts'],
 ];
 
 /**

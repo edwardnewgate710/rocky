@@ -24,21 +24,45 @@ variant codes:
 | 7 | `packages/persistence/migrations/0022_study_variant.sql` | `CHECK (variant IN (...))` |
 
 The sharp edge is #7 against #6. Every other variant column in the schema is
-`variant TEXT NOT NULL REFERENCES variants(code)` — games and ratings accept a new rule set the
-moment a row lands in the lookup table. `studies.variant` alone uses an inline `CHECK`, so that
-same row does nothing for studies.
+`variant TEXT NOT NULL REFERENCES variants(code)`, so once a row exists in the lookup table the
+**database** accepts that value in the games and ratings columns. `studies.variant` alone uses an
+inline `CHECK`, so the same row does nothing for studies. This is a claim about storage only —
+the application declarations (#1 to #5) still need their own updates either way; the lookup row
+settles what Postgres will hold, not what the platform will offer.
 
 **The type system does not catch this, and neither did anything else.** Measured, not assumed: a
 ninth variant was added to all five TypeScript sites, to `VARIANT_LABELS`, and to the `variants`
-seed, leaving only the `CHECK` untouched. `npm run build` exited 0, `npm run lint` was clean, and
-the full test suite passed — the one failure was `openapi.json` being stale, which says
-"regenerate me", not "the database will reject this"; after the regeneration a developer would
-obviously run, the API suite was green at 579 tests. The variant would then fail as a constraint
-violation in production, on the first study created with it.
+lookup table, leaving only the `CHECK` untouched. `npm run build` exited 0 and `npm run lint` was
+clean. The test suite then reported exactly **one** failure, and it was the wrong one:
+`openapi.json` was stale. That says "regenerate me", not "the database will reject this" — so a
+developer runs `npm run openapi`, which is the obvious next step, and on the following run the
+API suite passed at 579 tests with nothing left red anywhere. The variant would then fail as a
+constraint violation in production, on the first study created with it.
 
 `scripts/check-variant-parity.mjs` compares all six mirrors to the root and names each
-disagreement, with the same drift reproduced as its acceptance test. It runs in CI beside the
-other static guards and in `scripts/ci-local.mjs`, and costs milliseconds.
+disagreement. It runs in CI beside the other static guards and in `scripts/ci-local.mjs`, and
+costs milliseconds.
+
+Two properties it needs, both raised in the Qodo review and both pinned by
+`scripts/test/check-variant-parity.test.mjs`:
+
+- **The SQL sources are replayed, not read as files.** Applied migrations are checksummed and
+  immutable (`pg/migrate.ts`: "history is immutable"), so a ninth variant arrives in a *new*
+  migration and 0001 and 0022 never change. A guard that compared against those two files
+  directly would fail forever on a correct change, and could only be satisfied by editing an
+  applied migration — which aborts migration on every existing deployment. Both are therefore
+  accumulated across the whole directory: lookup rows summed in applied order, the study
+  constraint taken from the last migration to define it. Verified end to end — adding the variant
+  through a new `0023` and replacing the constraint in a new `0024` satisfies the guard with 0001
+  and 0022 untouched.
+- **Comments do not count.** Matching quoted tokens in raw source treated a commented-out entry as
+  live, so `// 'atomic',` in the API list left the guard green while the array no longer held it.
+  Every region is comment-stripped first, with string literals respected so a `--` or `//` inside
+  one is not mistaken for a comment.
+
+If a later migration converts `studies.variant` to `REFERENCES variants(code)`, that mirror stops
+being an independent list and the guard skips it rather than demanding one — so the deferred
+conversion below needs no change here when someone makes it.
 
 Two lists are deliberately **not** checked, because they are not independent copies:
 `packages/api/openapi.json` is generated (`enum: [...VARIANTS]`) and already pinned by
