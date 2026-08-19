@@ -8,13 +8,15 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
   stripComments,
+  splitStatements,
   extractRegion,
+  migrationFiles,
   effectiveLookupVariants,
   effectiveStudyVariantConstraint,
   disagreements,
@@ -75,16 +77,70 @@ INSERT INTO variants (code, name) VALUES
   }
 });
 
-test('migrations are summed in applied order, not lexicographic order', () => {
+test('migrations replay in the order the runner applies them, which is lexicographic', () => {
+  // `pg/migrate.ts` sorts with a plain `.sort()`, so that is the order the database ends up in and
+  // the order this must model. Zero-padded names make lexicographic and numeric order coincide, so
+  // the filenames here are deliberately *not* padded: `10_` sorts before `9_`, and a guard that
+  // sorted numerically instead would replay a database that never existed. The earlier version of
+  // this test used `0009_`/`0010_`, which sort the same either way and so proved nothing about the
+  // ordering it claimed to pin. Raised in the CodeRabbit review of PR #141.
   const dir = migrations({
-    '0009_a.sql': `INSERT INTO variants (code, name) VALUES ('nine', 'Nine');`,
-    '0010_b.sql': `INSERT INTO variants (code, name) VALUES ('ten', 'Ten');`,
+    '9_late.sql': `INSERT INTO variants (code, name) VALUES ('nine', 'Nine');`,
+    '10_early.sql': `INSERT INTO variants (code, name) VALUES ('ten', 'Ten');`,
   });
   try {
-    assert.deepEqual(effectiveLookupVariants(dir), ['nine', 'ten']);
+    assert.deepEqual(migrationFiles(dir), ['10_early.sql', '9_late.sql'], 'the runner order');
+    assert.deepEqual(effectiveLookupVariants(dir), ['ten', 'nine']);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('the guard replays migrations in exactly the order the runner does', () => {
+  // Pinned against the runner's own source rather than restated, so the two cannot drift apart
+  // silently: a change to `migrate.ts`'s sort must be made here too or this fails.
+  const runner = readFileSync('packages/persistence/src/pg/migrate.ts', 'utf8');
+  assert.match(
+    runner,
+    /readdirSync\(dir\)\s*\.filter\(\(f\) => f\.endsWith\('\.sql'\)\)\s*\.sort\(\);/,
+    'migrate.ts still sorts migration files with a plain lexicographic .sort()',
+  );
+});
+
+test('only statements that target `studies` decide its constraint', () => {
+  // The file was previously tested as a whole, so any other table in it could move the answer — a
+  // `variant` CHECK elsewhere would overwrite the studies one, and a `REFERENCES variants(code)`
+  // elsewhere would clear it, silently dropping the mirror. Raised in the CodeRabbit review of
+  // PR #141.
+  const dir = migrations({
+    '0022_study_variant.sql': `ALTER TABLE studies
+  ADD COLUMN variant TEXT NOT NULL DEFAULT 'standard'
+  CHECK (variant IN ('standard', 'atomic'));`,
+    '0023_other_table.sql': `CREATE TABLE puzzle_sets (
+  id UUID PRIMARY KEY,
+  variant TEXT NOT NULL REFERENCES variants(code)
+);
+ALTER TABLE studies ADD COLUMN tag TEXT;
+CREATE TABLE bot_profiles (
+  id UUID PRIMARY KEY,
+  variant TEXT NOT NULL CHECK (variant IN ('standard'))
+);`,
+  });
+  try {
+    const found = effectiveStudyVariantConstraint(dir);
+    assert.notEqual(found, null, 'the studies constraint must survive an unrelated table');
+    assert.equal(found.file, '0022_study_variant.sql');
+    assert.deepEqual(found.variants, ['standard', 'atomic']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a semicolon inside a string literal does not split a statement', () => {
+  assert.deepEqual(
+    splitStatements(`INSERT INTO t VALUES ('a;b'); SELECT 1;`).map((s) => s.trim()),
+    [`INSERT INTO t VALUES ('a;b')`, `SELECT 1`],
+  );
 });
 
 test('a statement the guard cannot model fails loudly rather than reporting a stale schema', () => {

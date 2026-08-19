@@ -143,11 +143,50 @@ export function extractRegion({ label, file, open, close, dialect = 'ts', text }
   return { label, file, variants };
 }
 
-/** Every migration file, in the order the runner applies them. */
+/**
+ * Every migration file, in the order the runner applies them.
+ *
+ * A plain lexicographic `.sort()`, because that is exactly what `pg/migrate.ts` does. Replaying
+ * in any other order would model a database that never existed: with the four-digit zero-padded
+ * names this repository uses the two orders coincide, but `9_x.sql` and `10_y.sql` would apply
+ * as `10` then `9`, and a guard that sorted numerically would disagree with the schema on disk.
+ * Fidelity to the runner is the invariant, not numeric intuition.
+ */
 export function migrationFiles(dir = MIGRATIONS_DIR) {
   return readdirSync(dir)
     .filter((f) => f.endsWith('.sql'))
-    .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+    .sort();
+}
+
+/**
+ * Splits SQL into statements, respecting string literals so a `;` inside one does not end one.
+ *
+ * Comment stripping runs first, so only quotes are left to worry about.
+ */
+export function splitStatements(sql) {
+  const statements = [];
+  let buffer = '';
+  let quote = null;
+  for (const ch of sql) {
+    if (quote !== null) {
+      buffer += ch;
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      buffer += ch;
+      continue;
+    }
+    if (ch === ';') {
+      statements.push(buffer);
+      buffer = '';
+      continue;
+    }
+    buffer += ch;
+  }
+  if (buffer.trim() !== '') statements.push(buffer);
+  return statements;
 }
 
 /**
@@ -192,19 +231,38 @@ export function effectiveLookupVariants(dir = MIGRATIONS_DIR) {
  * candidate in PROJECT_STATE — makes the column derive from the lookup table, at which point there
  * is no separate list left to drift. That returns `null`, and the caller skips the mirror.
  */
+/** `CREATE TABLE studies` / `ALTER TABLE studies`, and nothing else. */
+const TARGETS_STUDIES =
+  /^\s*(?:CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?|ALTER\s+TABLE)\s+(?:ONLY\s+)?"?studies"?[\s(]/i;
+
 export function effectiveStudyVariantConstraint(dir = MIGRATIONS_DIR) {
   let current = null;
   for (const file of migrationFiles(dir)) {
     const sql = stripComments(readFileSync(join(dir, file), 'utf8'), 'sql');
-    if (!/\bstudies\b/i.test(sql) || !/\bvariant\b/i.test(sql)) continue;
 
-    for (const m of sql.matchAll(/CHECK\s*\(\s*variant\s+IN\s*\(([\s\S]*?)\)\s*\)/gi)) {
-      current = {
-        file,
-        variants: [...m[1].matchAll(/'([a-z0-9]+)'/g)].map((t) => t[1]),
-      };
+    // Per statement, and only statements that name `studies` as their table. Testing the file as a
+    // whole let any other table move the answer: one migration that touches `studies` and also gives
+    // some other table its own `variant` CHECK would have overwritten this, and a `REFERENCES
+    // variants(code)` elsewhere in the same file — which is how games and ratings are already
+    // declared — would have cleared it, silently skipping the mirror the guard exists to compare.
+    // Raised in the CodeRabbit review of PR #141.
+    for (const statement of splitStatements(sql)) {
+      if (!TARGETS_STUDIES.test(statement)) continue;
+
+      // Order matters: `DROP CONSTRAINT` then `ADD CONSTRAINT ... CHECK` is how a constraint is
+      // replaced without editing the migration that first defined it.
+      if (/DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?"?\w*variant\w*"?/i.test(statement)) current = null;
+      if (/DROP\s+COLUMN\s+(?:IF\s+EXISTS\s+)?"?variant"?/i.test(statement)) current = null;
+
+      for (const m of statement.matchAll(/CHECK\s*\(\s*variant\s+IN\s*\(([\s\S]*?)\)\s*\)/gi)) {
+        current = { file, variants: [...m[1].matchAll(/'([a-z0-9]+)'/g)].map((t) => t[1]) };
+      }
+
+      // Once the column derives from the lookup table there is no second list left to drift.
+      if (/\bvariant\b[\s\S]*?REFERENCES\s+variants\s*\(\s*code\s*\)/i.test(statement)) {
+        current = null;
+      }
     }
-    if (/variant\b[^;]*REFERENCES\s+variants\s*\(\s*code\s*\)/i.test(sql)) current = null;
   }
   return current;
 }

@@ -54,7 +54,16 @@ Two properties it needs, both raised in the Qodo review and both pinned by
   accumulated across the whole directory: lookup rows summed in applied order, the study
   constraint taken from the last migration to define it. Verified end to end — adding the variant
   through a new `0023` and replacing the constraint in a new `0024` satisfies the guard with 0001
-  and 0022 untouched.
+  and 0022 untouched. "Applied order" means `pg/migrate.ts`'s own plain lexicographic `.sort()`,
+  not a numeric one: the two coincide under this repository's zero-padded names, but sorting
+  numerically would replay `9_x` before `10_y` and model a database that never existed. A test
+  asserts the runner still sorts that way, so the two cannot drift apart quietly.
+- **Only statements naming `studies` decide the study constraint.** Testing each migration file as
+  a whole let any other table move the answer — a `variant` CHECK on some other table would
+  overwrite it, and a `REFERENCES variants(code)` elsewhere in the same file (how games and ratings
+  are already declared) would clear it, silently dropping the mirror. Detection is per statement,
+  scoped to `CREATE TABLE studies` / `ALTER TABLE studies`, with a quote-aware splitter so a `;`
+  inside a string literal does not end a statement. Raised in the CodeRabbit review.
 - **Comments do not count.** Matching quoted tokens in raw source treated a commented-out entry as
   live, so `// 'atomic',` in the API list left the guard green while the array no longer held it.
   Every region is comment-stripped first, with string literals respected so a `--` or `//` inside
