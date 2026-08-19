@@ -36,6 +36,7 @@ const CORE = [
   ['deploy gates', 'npm run check:deploy-gates'],
   ['ADR claims', 'npm run check:adr-claims'],
   ['CI parity', 'npm run check:ci-parity'],
+  ['variant parity', 'npm run check:variant-parity'],
 ];
 
 /**
