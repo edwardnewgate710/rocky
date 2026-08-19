@@ -173,6 +173,111 @@ ALTER TABLE studies ADD CONSTRAINT studies_variant_check
   }
 });
 
+test('`ALTER TABLE IF EXISTS studies` is recognised, not skipped', () => {
+  // Valid PostgreSQL, and a migration is exactly where the defensive form gets written. Skipping it
+  // left the guard comparing against the constraint that statement had just replaced. Raised in the
+  // CodeRabbit review of PR #141.
+  const dir = migrations({
+    '0022_study_variant.sql': `ALTER TABLE studies
+  ADD COLUMN variant TEXT NOT NULL DEFAULT 'standard'
+  CHECK (variant IN ('standard', 'atomic'));`,
+    '0023_defensive.sql': `ALTER TABLE IF EXISTS studies DROP CONSTRAINT studies_variant_check;
+ALTER TABLE IF EXISTS ONLY studies ADD CONSTRAINT studies_variant_check
+  CHECK (variant IN ('standard', 'atomic', 'antichess'));`,
+  });
+  try {
+    const found = effectiveStudyVariantConstraint(dir);
+    assert.equal(found.file, '0023_defensive.sql');
+    assert.deepEqual(found.variants, ['standard', 'atomic', 'antichess']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a constraint is dropped by its exact name, whatever that name is', () => {
+  // `DROP CONSTRAINT allowed_codes` is a perfectly ordinary way to remove a CHECK on
+  // `studies.variant`. Matching names that merely contain "variant" missed it and left the guard
+  // comparing against a constraint the schema no longer has. Raised in the CodeRabbit review of
+  // PR #141.
+  const named = `ALTER TABLE studies
+  ADD COLUMN variant TEXT NOT NULL DEFAULT 'standard'
+  CONSTRAINT allowed_codes CHECK (variant IN ('standard', 'atomic'));`;
+
+  // Dropped and not replaced, so nothing downstream can paper over a missed clear: if the drop is
+  // not recognised the constraint is still reported as live.
+  const droppedOnly = migrations({
+    '0022_study_variant.sql': named,
+    '0023_drop.sql': `ALTER TABLE studies DROP CONSTRAINT allowed_codes;`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantConstraint(droppedOnly), null);
+  } finally {
+    rmSync(droppedOnly, { recursive: true, force: true });
+  }
+
+  const replaced = migrations({
+    '0022_study_variant.sql': named,
+    '0023_drop.sql': `ALTER TABLE studies DROP CONSTRAINT allowed_codes;
+ALTER TABLE studies ADD CONSTRAINT variant_codes
+  CHECK (variant IN ('standard', 'atomic', 'antichess'));`,
+  });
+  try {
+    const found = effectiveStudyVariantConstraint(replaced);
+    assert.equal(found.name, 'variant_codes');
+    assert.deepEqual(found.variants, ['standard', 'atomic', 'antichess']);
+  } finally {
+    rmSync(replaced, { recursive: true, force: true });
+  }
+});
+
+test('dropping an unrelated constraint does not clear the tracked one', () => {
+  // The other half of exact-name matching: a constraint whose name happens to contain "variant"
+  // must not be mistaken for the one governing the column.
+  const dir = migrations({
+    '0022_study_variant.sql': `ALTER TABLE studies
+  ADD COLUMN variant TEXT NOT NULL DEFAULT 'standard'
+  CHECK (variant IN ('standard', 'atomic'));`,
+    '0023_unrelated.sql': `ALTER TABLE studies DROP CONSTRAINT studies_variant_label_length;`,
+  });
+  try {
+    const found = effectiveStudyVariantConstraint(dir);
+    assert.notEqual(found, null, 'the governing constraint must survive an unrelated drop');
+    assert.deepEqual(found.variants, ['standard', 'atomic']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an unnamed CHECK is tracked under the name PostgreSQL gives it', () => {
+  // Written without a name, the server calls it `studies_variant_check` — so that is the name a
+  // later migration has to drop, and the name the guard has to be tracking.
+  const dir = migrations({
+    '0022_study_variant.sql': `ALTER TABLE studies
+  ADD COLUMN variant TEXT NOT NULL DEFAULT 'standard'
+  CHECK (variant IN ('standard', 'atomic'));`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantConstraint(dir).name, 'studies_variant_check');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('renaming the governing constraint fails loudly rather than tracking a dead name', () => {
+  const dir = migrations({
+    '0022_study_variant.sql': `ALTER TABLE studies
+  ADD COLUMN variant TEXT NOT NULL DEFAULT 'standard'
+  CHECK (variant IN ('standard', 'atomic'));`,
+    '0023_rename.sql': `ALTER TABLE studies
+  RENAME CONSTRAINT studies_variant_check TO allowed_codes;`,
+  });
+  try {
+    assert.throws(() => effectiveStudyVariantConstraint(dir), /RENAME CONSTRAINT/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('converting the study column to a foreign key leaves no list to compare', () => {
   // The conversion recorded as a candidate in PROJECT_STATE. Once `studies.variant` derives from
   // `variants(code)` there is no second list, and the guard must not go on demanding one.

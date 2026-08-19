@@ -231,9 +231,29 @@ export function effectiveLookupVariants(dir = MIGRATIONS_DIR) {
  * candidate in PROJECT_STATE — makes the column derive from the lookup table, at which point there
  * is no separate list left to drift. That returns `null`, and the caller skips the mirror.
  */
-/** `CREATE TABLE studies` / `ALTER TABLE studies`, and nothing else. */
+/**
+ * `CREATE TABLE studies` / `ALTER TABLE studies`, and nothing else.
+ *
+ * `IF EXISTS` and `IF NOT EXISTS` are both accepted because both are valid PostgreSQL and a
+ * migration is exactly where the defensive form gets written. Skipping `ALTER TABLE IF EXISTS
+ * studies` would leave the guard comparing against a constraint that statement had just replaced.
+ * Raised in the CodeRabbit review of PR #141.
+ */
 const TARGETS_STUDIES =
-  /^\s*(?:CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?|ALTER\s+TABLE)\s+(?:ONLY\s+)?"?studies"?[\s(]/i;
+  /^\s*(?:CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?|ALTER\s+TABLE(?:\s+IF\s+EXISTS)?)\s+(?:ONLY\s+)?"?studies"?[\s(]/i;
+
+/**
+ * The name PostgreSQL gives a `CHECK` on `studies.variant` that was written without one.
+ *
+ * `<table>_<column>_check` is the server's own convention, so this is what a later migration has to
+ * name in its `DROP CONSTRAINT` — which makes it the right default to track against.
+ */
+const IMPLICIT_CONSTRAINT_NAME = 'studies_variant_check';
+
+/** A `CHECK (variant IN (...))`, with the constraint name when the statement gives one. */
+const VARIANT_CHECK = /(?:CONSTRAINT\s+"?(\w+)"?\s+)?CHECK\s*\(\s*variant\s+IN\s*\(([\s\S]*?)\)\s*\)/gi;
+
+const normalise = (name) => name.replace(/"/g, '').toLowerCase();
 
 export function effectiveStudyVariantConstraint(dir = MIGRATIONS_DIR) {
   let current = null;
@@ -249,13 +269,35 @@ export function effectiveStudyVariantConstraint(dir = MIGRATIONS_DIR) {
     for (const statement of splitStatements(sql)) {
       if (!TARGETS_STUDIES.test(statement)) continue;
 
+      // A rename would leave every name tracked below pointing at something that no longer answers
+      // to it, and the drop that follows would look like an unrelated constraint. There is no
+      // half-right answer available, so say so rather than report a schema that is not there.
+      const renamed = /RENAME\s+CONSTRAINT\s+"?(\w+)"?/i.exec(statement);
+      if (renamed !== null && current !== null && normalise(renamed[1]) === current.name) {
+        throw new Error(
+          `${file} renames the constraint governing \`studies.variant\` ` +
+            `(\`${renamed[1]}\`). Teach this guard \`RENAME CONSTRAINT\` rather than leaving it ` +
+            `tracking a name nothing answers to.`,
+        );
+      }
+
       // Order matters: `DROP CONSTRAINT` then `ADD CONSTRAINT ... CHECK` is how a constraint is
-      // replaced without editing the migration that first defined it.
-      if (/DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?"?\w*variant\w*"?/i.test(statement)) current = null;
+      // replaced without editing the migration that first defined it. The name is compared exactly
+      // against the one being tracked — a substring test for "variant" both missed a legitimately
+      // named constraint (`DROP CONSTRAINT allowed_codes`) and would have fired on an unrelated one
+      // that happened to contain the word. Raised in the CodeRabbit review of PR #141.
+      const dropped = /DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?"?(\w+)"?/i.exec(statement);
+      if (dropped !== null && current !== null && normalise(dropped[1]) === current.name) {
+        current = null;
+      }
       if (/DROP\s+COLUMN\s+(?:IF\s+EXISTS\s+)?"?variant"?/i.test(statement)) current = null;
 
-      for (const m of statement.matchAll(/CHECK\s*\(\s*variant\s+IN\s*\(([\s\S]*?)\)\s*\)/gi)) {
-        current = { file, variants: [...m[1].matchAll(/'([a-z0-9]+)'/g)].map((t) => t[1]) };
+      for (const m of statement.matchAll(VARIANT_CHECK)) {
+        current = {
+          file,
+          name: normalise(m[1] ?? IMPLICIT_CONSTRAINT_NAME),
+          variants: [...m[2].matchAll(/'([a-z0-9]+)'/g)].map((t) => t[1]),
+        };
       }
 
       // Once the column derives from the lookup table there is no second list left to drift.
