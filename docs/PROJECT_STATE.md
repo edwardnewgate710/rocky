@@ -4,7 +4,63 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-20 — M15 Increment 11: the Ubuntu package mirror leaves the CI critical path._
+_Last updated: 2026-08-20 — M15 Increment 12: production runs the engine version CI actually tests._
+
+## M15 Increment 12 — Pinned Stockfish 16 in Production Images (ADR-0121, amended)
+
+### Production was running an engine no test had ever exercised
+
+Increment 11 pinned Stockfish 16 in CI. It left the production images installing whatever
+`apt-get install stockfish` resolved to, which meant:
+
+| | Stockfish version | chosen by |
+| --- | --- | --- |
+| CI, since Increment 11 | **16** | pinned release + digest |
+| Production images, before this increment | **15.1-4** | Debian bookworm, at build time |
+| Production images, once `node:22-slim` follows Debian to trixie | **17-1** | the same, with no commit of ours |
+
+`node:22-slim` resolves to `22/bookworm-slim` → `FROM debian:bookworm-slim`; bookworm carries
+`stockfish 15.1-4`, trixie carries `17-1`. So the engine behind `POST /v1/analysis`, the engine bot
+and anti-cheat auto-analysis was both different from the tested one and a base-image bump away from
+changing again on its own.
+
+Both images now take the binary from a dedicated `stockfish` artefact stage pinning exactly what CI
+pins — release `sf_16`, asset `stockfish-ubuntu-x86-64.tar`, archive SHA-256
+`efca1c60ec11fd9628425f3ee40644ad1618535ddf881c16385a86f7fc9e0983`. Digest verified before
+extraction, one member taken by exact path, `chmod` after that, `id name Stockfish 16` asserted in
+the stage. Runtime stages take `COPY --from=stockfish` only, so the 41.6 MB archive never reaches a
+shipped layer. `STOCKFISH_PATH` moves from `/usr/games/stockfish` to `/usr/local/bin/stockfish`.
+
+**Redistribution is the one place the images do not copy CI.** CI *uses* the binary; `release.yml`
+*publishes* the images to GHCR, and the Debian package being replaced carried its own licence
+material. `Copying.txt`, `AUTHORS`, `README.md` and the corresponding `src/` tree are copied to
+`/usr/local/share/stockfish/` beside the binary, for about 0.7 MB.
+
+**A `docker-images` CI job now builds both images before merge** and, inside each, asserts the
+binary runs, `ldd` resolves with no `not found`, the engine reports `id name Stockfish 16`, and the
+licence material is present. `release.yml` builds these images only on a `v*` tag, so until now
+nothing checked them until a release was already being cut. The job is gated on `Dockerfile*`,
+`package(-lock).json` and `.github/workflows/`, since application code is compiled by `build-test`
+already.
+
+`scripts/check-engine-pin-parity.mjs` holds the four copies of the pin together — CI workflow, both
+Dockerfiles, ADR-0121 — because the failure worth catching is a partial upgrade, which is exactly
+the state described above.
+
+**Measured on the built images** (`docker-images` job): `gambit-api` 275 MB and `gambit-gateway`
+276 MB in total, of which Stockfish is 38.6 MB of binary plus 0.8 MB of licence and source — 39.4
+MB against Debian's declared 46.2 MB `Installed-Size`, so roughly 6.8 MB smaller. The old images
+were not rebuilt to weigh them, so that comparison is a measurement against package metadata
+rather than like-for-like, and no exact total-image saving is claimed. `ldd` resolves every
+library inside both images with no `not found`; `libstdc++6` is already present in `node:22-slim`,
+so nothing had to be installed to replace what the Debian package used to pull in.
+
+**Rollout note:** 15.1 → 16 is a real behavioural change in production, made deliberately to align
+it with the tested version. Evaluations may legitimately differ between engine versions; no claim is
+made that they will not. What is asserted is capability — MultiPV, `cp`/`mate` scores, UCI principal
+variations, `movetime` honoured — which is what the analysis composition depends on.
+
+Fairy-Stockfish remains out of production, unchanged.
 
 ## M15 Increment 11 — Deterministic Stockfish Installation in CI (ADR-0121)
 
@@ -896,7 +952,7 @@ A player watching their own game saw a frozen clock that only updated when a mov
 Two defects from running the platform locally: registering answered `HTTP 404`, and the computer opponent never moved. Unrelated causes; each reproduced before being fixed.
 
 - **Dev proxy (`packages/web/vite.config.ts`)**: `resolveEndpoints` derives the API origin from `location.origin`, so under `vite dev` the app called `/v1/...` on the dev server, which served nothing. `preview` already had a proxy for e2e; `server` had none. Added for `/v1` and `/ws`, defaulting to the Compose ports, overridable with `GAMBIT_DEV_API_URL` / `GAMBIT_DEV_WS_URL`.
-- **Engine bot (`Dockerfile.gateway`, `docker-compose.yml`)**: `serve.ts` requires `ENGINE_BOT=1` **and** a binary at `STOCKFISH_PATH`. Compose set neither and the image installed no engine, and the failure is a log warning rather than a crash. The image now installs Stockfish at `/usr/games/stockfish`; Compose sets `ENGINE_BOT` by default.
+- **Engine bot (`Dockerfile.gateway`, `docker-compose.yml`)**: `serve.ts` requires `ENGINE_BOT=1` **and** a binary at `STOCKFISH_PATH`. Compose set neither and the image installed no engine, and the failure is a log warning rather than a crash. The image now installs Stockfish at `/usr/games/stockfish`; Compose sets `ENGINE_BOT` by default. *(Superseded in M15 Increment 12: the image no longer uses apt, and the binary is a pinned Stockfish 16 at `/usr/local/bin/stockfish`.)*
 - **Variant routing (`packages/engine/src/plugin.ts`, `pool.ts`)**: the platform calls ordinary chess `standard`, UCI calls it `chess`. `variantSetup` accepted `standard` all along, but `expectedVariants` omitted it and `supportsVariant` consulted only discovered capabilities when warm — so a bot game threw `NoEngineForVariantError`. Both plugins now declare `standard`, and `supportsVariant` returns the union of declared and discovered names.
 - **Why the suite missed it**: all 50 engine tests routed by `variant: 'chess'`, the engine's vocabulary rather than the platform's. New tests route `standard` warm and cold; both fail against the unfixed code. `packages/web/test/dev-proxy.test.ts` pins server/preview proxy parity, since nothing tested `vite.config.ts` at all.
 - **Documented** in `docs/RUNNING.md`: a front-end dev-server section, and the two requirements for Play vs Computer with the `EngineBotMover is enabled` log line that confirms them.

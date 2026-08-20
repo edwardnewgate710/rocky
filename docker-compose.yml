@@ -31,6 +31,16 @@ services:
     command: ["redis-server", "--appendonly", "yes"]
 
   api:
+    # Pinned because the image carries Stockfish 16, and release `sf_16` publishes no linux/arm64
+    # build — `stockfish-ubuntu-x86-64.tar` and its `-modern`/`-avx2` siblings are the only Linux
+    # assets. Debian's package, which M15 Increment 12 replaced, resolved per-architecture, so
+    # without this line `docker compose up --build` stops with the artefact stage's architecture
+    # error on an arm64 workstation — a local stack that used to work.
+    #
+    # amd64 under emulation is slower than a native engine but it runs, which beats not building.
+    # `release.yml` sets no `platforms:`, so the published images have always been amd64 and this
+    # changes nothing about production. Raised in the Qodo review of PR #143.
+    platform: linux/amd64
     build:
       context: .
       dockerfile: Dockerfile.api
@@ -59,6 +69,8 @@ services:
       start_period: 30s
 
   gateway:
+    # Same reason as `api` above: this image ships Stockfish 16 and `sf_16` has no arm64 asset.
+    platform: linux/amd64
     build:
       context: .
       dockerfile: Dockerfile.gateway

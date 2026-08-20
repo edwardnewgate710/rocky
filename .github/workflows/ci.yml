@@ -6,13 +6,30 @@ name: CI
 # and `test` scripts already fan out to the packages in dependency order
 # (core -> game -> realtime-gateway -> persistence -> api -> engine -> web).
 
+# Documentation-only changes skip this 24-minute suite, with one exception carved back in.
+#
+# ADR-0121 is markdown *and* one of the four places the Stockfish pin is written down, so a blanket
+# `paths-ignore: ['**/*.md']` meant an ADR-only pin edit started nothing and the four-file invariant
+# `scripts/check-engine-pin-parity.mjs` claims went unenforced for one of its own files. Path filters
+# do express the exception — a later `!` pattern overrides an earlier match, and a later positive
+# pattern overrides that — so the ADR is added back after markdown is removed. Raised in the Qodo and
+# CodeRabbit reviews of PR #143.
+#
+# `pin-parity.yml` covers the same case in seconds and still runs; this is the belt to its braces,
+# and it is here because the gap Qodo named was in *this* file's triggers.
 on:
   push:
     branches: [main]
-    paths-ignore: ['**/*.md']
+    paths:
+      - '**'
+      - '!**/*.md'
+      - 'docs/adr/0121-deterministic-engine-install-in-ci.md'
   pull_request:
     branches: [main]
-    paths-ignore: ['**/*.md']
+    paths:
+      - '**'
+      - '!**/*.md'
+      - 'docs/adr/0121-deterministic-engine-install-in-ci.md'
 
 # Cancel superseded runs on the same ref to save CI minutes.
 concurrency:
@@ -33,6 +50,7 @@ jobs:
       gateway: ${{ steps.filter.outputs.gateway }}
       web: ${{ steps.filter.outputs.web }}
       deploy: ${{ steps.filter.outputs.deploy }}
+      images: ${{ steps.filter.outputs.images }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,7 +59,7 @@ jobs:
       - name: Compute changed areas
         id: filter
         run: |
-          gateway=true; web=true; deploy=true
+          gateway=true; web=true; deploy=true; images=true
           base=""; head="HEAD"
           case "${{ github.event_name }}" in
             pull_request)
@@ -63,6 +81,31 @@ jobs:
             grep -qE '^(services/gateway/|packages/realtime-gateway/|packages/game/|packages/core/|package(-lock)?\.json|\.github/workflows/)' <<<"$changed" && gateway=true || gateway=false
             grep -qE '^(packages/web/|packages/e2e-harness/|packages/api/|packages/game/|packages/realtime-gateway/|packages/core/|package(-lock)?\.json|\.github/workflows/)' <<<"$changed" && web=true || web=false
             grep -qE '^(deploy/|\.github/workflows/)' <<<"$changed" && deploy=true || deploy=false
+            # Only what changes how an image is *built*. Application code is already compiled by
+            # build-test on every run, so rebuilding both images to compile it again would double a
+            # cost that buys nothing; what this job proves is the image recipe — the pinned engine,
+            # the runtime libraries, the paths — and that changes only in these files.
+            #
+            # `.dockerignore` defines the build context both images are built from, and any
+            # `package.json`/lockfile at any depth is installed by one of them — `Dockerfile.gateway`
+            # runs its own `npm ci --prefix services/gateway` against that service's manifests, which
+            # the gateway job installs on the runner rather than inside `node:22-slim`. A dependency
+            # that works in one and not the other would otherwise first fail at release. Both raised
+            # in the Qodo review of PR #143.
+            #
+            # Named workflows rather than all of `.github/workflows/`, unlike the gates above: these
+            # two are the only ones that build these images — `ci.yml` defines the job below,
+            # `release.yml` publishes them on a tag — so editing `deploy.yml` or `chaos.yml` would
+            # otherwise spend an image build proving nothing. A new workflow that builds an image
+            # belongs on this list. Also raised in the Qodo review of PR #143.
+            #
+            # `docker/` is here because `Dockerfile.web` copies `docker/web/nginx.conf.template`
+            # into the shipped web image, where the entrypoint renders it with `envsubst` at
+            # container start. A broken proxy config is therefore not a build error at all, and
+            # before this it first surfaced at a release tag. The job below builds and checks all
+            # three published images, so this filter and that job now cover the same set — which is
+            # the property that makes the filter honest. Raised in the Qodo review of PR #143.
+            grep -qE '(^|/)(Dockerfile[^/]*|\.dockerignore|package(-lock)?\.json)$|^docker/|^\.github/workflows/(ci|release)\.yml$' <<<"$changed" && images=true || images=false
           else
             echo "No diff base resolved; running all gated jobs (fail-open)."
           fi
@@ -70,8 +113,9 @@ jobs:
             echo "gateway=$gateway"
             echo "web=$web"
             echo "deploy=$deploy"
+            echo "images=$images"
           } >> "$GITHUB_OUTPUT"
-          echo "Resolved: gateway=$gateway web=$web deploy=$deploy"
+          echo "Resolved: gateway=$gateway web=$web deploy=$deploy images=$images"
 
   build-test:
     name: build + typecheck + test (Node ${{ matrix.node-version }})
@@ -138,6 +182,14 @@ jobs:
       - name: Variant list parity check
         run: npm run check:variant-parity
 
+      # The Stockfish pin is written out in four places now: this workflow, both production
+      # Dockerfiles, and ADR-0121. Nothing derives from anything else. The failure worth catching
+      # is a partial upgrade — the release moved here but not in the images — because that is how
+      # production came to be running Debian's Stockfish 15.1 while this job proved 16, which is
+      # what M15 Increment 12 fixed. Static, milliseconds.
+      - name: Engine pin parity check
+        run: npm run check:engine-pin-parity
+
       # The guard above parses TypeScript and replays a migration directory, so it has enough
       # logic of its own to be wrong quietly — the failure that matters is it passing while it has
       # stopped looking at anything. These drive it against synthetic sources: a commented-out
@@ -145,6 +197,164 @@ jobs:
       # declaration. Pure functions over temp files, no services.
       - name: Guard script tests
         run: npm run test:scripts
+
+
+  # Builds the two production images and looks inside them.
+  #
+  # `release.yml` builds these, but only on a `v*` tag — so until M15 Increment 12 nothing checked
+  # them before a release was already being cut, and the images had drifted: they installed whatever
+  # Debian's mirror resolved (`stockfish 15.1-4` on bookworm) while the analysis-smoke job proved the
+  # engine boundary against Stockfish 16. Production ran a version no test had ever exercised, and a
+  # base-image bump to trixie would have moved it again with no commit of ours.
+  #
+  # This job is the check that could not otherwise happen before merge. It is deliberately narrow:
+  # it proves the *recipe* — the pinned engine is present, executes, identifies itself, resolves its
+  # libraries, and carries its licence material — not the application, which build-test already
+  # compiles on every run. Gated on the files that change how an image is built, so an ordinary code
+  # change does not pay for two image builds.
+  docker-images:
+    name: production image build (API + gateway + web)
+    needs: changes
+    if: needs.changes.outputs.images == 'true'
+    runs-on: ubuntu-latest
+    # Two full image builds, each compiling the server packages from scratch without the npm cache
+    # action. Twenty minutes is generous against that and still bounds a stall, as on analysis-smoke.
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # `load: true` so the images land in the local daemon to be inspected. Nothing is pushed:
+      # publishing stays release.yml's job, on a tag.
+      - name: Build API image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.api
+          push: false
+          load: true
+          tags: gambit-api:ci
+
+      - name: Build gateway image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.gateway
+          push: false
+          load: true
+          tags: gambit-gateway:ci
+
+      - name: Build web image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.web
+          push: false
+          load: true
+          tags: gambit-web:ci
+
+      # Both Dockerfiles already assert identity and library resolution in their runtime stage, so a
+      # broken image cannot be built at all — including by `release.yml`, which never runs this job.
+      # What this step adds is the same checks against the *finished container*, entered the way it
+      # is actually run: as `USER node`, after every later layer has landed. A binary that is fine
+      # during the build but not readable or executable by the runtime user would pass there and
+      # fail here, and the licence material is confirmed to have survived into the final image.
+      - name: Verify Stockfish inside both images
+        run: |
+          set -euo pipefail
+          for image in gambit-api:ci gambit-gateway:ci; do
+            echo "::group::${image}"
+            docker run --rm "${image}" sh -eux -c '
+              test -x "$STOCKFISH_PATH"
+              ldd "$STOCKFISH_PATH" > /tmp/ldd.txt
+              cat /tmp/ldd.txt
+              ! grep -q "not found" /tmp/ldd.txt
+              printf "uci\nquit\n" | "$STOCKFISH_PATH" > /tmp/uci.txt
+              grep -q "id name Stockfish 16" /tmp/uci.txt
+              test -s /usr/local/share/stockfish/Copying.txt
+              test -d /usr/local/share/stockfish/src
+
+              # ADR-0121 claims the 41.6 MB archive never reaches a shipped layer. That was true by
+              # construction — the runtime stage copies two paths out of the artefact stage and the
+              # tar is in neither — but nothing asserted it, and a later `COPY --from=stockfish
+              # /out/ ...` widened by one character would ship it silently.
+              #
+              # The positive control runs first on purpose: a bare "find turned up nothing" passes
+              # just as happily when the scan itself is broken, which is the vacuous guard this
+              # repository has already been bitten by. Proving the scan can see the binary means the
+              # empty result below is evidence rather than an absence of evidence.
+              find / -xdev -type f -name "stockfish" > /tmp/found.txt 2>/dev/null || true
+              grep -qx "/usr/local/bin/stockfish" /tmp/found.txt
+              find / -xdev -type f -name "stockfish*.tar" > /tmp/tars.txt 2>/dev/null || true
+              cat /tmp/tars.txt
+              ! test -s /tmp/tars.txt
+            '
+            echo "::endgroup::"
+          done
+
+      # The web image carries no engine, so it gets its own check rather than a branch inside the
+      # loop above. What can break here is different in kind: `Dockerfile.web` copies
+      # `nginx.conf.template` into `/etc/nginx/templates/` and the entrypoint renders it with
+      # `envsubst` when the container starts. A malformed proxy block is therefore not a build
+      # failure — the image builds clean and dies on boot — and `release.yml` publishes this image
+      # too, so before this the first thing to exercise the template was a release. Raised in the
+      # Qodo review of PR #143.
+      - name: Verify the web image renders a valid nginx config
+        run: |
+          set -euo pipefail
+          echo "::group::gambit-web:ci"
+          # Loopback upstreams because `nginx -t` resolves a literal `proxy_pass` host at config-load
+          # time; the compose defaults (`api`, `gateway`) do not exist on a runner and would fail for
+          # a reason that has nothing to do with the template being correct.
+          docker run --rm \
+            -e API_UPSTREAM=127.0.0.1:8080 \
+            -e GATEWAY_UPSTREAM=127.0.0.1:4175 \
+            gambit-web:ci sh -eux -c '
+              rendered=/etc/nginx/conf.d/default.conf
+              /docker-entrypoint.sh nginx -t
+              cat "$rendered"
+
+              # envsubst actually ran and put the upstreams in.
+              #
+              # `-F` throughout: every pattern here is a literal line from the config, and two of
+              # them carry nginx variables. A bare `grep` reads them as basic regular expressions,
+              # where `$` is literal only because it happens to sit mid-pattern — drop the trailing
+              # `;` from one of these and the `$` silently becomes an end-anchor, changing what the
+              # assertion means without changing how it looks. Fixed strings say what is meant.
+              # Raised in the Qodo review of PR #143.
+              grep -qF "proxy_pass http://127.0.0.1:8080;" "$rendered"
+              grep -qF "proxy_pass http://127.0.0.1:4175;" "$rendered"
+
+              # ...and NGINX_ENVSUBST_FILTER kept it away from the variables nginx defines itself.
+              # Without that filter these expand to empty and the proxy silently loses its headers,
+              # which is the failure `Dockerfile.web` documents in a comment and nothing tested.
+              # `$http_host` is load-bearing here: `$host` drops the port, and that broke every
+              # browser WebSocket upgrade with a 401 until it was changed.
+              grep -qF "proxy_set_header Host \$http_host;" "$rendered"
+              grep -qF "try_files \$uri \$uri/ /index.html;" "$rendered"
+
+              test -s /usr/share/nginx/html/index.html
+            '
+          echo "::endgroup::"
+
+      # Reported rather than asserted: an image-size threshold in CI turns every legitimate
+      # dependency change into a failure here, which is not what this job is for. The numbers are
+      # printed so a reviewer can see what the change actually cost.
+      - name: Report image and engine footprint
+        run: |
+          set -euo pipefail
+          for image in gambit-api:ci gambit-gateway:ci; do
+            size=$(docker image inspect "${image}" --format '{{.Size}}')
+            printf '%-22s total image %s MB\n' "${image}" "$((size / 1000000))"
+            docker run --rm "${image}" sh -c \
+              'du -sk "$STOCKFISH_PATH" /usr/local/share/stockfish | awk "{printf \"  %-34s %6.1f MB\\n\", \$2, \$1/1024}"'
+          done
+          # No engine footprint line: the web image ships nginx and the built SPA, not Stockfish.
+          web_size=$(docker image inspect gambit-web:ci --format '{{.Size}}')
+          printf '%-22s total image %s MB\n' "gambit-web:ci" "$((web_size / 1000000))"
 
   # Runs the Postgres-gated integration tests (persistence event store +
   # repositories against a real database). Everything else is hermetic.

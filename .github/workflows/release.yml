@@ -40,6 +40,23 @@ jobs:
       - name: Typecheck & lint (tsc --noEmit)
         run: npm run lint
 
+      # The job above this comment says it "runs full verification before publishing container
+      # images", and until now that was not quite true of the engine pin: `npm test` and
+      # `npm run lint` fan out to the workspaces and never reach the static guards, which live as
+      # their own steps in `ci.yml`.
+      #
+      # That left the one gap this increment exists to close still open at the moment it matters
+      # most. A `v*` tag does not start `ci.yml` or `pin-parity.yml` — both are scoped to `main`
+      # pushes and pull requests — so a tag cut from a commit that never went through those checks
+      # would publish `Dockerfile.api` and `Dockerfile.gateway` to GHCR with a Stockfish pin that
+      # no longer agreed with CI or ADR-0121, and nothing would have said so. Publishing is the
+      # irreversible step; the guard costs milliseconds. Raised in the Qodo review of PR #143.
+      - name: Engine pin parity check
+        run: npm run check:engine-pin-parity
+
+      - name: Guard script tests
+        run: npm run test:scripts
+
   # Build and publish container images to GitHub Container Registry (GHCR).
   publish:
     name: publish images to GHCR

@@ -25,6 +25,7 @@
     "check:adr-claims": "node scripts/check-adr-claims.mjs",
     "check:ci-parity": "node scripts/check-ci-parity.mjs",
     "check:variant-parity": "node scripts/check-variant-parity.mjs",
+    "check:engine-pin-parity": "node scripts/check-engine-pin-parity.mjs",
     "test:scripts": "node --test \"scripts/test/**/*.test.mjs\"",
     "ci:local": "node scripts/ci-local.mjs"
   },

@@ -84,8 +84,8 @@ plus one) and is used by the Compose healthcheck. That port is not published to
 the host by the primary Compose file.
 
 **Play vs Computer** needs two things and fails quietly without either: `ENGINE_BOT=1`, and an
-engine binary at `STOCKFISH_PATH`. The gateway image installs Stockfish at
-`/usr/games/stockfish` and Compose sets `ENGINE_BOT` by default, so `docker compose up` gives
+engine binary at `STOCKFISH_PATH`. The gateway image ships a pinned Stockfish 16 at
+`/usr/local/bin/stockfish` and Compose sets `ENGINE_BOT` by default, so `docker compose up` gives
 you a working opponent. If neither is present the gateway logs
 `ENGINE_BOT requires an engine binary (set STOCKFISH_PATH)` and the lobby still offers the mode
 while the opponent never moves. Confirm with:
@@ -93,6 +93,13 @@ while the opponent never moves. Confirm with:
 ```bash
 docker compose logs gateway | grep "EngineBotMover is enabled"
 ```
+
+**On an arm64 workstation** (Apple Silicon, ARM Linux) the `api` and `gateway` services build as
+`linux/amd64` under emulation, which Compose is configured for. Stockfish release `sf_16` publishes
+no arm64 build, so the alternative would be no engine at all. Expect the first build and the engine
+itself to be slower than native; everything works, and nothing about the published production images
+changes — they have always been amd64. Docker Desktop users on Apple Silicon should enable Rosetta
+(*Settings → General → Use Rosetta for x86/amd64 emulation*), which makes the difference small.
 
 ### Web service
 
@@ -155,7 +162,7 @@ The script:
 | `GATEWAY_PORT` | `4175` | No | Gateway WebSocket host port |
 | `WEB_PORT` | `3000` | No | Web frontend host port |
 | `ENGINE_BOT` | `1` in Compose | No | Set to `"0"` to disable the autonomous engine bot mover in the gateway (ADR-0080) |
-| `STOCKFISH_PATH` | `/usr/games/stockfish` in the gateway image | Required if `ENGINE_BOT=1` outside the image | Path to the Stockfish UCI executable binary |
+| `STOCKFISH_PATH` | `/usr/local/bin/stockfish` in the gateway image | Required if `ENGINE_BOT=1` outside the image | Path to the Stockfish UCI executable binary |
 
 
 **Never commit real secrets.** The `.env.example` has development defaults only.

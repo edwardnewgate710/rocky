@@ -95,6 +95,13 @@ used only before warmup when nothing has been discovered.
 ### 3. The gateway image ships an engine, and Compose enables the bot
 
 `Dockerfile.gateway` installs Stockfish and sets `STOCKFISH_PATH=/usr/games/stockfish`;
+
+> **Correction (M15 Increment 12).** That path was Debian's, from the `apt-get install stockfish`
+> this ADR described. The image now takes a pinned Stockfish 16 from an artefact stage and sets
+> `STOCKFISH_PATH=/usr/local/bin/stockfish`. The decision recorded here — that the gateway image
+> ships an engine and Compose enables the bot — is unchanged; only where the binary comes from and
+> where it lands. See [ADR-0121](0121-deterministic-engine-install-in-ci.md).
+
 `docker-compose.yml` sets `ENGINE_BOT: ${ENGINE_BOT:-1}` on the gateway, overridable to `0`.
 
 `docs/RUNNING.md` records both requirements and the log line that confirms them

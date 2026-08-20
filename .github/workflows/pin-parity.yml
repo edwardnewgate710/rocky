@@ -1,0 +1,70 @@
+name: Pin parity
+
+# `ci.yml` carries `paths-ignore: ['**/*.md']`, which is right for a 24-minute suite but leaves a
+# hole in the invariant `scripts/check-engine-pin-parity.mjs` claims: ADR-0121 is one of the four
+# places the Stockfish pin is written down, and it is markdown. A pull request that edits only that
+# ADR — exactly the shape of an accidental documentation-only pin edit — would not start `ci.yml`,
+# so the guard would not run, and the drift its own tests cover would ship unchallenged. Raised in
+# the Qodo and CodeRabbit reviews of PR #143.
+#
+# A separate workflow rather than widening `ci.yml`'s triggers, because path filters cannot express
+# "ignore markdown except this file" and running the full suite on every documentation change would
+# cost 24 minutes to protect a check that takes milliseconds. This job is a checkout, a Node setup
+# and two guards.
+#
+# It overlaps `ci.yml` deliberately: on a code change both run the same guard, which costs seconds
+# and means neither workflow has to know what the other covers.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/adr/**'
+      - 'Dockerfile*'
+      - '.dockerignore'
+      - 'scripts/check-engine-pin-parity.mjs'
+      - 'scripts/test/check-engine-pin-parity.test.mjs'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/pin-parity.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docs/adr/**'
+      - 'Dockerfile*'
+      - '.dockerignore'
+      - 'scripts/check-engine-pin-parity.mjs'
+      - 'scripts/test/check-engine-pin-parity.test.mjs'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/pin-parity.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  pin-parity:
+    name: engine pin parity
+    runs-on: ubuntu-latest
+    # Seconds of work. Five minutes is only here so an infrastructure stall cannot inherit the
+    # six-hour default, as on analysis-smoke.
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Same reason as the analysis-smoke job in `ci.yml`: this job runs repository-controlled
+          # Node scripts and needs no authenticated Git access, so don't leave the token in
+          # .git/config for those scripts to read.
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+
+      # No `npm ci`: both the guard and its tests are dependency-free Node, so installing the
+      # workspace would be the slowest thing in this workflow by an order of magnitude.
+      - name: Engine pin parity check
+        run: node scripts/check-engine-pin-parity.mjs
+
+      - name: Guard script tests
+        run: node --test "scripts/test/**/*.test.mjs"

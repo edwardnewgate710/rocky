@@ -39,7 +39,7 @@ function withEnv<T>(overrides: Record<string, string | undefined>, run: () => T)
 
 test('createPgDependencies: wires deps.analysis when an engine binary is configured', () => {
   const pool = new Pool();
-  withEnv({ STOCKFISH_PATH: '/usr/games/stockfish' }, () => {
+  withEnv({ STOCKFISH_PATH: '/usr/local/bin/stockfish' }, () => {
     const { deps } = createPgDependencies({ pool });
     assert.ok(
       deps.analysis !== undefined,

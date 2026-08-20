@@ -1,3 +1,69 @@
+# --- Stockfish artefact stage ---
+#
+# Production previously ran whatever `apt-get install stockfish` resolved to. On Debian bookworm
+# that is `stockfish 15.1-4`, while CI has been proving the engine boundary against Stockfish 16
+# since ADR-0121 — so the engine serving production was a version no test had ever exercised, and
+# it would have moved to 17 on its own the day `node:22-slim` follows Debian to trixie. Pinning the
+# same upstream artefact CI pins makes the two agree and stops the base image deciding for us.
+#
+# A separate stage, so the 41.6 MB archive never exists in the runtime image: only the binary and
+# its licence material are copied out. The stage depends on nothing but the pin, so application
+# changes never re-download it, and changing the pin invalidates this stage alone.
+#
+# `buildpack-deps:bookworm-curl` is the base because the stage needs `curl` and `ca-certificates`
+# and nothing else. `node:22-slim` was tried first, on the strength of its Dockerfile installing
+# curl — but it installs those tools to fetch Node and then `apt-get purge`s them, so the image
+# does not ship one and the build failed with `curl: not found`. The `docker-images` CI job caught
+# that, which is what it is for. Installing curl here instead would put the apt mirror back into
+# the build this increment exists to take it out of; `buildpack-deps:*-curl` is the official image
+# whose whole purpose is having it already. The stage is discarded, so its size does not ship.
+FROM buildpack-deps:bookworm-curl AS stockfish
+
+# Stated, because it is a real constraint and it used to be satisfied for free.
+#
+# Release `sf_16` publishes no linux/arm64 asset at all — `stockfish-ubuntu-x86-64.tar` and its
+# `-modern`/`-avx2` siblings are the only Linux builds, and the Android ones are not it. Debian's
+# package, which this replaces, resolved per-architecture, so `docker compose up --build` used to
+# work on an arm64 workstation and now cannot. Production is unaffected: `release.yml` sets no
+# `platforms:`, so the published images have always been the runner's linux/amd64.
+#
+# Failing here with a sentence beats failing four steps later with `exec format error` on a binary
+# nobody said was architecture-specific. `TARGETARCH` is supplied by BuildKit.
+ARG TARGETARCH
+RUN set -eu; \
+    if [ "${TARGETARCH:-amd64}" != "amd64" ]; then \
+      echo "Stockfish ${STOCKFISH_RELEASE:-sf_16} publishes no linux/${TARGETARCH} build;" >&2; \
+      echo "these images target linux/amd64. Build with --platform=linux/amd64." >&2; \
+      exit 1; \
+    fi
+
+# Checksum before extraction, extraction before chmod, chmod before execution. The digest is of the
+# archive, which is the object crossing the trust boundary, and is pinned here rather than computed
+# from the bytes being checked. GitHub publishes no digest for this asset and a release asset is
+# replaceable, so this literal is the whole integrity story. Kept identical to `.github/workflows/
+# ci.yml` and ADR-0121; `scripts/check-engine-pin-parity.mjs` fails if the four ever disagree.
+#
+# The plain `x86-64` asset is the baseline build. The `-modern` and `-avx2` assets of the same
+# release need instruction sets a production host is not guaranteed to have, and all three are
+# byte-for-byte the same size — so the digest is what tells them apart, and asking for the member
+# by exact path is the second guard on that.
+RUN set -eux; \
+    curl -sSL --fail --retry 3 -o /tmp/stockfish.tar \
+      https://github.com/official-stockfish/Stockfish/releases/download/sf_16/stockfish-ubuntu-x86-64.tar; \
+    echo "efca1c60ec11fd9628425f3ee40644ad1618535ddf881c16385a86f7fc9e0983  /tmp/stockfish.tar" \
+      | sha256sum --check --strict -; \
+    mkdir -p /out/bin /out/share/stockfish; \
+    tar -xf /tmp/stockfish.tar -C /tmp --strip-components=1 \
+      stockfish/stockfish-ubuntu-x86-64 \
+      stockfish/Copying.txt \
+      stockfish/AUTHORS \
+      stockfish/README.md \
+      stockfish/src; \
+    mv /tmp/stockfish-ubuntu-x86-64 /out/bin/stockfish; \
+    chmod +x /out/bin/stockfish; \
+    mv /tmp/Copying.txt /tmp/AUTHORS /tmp/README.md /tmp/src /out/share/stockfish/; \
+    rm -rf /tmp/stockfish.tar
+
 # --- Build stage ---
 FROM node:22-slim AS builder
 
@@ -33,12 +99,33 @@ WORKDIR /app
 # STOCKFISH_PATH is set, and the route then answers 503 and the capability reports off (ADR-0113).
 # The analysis pool is separate from the gateway's gameplay pool by design, so this image needs its
 # own copy of the binary. Nothing spawns at boot — the pool runs `minWorkers: 0` and warms on the
-# first request, so an image that never analyses pays only the disk. Debian installs to
-# /usr/games/stockfish, as in Dockerfile.gateway.
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends stockfish && \
-    rm -rf /var/lib/apt/lists/*
-ENV STOCKFISH_PATH=/usr/games/stockfish
+# first request, so an image that never analyses pays only the disk.
+#
+# From the artefact stage above: the binary and, beside it, the licence and corresponding source
+# the upstream archive ships. These images are published to GHCR, which is distribution rather than
+# the mere use CI makes of the same binary, and the Debian package this replaces carried its own
+# licence material. Keeping `Copying.txt`, `AUTHORS`, `README.md` and `src/` with the binary costs
+# about 0.7 MB and keeps that association explicit rather than dropped on the floor.
+COPY --from=stockfish /out/bin/stockfish /usr/local/bin/stockfish
+COPY --from=stockfish /out/share/stockfish/ /usr/local/share/stockfish/
+ENV STOCKFISH_PATH=/usr/local/bin/stockfish
+
+# Run it here, in the image that actually ships, rather than in the artefact stage above.
+#
+# Two things are being proven and only this stage can prove them: that the engine is the pinned
+# version, and that it *runs at all* on this base. Dropping Debian's `stockfish` package also drops
+# whatever it pulled in transitively, so a missing `libstdc++6` would otherwise surface as a failed
+# subprocess spawn in production. `ldd` is read rather than trusted to set an exit code, because it
+# reports an unresolved library as `not found` and still exits zero.
+#
+# In the runtime stage so that `release.yml` — which builds these images on a tag and never runs
+# the `docker-images` CI job — fails the build instead of publishing a broken image. The layer is
+# a no-op: it writes nothing that survives the command.
+RUN set -eux; \
+    ldd "$STOCKFISH_PATH" | tee /tmp/ldd.txt; \
+    ! grep -q "not found" /tmp/ldd.txt; \
+    printf "uci\nquit\n" | "$STOCKFISH_PATH" | grep -q "id name Stockfish 16"; \
+    rm -f /tmp/ldd.txt
 
 COPY --from=builder --chown=node:node /app/package.json /app/package-lock.json ./
 COPY --from=builder --chown=node:node /app/node_modules/ ./node_modules/
