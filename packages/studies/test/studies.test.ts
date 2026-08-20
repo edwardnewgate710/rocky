@@ -269,6 +269,50 @@ describe('Domain Rule 7: Import PGN validation and atomicity', () => {
     assert.match(exported, /\[Variant "threecheck"\]/);
   });
 
+  it('carries the study variant into side variations, not just the mainline', async () => {
+    // The mainline being variant-aware proves nothing about the branches. Import walks variations
+    // recursively, and a recursive call that forgets to pass the variant along is invisible: the
+    // import succeeds, the chapter looks complete, and the sideline was validated under the wrong
+    // rule set. ADR-0091 §10 records the last time a variation branch diverged from the mainline
+    // here and produced a tree that loaded and was wrong.
+    //
+    // This is the property M15 Increment 13 pinned when it deleted `importGame`, the one movetext
+    // walker in this package that never threaded a variant at all.
+    const repo = new InMemoryStudiesRepository();
+    await repo.createStudy('s-var', 'p-owner', 'Three-Check Study', '', 'public', undefined, {
+      variant: 'threecheck',
+    });
+
+    // The reader's *answers* depend on the variant: only three-check offers these checking rook
+    // moves, so a branch resolving under standard rules cannot find them and the import fails
+    // rather than quietly storing a move this study's rules never allowed.
+    const reader: PositionReader = {
+      legalSans: (_fen, variant) => (variant === 'threecheck' ? ['Re1+', 'Rd8+'] : ['Rd2']),
+      play: (fen, san, variant) => {
+        if (variant !== 'threecheck') throw new Error(`played ${san} under ${String(variant)}`);
+        return fen.replace(/ (\d)\+(\d) /, (_m, w: string) => ` ${Number(w) - 1}+3 `) + `|${san}`;
+      },
+    };
+
+    const pgn = [
+      '[Event "Sideline"]',
+      '[FEN "4k3/8/8/8/8/8/8/3R3K w - - 3+3 0 1"]',
+      '',
+      '1. Re1+ (1. Rd8+) *',
+    ].join('\n');
+
+    const [chapter] = await repo.importPgn('s-var', 'p-owner', pgn, reader);
+    assert.ok(chapter);
+
+    const { tree } = await repo.getChapter(chapter.id, 'p-owner');
+    const sans = tree.map((n) => n.san).sort();
+    assert.deepEqual(
+      sans,
+      ['Rd8+', 'Re1+'],
+      'the mainline and the variation both resolved under three-check rules',
+    );
+  });
+
   it('creates one chapter per game and rejects invalid moves with invalid_move without partial import', async () => {
     const repo = new InMemoryStudiesRepository();
     await repo.createStudy('s1', 'p-owner', 'Study 1', 'Desc', 'public');
