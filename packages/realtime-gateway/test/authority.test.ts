@@ -77,6 +77,25 @@ test('duplicate game id is refused', async () => {
   );
 });
 
+test('a variant the domain refuses is reported as an AuthorityError, not a GameError', async () => {
+  // `Game.create` refuses `chess960` itself — the variant has no start position of its own, so the
+  // game would be ordinary chess wearing the label (ADR-0123). This function's contract is that a
+  // refused creation surfaces as `AuthorityError`, the same as the duplicate-id case above, so the
+  // domain's refusal has to be translated rather than allowed to escape as its own type.
+  const { authority } = await setup();
+  await assert.rejects(
+    authority.createGame({
+      gameId: 'g-960',
+      variant: 'chess960',
+      timeControl: TC,
+      players: { white: 'x', black: 'y' },
+      rated: false,
+    }),
+    (e) => e instanceof AuthorityError && e.code === 'invalid_command' && /chess960/.test(e.message),
+  );
+  assert.equal(authority.has('g-960'), false, 'and no game was registered');
+});
+
 test('a legal move is applied and published as an authoritative broadcast', async () => {
   const { authority, pubsub } = await setup();
   const got: Broadcast[] = [];

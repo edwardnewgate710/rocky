@@ -15,7 +15,7 @@ import { AuthService } from './auth/service';
 import type { RequestMeta } from './auth/service';
 import type { Repositories } from './deps';
 import { Game, classifySpeed } from '@chess-platform/game';
-import { parseRole, parseSeekColor, parseTimeControl, parseUuid, parseVariant, VARIANTS, HANDLE_PATTERN, UUID_PATTERN } from './domain';
+import { parseRole, parseSeekColor, parseTimeControl, parseUuid, parseVariant, parseCreatableVariant, VARIANTS, CREATABLE_VARIANTS, HANDLE_PATTERN, UUID_PATTERN } from './domain';
 import { BOT_ACCOUNTS, botAccountByLevel } from './bot/catalogue';
 import { HttpError } from './http/errors';
 import { json, noContent } from './http/context';
@@ -1110,7 +1110,7 @@ export function buildRouter(deps: RouteDeps): Router {
     async (ctx) => {
       const identity = requireAuth(ctx);
       const body = strictObject(ctx.body, ['variant', 'timeControl', 'rated', 'color', 'minRating', 'maxRating']);
-      const variant = parseVariant(oneOf(reqString(body, 'variant'), VARIANTS, 'variant'));
+      const variant = parseCreatableVariant(reqString(body, 'variant'));
       const timeControl = parseTimeControl(body['timeControl']);
       const rated = body['rated'] === undefined ? true : body['rated'] === true;
       const color = body['color'] === undefined ? 'random' : parseSeekColor(reqString(body, 'color'));
@@ -1171,6 +1171,7 @@ export function buildRouter(deps: RouteDeps): Router {
         400: ['Error', 'Cannot accept own seek'],
         403: ['Error', 'Rating requirements not met'],
         404: ['Error', 'Seek not found or already accepted'],
+        409: ['Error', 'Seek is for a variant that can no longer start a game (ADR-0123)'],
       },
     }),
     AUTHED,
@@ -1179,6 +1180,26 @@ export function buildRouter(deps: RouteDeps): Router {
       const seek = await repos.seeks.findById(ctx.params['id']!);
       if (!seek || seek.gameId !== null) throw HttpError.notFound('seek not found or already accepted');
       if (seek.creatorId === identity.userId) throw HttpError.badRequest('cannot accept own seek');
+
+      // Before the rating checks, deliberately. This variant comes from a stored row rather than
+      // from the request, so validating seek *creation* does not cover it: a `chess960` seek
+      // written before ADR-0123 is still in the table and would reach `Game.create`, which now
+      // refuses it — and `GameError` maps to no status, so the acceptor would get a 500 for a seek
+      // they did not create and cannot fix.
+      //
+      // Order matters for the reason it always does with guards that both apply. A legacy seek can
+      // also carry rating limits, and answering 403 "rating too low" would name a condition the
+      // acceptor might go and fix, for a seek that can never start a game whatever their rating.
+      // The unfixable reason has to win. It also spares a ratings lookup for a variant the acceptor
+      // will never be rated in. Raised in the CodeRabbit review of PR #145.
+      //
+      // 409 rather than 422 because the request is well formed — it is the seek that can no longer
+      // be honoured.
+      if (!CREATABLE_VARIANTS.includes(seek.variant)) {
+        throw HttpError.conflict(
+          `this seek is for '${seek.variant}', which can no longer start a game; it needs to be cancelled and recreated`,
+        );
+      }
 
       if (seek.minRating !== null || seek.maxRating !== null) {
         const ratingRow = await repos.ratings.get(identity.userId, seek.variant);
@@ -1261,7 +1282,7 @@ export function buildRouter(deps: RouteDeps): Router {
         throw HttpError.badRequest(`invalid bot level: "${levelStr}". Valid levels: ${validLevels}`);
       }
 
-      const variant = parseVariant(reqString(body, 'variant'));
+      const variant = parseCreatableVariant(reqString(body, 'variant'));
       const timeControl = parseTimeControl(body['timeControl']);
       const colorPref = body['color'] !== undefined ? parseSeekColor(reqString(body, 'color')) : 'random';
 
@@ -1520,8 +1541,14 @@ export function buildRouter(deps: RouteDeps): Router {
       }
       const body = strictObject(ctx.body, ['name', 'format', 'variant', 'timeControl', 'rounds', 'durationMs', 'tiebreakOrder']);
       const format = oneOf(reqString(body, 'format'), ['round_robin', 'swiss', 'arena'], 'format');
-      const variantRaw = oneOf(reqString(body, 'variant'), VARIANTS, 'variant');
-      const variant = parseVariant(variantRaw) as 'standard' | 'chess960';
+      // The cast is not this increment's, and it is wrong in a way worth naming rather than
+      // tidying past: `CreateArenaCommand.variant` is declared `'standard' | 'chess960'`, so an
+      // arena for any of the other five creatable variants is already being passed through a type
+      // that says it cannot exist. Widening that declaration is a change to the arena service and
+      // belongs to whoever owns it. What this increment removes is only the redundant second parse
+      // — `parseCreatableVariant` validates against a subset of what `parseVariant` accepts, so the
+      // second call could never reject anything the first had let through.
+      const variant = parseCreatableVariant(reqString(body, 'variant')) as 'standard' | 'chess960';
       const timeControl = parseTimeControl(body['timeControl']);
 
       if (format === 'arena') {

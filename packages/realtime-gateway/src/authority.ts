@@ -145,7 +145,20 @@ export class GameAuthority {
       throw new AuthorityError('invalid_command', `game ${params.gameId} already exists`);
     }
     const at = params.at ?? this.now();
-    const { game, events } = Game.create({ ...params, at });
+    // Wrapped for the same reason the persist below is: this function's contract is that a refused
+    // creation surfaces as `AuthorityError`, and `Game.create` refuses some of them itself — it
+    // rejects `chess960` outright, because the variant has no start position of its own (ADR-0123).
+    // `codeOf` in `gateway.ts` does fall back to `invalid_command` for an unrecognised error, so an
+    // escaping `GameError` would already reach the client as the right reject code; this makes that
+    // a stated guarantee rather than a lucky default, and keeps the two failure paths in this one
+    // function consistent. Raised in the Qodo review of PR #145.
+    let game: Game;
+    let events: GameEvent[];
+    try {
+      ({ game, events } = Game.create({ ...params, at }));
+    } catch (err) {
+      throw new AuthorityError('invalid_command', `cannot create game ${params.gameId}: ${(err as Error).message}`);
+    }
     // Persist first: an append against a fresh id fails if the game already
     // exists in the durable log, so the store is the single source of truth for
     // uniqueness across restarts.

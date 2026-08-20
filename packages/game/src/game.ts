@@ -86,9 +86,33 @@ export { repetitionKey } from '@chess-platform/core';
 export class Game {
   private constructor(private readonly state: GameState) {}
 
-  /** Create a new game, returning the aggregate and its `GameCreated` event. */
+  /**
+   * Create a new game, returning the aggregate and its `GameCreated` event.
+   *
+   * Rejects `chess960`, and does so here rather than only at the API, because this is the one place
+   * every game is born: seek acceptance, the bot route and the tournament launcher all arrive at
+   * this call, and a future fourth caller would inherit the rule instead of having to remember it.
+   *
+   * The reason is not policy but honesty about what the engine can do. `Position.initial('chess960')`
+   * returns the standard array — verified identical to `Position.initial('standard')` — and castling
+   * generation is hardcoded to e1/a1/h1, so the only Chess960 arrangement that works is the one that
+   * is ordinary chess. Creating the game anyway wrote `variant: 'chess960'` beside a standard
+   * `initialFen` into an append-only event store, which is a durable lie: the row says a rule set the
+   * position never used, and nothing downstream can tell it from a real one.
+   *
+   * ADR-0099 withheld the variant from the lobby and deliberately left the server contract open.
+   * ADR-0123 closes it, because a client-side list cannot be an invariant. See ADR-0123 for what
+   * implementing the variant properly requires; `chess960` stays in `Variant` throughout, since
+   * reading and analysing such a position is legitimate and only *creating* one is not.
+   */
   static create(params: CreateGameParams): { game: Game; events: GameEvent[] } {
     const variant = params.variant ?? 'standard';
+    if (variant === 'chess960') {
+      throw new GameError(
+        'chess960 games cannot be created: the variant is named but not implemented, so the game ' +
+          'would start from the standard position. See ADR-0123.',
+      );
+    }
     const initialFen = params.initialFen ?? Position.initial(variant).fen();
     const event: GameEvent = {
       type: 'GameCreated',

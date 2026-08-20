@@ -2,7 +2,7 @@
 
 | Field      | Value                                      |
 |------------|--------------------------------------------|
-| **Status** | Accepted                                   |
+| **Status** | Accepted; the server-contract half amended by [ADR-0123](0123-chess960-not-creatable.md) |
 | **Date**   | 2026-08-06                                 |
 | **Scope**  | `packages/web`, `packages/chess-core` (findings only) |
 
@@ -133,8 +133,15 @@ belongs with whatever work makes the FEN round-trip lossless.
 
 - The lobby offers seven variants. Every one of them does what its label says.
 - `chess960` remains a valid value in the API contract and in `chess-core`; only the lobby withholds
-  it.
-- Restoring it is one line in `OFFERED_VARIANTS`, and the test named in §2 says so.
+  it. *(Amended by [ADR-0123](0123-chess960-not-creatable.md): the server now refuses to **create** a
+  Chess960 game. Withholding it in the browser turned out to protect only browser users — every
+  other client went on writing `variant: 'chess960'` beside a standard `initialFen` into an
+  append-only event store. It remains a valid value everywhere that reads.)*
+- Restoring it is one line in `OFFERED_VARIANTS`, and the test named in §2 says so. *(No longer one
+  line: since [ADR-0123](0123-chess960-not-creatable.md) it also means `CREATABLE_VARIANTS` in
+  `packages/api/src/domain.ts`, the guard in `Game.create`, regenerating `packages/api/openapi.json`
+  so the published contract stops refusing the variant, and dropping the 409 from the seek-accept
+  response map. The full list is in ADR-0123's consequences.)*
 
 ## Out of scope
 

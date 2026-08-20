@@ -5,7 +5,7 @@
  * emit exactly these shapes and the spec builder references them by name.
  */
 
-import { ROLES, SEEK_COLORS, TIME_CONTROL_KINDS, VARIANTS } from '../domain';
+import { ROLES, SEEK_COLORS, TIME_CONTROL_KINDS, VARIANTS, CREATABLE_VARIANTS } from '../domain';
 import { DEFAULT_ANALYSIS_LIMITS } from '../analysis/limits';
 import type { ComponentSchemas, JsonSchema } from './types';
 import { nullable } from './types';
@@ -475,7 +475,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     type: 'object',
     required: ['variant', 'timeControl'],
     properties: {
-      variant: { type: 'string', enum: [...VARIANTS] },
+      variant: { type: 'string', enum: [...CREATABLE_VARIANTS] },
       timeControl: { $ref: '#/components/schemas/TimeControl' },
       rated: { type: 'boolean', description: 'Defaults to true.' },
       color: {
@@ -494,7 +494,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     required: ['level', 'variant', 'timeControl'],
     properties: {
       level: { type: 'string', enum: ['novice', 'club', 'master'], description: 'Engine bot strength level.' },
-      variant: { type: 'string', enum: [...VARIANTS] },
+      variant: { type: 'string', enum: [...CREATABLE_VARIANTS] },
       timeControl: { $ref: '#/components/schemas/TimeControl' },
       color: {
         type: 'string',
@@ -518,7 +518,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     properties: {
       name: { type: 'string', minLength: 1, maxLength: 50 },
       format: { type: 'string', enum: ['round_robin', 'swiss', 'arena'] },
-      variant: { type: 'string', enum: [...VARIANTS] },
+      variant: { type: 'string', enum: [...CREATABLE_VARIANTS] },
       timeControl: { $ref: '#/components/schemas/TimeControl' },
       rounds: { type: 'integer', minimum: 1, description: 'Required for swiss' },
       durationMs: { type: 'integer', minimum: 1, description: 'Required for arena' },

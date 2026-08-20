@@ -23,6 +23,36 @@ export const VARIANTS: readonly Variant[] = [
   'racingkings',
 ];
 
+/**
+ * The variants a *new game* may be created with, which is deliberately not `VARIANTS`.
+ *
+ * `VARIANTS` is what the enum can name, and analysis, ratings and stored games all legitimately
+ * read `chess960` — so it stays there. What may be *created* is a narrower question, and the two
+ * are not the same list: `Position.initial('chess960')` returns the standard array and castling is
+ * hardcoded to e1/a1/h1, so creating one produces an ordinary game wearing a different label and
+ * persists that mismatch to an append-only store. ADR-0123.
+ *
+ * `Game.create` enforces this too and is the authoritative boundary — nothing reaches a game
+ * without passing through it. This list exists so the refusal arrives as the validation error the
+ * rest of the API speaks, naming the field and listing what is allowed, rather than as the 500 an
+ * unmapped `GameError` would produce.
+ *
+ * Written out rather than derived as `VARIANTS.filter(v => v !== 'chess960')`, for the same reason
+ * `OFFERED_VARIANTS` is in the web client: subtracting from the contract list makes *allowing*
+ * creation the default, so a variant added to `VARIANTS` tomorrow becomes creatable the moment it
+ * is named — which is exactly how a variant with nothing behind it became playable in the first
+ * place. Naming what is creatable means a new one has to be let in deliberately.
+ */
+export const CREATABLE_VARIANTS: readonly Variant[] = [
+  'standard',
+  'kingofthehill',
+  'atomic',
+  'crazyhouse',
+  'threecheck',
+  'horde',
+  'racingkings',
+];
+
 /** Every assignable role (mirrors `Role` in @chess-platform/persistence). */
 export const ROLES: readonly Role[] = [
   'user',
@@ -65,6 +95,16 @@ export function parseUuid(value: string, key = 'id'): string {
 /** Parse a variant code from an arbitrary string. */
 export function parseVariant(value: string, key = 'variant'): Variant {
   return oneOf(value, VARIANTS, key);
+}
+
+/**
+ * Parse a variant for a route that goes on to create a game.
+ *
+ * Use this wherever the value ends up in `Game.create` — seeks, bot games, tournaments — and plain
+ * `parseVariant` wherever it only describes a position to read.
+ */
+export function parseCreatableVariant(value: string, key = 'variant'): Variant {
+  return oneOf(value, CREATABLE_VARIANTS, key);
 }
 
 /** Parse a role code from an arbitrary string. */
