@@ -202,6 +202,12 @@ jobs:
   analysis-smoke:
     name: analysis smoke (real Stockfish + Fairy-Stockfish)
     runs-on: ubuntu-latest
+    # A healthy run of this job is 72 seconds, of which the build is 41. Fifteen minutes is about
+    # twelve times that, so a cold npm cache or a slow runner cannot trip it, while an
+    # infrastructure stall is capped at fifteen minutes instead of the six-hour default. That
+    # default is what let one stalled run burn 34 minutes before a human noticed and cancelled it
+    # during the Increment 9 post-merge check.
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -212,8 +218,38 @@ jobs:
           node-version: '22.x'
           cache: npm
 
+      # Was `apt-get update && apt-get install stockfish`, which put the Ubuntu/Azure package
+      # mirror on the critical path of the one job that proves the engine boundary works. Over the
+      # thirty runs before this change that step had a median of 18s but a mean of 184s: ten runs
+      # over a minute, eight over three, and one that reached 34 minutes before being cancelled by
+      # hand - 92 minutes of Actions time in total, to install a dependency for a ten-second test.
+      # The Fairy step below has never shown that tail, so this copies its model exactly.
+      #
+      # `sf_16` is the same version the mirror was serving (`stockfish 16-1build1`), so the engine
+      # under test does not change; only how it arrives does. The plain `x86-64` asset is the
+      # baseline build - the `-modern` and `-avx2` assets need instruction sets a hosted runner is
+      # not guaranteed to have, and all three are byte-for-byte the same *size*, so the digest below
+      # is what actually tells them apart. The archive member name is the second guard on that:
+      # `-modern` and `-avx2` ship their binary under their own name, so asking for this one by
+      # path fails rather than silently yielding a CPU-specific build.
+      #
+      # Checksum before extraction, extraction before chmod, chmod before execution. The digest is
+      # pinned here and was computed from the release asset independently, never from the bytes
+      # being verified. GitHub publishes no digest of its own for this asset (`digest: null`) and a
+      # release asset is replaceable, so the pin is the whole integrity story.
       - name: Install Stockfish
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends stockfish
+        env:
+          STOCKFISH_SHA256: efca1c60ec11fd9628425f3ee40644ad1618535ddf881c16385a86f7fc9e0983
+        run: |
+          set -euo pipefail
+          curl -sSL --fail --retry 3 -o /tmp/stockfish.tar \
+            https://github.com/official-stockfish/Stockfish/releases/download/sf_16/stockfish-ubuntu-x86-64.tar
+          echo "${STOCKFISH_SHA256}  /tmp/stockfish.tar" | sha256sum --check --strict -
+          # One member, by exact path. `tar` exits non-zero when it is not in the archive, so a
+          # changed layout fails here rather than leaving a later step to find nothing.
+          tar -xf /tmp/stockfish.tar -C /tmp --strip-components=1 stockfish/stockfish-ubuntu-x86-64
+          mv /tmp/stockfish-ubuntu-x86-64 /tmp/stockfish
+          chmod +x /tmp/stockfish
 
       # Fairy-Stockfish is the engine every variant routes to, and Debian does not package it.
       # Pinned to the release the Three-Check FEN contract was verified against (ADR-0120): the
@@ -240,12 +276,20 @@ jobs:
         run: npm run build
 
       # Both smoke files self-skip when their binary is unset, so a missing one would make this
-      # job pass while proving nothing. Assert each is really there, and that Fairy is the pinned
-      # version offering the 3check variant, before trusting the result.
+      # job pass while proving nothing. Assert each is really there, and that each is the pinned
+      # version it claims to be, before trusting the result.
+      #
+      # Stockfish is asked to identify itself for the same reason Fairy always has been, and for
+      # one more: it is a downloaded binary now rather than a distribution package, so this is also
+      # where a missing shared library or an incompatible architecture surfaces - as a failure here,
+      # naming the step, rather than as a confusing spawn error inside the test run.
       - name: Verify the engine binaries exist
         run: |
-          test -x /usr/games/stockfish
+          set -euo pipefail
+          test -x /tmp/stockfish
           test -x /tmp/fairy-stockfish
+          printf "uci\nquit\n" | /tmp/stockfish | tee /tmp/stockfish-uci.txt > /dev/null
+          grep -q "id name Stockfish 16" /tmp/stockfish-uci.txt
           printf "uci\nquit\n" | /tmp/fairy-stockfish | tee /tmp/fairy-uci.txt > /dev/null
           grep -q "id name Fairy-Stockfish 14" /tmp/fairy-uci.txt
           grep -q "var 3check" /tmp/fairy-uci.txt
@@ -253,7 +297,7 @@ jobs:
       - name: Analysis smoke test against real engines
         run: npm run test:analysis-smoke --workspace @chess-platform/api
         env:
-          STOCKFISH_PATH: /usr/games/stockfish
+          STOCKFISH_PATH: /tmp/stockfish
           FAIRY_STOCKFISH_PATH: /tmp/fairy-stockfish
 
   # Builds, typechecks, and tests the deployable gateway service. It is NOT a

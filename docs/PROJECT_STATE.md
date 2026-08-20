@@ -4,7 +4,56 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-19 — M15 Increment 10: one guard over the seven copies of the variant list._
+_Last updated: 2026-08-20 — M15 Increment 11: the Ubuntu package mirror leaves the CI critical path._
+
+## M15 Increment 11 — Deterministic Stockfish Installation in CI (ADR-0121)
+
+### One step in one job was costing more than everything it enabled
+
+`analysis smoke (real Stockfish + Fairy-Stockfish)` installed its two engines by different means:
+Fairy-Stockfish from a pinned, checksummed release asset; Stockfish from `apt-get install`, with no
+version pin, no integrity check and no identity assertion. Measured over the thirty runs before this
+change:
+
+| statistic | `Install Stockfish` (apt) | `Install Fairy-Stockfish` (pinned) |
+| --- | --- | --- |
+| median | 18.5s | 0–1s |
+| mean | 184s | ~0.5s |
+| p90 | 460s | 1s |
+| max | 2060s (34m, cancelled by hand) | 1s |
+| over 60s | 10 / 30 runs | 0 / 30 |
+| over 180s | 8 / 30 runs | 0 / 30 |
+| total | 92.2 minutes | ~20s |
+
+The test that step exists to enable takes **ten seconds**. The failure mode is not a fast crash but
+unbounded tail latency, and the job inherited GitHub's six-hour default timeout, so a stall burned
+Actions minutes until a human noticed — which is exactly what the Increment 9 infrastructure
+exception below records.
+
+Stockfish now arrives the way Fairy already did: release `sf_16`, asset
+`stockfish-ubuntu-x86-64.tar`, SHA-256
+`efca1c60ec11fd9628425f3ee40644ad1618535ddf881c16385a86f7fc9e0983`, one member extracted by exact
+path, `chmod` only after verification, then `id name Stockfish 16` before the suite runs. `sf_16` is
+the same version the mirror was serving (`stockfish 16-1build1`), so the engine under test is
+unchanged — only how it arrives. See [ADR-0121](adr/0121-deterministic-engine-install-in-ci.md).
+
+Two details worth keeping: all three `sf_16` Linux assets are **byte-for-byte the same size**, so the
+digest is the only thing distinguishing the baseline build from the `-modern` and `-avx2` ones (the
+archive member name is a second, independent guard); and the NNUE net `nn-5af11540bbfe.nnue` is
+embedded in the binary, so there is no second download.
+
+The job also takes an explicit `timeout-minutes: 15` — about twelve times a healthy 72-second run,
+wide enough not to trip on a cold cache, narrow enough that a future stall cannot consume hours.
+
+`apt-get` no longer appears in any executable line of any workflow. `Dockerfile.api` and
+`Dockerfile.gateway` still install Stockfish through apt and are deliberately untouched — but the
+precise reason matters, and an earlier draft of this section got it wrong. `ci.yml`, the workflow
+that runs on pull requests and on `main`, does not build those images, so they were never part of
+the measured failure path. `release.yml` **does** build both, on a `v*` tag push, and those builds
+still run the apt layers. `chaos.yml` builds no image at all. So the mirror dependency survives in
+the release path; it is out of scope here because it is a different workflow on a different
+trigger with its own rollout and image-size trade-offs, not because it does not exist. Raised in
+the Qodo review of PR #142.
 
 ## M15 Increment 10 — Variant List Parity Guard
 
