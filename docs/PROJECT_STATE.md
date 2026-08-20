@@ -4,7 +4,105 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-19 — M15 Increment 9 review follow-up: persisted study and Coach variant propagation._
+_Last updated: 2026-08-19 — M15 Increment 10: one guard over the seven copies of the variant list._
+
+## M15 Increment 10 — Variant List Parity Guard
+
+### The set of supported variants is written out seven times and nothing derived from anything
+
+Increment 9 added `studies.variant`, and with it a seventh independent copy of the same eight
+variant codes:
+
+| # | Location | Form |
+| --- | --- | --- |
+| 1 | `packages/chess-core/src/types.ts` | `Variant` union — **the root**, what the engine branches on |
+| 2 | `packages/api/src/domain.ts` | `VARIANTS` array |
+| 3 | `packages/studies/src/model.ts` | `StudyVariant` union |
+| 4 | `packages/ai-features/src/mistake-predictor.ts` | `SUPPORTED_VARIANTS` set |
+| 5 | `packages/web/src/api/models.ts` | `VARIANTS`, documented as "matches the server's enum" |
+| 6 | `packages/persistence/migrations/0001_init.sql` | `variants` lookup table rows |
+| 7 | `packages/persistence/migrations/0022_study_variant.sql` | `CHECK (variant IN (...))` |
+
+The sharp edge is #7 against #6. Every other variant column in the schema is
+`variant TEXT NOT NULL REFERENCES variants(code)`, so once a row exists in the lookup table the
+**database** accepts that value in the games and ratings columns. `studies.variant` alone uses an
+inline `CHECK`, so the same row does nothing for studies. This is a claim about storage only —
+the application declarations (#1 to #5) still need their own updates either way; the lookup row
+settles what Postgres will hold, not what the platform will offer.
+
+**The type system does not catch this, and neither did anything else.** Measured, not assumed: a
+ninth variant was added to all five TypeScript sites, to `VARIANT_LABELS`, and to the `variants`
+lookup table, leaving only the `CHECK` untouched. `npm run build` exited 0 and `npm run lint` was
+clean. The test suite then reported exactly **one** failure, and it was the wrong one:
+`openapi.json` was stale. That says "regenerate me", not "the database will reject this" — so a
+developer runs `npm run openapi`, which is the obvious next step, and on the following run the
+API suite passed at 579 tests with nothing left red anywhere. The variant would then fail as a
+constraint violation in production, on the first study created with it.
+
+`scripts/check-variant-parity.mjs` compares all six mirrors to the root and names each
+disagreement. It runs in CI beside the other static guards and in `scripts/ci-local.mjs`, and
+costs milliseconds.
+
+Two properties it needs, both raised in the Qodo review and both pinned by
+`scripts/test/check-variant-parity.test.mjs`:
+
+- **The SQL sources are replayed, not read as files.** Applied migrations are checksummed and
+  immutable (`pg/migrate.ts`: "history is immutable"), so a ninth variant arrives in a *new*
+  migration and 0001 and 0022 never change. A guard that compared against those two files
+  directly would fail forever on a correct change, and could only be satisfied by editing an
+  applied migration — which aborts migration on every existing deployment. Both are therefore
+  accumulated across the whole directory: lookup rows summed in applied order, the study
+  constraint taken from the last migration to define it. Verified end to end — adding the variant
+  through a new `0023` and replacing the constraint in a new `0024` satisfies the guard with 0001
+  and 0022 untouched. "Applied order" means `pg/migrate.ts`'s own plain lexicographic `.sort()`,
+  not a numeric one: the two coincide under this repository's zero-padded names, but sorting
+  numerically would replay `9_x` before `10_y` and model a database that never existed. A test
+  asserts the runner still sorts that way, so the two cannot drift apart quietly.
+- **Only statements naming `studies` decide the study constraint.** Testing each migration file as
+  a whole let any other table move the answer — a `variant` CHECK on some other table would
+  overwrite it, and a `REFERENCES variants(code)` elsewhere in the same file (how games and ratings
+  are already declared) would clear it, silently dropping the mirror. Detection is per statement,
+  scoped to `CREATE TABLE studies` / `ALTER TABLE studies`, with a quote-aware splitter so a `;`
+  inside a string literal does not end a statement. Raised in the CodeRabbit review.
+- **Comments do not count.** Matching quoted tokens in raw source treated a commented-out entry as
+  live, so `// 'atomic',` in the API list left the guard green while the array no longer held it.
+  Every region is comment-stripped first, with string literals respected so a `--` or `//` inside
+  one is not mistaken for a comment.
+
+If a later migration converts `studies.variant` to `REFERENCES variants(code)`, that mirror stops
+being an independent list and the guard skips it rather than demanding one — so the deferred
+conversion below needs no change here when someone makes it.
+
+Two lists are deliberately **not** checked, because they are not independent copies:
+`packages/api/openapi.json` is generated (`enum: [...VARIANTS]`) and already pinned by
+`openapi-nullability.test.ts`; `OFFERED_VARIANTS` in the web client is a deliberate subset
+(ADR-0099 withholds `chess960`) pinned by `create-game-prefs.test.ts`. Requiring equality of
+either would fight a decision already made.
+
+### Decided and not done: `studies.variant` stays a CHECK, for now
+
+Converting it to `REFERENCES variants(code)` would make studies consistent with games and ratings
+and remove copy #7. It was considered and deferred, because **it does not fix the failure mode**:
+adding a variant to the types without adding the `variants` row still fails at runtime, a foreign
+key rejecting it exactly as the `CHECK` did. The guard is what closes that, and it covers the
+lookup table either way. A schema migration on a table that shipped days ago, for a consistency
+gain the guard already secures, is not worth the rollout risk in this increment. Recorded as a
+candidate rather than carried out.
+
+### Post-merge CI exception carried over from Increment 9
+
+The `analysis smoke (real Stockfish + Fairy-Stockfish)` job on merged `main` (`cbe6bce`) did not
+complete. It stalled in the Ubuntu `apt-get` / package-mirror step on both the original job
+(`96156044656`) and a single-job rerun (`96200357632`), the rerun cancelled after ~34 minutes to
+stop burning Actions minutes. Both stalls happened **before** Fairy-Stockfish was installed,
+before any real-engine smoke test, and before any Increment 9 code executed — the other seven
+jobs passed.
+
+This is recorded as a **post-merge CI infrastructure exception, not a project-code failure**. The
+pre-merge exact-HEAD gates were clean (Qodo and CodeRabbit both on `127cbda`, CI green), and the
+real Fairy-Stockfish smoke was independently validated locally against Fairy-Stockfish 14, 5/5,
+with the pinned artifact checksum verified from a fresh download. Increment 9 was **not** modified
+to work around the mirror. Removing the `apt` dependency is tracked separately; see ROADMAP.
 
 ## M15 Increment 9 — Lossless Three-check FEN and Fairy-Stockfish Interoperability (ADR-0120)
 

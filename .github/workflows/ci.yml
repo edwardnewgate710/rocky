@@ -130,6 +130,22 @@ jobs:
       - name: CI parity check (scripts/ci-local.mjs vs this file)
         run: npm run check:ci-parity
 
+      # The supported-variant list is written out seven times across TypeScript and SQL, and
+      # nothing derives from anything else. The build does not catch a disagreement between the
+      # types and the schema: with a new variant added to every TypeScript site, `npm run build`,
+      # `npm run lint` and the whole test suite stay green while `studies.variant`'s CHECK
+      # constraint rejects it — a constraint violation in production, not here. Static, milliseconds.
+      - name: Variant list parity check
+        run: npm run check:variant-parity
+
+      # The guard above parses TypeScript and replays a migration directory, so it has enough
+      # logic of its own to be wrong quietly — the failure that matters is it passing while it has
+      # stopped looking at anything. These drive it against synthetic sources: a commented-out
+      # entry, a forward migration, a constraint replaced rather than edited, a renamed
+      # declaration. Pure functions over temp files, no services.
+      - name: Guard script tests
+        run: npm run test:scripts
+
   # Runs the Postgres-gated integration tests (persistence event store +
   # repositories against a real database). Everything else is hermetic.
   postgres-integration:
