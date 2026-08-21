@@ -110,6 +110,12 @@ export interface ApiDependencies {
    */
   readonly mistakePrediction?: import('./analysis/mistake-prediction-service').MistakePredictionService;
   /**
+   * Optional engine-only puzzle generation (ADR-0125). When absent,
+   * `POST /v1/analysis/puzzle` responds 503. Bootstrap composes it whenever analysis is available
+   * and can honor the fixed evidence policy.
+   */
+  readonly puzzleGeneration?: import('./analysis/puzzle-generation-service').PuzzleGenerationService;
+  /**
    * Optional GraphQL read layer (M10 inc 8). When absent, `POST /v1/graphql` responds 503.
    *
    * The subsystem repositories it resolves against are the optional ones above — it adds no data

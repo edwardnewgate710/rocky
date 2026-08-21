@@ -177,6 +177,15 @@ export class EngineManager implements AnalysisProvider {
     return this.pools.some((pool) => pool.supportsVariant(variant));
   }
 
+  /**
+   * Whether the routed engine can honor an exact MultiPV count without warming a cold pool.
+   * Discovered UCI bounds replace the plugin's cold-start guarantee once available.
+   */
+  supportsMultiPv(variant: string, count: number): boolean {
+    const pool = this.pools.find((candidate) => candidate.supportsVariant(variant));
+    return pool?.supportsMultiPv(count) ?? false;
+  }
+
   health(): ManagerHealth {
     const pools = this.pools.map((pool) => pool.health());
     const totalQueueDepth = pools.reduce((sum, pool) => sum + pool.queueDepth, 0);

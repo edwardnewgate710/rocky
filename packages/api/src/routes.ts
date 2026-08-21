@@ -90,6 +90,7 @@ import {
   analysisView,
   moveExplanationView,
   mistakePredictionView,
+  puzzleGenerationView,
 } from './presenters';
 import { DEFAULT_ANALYSIS_LIMITS } from './analysis/limits';
 import { TournamentService } from './tournament/service';
@@ -149,6 +150,8 @@ export interface RouteDeps {
    * responds 503. Tracks the analysis subsystem alone — no AI provider is involved.
    */
   readonly mistakePrediction?: import('./analysis/mistake-prediction-service').MistakePredictionService;
+  /** Optional puzzle generation (ADR-0125). When absent, `POST /v1/analysis/puzzle` responds 503. */
+  readonly puzzleGeneration?: import('./analysis/puzzle-generation-service').PuzzleGenerationService;
 }
 
 const PUBLIC: AuthPolicy = { required: false };
@@ -1410,6 +1413,48 @@ export function buildRouter(deps: RouteDeps): Router {
       });
 
       return json(200, analysisView(outcome));
+    },
+  );
+
+  // --- Puzzle Generation ---------------------------------------------------
+  router.post(
+    '/v1/analysis/puzzle',
+    doc({
+      summary: 'Find a tactic in an exact position using fixed engine policy',
+      tags: ['analysis'],
+      security: 'bearer',
+      requestSchema: 'PuzzleGenerationRequest',
+      responses: {
+        200: ['PuzzleGenerationResponse', 'Puzzle, no-tactic conclusion, or insufficient evidence'],
+        401: ['Error', 'Authentication required'],
+        422: ['Error', 'Invalid position or unsupported variant'],
+        429: ['Error', 'Rate limit exceeded'],
+        503: ['Error', 'Puzzle generation is not configured, or the engine is unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const identity = requireAuth(ctx);
+      const service = deps.puzzleGeneration;
+      if (!service) throw HttpError.unavailable('puzzle generation is not configured');
+
+      // Search limits, MultiPV and the tactic threshold are server-owned policy.
+      const body = strictObject(ctx.body, ['fen', 'variant']);
+      const fen = reqString(body, 'fen', { min: 1, max: 200, trim: true });
+      const variant = parseVariant(reqString(body, 'variant'));
+      const charge = (): Promise<void> => admit([
+        {
+          key: `puzzle-generation:user:${identity.userId}`,
+          limit: config.rateLimit.puzzleGeneration.perUser,
+        },
+        {
+          key: `puzzle-generation:ip:${ctx.ip ?? 'unknown'}`,
+          limit: config.rateLimit.puzzleGeneration.perIp,
+        },
+      ]);
+
+      const outcome = await service.generate({ fen, variant }, charge);
+      return json(200, puzzleGenerationView(outcome));
     },
   );
 

@@ -296,6 +296,15 @@ mate and the second-best is not. The LLM never decides whether a puzzle is real.
   - Clean-tree verification: `rm -rf node_modules packages/*/dist packages/*/dist-test && npm ci && npm run build && npm test && npm run lint` — all green.
   - ROADMAP updated; ADR-0006 unchanged (follows the established template).
 
+**Productionized in M15 Increment 17 (ADR-0125).** The game sidebar now exposes an authenticated,
+capability-gated **Find tactic** action backed by one fixed MultiPV-3 request through the existing
+API-owned `AnalysisService` and engine pool. The production contract is
+`puzzle | no_tactic | insufficient`, with tagged centipawn/mate evidence and nullable missing moves;
+it never serialises `Infinity`, `NaN`, or `"(none)"`. Engine limits and the 200 cp threshold are
+server-owned, the endpoint has a separate expensive-work quota, and the UI keys each response to
+exact variant + FEN. This adds no LLM hints/themes, persistence, ratings, sharing, spaced repetition,
+Chess960 implementation, or second engine pool.
+
 ### Increment 3: Mistake Predictor ✅
 
 `MistakePredictor` — given a position (FEN) and a candidate move the player is

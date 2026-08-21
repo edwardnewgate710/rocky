@@ -22,6 +22,11 @@ import type { AnalysisLimitsPolicy } from './limits.js';
 import { DEFAULT_ANALYSIS_LIMITS } from './limits.js';
 import { AnalysisService } from './service.js';
 import { MistakePredictionService } from './mistake-prediction-service.js';
+import {
+  PUZZLE_ANALYSIS_LIMITS,
+  PuzzleGenerationService,
+} from './puzzle-generation-service.js';
+import { VARIANTS } from '../domain.js';
 
 export interface AnalysisEngineSettings {
   readonly maxWorkers: number;
@@ -191,6 +196,7 @@ export function createAnalysisFromEnv(
     // The manager answers this from its registered plugins without warming a pool, so advertising
     // the variant list costs no engine process (ADR-0114 Decision 7).
     supportsVariant: (variant) => engine.supportsVariant(variant),
+    supportsMultiPv: (variant, count) => engine.supportsMultiPv(variant, count),
   });
   return {
     service,
@@ -217,4 +223,19 @@ export function createMistakePrediction(analysis: AnalysisService): MistakePredi
     thresholds: DEFAULT_MISTAKE_THRESHOLDS,
   });
   return new MistakePredictionService({ analysis, predictor });
+}
+
+/**
+ * Assemble puzzle generation over the same bounded analysis subsystem (ADR-0125).
+ *
+ * The generator receives no engine provider of its own. Its only search is the fixed-policy
+ * MultiPV request made through the supplied production {@link AnalysisService}.
+ */
+export function createPuzzleGeneration(
+  analysis: AnalysisService,
+): PuzzleGenerationService | undefined {
+  if (!analysis.canSatisfyLimits(PUZZLE_ANALYSIS_LIMITS)) return undefined;
+  if (!VARIANTS.some((variant) =>
+    analysis.supportsMultiPv(variant, PUZZLE_ANALYSIS_LIMITS.multiPv))) return undefined;
+  return new PuzzleGenerationService({ analysis });
 }

@@ -109,7 +109,7 @@ describe('PuzzleGenerator integration (OpenAI)', () => {
     // Engine fields must be correct regardless of LLM.
     assert.equal(puzzle.solutionMove, 'd8a5');
     assert.equal(puzzle.bestEval.value, 350);
-    assert.equal(puzzle.evalGapCp, 270);
+    assert.deepEqual(puzzle.evidence, { kind: 'centipawn_gap', gapCp: 270 });
     assert.deepEqual([...puzzle.solutionLine], ['d8a5', 'b1c3']);
 
     // LLM fields should be populated by the real provider.
@@ -143,7 +143,7 @@ describe('PuzzleGenerator integration (Anthropic)', () => {
     const puzzle = result as import('../src/index.js').Puzzle;
 
     assert.equal(puzzle.solutionMove, 'd8a5');
-    assert.equal(puzzle.evalGapCp, 270);
+    assert.deepEqual(puzzle.evidence, { kind: 'centipawn_gap', gapCp: 270 });
     assert.ok(puzzle.theme);
     assert.equal(puzzle.providerId, 'anthropic');
   });

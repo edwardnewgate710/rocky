@@ -214,6 +214,7 @@ export interface SystemCapabilities {
   readonly messaging: boolean;
   readonly community: boolean;
   readonly analysis: boolean;
+  readonly puzzleGeneration?: boolean;
 }
 
 export interface CapabilitiesResponse {
@@ -223,6 +224,8 @@ export interface CapabilitiesResponse {
    * while serving a subset. Optional here because a server predating this field simply omits it.
    */
   readonly analysisVariants?: readonly string[];
+  /** Variants served by fixed-policy puzzle generation; absent on older servers. */
+  readonly puzzleVariants?: readonly string[];
   readonly capabilities: SystemCapabilities;
 }
 
@@ -878,6 +881,57 @@ export interface AnalyzeRequest {
   readonly nodes?: number;
   readonly movetimeMs?: number;
   readonly multiPv?: number;
+}
+
+// --- Puzzle Generation (M15 inc 17) ----------------------------------------
+
+export type PuzzleEvidence =
+  | { readonly kind: 'centipawn_gap'; readonly gapCp: number }
+  | {
+      readonly kind: 'mate';
+      readonly relation: 'forces_mate' | 'avoids_mate' | 'faster_mate' | 'delays_mate';
+      readonly distanceGap: number | null;
+    };
+
+export type PuzzleGenerationResponse =
+  | {
+      readonly kind: 'puzzle';
+      readonly fen: string;
+      readonly variant: string;
+      readonly evidence: PuzzleEvidence;
+      readonly bestMove: string;
+      readonly comparisonMove: string;
+      readonly bestEvaluation: AnalysisEvaluation;
+      readonly comparisonEvaluation: AnalysisEvaluation;
+      readonly depth: number;
+      readonly solutionMove: string;
+      readonly solutionLine: readonly string[];
+      readonly difficulty: 'easy' | 'medium' | 'hard' | 'brilliant';
+    }
+  | {
+      readonly kind: 'no_tactic';
+      readonly fen: string;
+      readonly variant: string;
+      readonly evidence: PuzzleEvidence;
+      readonly bestMove: string;
+      readonly comparisonMove: string;
+      readonly bestEvaluation: AnalysisEvaluation;
+      readonly comparisonEvaluation: AnalysisEvaluation;
+      readonly depth: number;
+    }
+  | {
+      readonly kind: 'insufficient';
+      readonly fen: string;
+      readonly variant: string;
+      readonly reason: string;
+      readonly bestMove: string | null;
+      readonly comparisonMove: string | null;
+      readonly terminal?: { readonly reason: string; readonly result: string };
+    };
+
+export interface PuzzleGenerationRequest {
+  readonly fen: string;
+  readonly variant: string;
 }
 
 // --- Move Explanation (M15 inc 4) ------------------------------------------

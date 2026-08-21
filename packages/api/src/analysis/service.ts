@@ -21,6 +21,7 @@ import { terminalOutcome } from './terminal.js';
 import type {
   AnalysisLimitsPolicy,
   AppliedAnalysisLimits,
+  RequestedAnalysisLimits,
 } from './limits.js';
 import {
   applyAnalysisLimits,
@@ -95,6 +96,8 @@ export interface AnalysisServiceOptions {
    * request time regardless.
    */
   readonly supportsVariant?: (variant: string) => boolean;
+  /** Whether the routed engine can honor an exact MultiPV count without clamping. */
+  readonly supportsMultiPv?: (variant: string, count: number) => boolean;
 }
 
 export class AnalysisService {
@@ -103,6 +106,7 @@ export class AnalysisService {
   private readonly timeoutGraceMs: number;
   private readonly fenValidator: FenValidator;
   private readonly variantSupported: (variant: string) => boolean;
+  private readonly multiPvSupported: (variant: string, count: number) => boolean;
 
   constructor(options: AnalysisServiceOptions) {
     this.provider = options.provider;
@@ -110,6 +114,7 @@ export class AnalysisService {
     this.timeoutGraceMs = options.timeoutGraceMs ?? 2000;
     this.fenValidator = options.fenValidator ?? coreFenValidator;
     this.variantSupported = options.supportsVariant ?? (() => true);
+    this.multiPvSupported = options.supportsMultiPv ?? (() => true);
   }
 
   /**
@@ -120,6 +125,28 @@ export class AnalysisService {
    */
   supportsVariant(variant: string): boolean {
     return this.variantSupported(variant);
+  }
+
+  supportsMultiPv(variant: string, count: number): boolean {
+    return this.variantSupported(variant) && this.multiPvSupported(variant, count);
+  }
+
+  /**
+   * Whether this deployment's ceilings can honor every explicitly requested limit unchanged.
+   *
+   * Feature composition uses this before advertising a capability with a stricter fixed policy.
+   * The ordinary analysis endpoint may safely clamp a request; a feature that promises one exact
+   * evidence policy must instead stay unavailable when an operator has deliberately tightened a
+   * ceiling below it.
+   */
+  canSatisfyLimits(requested: RequestedAnalysisLimits): boolean {
+    const applied = applyAnalysisLimits(requested, this.policy);
+    return (
+      (requested.depth === undefined || applied.depth === requested.depth) &&
+      (requested.nodes === undefined || applied.nodes === requested.nodes) &&
+      (requested.movetimeMs === undefined || applied.movetimeMs === requested.movetimeMs) &&
+      (requested.multiPv === undefined || applied.multiPv === requested.multiPv)
+    );
   }
 
   async analyze(input: {

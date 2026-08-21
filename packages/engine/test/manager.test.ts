@@ -136,6 +136,19 @@ test('routing "standard" works cold, before any engine has been warmed', async (
   assert.equal(standard[0].evaluation.value, 20);
 });
 
+test('MultiPV capability uses the plugin guarantee cold and discovered limits warm', async () => {
+  const clock = new ManualClock();
+  const { manager } = makeManager(clock);
+
+  assert.equal(manager.supportsMultiPv('standard', 3), true);
+  assert.equal(manager.supportsMultiPv('standard', 4), false);
+  assert.equal(manager.supportsMultiPv('antichess', 3), false);
+
+  await manager.warmup();
+  assert.equal(manager.supportsMultiPv('standard', 256), true);
+  assert.equal(manager.supportsMultiPv('standard', 257), false);
+});
+
 /**
  * Resolving the name must not become widening it. An engine build that genuinely lacks a variant has
  * to stay unroutable even though the plugin lists it in `expectedVariants`, or the manager picks a

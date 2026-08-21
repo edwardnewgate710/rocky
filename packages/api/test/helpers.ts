@@ -69,6 +69,7 @@ export interface Harness {
   readonly analysis?: import('../src/analysis/service').AnalysisService;
   readonly moveExplanation?: import('../src/ai/move-explanation-service').MoveExplanationService;
   readonly mistakePrediction?: import('../src/analysis/mistake-prediction-service').MistakePredictionService;
+  readonly puzzleGeneration?: import('../src/analysis/puzzle-generation-service').PuzzleGenerationService;
   readonly clock: ManualClock;
   readonly tokens: AccessTokenService;
   readonly emailSender: InMemoryEmailSender;
@@ -122,6 +123,8 @@ export interface HarnessOptions {
   readonly moveExplanation?: import('../src/ai/move-explanation-service').MoveExplanationService;
   /** Inject an optional mistake prediction service. */
   readonly mistakePrediction?: import('../src/analysis/mistake-prediction-service').MistakePredictionService;
+  /** Inject an optional puzzle generation service. */
+  readonly puzzleGeneration?: import('../src/analysis/puzzle-generation-service').PuzzleGenerationService;
 }
 
 export async function startHarness(
@@ -216,6 +219,7 @@ export async function startHarness(
     ...(harnessOptions.analysis ? { analysis: harnessOptions.analysis } : {}),
     ...(harnessOptions.moveExplanation ? { moveExplanation: harnessOptions.moveExplanation } : {}),
     ...(harnessOptions.mistakePrediction ? { mistakePrediction: harnessOptions.mistakePrediction } : {}),
+    ...(harnessOptions.puzzleGeneration ? { puzzleGeneration: harnessOptions.puzzleGeneration } : {}),
     ...(harnessOptions.readiness ? { readiness: harnessOptions.readiness } : {}),
     ...(harnessOptions.logger ? { logger: harnessOptions.logger } : {}),
     ...(harnessOptions.tracer ? { tracer: harnessOptions.tracer } : {}),
@@ -246,6 +250,7 @@ export async function startHarness(
     analysis: harnessOptions.analysis,
     moveExplanation: harnessOptions.moveExplanation,
     mistakePrediction: harnessOptions.mistakePrediction,
+    puzzleGeneration: harnessOptions.puzzleGeneration,
     clock,
     tokens,
     emailSender,

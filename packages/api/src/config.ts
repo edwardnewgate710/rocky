@@ -93,6 +93,10 @@ export interface RateLimitConfig {
     readonly perUser: RateLimitEndpointConfig;
     readonly perIp: RateLimitEndpointConfig;
   };
+  readonly puzzleGeneration: {
+    readonly perUser: RateLimitEndpointConfig;
+    readonly perIp: RateLimitEndpointConfig;
+  };
 }
 
 export const DEFAULT_ACCESS_TOKEN_TTL_SEC = 15 * 60;
@@ -148,6 +152,12 @@ export const DEFAULT_RATE_LIMIT: RateLimitConfig = {
   // of the analysis one — a user assessing moves must not be able to exhaust their own ability to
   // analyse a position, and the two limits describe different costs.
   mistakePrediction: {
+    perUser: { maxRequests: 20, windowMs: 60 * 1000 }, // 20 / min
+    perIp: { maxRequests: 40, windowMs: 60 * 1000 }, // 40 / min
+  },
+  // One fixed three-line MultiPV search, with no provider call. Its own bucket prevents puzzle
+  // discovery from consuming ordinary analysis quota.
+  puzzleGeneration: {
     perUser: { maxRequests: 20, windowMs: 60 * 1000 }, // 20 / min
     perIp: { maxRequests: 40, windowMs: 60 * 1000 }, // 40 / min
   },

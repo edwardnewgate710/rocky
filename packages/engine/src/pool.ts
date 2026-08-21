@@ -139,6 +139,18 @@ export class EnginePool {
     return this.plugin.expectedVariants.includes(variant) || this.plugin.expectedVariants.includes(engineName);
   }
 
+  /** Whether this pool can honor an exact MultiPV count without silently clamping it. */
+  supportsMultiPv(count: number): boolean {
+    if (!Number.isInteger(count) || count < 1) return false;
+    if (count === 1) return true;
+    if (!this.capabilitiesValue) return (this.plugin.guaranteedMultiPv ?? 1) >= count;
+    if (!this.capabilitiesValue.supportsMultiPv) return false;
+    const option = this.capabilitiesValue.options.get('MultiPV');
+    if (option?.min !== undefined && count < option.min) return false;
+    if (option?.max !== undefined && count > option.max) return false;
+    return true;
+  }
+
   /** Warm to the minimum worker count and return the discovered capabilities. */
   async warmup(): Promise<EngineCapabilities> {
     if (this.capabilitiesValue) return this.capabilitiesValue;

@@ -12,6 +12,7 @@ export { JobPriority } from './types.js';
 export type {
   AnalysisLimits,
   Evaluation,
+  EvaluationBound,
   EvaluationKind,
   EngineResult,
   EngineConfig,

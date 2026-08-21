@@ -112,6 +112,23 @@ test('real Fairy: a fresh Three-Check position is three checks from a win, not o
   );
 });
 
+test('real Fairy: the production composition honors the puzzle MultiPV-3 guarantee', { skip }, async () => {
+  const composed = createAnalysisFromEnv(process.env);
+  assert.ok(composed !== undefined, 'FAIRY_STOCKFISH_PATH is set, so analysis must be composed');
+  try {
+    const outcome = await composed.service.analyze({
+      fen: `${ITALIAN.split(' 0 1')[0]} 3+3 0 1`,
+      variant: 'threecheck',
+      movetimeMs: 1_000,
+      multiPv: 3,
+    });
+    assert.equal(outcome.lines.length, 3, 'multiPv: 3 must yield three distinct lines');
+    assert.equal(new Set(outcome.lines.map((line) => line.principalVariation[0])).size, 3);
+  } finally {
+    await composed.shutdown({ deadlineMs: 5_000 });
+  }
+});
+
 test('real Fairy: the counter the engine holds falls as checks are delivered', { skip }, async () => {
   const after = async (moves: string): Promise<string> =>
     engineFen(

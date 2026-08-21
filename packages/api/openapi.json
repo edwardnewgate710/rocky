@@ -2361,6 +2361,92 @@
         }
       }
     },
+    "/v1/analysis/puzzle": {
+      "post": {
+        "summary": "Find a tactic in an exact position using fixed engine policy",
+        "tags": [
+          "analysis"
+        ],
+        "operationId": "post_v1_analysis_puzzle",
+        "responses": {
+          "200": {
+            "description": "Puzzle, no-tactic conclusion, or insufficient evidence",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PuzzleGenerationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid position or unsupported variant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Puzzle generation is not configured, or the engine is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PuzzleGenerationRequest"
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/analysis/mistake-prediction": {
       "post": {
         "summary": "Classify a candidate move as ok, inaccuracy, mistake or blunder",
@@ -12214,10 +12300,27 @@
         "type": "object",
         "required": [
           "capabilities",
-          "analysisVariants"
+          "analysisVariants",
+          "puzzleVariants"
         ],
         "properties": {
           "analysisVariants": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "standard",
+                "chess960",
+                "kingofthehill",
+                "atomic",
+                "crazyhouse",
+                "threecheck",
+                "horde",
+                "racingkings"
+              ]
+            }
+          },
+          "puzzleVariants": {
             "type": "array",
             "items": {
               "type": "string",
@@ -12245,7 +12348,8 @@
               "community",
               "analysis",
               "moveExplanation",
-              "mistakePrediction"
+              "mistakePrediction",
+              "puzzleGeneration"
             ],
             "properties": {
               "learning": {
@@ -12276,6 +12380,9 @@
                 "type": "boolean"
               },
               "mistakePrediction": {
+                "type": "boolean"
+              },
+              "puzzleGeneration": {
                 "type": "boolean"
               }
             },
@@ -15746,6 +15853,348 @@
           }
         },
         "additionalProperties": false
+      },
+      "PuzzleGenerationRequest": {
+        "type": "object",
+        "required": [
+          "fen",
+          "variant"
+        ],
+        "properties": {
+          "fen": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "variant": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "chess960",
+              "kingofthehill",
+              "atomic",
+              "crazyhouse",
+              "threecheck",
+              "horde",
+              "racingkings"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "PuzzleEvidence": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "gapCp"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "centipawn_gap"
+                ]
+              },
+              "gapCp": {
+                "type": "number"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "relation",
+              "distanceGap"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "mate"
+                ]
+              },
+              "relation": {
+                "type": "string",
+                "enum": [
+                  "forces_mate",
+                  "avoids_mate",
+                  "faster_mate",
+                  "delays_mate"
+                ]
+              },
+              "distanceGap": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "PuzzleEvaluation": {
+        "type": "object",
+        "required": [
+          "type",
+          "value"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "cp",
+              "mate"
+            ]
+          },
+          "value": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PuzzleGenerationResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "fen",
+              "variant",
+              "evidence",
+              "bestMove",
+              "comparisonMove",
+              "bestEvaluation",
+              "comparisonEvaluation",
+              "depth",
+              "solutionMove",
+              "solutionLine",
+              "difficulty"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "puzzle"
+                ]
+              },
+              "fen": {
+                "type": "string"
+              },
+              "variant": {
+                "type": "string",
+                "enum": [
+                  "standard",
+                  "chess960",
+                  "kingofthehill",
+                  "atomic",
+                  "crazyhouse",
+                  "threecheck",
+                  "horde",
+                  "racingkings"
+                ]
+              },
+              "evidence": {
+                "$ref": "#/components/schemas/PuzzleEvidence"
+              },
+              "bestMove": {
+                "type": "string"
+              },
+              "comparisonMove": {
+                "type": "string"
+              },
+              "bestEvaluation": {
+                "$ref": "#/components/schemas/PuzzleEvaluation"
+              },
+              "comparisonEvaluation": {
+                "$ref": "#/components/schemas/PuzzleEvaluation"
+              },
+              "depth": {
+                "type": "integer"
+              },
+              "solutionMove": {
+                "type": "string"
+              },
+              "solutionLine": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "difficulty": {
+                "type": "string",
+                "enum": [
+                  "easy",
+                  "medium",
+                  "hard",
+                  "brilliant"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "fen",
+              "variant",
+              "evidence",
+              "bestMove",
+              "comparisonMove",
+              "bestEvaluation",
+              "comparisonEvaluation",
+              "depth"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "no_tactic"
+                ]
+              },
+              "fen": {
+                "type": "string"
+              },
+              "variant": {
+                "type": "string",
+                "enum": [
+                  "standard",
+                  "chess960",
+                  "kingofthehill",
+                  "atomic",
+                  "crazyhouse",
+                  "threecheck",
+                  "horde",
+                  "racingkings"
+                ]
+              },
+              "evidence": {
+                "$ref": "#/components/schemas/PuzzleEvidence"
+              },
+              "bestMove": {
+                "type": "string"
+              },
+              "comparisonMove": {
+                "type": "string"
+              },
+              "bestEvaluation": {
+                "$ref": "#/components/schemas/PuzzleEvaluation"
+              },
+              "comparisonEvaluation": {
+                "$ref": "#/components/schemas/PuzzleEvaluation"
+              },
+              "depth": {
+                "type": "integer"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "fen",
+              "variant",
+              "reason",
+              "bestMove",
+              "comparisonMove"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "insufficient"
+                ]
+              },
+              "fen": {
+                "type": "string"
+              },
+              "variant": {
+                "type": "string",
+                "enum": [
+                  "standard",
+                  "chess960",
+                  "kingofthehill",
+                  "atomic",
+                  "crazyhouse",
+                  "threecheck",
+                  "horde",
+                  "racingkings"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "not_enough_lines",
+                  "missing_best_line",
+                  "missing_comparison_line",
+                  "missing_best_move",
+                  "missing_comparison_move",
+                  "invalid_best_move",
+                  "invalid_comparison_move",
+                  "invalid_solution_line",
+                  "duplicate_moves",
+                  "bounded_evaluation",
+                  "non_finite_evaluation",
+                  "non_finite_depth",
+                  "incomplete_depth",
+                  "mismatched_depth",
+                  "incomplete_multipv",
+                  "unordered_lines",
+                  "terminal_position"
+                ]
+              },
+              "bestMove": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "comparisonMove": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "terminal": {
+                "type": "object",
+                "required": [
+                  "reason",
+                  "result"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "enum": [
+                      "checkmate",
+                      "stalemate",
+                      "insufficient_material",
+                      "fifty_move",
+                      "threefold",
+                      "variant_win",
+                      "variant_draw"
+                    ]
+                  },
+                  "result": {
+                    "type": "string",
+                    "enum": [
+                      "1-0",
+                      "0-1",
+                      "1/2-1/2"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
       },
       "MistakePredictionRequest": {
         "type": "object",

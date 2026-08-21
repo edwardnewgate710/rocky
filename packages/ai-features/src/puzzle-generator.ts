@@ -29,15 +29,23 @@ import type { AnalysisProvider, AnalysisRequest, EngineResult, AnalysisLimits, E
 import type { AiProvider, CompletionRequest, EngineGrounding } from '@chess-platform/ai-orchestrator';
 import { engineResultsToGrounding, evalToString, buildGroundedMessages } from '@chess-platform/ai-orchestrator';
 
-import type { GeneratePuzzleRequest, PuzzleResult, Puzzle, PuzzleRejection, PuzzleDifficulty } from './puzzle-types.js';
+import type {
+  GeneratePuzzleRequest,
+  PuzzleResult,
+  Puzzle,
+  PuzzleRejection,
+  PuzzleDifficulty,
+  PuzzleEvidence,
+  PuzzleInsufficientReason,
+} from './puzzle-types.js';
 
 /** Options for constructing a `PuzzleGenerator`. */
 export interface PuzzleGeneratorOptions {
   /** The chess engine analysis provider (M5 port). Injected — never a real binary in tests. */
-  readonly engine: AnalysisProvider;
+  readonly engine?: AnalysisProvider;
   /** The AI completion provider (M7 port). Optional — the LLM text is additive, never load-bearing. */
   readonly ai?: AiProvider;
-  /** Default variant (defaults to `chess`). */
+  /** Default variant in the platform vocabulary (defaults to `standard`). */
   readonly defaultVariant?: string;
   /** Default analysis limits (used when the request doesn't supply them and no pre-computed analysis is given). */
   readonly defaultLimits?: AnalysisLimits;
@@ -65,7 +73,7 @@ export const DEFAULT_MULTI_PV = 3;
  * human-facing flavour (theme/hint).
  */
 export class PuzzleGenerator {
-  private readonly engine: AnalysisProvider;
+  private readonly engine: AnalysisProvider | undefined;
   private readonly ai: AiProvider | undefined;
   private readonly defaultVariant: string;
   private readonly defaultLimits: AnalysisLimits;
@@ -74,10 +82,10 @@ export class PuzzleGenerator {
   private readonly temperature: number;
   private readonly maxTokens: number;
 
-  constructor(options: PuzzleGeneratorOptions) {
+  constructor(options: PuzzleGeneratorOptions = {}) {
     this.engine = options.engine;
     this.ai = options.ai;
-    this.defaultVariant = options.defaultVariant ?? 'chess';
+    this.defaultVariant = options.defaultVariant ?? 'standard';
     this.defaultLimits = options.defaultLimits ?? { depth: 20 };
     this.defaultMultiPv = options.defaultMultiPv ?? DEFAULT_MULTI_PV;
     this.defaultSharpnessThreshold = options.defaultSharpnessThreshold ?? DEFAULT_SHARPNESS_THRESHOLD;
@@ -89,19 +97,27 @@ export class PuzzleGenerator {
    * Generate a puzzle from a position.
    *
    * @param request - The position and optional configuration.
-   * @returns A `PuzzleResult`: either a verified `Puzzle` or a `PuzzleRejection`.
+   * @returns A verified puzzle, a supported rejection, or explicit insufficient evidence.
    */
   async generate(request: GeneratePuzzleRequest): Promise<PuzzleResult> {
     const variant = request.variant ?? this.defaultVariant;
     const limits = request.limits ?? this.defaultLimits;
     const multiPv = request.multiPv ?? this.defaultMultiPv;
-    const threshold = request.sharpnessThreshold ?? this.defaultSharpnessThreshold;
+    const configuredThreshold = finiteThreshold(this.defaultSharpnessThreshold)
+      ? this.defaultSharpnessThreshold
+      : DEFAULT_SHARPNESS_THRESHOLD;
+    const threshold = finiteThreshold(request.sharpnessThreshold)
+      ? request.sharpnessThreshold
+      : configuredThreshold;
 
     // 1. Obtain engine analysis (multi-PV).
     let results: readonly EngineResult[];
-    if (request.analysis && request.analysis.length > 0) {
+    if (request.analysis !== undefined) {
       results = request.analysis;
     } else {
+      if (!this.engine) {
+        throw new Error('PuzzleGenerator requires pre-computed analysis when no engine is configured.');
+      }
       const analysisRequest: AnalysisRequest = {
         fen: request.fen,
         variant,
@@ -112,38 +128,87 @@ export class PuzzleGenerator {
       results = await this.engine.analyze(analysisRequest);
     }
 
-    // 2. Need at least 2 lines to compute a gap.
+    // 2. A puzzle is a comparison, not merely a best line. Partial engine output is neither a
+    // puzzle nor evidence that the position is quiet.
     if (results.length < 2) {
-      return {
-        kind: 'rejection',
-        fen: request.fen,
-        evalGapCp: 0,
-        threshold,
-        reason: 'Engine returned fewer than 2 lines; cannot compute eval gap.',
-        bestMove: results[0]?.principalVariation[0] ?? '(none)',
-        bestEval: results[0]?.evaluation ?? { type: 'cp', value: 0 },
-        secondBestEval: { type: 'cp', value: 0 },
-        depth: results[0]?.depth ?? 0,
-      };
+      return insufficient(request.fen, 'not_enough_lines', results[0], undefined);
     }
 
-    const best = results[0];
-    const second = results[1];
+    const best = results.find((line) => line.multipv === 1);
+    if (!best) return insufficient(request.fen, 'missing_best_line', undefined, undefined);
+    const second = results.find((line) => line.multipv === 2);
+    if (!second) return insufficient(request.fen, 'missing_comparison_line', best, undefined);
 
-    // 3. Compute the eval gap.
-    const gap = evalGapCp(best.evaluation, second.evaluation);
+    const requiredMultiPv = request.analysis === undefined ? multiPv : request.multiPv ?? 2;
+    const exactMultiPv = request.analysis === undefined || request.multiPv !== undefined;
+    const requiredLines = completeMultiPv(results, requiredMultiPv, exactMultiPv);
+    if (!requiredLines) return insufficient(request.fen, 'incomplete_multipv', best, second);
 
-    // 4. Determine if the position qualifies as a puzzle.
-    const qualifies = gap >= threshold;
+    const bestMove = best.principalVariation[0] ?? null;
+    const comparisonMove = second.principalVariation[0] ?? null;
+    if (bestMove === null) return insufficient(request.fen, 'missing_best_move', best, second);
+    if (comparisonMove === null) {
+      return insufficient(request.fen, 'missing_comparison_move', best, second);
+    }
+    if (!UCI_MOVE.test(bestMove)) return insufficient(request.fen, 'invalid_best_move', best, second);
+    if (!UCI_MOVE.test(comparisonMove)) {
+      return insufficient(request.fen, 'invalid_comparison_move', best, second);
+    }
+    if (bestMove === comparisonMove) {
+      return insufficient(request.fen, 'duplicate_moves', best, second);
+    }
+    if (!best.principalVariation.every((move) => UCI_MOVE.test(move))) {
+      return insufficient(request.fen, 'invalid_solution_line', best, second);
+    }
+    if (requiredLines.some((line) => !Number.isFinite(line.evaluation.value))) {
+      return insufficient(request.fen, 'non_finite_evaluation', best, second);
+    }
+    if (requiredLines.some((line) => line.evaluationBound !== undefined)) {
+      return insufficient(request.fen, 'bounded_evaluation', best, second);
+    }
+    if (requiredLines.some((line) => {
+      const move = line.principalVariation[0];
+      return move === undefined || !UCI_MOVE.test(move);
+    })) {
+      return insufficient(request.fen, 'incomplete_multipv', best, second);
+    }
+    if (requiredLines.some((line) => !Number.isInteger(line.depth))) {
+      return insufficient(request.fen, 'non_finite_depth', best, second);
+    }
+    const requiredDepth = request.analysis === undefined ? limits.depth : request.limits?.depth;
+    if (
+      requiredLines.some((line) => line.depth <= 0) ||
+      (requiredDepth !== undefined && requiredLines.some((line) => line.depth < requiredDepth))
+    ) {
+      return insufficient(request.fen, 'incomplete_depth', best, second);
+    }
+    if (requiredLines.some((line) => line.depth !== best.depth)) {
+      return insufficient(request.fen, 'mismatched_depth', best, second);
+    }
+    if (
+      best.evaluation.type === 'cp' &&
+      second.evaluation.type === 'cp' &&
+      !Number.isFinite(best.evaluation.value - second.evaluation.value)
+    ) {
+      return insufficient(request.fen, 'non_finite_evaluation', best, second);
+    }
 
-    if (!qualifies) {
+    // 3. Compare like with like. Mate scores are not very large pawn scores and must never be
+    // represented by Infinity simply to pass a centipawn threshold.
+    const comparison = compareEvidence(best.evaluation, second.evaluation, threshold);
+    if (!comparison) return insufficient(request.fen, 'unordered_lines', best, second);
+
+    if (!comparison.qualifies) {
       const rejection: PuzzleRejection = {
         kind: 'rejection',
         fen: request.fen,
-        evalGapCp: gap,
-        threshold,
-        reason: `Eval gap (${formatCp(gap)}) is below threshold (${formatCp(threshold)}).`,
-        bestMove: best.principalVariation[0] ?? '(none)',
+        evidence: comparison.evidence,
+        thresholdCp: threshold,
+        reason: comparison.evidence.kind === 'centipawn_gap'
+          ? 'gap_below_threshold'
+          : 'mate_not_unique',
+        bestMove,
+        comparisonMove,
         bestEval: best.evaluation,
         secondBestEval: second.evaluation,
         depth: best.depth,
@@ -152,7 +217,9 @@ export class PuzzleGenerator {
     }
 
     // 5. Derive difficulty from the gap and depth.
-    const difficulty = deriveDifficulty(gap, best.depth);
+    const difficulty = comparison.evidence.kind === 'centipawn_gap'
+      ? deriveDifficulty(comparison.evidence.gapCp, best.depth)
+      : 'hard';
 
     // 6. Optionally generate LLM theme/hint.
     let theme: string | null = null;
@@ -205,12 +272,13 @@ export class PuzzleGenerator {
     const puzzle: Puzzle = {
       kind: 'puzzle',
       fen: request.fen,
-      solutionMove: best.principalVariation[0] ?? '(none)',
+      solutionMove: bestMove,
+      comparisonMove,
       bestEval: best.evaluation,
       bestEvalLabel: evalToString(best.evaluation),
       secondBestEval: second.evaluation,
       secondBestEvalLabel: evalToString(second.evaluation),
-      evalGapCp: gap,
+      evidence: comparison.evidence,
       solutionLine: best.principalVariation,
       depth: best.depth,
       difficulty,
@@ -231,47 +299,29 @@ export class PuzzleGenerator {
 // ---------------------------------------------------------------------------
 
 /**
- * Compute the eval gap in centipawns between the best and second-best
- * lines.  If the best line is mate and the second-best is not, the gap
- * is `Infinity` (any threshold is satisfied).  If both are mate, the
- * gap is the difference in mate distance (closer mate = better).
+ * Compute a centipawn gap only when both lines are finite centipawn evaluations.
+ *
+ * Mate comparisons intentionally return `null`: mate distance and pawn value do not share a scale,
+ * and callers must use the tagged evidence produced by {@link PuzzleGenerator} instead.
  */
-export function evalGapCp(best: Evaluation, second: Evaluation): number {
-  // Mate vs non-mate: infinite gap.
-  if (best.type === 'mate' && second.type !== 'mate') {
-    return Infinity;
-  }
-  // Both mate: closer mate is better.  Positive value = best is closer.
-  if (best.type === 'mate' && second.type === 'mate') {
-    // A positive mate value means side-to-move mates; negative means gets mated.
-    // Closer to zero = faster mate.  We want the gap to be positive when
-    // best is a faster mate (closer to zero) than second.
-    return Math.abs(second.value) - Math.abs(best.value);
-  }
-  // Both cp: simple difference.
-  if (best.type === 'cp' && second.type === 'cp') {
-    return best.value - second.value;
-  }
-  // Non-mate vs mate: the mate is better, so the gap is negative
-  // (best is worse than second).  This shouldn't happen if results are
-  // ordered best-first, but handle it defensively.
-  return -Infinity;
+export function evalGapCp(best: Evaluation, second: Evaluation): number | null {
+  if (best.type !== 'cp' || second.type !== 'cp') return null;
+  if (!Number.isFinite(best.value) || !Number.isFinite(second.value)) return null;
+  const gap = best.value - second.value;
+  return Number.isFinite(gap) ? gap : null;
 }
 
 /**
  * Derive difficulty from the eval gap and search depth.
  *
- * - easy: gap 200–400 cp, any depth
+ * - easy: gap 200–400 cp with depth < 20, or gap < 200 cp
  * - medium: gap 400–700 cp, or gap 200–400 with depth ≥ 20
- * - hard: gap 700–1500 cp, or mate in 4+
- * - brilliant: gap > 1500 cp, or mate in ≤ 3
+ * - hard: gap 700–1500 cp
+ * - brilliant: gap > 1500 cp
+ *
+ * Mate evidence is classified separately by `PuzzleGenerator` and currently maps to `hard`.
  */
 export function deriveDifficulty(gap: number, depth: number): PuzzleDifficulty {
-  if (gap === Infinity) {
-    // Mate vs non-mate — always at least hard.
-    // We can't know the mate distance from the gap alone, so default to 'hard'.
-    return 'hard';
-  }
   if (gap > 1500) return 'brilliant';
   if (gap > 700) return 'hard';
   if (gap > 400) return depth >= 20 ? 'hard' : 'medium';
@@ -279,12 +329,107 @@ export function deriveDifficulty(gap: number, depth: number): PuzzleDifficulty {
   return 'easy';
 }
 
-/** Format centipawns as a human-readable string (e.g. 200 → "+2.00"). */
-function formatCp(cp: number): string {
-  if (cp === Infinity) return '∞';
-  if (cp === -Infinity) return '-∞';
-  const pawns = cp / 100;
-  return pawns >= 0 ? `+${pawns.toFixed(2)}` : pawns.toFixed(2);
+const UCI_MOVE = /^(?:[a-h][1-8][a-h][1-8][qrbn]?|[PNBRQ]@[a-h][1-8])$/;
+const MIN_MATE_DISTANCE_GAP = 2;
+
+function finiteThreshold(value: number | undefined): value is number {
+  return value !== undefined && Number.isFinite(value) && value >= 0;
+}
+
+function completeMultiPv(
+  results: readonly EngineResult[],
+  requiredMultiPv: number,
+  exact: boolean,
+): readonly EngineResult[] | null {
+  if (
+    !Number.isInteger(requiredMultiPv) ||
+    requiredMultiPv < 2 ||
+    results.length < requiredMultiPv ||
+    (exact && results.length !== requiredMultiPv)
+  ) {
+    return null;
+  }
+  const byRank = new Map<number, EngineResult>();
+  for (const line of results) {
+    if (byRank.has(line.multipv)) return null;
+    byRank.set(line.multipv, line);
+  }
+  const required = Array.from({ length: requiredMultiPv }, (_, index) => byRank.get(index + 1));
+  return required.every((line): line is EngineResult => line !== undefined) ? required : null;
+}
+
+function insufficient(
+  fen: string,
+  reason: PuzzleInsufficientReason,
+  best: EngineResult | undefined,
+  second: EngineResult | undefined,
+): PuzzleResult {
+  const bestMove = best?.principalVariation[0];
+  const comparisonMove = second?.principalVariation[0];
+  return {
+    kind: 'insufficient',
+    fen,
+    reason,
+    bestMove: bestMove && UCI_MOVE.test(bestMove) ? bestMove : null,
+    comparisonMove: comparisonMove && UCI_MOVE.test(comparisonMove) ? comparisonMove : null,
+  };
+}
+
+function compareEvidence(
+  best: Evaluation,
+  second: Evaluation,
+  thresholdCp: number,
+): { evidence: PuzzleEvidence; qualifies: boolean } | null {
+  if (best.type === 'cp' && second.type === 'cp') {
+    const gapCp = best.value - second.value;
+    if (gapCp < 0) return null;
+    return { evidence: { kind: 'centipawn_gap', gapCp }, qualifies: gapCp >= thresholdCp };
+  }
+
+  if (best.type === 'mate' && second.type === 'mate') {
+    if (best.value === 0 || second.value === 0) return null;
+    if (best.value > 0 && second.value > 0) {
+      const distanceGap = Math.abs(second.value) - Math.abs(best.value);
+      if (distanceGap < 0) return null;
+      return {
+        evidence: { kind: 'mate', relation: 'faster_mate', distanceGap },
+        qualifies: distanceGap >= MIN_MATE_DISTANCE_GAP,
+      };
+    }
+    if (best.value < 0 && second.value < 0) {
+      const distanceGap = Math.abs(best.value) - Math.abs(second.value);
+      if (distanceGap < 0) return null;
+      return {
+        evidence: { kind: 'mate', relation: 'delays_mate', distanceGap },
+        qualifies: distanceGap >= MIN_MATE_DISTANCE_GAP,
+      };
+    }
+    if (best.value > 0 && second.value < 0) {
+      return {
+        evidence: { kind: 'mate', relation: 'forces_mate', distanceGap: null },
+        qualifies: true,
+      };
+    }
+    return null;
+  }
+
+  if (best.type === 'mate') {
+    if (best.value <= 0) return null;
+    return {
+      evidence: { kind: 'mate', relation: 'forces_mate', distanceGap: null },
+      qualifies: true,
+    };
+  }
+
+  if (second.type === 'mate') {
+    if (second.value >= 0) return null;
+    return {
+      evidence: { kind: 'mate', relation: 'avoids_mate', distanceGap: null },
+      qualifies: true,
+    };
+  }
+
+  return null;
 }
 
 /**

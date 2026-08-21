@@ -915,6 +915,8 @@ export interface CapabilitiesFlags {
    * stops being true. The variants it can serve are `analysisVariants`.
    */
   readonly mistakePrediction: boolean;
+  /** Fixed-policy, engine-only tactic discovery (ADR-0125). */
+  readonly puzzleGeneration: boolean;
 }
 
 /**
@@ -937,6 +939,8 @@ export type AnalysisVariants = readonly string[];
 export interface CapabilitiesView {
   readonly capabilities: CapabilitiesFlags;
   readonly analysisVariants: AnalysisVariants;
+  /** Kept feature-specific so clients never infer future puzzle support from generic analysis. */
+  readonly puzzleVariants: AnalysisVariants;
 }
 
 /**
@@ -961,8 +965,12 @@ export function capabilitiesView(
     | 'analysis'
     | 'moveExplanation'
     | 'mistakePrediction'
+    | 'puzzleGeneration'
   >,
 ): CapabilitiesView {
+  const puzzleVariants = deps.puzzleGeneration
+    ? VARIANTS.filter((variant) => deps.puzzleGeneration?.supportsVariant(variant) === true)
+    : [];
   return {
     capabilities: {
       learning: deps.learningRepository !== undefined,
@@ -975,10 +983,49 @@ export function capabilitiesView(
       analysis: deps.analysis !== undefined,
       moveExplanation: deps.moveExplanation !== undefined,
       mistakePrediction: deps.mistakePrediction !== undefined,
+      puzzleGeneration: puzzleVariants.length > 0,
     },
     analysisVariants: deps.analysis
       ? VARIANTS.filter((variant) => deps.analysis?.supportsVariant(variant) === true)
       : [],
+    puzzleVariants,
+  };
+}
+
+/** The service outcome is already the intentionally minimal, JSON-safe public shape. */
+export type PuzzleGenerationView = import('./analysis/puzzle-generation-service.js').PuzzleGenerationOutcome;
+
+export function puzzleGenerationView(
+  outcome: import('./analysis/puzzle-generation-service.js').PuzzleGenerationOutcome,
+): PuzzleGenerationView {
+  if (outcome.kind === 'insufficient') {
+    return {
+      kind: 'insufficient',
+      fen: outcome.fen,
+      variant: outcome.variant,
+      reason: outcome.reason,
+      bestMove: outcome.bestMove,
+      comparisonMove: outcome.comparisonMove,
+      ...(outcome.terminal ? { terminal: outcome.terminal } : {}),
+    };
+  }
+  const common = {
+    fen: outcome.fen,
+    variant: outcome.variant,
+    evidence: outcome.evidence,
+    bestMove: outcome.bestMove,
+    comparisonMove: outcome.comparisonMove,
+    bestEvaluation: outcome.bestEvaluation,
+    comparisonEvaluation: outcome.comparisonEvaluation,
+    depth: outcome.depth,
+  };
+  if (outcome.kind === 'no_tactic') return { kind: 'no_tactic', ...common };
+  return {
+    kind: 'puzzle',
+    ...common,
+    solutionMove: outcome.solutionMove,
+    solutionLine: [...outcome.solutionLine],
+    difficulty: outcome.difficulty,
   };
 }
 

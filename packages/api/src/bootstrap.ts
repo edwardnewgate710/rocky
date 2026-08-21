@@ -78,7 +78,7 @@ import { DurableTournamentLiveView } from './tournament/durable-live-view';
 import type { AnalysisProvider } from '@chess-platform/engine';
 import { EngineBackedEvaluator } from '@chess-platform/anti-cheat/engine';
 import { AntiCheatAnalysisService } from './anti-cheat/analysis-service';
-import { createAnalysisFromEnv, createMistakePrediction } from './analysis/composition';
+import { createAnalysisFromEnv, createMistakePrediction, createPuzzleGeneration } from './analysis/composition';
 import { createAiFromEnv, createMoveExplanation } from './ai/composition';
 import { EventStoreGameSource } from './anti-cheat/source';
 import { EventStoreBotTimingSource } from './bot-detection/source';
@@ -238,6 +238,9 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
   const mistakePrediction = analysisComposition
     ? createMistakePrediction(analysisComposition.service)
     : undefined;
+  const puzzleGeneration = analysisComposition
+    ? createPuzzleGeneration(analysisComposition.service)
+    : undefined;
 
   const searchEnabled = process.env['SEARCH_ENABLED'] !== '0';
   const searchRepository = searchEnabled
@@ -354,6 +357,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ...(analysisComposition ? { analysis: analysisComposition.service } : {}),
     ...(moveExplanation ? { moveExplanation } : {}),
     ...(mistakePrediction ? { mistakePrediction } : {}),
+    ...(puzzleGeneration ? { puzzleGeneration } : {}),
     botTimingSource: new EventStoreBotTimingSource(eventStore),
     // Production observability (M13): structured logs to stdout, a scrape
     // registry backing GET /v1/metrics, and tracer emitting spans to logs.

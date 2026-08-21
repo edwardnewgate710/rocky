@@ -144,6 +144,25 @@ export function mistakePredictionSupportsVariant(payload: unknown, variant: stri
   return variants.includes(variant);
 }
 
+/** Whether fixed-policy tactic discovery is composed in this deployment (ADR-0125). */
+export function puzzleGenerationEnabled(payload: unknown): boolean {
+  return capabilityFlags(payload)?.['puzzleGeneration'] === true;
+}
+
+/**
+ * Feature-specific variant gate; never inferred from generic analysis support.
+ *
+ * The flag and list were introduced together, so a missing or malformed list is an invalid partial
+ * answer, not an older-server compatibility case. Fail closed rather than turning one feature flag
+ * into an accidental claim of universal variant support.
+ */
+export function puzzleGenerationSupportsVariant(payload: unknown, variant: string | null): boolean {
+  if (!puzzleGenerationEnabled(payload) || variant === null) return false;
+  const variants = (payload as { puzzleVariants?: unknown } | null)?.puzzleVariants;
+  if (!Array.isArray(variants) || variants.some((entry) => typeof entry !== 'string')) return false;
+  return variants.includes(variant);
+}
+
 /**
  * Whether this deployment can analyse a specific variant.
  *

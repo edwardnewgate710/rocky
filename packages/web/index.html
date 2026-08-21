@@ -126,6 +126,14 @@
           <div id="analysis-results" class="panel-list" aria-busy="false"></div>
           <p id="analysis-reached" class="count" hidden></p>
           <p id="analysis-limits" class="count" hidden></p>
+          <div id="puzzle" class="puzzle-block" hidden>
+            <button id="puzzle-run" type="button" class="button">Find tactic</button>
+            <p id="puzzle-note" class="count" role="status" aria-live="polite"></p>
+            <div id="puzzle-error" class="error" role="alert" hidden></div>
+            <div id="puzzle-result" class="puzzle-result" aria-busy="false" hidden>
+              <div id="puzzle-rows" class="panel-list"></div>
+            </div>
+          </div>
           <div id="explain" class="explain-block" hidden>
             <button id="explain-run" type="button" class="button">Explain last move</button>
             <p id="explain-note" class="count" role="status" aria-live="polite"></p>

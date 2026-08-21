@@ -139,6 +139,13 @@ advertised variant list. This produces `EngineCapabilities`, cached per
 - `UCI_LimitStrength`/`Skill Level` presence → bot strength strategy;
 - `MultiPV`/`Threads`/`Hash` presence + bounds → validated `setoption`.
 
+Built-in plugins may declare a conservative cold-start `guaranteedMultiPv` count so a stricter
+feature can be capability-gated without spawning a process merely to answer discovery. Once the
+first UCI handshake completes, the discovered option bounds replace that declaration. An exact
+MultiPV request outside those bounds is rejected; it is never silently clamped to weaker evidence.
+UCI `score ... lowerbound` and `score ... upperbound` markers are retained on structured engine
+results so evidence consumers can distinguish aspiration-search bounds from exact evaluations.
+
 Why: capability discovery is what makes "add a new engine" a config change, not a
 code change, and prevents brittle name-based branching.
 

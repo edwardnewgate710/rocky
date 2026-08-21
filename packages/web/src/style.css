@@ -1122,6 +1122,27 @@ button:disabled {
   padding-top: 12px;
   border-top: 1px solid var(--border);
 }
+
+.puzzle-block {
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
+.puzzle-result {
+  margin-top: 8px;
+}
+
+.puzzle-label {
+  color: var(--muted);
+  min-width: 5.5rem;
+}
+
+.puzzle-value {
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
 .explain-result {
   margin-top: 8px;
 }

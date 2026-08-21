@@ -3,7 +3,7 @@
  * command lines. No I/O, no state — every function is total and side-effect free, so
  * it is trivially unit-testable and shared by the real and fake transports.
  */
-import type { AnalysisLimits, UciOptionSpec, UciOptionType } from '../types.js';
+import type { AnalysisLimits, EvaluationBound, UciOptionSpec, UciOptionType } from '../types.js';
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
@@ -13,6 +13,7 @@ export interface ParsedInfoLine {
   readonly multipv?: number;
   readonly scoreCp?: number;
   readonly scoreMate?: number;
+  readonly scoreBound?: EvaluationBound;
   readonly nodes?: number;
   readonly nps?: number;
   readonly timeMs?: number;
@@ -54,6 +55,8 @@ export function parseInfoLine(line: string): ParsedInfoLine | null {
         const value = toInt(tokens[++i]);
         if (value !== undefined && kind === 'cp') out.scoreCp = value;
         else if (value !== undefined && kind === 'mate') out.scoreMate = value;
+        const bound = tokens[i + 1];
+        if (bound === 'lowerbound' || bound === 'upperbound') out.scoreBound = bound;
         break;
       }
       case 'pv':

@@ -29,7 +29,18 @@ import {
   mistakePredictionSupportsVariant,
   moveExplanationEnabled,
   moveExplanationSupportsVariant,
+  puzzleGenerationEnabled,
+  puzzleGenerationSupportsVariant,
 } from './capabilities-nav.js';
+import { PuzzleController } from './puzzle-controller.js';
+import {
+  clearPuzzle,
+  PUZZLE_MESSAGES,
+  renderPuzzleError,
+  renderPuzzleNote,
+  renderPuzzleResult,
+  setPuzzleBusy,
+} from './puzzle-view.js';
 import { AssessController } from './assess-controller.js';
 import {
   ASSESS_MESSAGES,
@@ -243,6 +254,52 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     }
   };
 
+  // Puzzle Generation (M15 inc 17), using the exact position on the board.
+  const puzzleBlockEl = doc.getElementById('puzzle');
+  const puzzleRunBtn = doc.getElementById('puzzle-run') as HTMLButtonElement | null;
+  const puzzleNoteEl = doc.getElementById('puzzle-note');
+  const puzzleErrorEl = doc.getElementById('puzzle-error');
+  const puzzleResultEl = doc.getElementById('puzzle-result');
+  const puzzleRowsEl = doc.getElementById('puzzle-rows');
+  let puzzleAvailable = false;
+  let puzzleCapabilities: unknown = null;
+  let puzzleUnsupported = false;
+
+  const resetPuzzleBlock = (): void => {
+    if (puzzleRowsEl && puzzleResultEl) clearPuzzle(puzzleRowsEl, puzzleResultEl);
+    if (puzzleErrorEl) renderPuzzleError(puzzleErrorEl, null);
+    if (puzzleNoteEl) renderPuzzleNote(puzzleNoteEl, PUZZLE_MESSAGES.idle);
+  };
+  resetPuzzleBlock();
+
+  const refreshPuzzleControls = (): void => {
+    if (analysisDisposed || !puzzleAvailable) return;
+    if (
+      !puzzleUnsupported &&
+      currentVariant !== null &&
+      !puzzleGenerationSupportsVariant(puzzleCapabilities, currentVariant)
+    ) puzzleUnsupported = true;
+
+    const servable = !puzzleUnsupported;
+    if (puzzleBlockEl) puzzleBlockEl.hidden = !servable;
+    if (!servable) return;
+    const authed = isUserAuthenticated();
+    if (puzzleRunBtn) {
+      puzzleRunBtn.disabled = !authed || !hasPosition() || puzzleController.isPending;
+    }
+    if (!puzzleNoteEl) return;
+    const owned = new Set<string>([
+      PUZZLE_MESSAGES.idle,
+      PUZZLE_MESSAGES.signedOut,
+      '',
+    ]);
+    if (!owned.has(puzzleNoteEl.textContent ?? '')) return;
+    renderPuzzleNote(
+      puzzleNoteEl,
+      authed ? PUZZLE_MESSAGES.idle : PUZZLE_MESSAGES.signedOut,
+    );
+  };
+
   // Move Explanation block (M15 inc 4), inside the same panel.
   const explainBlockEl = doc.getElementById('explain');
   const explainRunBtn = doc.getElementById('explain-run') as HTMLButtonElement | null;
@@ -400,6 +457,61 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
   };
 
   let controller: GameController;
+
+  const puzzleController = new PuzzleController({
+    client: deps.client,
+    getPosition: () => {
+      const fen = controller.fen;
+      if (!fen || !currentVariant) return null;
+      return { fen, variant: currentVariant };
+    },
+    callbacks: {
+      onPhase: (phase) => {
+        if (puzzleResultEl) setPuzzleBusy(puzzleResultEl, phase === 'loading');
+        refreshPuzzleControls();
+        if (phase === 'loading') {
+          if (puzzleNoteEl) renderPuzzleNote(puzzleNoteEl, PUZZLE_MESSAGES.running);
+          if (puzzleErrorEl) renderPuzzleError(puzzleErrorEl, null);
+        }
+      },
+      onResult: (result) => {
+        const note = puzzleRowsEl && puzzleResultEl
+          ? renderPuzzleResult(puzzleRowsEl, puzzleResultEl, result)
+          : null;
+        if (puzzleNoteEl) renderPuzzleNote(puzzleNoteEl, note);
+        if (puzzleErrorEl) renderPuzzleError(puzzleErrorEl, null);
+      },
+      onFailure: (failure) => {
+        resetPuzzleBlock();
+        if (failure === 'unsupported-variant') {
+          puzzleUnsupported = true;
+          if (puzzleBlockEl) puzzleBlockEl.hidden = true;
+          return;
+        }
+        const noteFor: Partial<Record<typeof failure, string>> = {
+          'rate-limited': PUZZLE_MESSAGES.rateLimited,
+          unavailable: PUZZLE_MESSAGES.unavailable,
+          unauthenticated: PUZZLE_MESSAGES.signedOut,
+        };
+        const note = noteFor[failure];
+        if (note) {
+          if (puzzleNoteEl) renderPuzzleNote(puzzleNoteEl, note);
+        } else {
+          if (puzzleNoteEl) renderPuzzleNote(puzzleNoteEl, null);
+          if (puzzleErrorEl) {
+            renderPuzzleError(
+              puzzleErrorEl,
+              failure === 'rejected' ? PUZZLE_MESSAGES.rejected : PUZZLE_MESSAGES.failed,
+            );
+          }
+        }
+      },
+      onInvalidated: () => {
+        resetPuzzleBlock();
+        if (puzzleNoteEl) renderPuzzleNote(puzzleNoteEl, PUZZLE_MESSAGES.positionChanged);
+      },
+    },
+  });
 
   const assessController = new AssessController({
     client: deps.client,
@@ -590,9 +702,11 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
       onPosition: (fen: string) => {
         board.setPosition(fen);
         analysisController.positionChanged(fen);
+        if (currentVariant) puzzleController.positionChanged({ fen, variant: currentVariant });
         explainController.targetChanged();
         assessController.targetChanged();
         refreshAnalysisControls();
+        refreshPuzzleControls();
         refreshExplainControls();
         refreshAssessControls();
       },
@@ -625,6 +739,7 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
         if (state.variant) {
           currentVariant = state.variant;
           refreshAnalysisControls();
+          refreshPuzzleControls();
           // Every gate depends on the variant, and this is the arrival that supplies it. Refreshing
           // only the analysis one left the explain control offered on a variant with no engine
           // whenever capabilities answered first.
@@ -795,6 +910,10 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     void assessController.assess();
   });
 
+  bindClick(puzzleRunBtn, () => {
+    void puzzleController.find();
+  });
+
   bindClick(btnOfferDraw, () => controller.offerDraw());
   bindClick(btnClaimFlag, () => controller.claimFlag());
   bindClick(btnAcceptDraw, () => controller.acceptDraw());
@@ -883,6 +1002,9 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
       assessCapabilities = flags;
       assessAvailable = mistakePredictionEnabled(flags);
       refreshAssessControls();
+      puzzleCapabilities = flags;
+      puzzleAvailable = puzzleGenerationEnabled(flags);
+      refreshPuzzleControls();
     })
     .catch(() => {
       // Fail quiet: leave section hidden
@@ -922,6 +1044,7 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
       analysisController.dispose();
       explainController.dispose();
       assessController.dispose();
+      puzzleController.dispose();
     },
   };
 
@@ -936,9 +1059,11 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
         const t = getAccessToken();
         if (t !== undefined) gameSync.setToken(t);
         if (!analysisDisposed) refreshAnalysisControls();
+        if (!analysisDisposed) refreshPuzzleControls();
       })
       .catch(() => {
         if (!analysisDisposed) refreshAnalysisControls();
+        if (!analysisDisposed) refreshPuzzleControls();
       })
       .finally(() => {
         if (gameRouteActive) gameSync.start();
@@ -958,6 +1083,7 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
       // event happened to refresh it. Raised in the Qodo review of PR #135.
       refreshExplainControls();
       refreshAssessControls();
+      refreshPuzzleControls();
     },
   };
 }

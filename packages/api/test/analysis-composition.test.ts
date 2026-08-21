@@ -8,8 +8,10 @@ import {
   analysisSettingsFromEnv,
   createAnalysisEngine,
   createAnalysisFromEnv,
+  createPuzzleGeneration,
 } from '../src/analysis/composition';
 import { AnalysisService } from '../src/analysis/service';
+import { PuzzleGenerationService } from '../src/analysis/puzzle-generation-service';
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -210,6 +212,52 @@ test('createAnalysisFromEnv: returns AnalysisService when STOCKFISH_PATH is set'
   assert.ok(composed !== undefined);
   assert.ok(composed.service instanceof AnalysisService);
 });
+
+test('createPuzzleGeneration reuses the supplied AnalysisService', () => {
+  const provider = {
+    analyze: async () => [],
+    play: async () => { throw new Error('not used'); },
+    capabilitiesFor: () => undefined,
+  };
+  const analysis = new AnalysisService({ provider, supportsVariant: () => true });
+
+  const puzzles = createPuzzleGeneration(analysis);
+
+  assert.ok(puzzles instanceof PuzzleGenerationService);
+  assert.equal(puzzles.supportsVariant('standard'), true);
+});
+
+test('createPuzzleGeneration stays unavailable when no engine can supply MultiPV 3', () => {
+  const provider = {
+    analyze: async () => [],
+    play: async () => { throw new Error('not used'); },
+    capabilitiesFor: () => undefined,
+  };
+  const analysis = new AnalysisService({
+    provider,
+    supportsVariant: () => true,
+    supportsMultiPv: () => false,
+  });
+
+  assert.equal(createPuzzleGeneration(analysis), undefined);
+});
+
+for (const [name, policy] of [
+  ['depth', { maxDepth: 15, maxNodes: 5_000_000, maxTimeMs: 2_000, maxMultiPv: 5, defaultDepth: 15, defaultTimeMs: 1_000 }],
+  ['movetime', { maxDepth: 20, maxNodes: 5_000_000, maxTimeMs: 999, maxMultiPv: 5, defaultDepth: 16, defaultTimeMs: 999 }],
+  ['MultiPV', { maxDepth: 20, maxNodes: 5_000_000, maxTimeMs: 2_000, maxMultiPv: 2, defaultDepth: 16, defaultTimeMs: 1_000 }],
+] as const) {
+  test(`createPuzzleGeneration stays unavailable when deployment ${name} policy cannot satisfy the fixed search`, () => {
+    const provider = {
+      analyze: async () => [],
+      play: async () => { throw new Error('not used'); },
+      capabilitiesFor: () => undefined,
+    };
+    const analysis = new AnalysisService({ provider, policy, supportsVariant: () => true });
+
+    assert.equal(createPuzzleGeneration(analysis), undefined);
+  });
+}
 
 /**
  * The pool owns OS processes, so a composition that cannot be stopped leaks them past SIGTERM.

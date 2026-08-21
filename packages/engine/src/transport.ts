@@ -65,6 +65,8 @@ const DEFAULT_OPTIONS: readonly string[] = [
  * `'hang'` responses let a test drive the watchdog via a {@link Clock} it controls.
  */
 export class FakeEngineTransport implements EngineTransport {
+  /** Commands accepted by the fake, exposed so protocol-ordering tests can make assertions. */
+  readonly sent: string[] = [];
   private readonly lineListeners: LineListener[] = [];
   private readonly exitListeners: ExitListener[] = [];
   private readonly options: FakeEngineOptions;
@@ -78,6 +80,7 @@ export class FakeEngineTransport implements EngineTransport {
 
   send(line: string): void {
     if (this.exited) return;
+    this.sent.push(line);
     const trimmed = line.trim();
     const verb = trimmed.split(/\s+/, 1)[0];
 

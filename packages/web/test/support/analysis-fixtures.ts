@@ -148,6 +148,12 @@ export const GAME_ELEMENT_IDS = [
   'analysis-results',
   'analysis-reached',
   'analysis-limits',
+  'puzzle',
+  'puzzle-run',
+  'puzzle-note',
+  'puzzle-error',
+  'puzzle-result',
+  'puzzle-rows',
   'explain',
   'explain-run',
   'explain-note',
@@ -181,6 +187,9 @@ export function createGameDocument(): {
       id === 'analysis-error' ||
       id === 'analysis-reached' ||
       id === 'analysis-limits' ||
+      id === 'puzzle' ||
+      id === 'puzzle-error' ||
+      id === 'puzzle-result' ||
       // Mirrors index.html: the explain block and its result group ship hidden, so a test asserting
       // the capability reveals them starts from the same state the browser does.
       id === 'explain' ||
@@ -192,7 +201,7 @@ export function createGameDocument(): {
     ) {
       el.hidden = true;
     }
-    if (id === 'analysis-results' || id === 'assess-result') {
+    if (id === 'analysis-results' || id === 'assess-result' || id === 'puzzle-result') {
       el.setAttribute('aria-busy', 'false');
     }
     elements.set(id, el);

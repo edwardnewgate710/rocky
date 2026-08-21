@@ -1,7 +1,7 @@
 /**
  * The published contract's nullability, and the distinction it kept getting wrong.
  *
- * Every one of the 47 nullable fields in this API was declared with `nullable: true` — an OpenAPI
+ * Every nullable field in this API was once declared with `nullable: true` — an OpenAPI
  * **3.0** keyword, in a document whose first line says `"openapi": "3.1.0"`. 3.1 is JSON Schema
  * 2020-12, which has no such keyword and ignores it. So the document did not describe those fields
  * as nullable; it described them as strictly non-null and carried a comment no validator reads,
@@ -156,7 +156,7 @@ test('optional and nullable are independent axes, and the migration moved only o
  * field is added or removed, and that is the point: a migration that silently dropped nullability
  * from a field would otherwise leave every remaining field still well-formed.
  */
-test('every nullable schema in the document is well-formed, and there are 47 of them', async () => {
+test('every nullable schema in the document is well-formed, and there are 50 of them', async () => {
   const { doc, close } = await schemas();
   try {
     const nullables: { path: string; schema: JsonSchema }[] = [];
@@ -174,7 +174,7 @@ test('every nullable schema in the document is well-formed, and there are 47 of 
     };
     walk(doc, '$');
 
-    assert.equal(nullables.length, 47, `nullable field count changed: ${nullables.length}`);
+    assert.equal(nullables.length, 50, `nullable field count changed: ${nullables.length}`);
 
     for (const { path, schema } of nullables) {
       const types = schema.type as readonly string[];

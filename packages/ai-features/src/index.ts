@@ -42,6 +42,9 @@ export type {
   PuzzleResult,
   Puzzle,
   PuzzleRejection,
+  PuzzleInsufficientEvidence,
+  PuzzleInsufficientReason,
+  PuzzleEvidence,
   PuzzleDifficulty,
 } from './puzzle-types.js';
 

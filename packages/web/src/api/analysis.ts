@@ -9,6 +9,8 @@ import type {
   MoveExplanationResponse,
   MistakePredictionRequest,
   MistakePredictionResponse,
+  PuzzleGenerationRequest,
+  PuzzleGenerationResponse,
 } from './models.js';
 
 export class AnalysisApi {
@@ -82,6 +84,20 @@ export class AnalysisApi {
         variant: body.variant,
         move: body.move,
       },
+      auth: true,
+      ...(signal !== undefined ? { signal } : {}),
+    });
+  }
+
+  /** One non-retried, fixed-policy tactic search. */
+  findPuzzle(
+    body: PuzzleGenerationRequest,
+    signal?: AbortSignal,
+  ): Promise<PuzzleGenerationResponse> {
+    return this.execute<PuzzleGenerationResponse>({
+      method: 'POST',
+      path: '/v1/analysis/puzzle',
+      body: { fen: body.fen, variant: body.variant },
       auth: true,
       ...(signal !== undefined ? { signal } : {}),
     });

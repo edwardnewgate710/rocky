@@ -26,6 +26,14 @@ test('parses a mate score', () => {
   assert.equal(info?.scoreMate, -3);
 });
 
+test('preserves lower and upper score bounds', () => {
+  const lower = parseInfoLine('info depth 10 score cp 34 lowerbound pv e2e4');
+  const upper = parseInfoLine('info depth 10 score mate 3 upperbound pv d2d4');
+
+  assert.equal(lower?.scoreBound, 'lowerbound');
+  assert.equal(upper?.scoreBound, 'upperbound');
+});
+
 test('ignores info string lines', () => {
   assert.equal(parseInfoLine('info string NNUE evaluation using nn-xxx.nnue'), null);
 });

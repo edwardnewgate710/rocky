@@ -24,6 +24,8 @@ export interface EnginePlugin {
   readonly minVersion: string;
   /** Variants this engine is expected to serve, for routing before a worker has warmed up. */
   readonly expectedVariants: readonly string[];
+  /** MultiPV count guaranteed before a worker has warmed and reported its actual option bounds. */
+  readonly guaranteedMultiPv?: number;
   /**
    * This engine's own name for a platform variant, where the two differ.
    *
@@ -61,6 +63,7 @@ export const stockfishPlugin: EnginePlugin = {
   displayName: 'Stockfish',
   minVersion: '15',
   expectedVariants: ['chess', 'chess960'],
+  guaranteedMultiPv: 3,
   // UCI's name for ordinary chess is `chess`; the platform calls it `standard`. Routing resolves
   // through here so a warm pool can match the capabilities the engine actually reported.
   engineVariantName(variant: string): string {
@@ -103,6 +106,7 @@ export const fairyStockfishPlugin: EnginePlugin = {
     'horde',
     'racingkings',
   ],
+  guaranteedMultiPv: 3,
   // The map below is exactly the platform-to-engine translation routing needs, so expose it rather
   // than duplicating the knowledge: a warm Fairy reports `3check`, not the platform's `threecheck`.
   engineVariantName(variant: string): string {

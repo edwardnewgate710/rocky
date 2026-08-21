@@ -23,7 +23,7 @@ import type { AnalysisProvider, AnalysisRequest, EngineResult, PlayRequest, Play
 import { FakeEngineTransport, UciEngineInstance } from '@chess-platform/engine';
 import { FakeProvider } from '@chess-platform/ai-orchestrator';
 
-import { PuzzleGenerator } from '../src/index.js';
+import { evalGapCp, PuzzleGenerator } from '../src/index.js';
 
 // ---------------------------------------------------------------------------
 // Helpers: build a real AnalysisProvider backed by FakeEngineTransport
@@ -137,11 +137,11 @@ function mateGoHandler(
 ): { info: readonly string[]; bestmove: string } {
   return {
     info: [
-      'info depth 18 seldepth 18 multipv 1 score mate 3 nodes 800000 nps 400000 time 1800 pv qh5xf7',
-      'info depth 18 seldepth 17 multipv 2 score cp 150 nodes 800000 nps 400000 time 1800 pv d1h5 g7g6',
-      'info depth 18 seldepth 16 multipv 3 score cp 80 nodes 800000 nps 400000 time 1800 pv e2e4 e7e5',
+      'info depth 20 seldepth 20 multipv 1 score mate 3 nodes 800000 nps 400000 time 1800 pv d8a5',
+      'info depth 20 seldepth 19 multipv 2 score cp 150 nodes 800000 nps 400000 time 1800 pv d1h5 g7g6',
+      'info depth 20 seldepth 18 multipv 3 score cp 80 nodes 800000 nps 400000 time 1800 pv e2e4 e7e5',
     ],
-    bestmove: 'qh5xf7',
+        bestmove: 'd8a5',
   };
 }
 
@@ -173,7 +173,7 @@ describe('PuzzleGenerator (hermetic)', () => {
     assert.equal(puzzle.secondBestEval.type, 'cp');
     assert.equal(puzzle.secondBestEval.value, 80);
     assert.equal(puzzle.secondBestEvalLabel, '+0.80');
-    assert.equal(puzzle.evalGapCp, 270); // 350 - 80 = 270
+    assert.deepEqual(puzzle.evidence, { kind: 'centipawn_gap', gapCp: 270 });
     assert.deepEqual([...puzzle.solutionLine], ['d8a5', 'b1c3']);
     assert.equal(puzzle.depth, 20);
 
@@ -197,9 +197,9 @@ describe('PuzzleGenerator (hermetic)', () => {
     const rejection = result as import('../src/index.js').PuzzleRejection;
 
     assert.equal(rejection.fen, TEST_FEN);
-    assert.equal(rejection.evalGapCp, 15); // 35 - 20 = 15
-    assert.equal(rejection.threshold, 200); // default
-    assert.ok(rejection.reason.includes('below threshold'));
+    assert.deepEqual(rejection.evidence, { kind: 'centipawn_gap', gapCp: 15 });
+    assert.equal(rejection.thresholdCp, 200); // default
+    assert.equal(rejection.reason, 'gap_below_threshold');
     assert.equal(rejection.bestMove, 'e7e5');
     assert.equal(rejection.bestEval.type, 'cp');
     assert.equal(rejection.bestEval.value, 35);
@@ -218,16 +218,52 @@ describe('PuzzleGenerator (hermetic)', () => {
     assert.equal(result.kind, 'puzzle');
     const puzzle = result as import('../src/index.js').Puzzle;
 
-    assert.equal(puzzle.solutionMove, 'qh5xf7');
+    assert.equal(puzzle.solutionMove, 'd8a5');
     assert.equal(puzzle.bestEval.type, 'mate');
     assert.equal(puzzle.bestEval.value, 3);
     assert.equal(puzzle.bestEvalLabel, 'mate in 3');
     assert.equal(puzzle.secondBestEval.type, 'cp');
     assert.equal(puzzle.secondBestEval.value, 150);
-    // Gap should be Infinity (mate vs non-mate).
-    assert.equal(puzzle.evalGapCp, Infinity);
-    assert.deepEqual([...puzzle.solutionLine], ['qh5xf7']);
-    assert.equal(puzzle.depth, 18);
+    assert.deepEqual(puzzle.evidence, {
+      kind: 'mate',
+      relation: 'forces_mate',
+      distanceGap: null,
+    });
+    assert.equal(JSON.stringify(puzzle).includes('null'), true, 'ordinary null fields remain JSON-safe');
+    assert.doesNotMatch(JSON.stringify(puzzle), /Infinity|NaN|\(none\)/);
+    assert.deepEqual([...puzzle.solutionLine], ['d8a5']);
+    assert.equal(puzzle.depth, 20);
+  });
+
+  test('mate-distance uniqueness accepts exactly a two-move advantage, not one move', async () => {
+    const oneMoveGap = await new PuzzleGenerator().generate({
+      fen: TEST_FEN,
+      analysis: [
+        result(1, { type: 'mate', value: 3 }, ['e2e4']),
+        result(2, { type: 'mate', value: 4 }, ['d2d4']),
+      ],
+    });
+    assert.equal(oneMoveGap.kind, 'rejection');
+    assert.equal(oneMoveGap.reason, 'mate_not_unique');
+    assert.deepEqual(oneMoveGap.evidence, {
+      kind: 'mate',
+      relation: 'faster_mate',
+      distanceGap: 1,
+    });
+
+    const twoMoveGap = await new PuzzleGenerator().generate({
+      fen: TEST_FEN,
+      analysis: [
+        result(1, { type: 'mate', value: 3 }, ['e2e4']),
+        result(2, { type: 'mate', value: 5 }, ['d2d4']),
+      ],
+    });
+    assert.equal(twoMoveGap.kind, 'puzzle');
+    assert.deepEqual(twoMoveGap.evidence, {
+      kind: 'mate',
+      relation: 'faster_mate',
+      distanceGap: 2,
+    });
   });
 
   test('AI provider omitted → valid puzzle with engine fields and no LLM text', async () => {
@@ -243,7 +279,7 @@ describe('PuzzleGenerator (hermetic)', () => {
     // Engine fields are fully populated.
     assert.equal(puzzle.solutionMove, 'd8a5');
     assert.equal(puzzle.bestEval.value, 350);
-    assert.equal(puzzle.evalGapCp, 270);
+    assert.deepEqual(puzzle.evidence, { kind: 'centipawn_gap', gapCp: 270 });
     assert.deepEqual([...puzzle.solutionLine], ['d8a5', 'b1c3']);
     assert.equal(puzzle.depth, 20);
 
@@ -269,8 +305,8 @@ describe('PuzzleGenerator (hermetic)', () => {
 
     assert.equal(result.kind, 'rejection');
     const rejection = result as import('../src/index.js').PuzzleRejection;
-    assert.equal(rejection.evalGapCp, 270);
-    assert.equal(rejection.threshold, 300);
+    assert.deepEqual(rejection.evidence, { kind: 'centipawn_gap', gapCp: 270 });
+    assert.equal(rejection.thresholdCp, 300);
   });
 
   test('accepts pre-computed analysis and skips engine call', async () => {
@@ -316,12 +352,13 @@ describe('PuzzleGenerator (hermetic)', () => {
     const result = await generator.generate({
       fen: TEST_FEN,
       analysis: preComputed,
+      multiPv: 2,
     });
 
     assert.equal(result.kind, 'puzzle');
     const puzzle = result as import('../src/index.js').Puzzle;
     assert.equal(puzzle.solutionMove, 'e2e4');
-    assert.equal(puzzle.evalGapCp, 400); // 500 - 100
+    assert.deepEqual(puzzle.evidence, { kind: 'centipawn_gap', gapCp: 400 });
     assert.deepEqual([...puzzle.solutionLine], ['e2e4', 'e7e5']);
   });
 
@@ -334,6 +371,220 @@ describe('PuzzleGenerator (hermetic)', () => {
     assert.equal(result.kind, 'puzzle');
     const puzzle = result as import('../src/index.js').Puzzle;
     assert.equal(puzzle.difficulty, 'medium');
+  });
+
+  test('fewer than two lines is insufficient evidence, not a quiet position', async () => {
+    const generator = new PuzzleGenerator({
+      engine: createFakeAnalysisProvider(() => ({
+        info: ['info depth 20 multipv 1 score cp 500 nodes 1 time 1 pv e2e4'],
+        bestmove: 'e2e4',
+      })),
+    });
+
+    const result = await generator.generate({ fen: TEST_FEN });
+
+    assert.deepEqual(result, {
+      kind: 'insufficient',
+      fen: TEST_FEN,
+      reason: 'not_enough_lines',
+      bestMove: 'e2e4',
+      comparisonMove: null,
+    });
+  });
+
+  test('a missing best move is explicit insufficient evidence', async () => {
+    const analysis: EngineResult[] = [
+      result(1, { type: 'cp', value: 500 }, []),
+      result(2, { type: 'cp', value: 0 }, ['d2d4']),
+    ];
+    const generator = new PuzzleGenerator();
+
+    const generated = await generator.generate({ fen: TEST_FEN, analysis });
+
+    assert.deepEqual(generated, {
+      kind: 'insufficient',
+      fen: TEST_FEN,
+      reason: 'missing_best_move',
+      bestMove: null,
+      comparisonMove: 'd2d4',
+    });
+  });
+
+  test('a missing comparison move is explicit insufficient evidence', async () => {
+    const analysis: EngineResult[] = [
+      result(1, { type: 'cp', value: 500 }, ['e2e4']),
+      result(2, { type: 'cp', value: 0 }, []),
+    ];
+    const generator = new PuzzleGenerator();
+
+    const generated = await generator.generate({ fen: TEST_FEN, analysis });
+
+    assert.deepEqual(generated, {
+      kind: 'insufficient',
+      fen: TEST_FEN,
+      reason: 'missing_comparison_move',
+      bestMove: 'e2e4',
+      comparisonMove: null,
+    });
+  });
+
+  test('duplicate best and comparison moves cannot establish uniqueness', async () => {
+    const analysis: EngineResult[] = [
+      result(1, { type: 'cp', value: 500 }, ['e2e4', 'e7e5']),
+      result(2, { type: 'cp', value: 0 }, ['e2e4', 'c7c5']),
+    ];
+
+    const generated = await new PuzzleGenerator().generate({ fen: TEST_FEN, analysis });
+
+    assert.equal(generated.kind, 'insufficient');
+    assert.equal(generated.reason, 'duplicate_moves');
+  });
+
+  test('non-finite engine scores are explicit insufficient evidence', async () => {
+    const analysis: EngineResult[] = [
+      result(1, { type: 'cp', value: Number.NaN }, ['e2e4']),
+      result(2, { type: 'cp', value: 0 }, ['d2d4']),
+    ];
+    const generator = new PuzzleGenerator();
+
+    const generated = await generator.generate({ fen: TEST_FEN, analysis });
+
+    assert.equal(generated.kind, 'insufficient');
+    assert.equal(generated.reason, 'non_finite_evaluation');
+    assert.doesNotMatch(JSON.stringify(generated), /Infinity|NaN|\(none\)/);
+  });
+
+  test('finite scores whose subtraction overflows cannot escape as infinite evidence', async () => {
+    const analysis: EngineResult[] = [
+      result(1, { type: 'cp', value: Number.MAX_VALUE }, ['e2e4']),
+      result(2, { type: 'cp', value: -Number.MAX_VALUE }, ['d2d4']),
+    ];
+
+    const generated = await new PuzzleGenerator().generate({ fen: TEST_FEN, analysis });
+
+    assert.equal(generated.kind, 'insufficient');
+    assert.doesNotMatch(JSON.stringify(generated), /Infinity|NaN|\(none\)/);
+  });
+
+  test('evalGapCp returns null when finite operands overflow during subtraction', () => {
+    assert.equal(
+      evalGapCp(
+        { type: 'cp', value: Number.MAX_VALUE },
+        { type: 'cp', value: -Number.MAX_VALUE },
+      ),
+      null,
+    );
+  });
+
+  test('an invalid move later in the solution line is insufficient and never serialized', async () => {
+    const analysis: EngineResult[] = [
+      result(1, { type: 'cp', value: 500 }, ['e2e4', '(none)']),
+      result(2, { type: 'cp', value: 0 }, ['d2d4']),
+    ];
+
+    const generated = await new PuzzleGenerator().generate({ fen: TEST_FEN, analysis });
+
+    assert.equal(generated.kind, 'insufficient');
+    assert.equal(generated.reason, 'invalid_solution_line');
+    assert.doesNotMatch(JSON.stringify(generated), /\(none\)/);
+  });
+
+  test('a zero-depth comparison line is incomplete evidence', async () => {
+    const analysis: EngineResult[] = [
+      result(1, { type: 'cp', value: 500 }, ['e2e4']),
+      { ...result(2, { type: 'cp', value: 0 }, ['d2d4']), depth: 0 },
+    ];
+
+    const generated = await new PuzzleGenerator().generate({ fen: TEST_FEN, analysis });
+
+    assert.equal(generated.kind, 'insufficient');
+    assert.equal(generated.reason, 'incomplete_depth');
+  });
+
+  test('a bounded score is insufficient evidence', async () => {
+    const analysis: EngineResult[] = [
+      { ...result(1, { type: 'cp', value: 500 }, ['e2e4']), evaluationBound: 'lowerbound' },
+      result(2, { type: 'cp', value: 0 }, ['d2d4']),
+      result(3, { type: 'cp', value: -50 }, ['g1f3']),
+    ];
+
+    const generated = await new PuzzleGenerator().generate({ fen: TEST_FEN, analysis });
+
+    assert.equal(generated.kind, 'insufficient');
+    assert.equal(generated.reason, 'bounded_evaluation');
+  });
+
+  test('mismatched MultiPV depths are insufficient evidence', async () => {
+    const analysis: EngineResult[] = [
+      result(1, { type: 'cp', value: 500 }, ['e2e4']),
+      { ...result(2, { type: 'cp', value: 0 }, ['d2d4']), depth: 19 },
+      result(3, { type: 'cp', value: -50 }, ['g1f3']),
+    ];
+
+    const generated = await new PuzzleGenerator().generate({ fen: TEST_FEN, analysis });
+
+    assert.equal(generated.kind, 'insufficient');
+    assert.equal(generated.reason, 'mismatched_depth');
+  });
+
+  test('missing requested MultiPV rank is insufficient evidence', async () => {
+    const analysis: EngineResult[] = [
+      result(1, { type: 'cp', value: 500 }, ['e2e4']),
+      result(2, { type: 'cp', value: 0 }, ['d2d4']),
+    ];
+
+    const generated = await new PuzzleGenerator().generate({ fen: TEST_FEN, analysis, multiPv: 3 });
+
+    assert.equal(generated.kind, 'insufficient');
+    assert.equal(generated.reason, 'incomplete_multipv');
+  });
+
+  test('duplicate requested MultiPV ranks are insufficient evidence', async () => {
+    const analysis: EngineResult[] = [
+      result(1, { type: 'cp', value: 500 }, ['e2e4']),
+      result(2, { type: 'cp', value: 0 }, ['d2d4']),
+      result(2, { type: 'cp', value: -50 }, ['g1f3']),
+    ];
+
+    const generated = await new PuzzleGenerator().generate({ fen: TEST_FEN, analysis, multiPv: 3 });
+
+    assert.equal(generated.kind, 'insufficient');
+    assert.equal(generated.reason, 'incomplete_multipv');
+  });
+
+  test('a requested MultiPV line below the required depth is incomplete evidence', async () => {
+    const analysis: EngineResult[] = [
+      { ...result(1, { type: 'cp', value: 500 }, ['e2e4']), depth: 15 },
+      { ...result(2, { type: 'cp', value: 0 }, ['d2d4']), depth: 15 },
+      { ...result(3, { type: 'cp', value: -50 }, ['g1f3']), depth: 15 },
+    ];
+
+    const generated = await new PuzzleGenerator().generate({
+      fen: TEST_FEN,
+      analysis,
+      limits: { depth: 16 },
+      multiPv: 3,
+    });
+
+    assert.equal(generated.kind, 'insufficient');
+    assert.equal(generated.reason, 'incomplete_depth');
+  });
+
+  test('a non-finite caller threshold falls back to the safe default', async () => {
+    const analysis: EngineResult[] = [
+      result(1, { type: 'cp', value: 500 }, ['e2e4']),
+      result(2, { type: 'cp', value: 0 }, ['d2d4']),
+    ];
+    const generator = new PuzzleGenerator({ defaultSharpnessThreshold: Number.POSITIVE_INFINITY });
+
+    const generated = await generator.generate({
+      fen: TEST_FEN,
+      analysis,
+      sharpnessThreshold: Number.NaN,
+    });
+
+    assert.equal(generated.kind, 'puzzle');
+    assert.doesNotMatch(JSON.stringify(generated), /Infinity|NaN|\(none\)/);
   });
 
   test('grounding is passed to the AI provider when supplied', async () => {
@@ -355,3 +606,20 @@ describe('PuzzleGenerator (hermetic)', () => {
     assert.equal(call.grounding!.evalCp, 350);
   });
 });
+
+function result(
+  multipv: number,
+  evaluation: EngineResult['evaluation'],
+  principalVariation: readonly string[],
+): EngineResult {
+  return {
+    multipv,
+    evaluation,
+    principalVariation,
+    depth: 20,
+    selDepth: 20,
+    nodes: 1,
+    nps: 1,
+    timeMs: 1,
+  };
+}

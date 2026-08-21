@@ -96,6 +96,7 @@ function infoToResult(info: ParsedInfoLine, fallbackTimeMs: number): EngineResul
   return {
     multipv: info.multipv ?? 1,
     evaluation,
+    ...(info.scoreBound !== undefined ? { evaluationBound: info.scoreBound } : {}),
     principalVariation: info.pv ?? [],
     depth: info.depth ?? 0,
     ...(info.selDepth !== undefined ? { selDepth: info.selDepth } : {}),
@@ -253,14 +254,25 @@ export class UciEngineInstance implements EngineInstance {
 
     this.state = 'busy';
     try {
+      // Always pin MultiPV for this search so a prior multi-line search cannot leak
+      // extra lines into a later single-line request (stale-option bug). Validate it before sending
+      // any variant or strength setup: a rejected request must not leave unacknowledged `setoption`
+      // commands on a worker that `finally` returns to the ready pool.
+      const multiPvSpec = this.capabilitiesValue?.options.get('MultiPV');
+      if (params.multiPv > 1 && !this.capabilitiesValue?.supportsMultiPv) {
+        throw new EngineError('protocol', `Engine ${this.id} cannot honor MultiPV ${params.multiPv}.`);
+      }
+      const appliedMultiPv = this.capabilitiesValue?.supportsMultiPv
+        ? clampToSpec(Math.max(1, params.multiPv), multiPvSpec)
+        : params.multiPv;
+      if (appliedMultiPv !== params.multiPv) {
+        throw new EngineError('protocol', `Engine ${this.id} cannot honor MultiPV ${params.multiPv}.`);
+      }
+
       const setup = [...extraSetup, ...(params.setup ?? [])];
       let applied = this.applyOptions(setup);
-
-      // Always pin MultiPV for this search so a prior multi-line search cannot leak
-      // extra lines into a later single-line request (stale-option bug).
       if (this.capabilitiesValue?.supportsMultiPv) {
-        const multiPv = clampToSpec(Math.max(1, params.multiPv), this.capabilitiesValue.options.get('MultiPV'));
-        this.transport.send(buildSetOption('MultiPV', multiPv));
+        this.transport.send(buildSetOption('MultiPV', appliedMultiPv));
         applied = true;
       }
 

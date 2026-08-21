@@ -30,11 +30,13 @@ test('GET /v1/capabilities returns capability flags for all subsystems when pres
         analysis: true,
         moveExplanation: false,
         mistakePrediction: false,
+        puzzleGeneration: false,
       },
       // The stub provider has no opinion about engine binaries, so the service permits every
       // variant — the documented default for a double. A real deployment narrows this to whatever
       // it has a configured engine for.
       analysisVariants: [...VARIANTS],
+      puzzleVariants: [],
     });
   } finally {
     await h.close();

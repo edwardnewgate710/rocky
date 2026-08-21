@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { startHarness } from './helpers';
-import { joinRequestView, learnerStepView, teamView, teamDetailView, attemptResultView, capabilitiesView, sessionView, moveExplanationView } from '../src/presenters';
+import { joinRequestView, learnerStepView, teamView, teamDetailView, attemptResultView, capabilitiesView, sessionView, moveExplanationView, puzzleGenerationView } from '../src/presenters';
 import type { JoinRequest, Team } from '@chess-platform/community';
 import type { AttemptResult, LessonStep } from '@chess-platform/learning';
 import type { JsonSchema } from '../src/openapi/types';
@@ -480,6 +480,53 @@ test('MoveExplanationResponse: the served schema describes exactly what the pres
     const citationKeys = Object.keys(view.citation).sort();
     assert.deepEqual(citationKeys, Object.keys(citationSchema.properties).sort());
     assert.deepEqual(citationKeys, [...citationSchema.required].sort());
+  } finally {
+    await h.close();
+  }
+});
+
+test('PuzzleGenerationResponse: every result branch matches its served schema', async () => {
+  const h = await startHarness();
+  try {
+    const schema = (h.server.openapiDocument() as any).components.schemas.PuzzleGenerationResponse;
+    const fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+    const common = {
+      fen,
+      variant: 'standard' as const,
+      evidence: { kind: 'centipawn_gap' as const, gapCp: 270 },
+      bestMove: 'e2e4',
+      comparisonMove: 'd2d4',
+      bestEvaluation: { type: 'cp' as const, value: 350 },
+      comparisonEvaluation: { type: 'cp' as const, value: 80 },
+      depth: 16,
+    };
+    const views = [
+      puzzleGenerationView({
+        kind: 'puzzle',
+        ...common,
+        solutionMove: 'e2e4',
+        solutionLine: ['e2e4', 'e7e5'],
+        difficulty: 'easy',
+      }),
+      puzzleGenerationView({ kind: 'no_tactic', ...common }),
+      puzzleGenerationView({
+        kind: 'insufficient',
+        fen,
+        variant: 'standard',
+        reason: 'not_enough_lines',
+        bestMove: 'e2e4',
+        comparisonMove: null,
+      }),
+    ];
+
+    for (const view of views) {
+      const branch = schema.oneOf.find(
+        (candidate: any) => candidate.properties?.kind?.enum?.[0] === view.kind,
+      );
+      assert.ok(branch, `no PuzzleGenerationResponse branch for kind '${view.kind}'`);
+      assert.deepEqual(Object.keys(view).sort(), [...branch.required].sort());
+      assert.deepEqual(Object.keys(view).sort(), Object.keys(branch.properties).filter((key) => key !== 'terminal').sort());
+    }
   } finally {
     await h.close();
   }

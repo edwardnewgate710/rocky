@@ -4,7 +4,30 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-20 — M15 Increment 12: production runs the engine version CI actually tests._
+_Last updated: 2026-08-21 — M15 Increment 17: Puzzle Generator is production-wired._
+
+## M15 Increment 17 — Puzzle Generator Productionization (ADR-0125)
+
+The M8 `PuzzleGenerator` was library-complete but had no production importer, API, capability or
+UI. It now runs through `POST /v1/analysis/puzzle` and the game sidebar's **Find tactic** action.
+
+Production composition reuses the API-owned `AnalysisService` and engine pool. Each accepted
+request makes exactly one fixed MultiPV-3 analysis call (at most one pool acquisition; a shared
+cache hit can avoid fresh engine work), with depth 16 and a 1,000 ms wall-clock bound, and no AI
+provider call. The client can send only FEN and variant; the 200 cp uniqueness rule and mate policy
+are server-owned. A separate 20/user/minute and 40/IP/minute bucket is charged only after cheap
+validation, variant support and terminal checks pass.
+
+The response is a JSON-safe `puzzle | no_tactic | insufficient` union. Finite centipawn gaps and
+mate relations are tagged separately; absent/invalid moves are `null`; partial engine output is
+insufficient rather than being called quiet. No `Infinity`, `NaN` or `"(none)"` reaches JSON.
+`puzzleGeneration` plus `puzzleVariants` makes availability agree with the configured engine set
+and stays off when deployment ceilings cannot honor the fixed evidence policy.
+
+The sidebar coalesces repeat clicks, does not retry the engine POST, and binds a result to exact
+variant + FEN. Position changes abort and invalidate it; disposal suppresses stale completion and
+remount clears persistent DOM state. Puzzle libraries, ratings, sharing, spaced repetition,
+user-created puzzles, LLM hints/themes, voice, Chess960 and new engines remain deferred.
 
 ## M15 Increment 12 — Pinned Stockfish 16 in Production Images (ADR-0121, amended)
 

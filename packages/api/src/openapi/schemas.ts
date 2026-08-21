@@ -231,7 +231,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
 
   Capabilities: {
     type: 'object',
-    required: ['capabilities', 'analysisVariants'],
+    required: ['capabilities', 'analysisVariants', 'puzzleVariants'],
     properties: {
       // The `analysis` flag is deployment-wide, but only engines with a configured binary are
       // registered (ADR-0113), so a deployment can report `analysis: true` while serving a subset of
@@ -241,9 +241,13 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
         type: 'array',
         items: { type: 'string', enum: [...VARIANTS] },
       },
+      puzzleVariants: {
+        type: 'array',
+        items: { type: 'string', enum: [...VARIANTS] },
+      },
       capabilities: {
         type: 'object',
-        required: ['learning', 'studies', 'achievements', 'search', 'social', 'messaging', 'community', 'analysis', 'moveExplanation', 'mistakePrediction'],
+        required: ['learning', 'studies', 'achievements', 'search', 'social', 'messaging', 'community', 'analysis', 'moveExplanation', 'mistakePrediction', 'puzzleGeneration'],
         properties: {
           learning: { type: 'boolean' },
           studies: { type: 'boolean' },
@@ -255,6 +259,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
           analysis: { type: 'boolean' },
           moveExplanation: { type: 'boolean' },
           mistakePrediction: { type: 'boolean' },
+          puzzleGeneration: { type: 'boolean' },
         },
         additionalProperties: false,
       },
@@ -1713,6 +1718,111 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       model: { type: 'string' },
     },
     additionalProperties: false,
+  },
+
+  // --- Puzzle Generation (ADR-0125) ---
+  PuzzleGenerationRequest: {
+    type: 'object',
+    required: ['fen', 'variant'],
+    properties: {
+      fen: { type: 'string', minLength: 1, maxLength: 200 },
+      variant: { type: 'string', enum: [...VARIANTS] },
+    },
+    additionalProperties: false,
+  },
+
+  PuzzleEvidence: {
+    oneOf: [
+      {
+        type: 'object',
+        required: ['kind', 'gapCp'],
+        properties: {
+          kind: { type: 'string', enum: ['centipawn_gap'] },
+          gapCp: { type: 'number' },
+        },
+        additionalProperties: false,
+      },
+      {
+        type: 'object',
+        required: ['kind', 'relation', 'distanceGap'],
+        properties: {
+          kind: { type: 'string', enum: ['mate'] },
+          relation: {
+            type: 'string',
+            enum: ['forces_mate', 'avoids_mate', 'faster_mate', 'delays_mate'],
+          },
+          distanceGap: nullableInt,
+        },
+        additionalProperties: false,
+      },
+    ],
+  },
+
+  PuzzleEvaluation: {
+    type: 'object',
+    required: ['type', 'value'],
+    properties: {
+      type: { type: 'string', enum: ['cp', 'mate'] },
+      value: { type: 'number' },
+    },
+    additionalProperties: false,
+  },
+
+  PuzzleGenerationResponse: {
+    oneOf: [
+      {
+        type: 'object',
+        required: ['kind', 'fen', 'variant', 'evidence', 'bestMove', 'comparisonMove', 'bestEvaluation', 'comparisonEvaluation', 'depth', 'solutionMove', 'solutionLine', 'difficulty'],
+        properties: {
+          kind: { type: 'string', enum: ['puzzle'] },
+          fen: { type: 'string' },
+          variant: { type: 'string', enum: [...VARIANTS] },
+          evidence: { $ref: '#/components/schemas/PuzzleEvidence' },
+          bestMove: { type: 'string' },
+          comparisonMove: { type: 'string' },
+          bestEvaluation: { $ref: '#/components/schemas/PuzzleEvaluation' },
+          comparisonEvaluation: { $ref: '#/components/schemas/PuzzleEvaluation' },
+          depth: { type: 'integer' },
+          solutionMove: { type: 'string' },
+          solutionLine: { type: 'array', items: { type: 'string' } },
+          difficulty: { type: 'string', enum: ['easy', 'medium', 'hard', 'brilliant'] },
+        },
+        additionalProperties: false,
+      },
+      {
+        type: 'object',
+        required: ['kind', 'fen', 'variant', 'evidence', 'bestMove', 'comparisonMove', 'bestEvaluation', 'comparisonEvaluation', 'depth'],
+        properties: {
+          kind: { type: 'string', enum: ['no_tactic'] },
+          fen: { type: 'string' },
+          variant: { type: 'string', enum: [...VARIANTS] },
+          evidence: { $ref: '#/components/schemas/PuzzleEvidence' },
+          bestMove: { type: 'string' },
+          comparisonMove: { type: 'string' },
+          bestEvaluation: { $ref: '#/components/schemas/PuzzleEvaluation' },
+          comparisonEvaluation: { $ref: '#/components/schemas/PuzzleEvaluation' },
+          depth: { type: 'integer' },
+        },
+        additionalProperties: false,
+      },
+      {
+        type: 'object',
+        required: ['kind', 'fen', 'variant', 'reason', 'bestMove', 'comparisonMove'],
+        properties: {
+          kind: { type: 'string', enum: ['insufficient'] },
+          fen: { type: 'string' },
+          variant: { type: 'string', enum: [...VARIANTS] },
+          reason: {
+            type: 'string',
+            enum: ['not_enough_lines', 'missing_best_line', 'missing_comparison_line', 'missing_best_move', 'missing_comparison_move', 'invalid_best_move', 'invalid_comparison_move', 'invalid_solution_line', 'duplicate_moves', 'bounded_evaluation', 'non_finite_evaluation', 'non_finite_depth', 'incomplete_depth', 'mismatched_depth', 'incomplete_multipv', 'unordered_lines', 'terminal_position'],
+          },
+          bestMove: nullableString,
+          comparisonMove: nullableString,
+          terminal: terminalOutcomeSchema,
+        },
+        additionalProperties: false,
+      },
+    ],
   },
 
   // --- Mistake Prediction (ADR-0118) ---

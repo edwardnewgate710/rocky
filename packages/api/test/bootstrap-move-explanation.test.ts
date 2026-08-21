@@ -32,6 +32,9 @@ function withEnv<T>(overrides: Record<string, string | undefined>, run: () => T)
     AI_ANTHROPIC_API_KEY: undefined,
     STOCKFISH_PATH: undefined,
     FAIRY_STOCKFISH_PATH: undefined,
+    ANALYSIS_MAX_DEPTH: undefined,
+    ANALYSIS_MAX_TIME_MS: undefined,
+    ANALYSIS_MAX_MULTIPV: undefined,
     ...overrides,
   };
   const saveKeys = new Set([...Object.keys(applied)]);
@@ -90,6 +93,33 @@ test('createPgDependencies: leaves deps.moveExplanation undefined when no AI pro
       undefined,
       'no provider means the capability reports off, never a default vendor chosen on our behalf',
     );
+  });
+});
+
+test('createPgDependencies composes puzzle generation exactly when analysis is configured', () => {
+  const pool = new Pool();
+  withEnv({ STOCKFISH_PATH: ENGINE }, () => {
+    const { deps } = createPgDependencies({ pool });
+    assert.ok(deps.analysis !== undefined);
+    assert.ok(deps.puzzleGeneration !== undefined);
+    assert.equal(capabilitiesView(deps).capabilities.puzzleGeneration, true);
+  });
+  withEnv({}, () => {
+    const { deps } = createPgDependencies({ pool });
+    assert.equal(deps.analysis, undefined);
+    assert.equal(deps.puzzleGeneration, undefined);
+    assert.deepEqual(capabilitiesView(deps).puzzleVariants, []);
+  });
+});
+
+test('createPgDependencies does not advertise puzzle generation below its fixed analysis policy', () => {
+  const pool = new Pool();
+  withEnv({ STOCKFISH_PATH: ENGINE, ANALYSIS_MAX_MULTIPV: '2' }, () => {
+    const { deps } = createPgDependencies({ pool });
+    assert.ok(deps.analysis !== undefined, 'generic analysis remains available at MultiPV 2');
+    assert.equal(deps.puzzleGeneration, undefined);
+    assert.equal(capabilitiesView(deps).capabilities.puzzleGeneration, false);
+    assert.deepEqual(capabilitiesView(deps).puzzleVariants, []);
   });
 });
 

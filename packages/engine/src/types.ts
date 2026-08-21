@@ -27,6 +27,7 @@ export interface AnalysisLimits {
 }
 
 export type EvaluationKind = 'cp' | 'mate';
+export type EvaluationBound = 'lowerbound' | 'upperbound';
 
 /**
  * An evaluation from the perspective of the side to move.
@@ -45,6 +46,8 @@ export interface Evaluation {
 export interface EngineResult {
   readonly multipv: number;
   readonly evaluation: Evaluation;
+  /** Present when UCI reports an aspiration-search bound rather than an exact score. */
+  readonly evaluationBound?: EvaluationBound;
   readonly principalVariation: readonly string[];
   readonly depth: number;
   readonly selDepth?: number;

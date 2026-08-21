@@ -47,6 +47,22 @@ test('analyze parses info into a structured result', async () => {
   assert.equal(instance.jobsCompleted, 1);
 });
 
+test('analyze preserves score bounds in structured results', async () => {
+  const clock = new ManualClock();
+  const transport = new FakeEngineTransport({
+    go: () => ({
+      info: ['info depth 18 score cp 42 lowerbound nodes 100000 nps 800000 time 120 pv e2e4'],
+      bestmove: 'e2e4',
+    }),
+  });
+  const instance = newInstance(transport, clock);
+  await instance.init();
+
+  const [best] = await instance.analyze({ fen: START_FEN, limits: { depth: 18 }, multiPv: 1 });
+
+  assert.equal(best.evaluationBound, 'lowerbound');
+});
+
 test('multiPv returns lines ordered best-first', async () => {
   const clock = new ManualClock();
   const transport = new FakeEngineTransport({
@@ -64,6 +80,26 @@ test('multiPv returns lines ordered best-first', async () => {
   assert.equal(results.length, 2);
   assert.equal(results[0].multipv, 1);
   assert.equal(results[1].multipv, 2);
+});
+
+test('analysis rejects a MultiPV count the discovered engine cannot honor', async () => {
+  const clock = new ManualClock();
+  const transport = new FakeEngineTransport({
+    optionLines: ['option name MultiPV type spin default 1 min 1 max 2'],
+  });
+  const instance = newInstance(transport, clock);
+  await instance.init();
+  const commandsAfterInit = [...transport.sent];
+
+  await assert.rejects(
+    instance.analyze({ fen: START_FEN, limits: { depth: 12 }, multiPv: 3 }),
+    (error: unknown) => error instanceof Error && /MultiPV/.test(error.message),
+  );
+  assert.deepEqual(
+    transport.sent,
+    commandsAfterInit,
+    'a rejected search must not send setup commands to a worker returned to the pool',
+  );
 });
 
 test('play returns the chosen move and ponder', async () => {

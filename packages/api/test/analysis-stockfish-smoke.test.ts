@@ -37,16 +37,17 @@ test('real Stockfish: the production composition analyses the opening position',
       fen: START_FEN,
       variant: 'standard',
       movetimeMs: 1_000,
-      multiPv: 2,
+      multiPv: 3,
     });
 
     assert.equal(outcome.fen, START_FEN);
     assert.equal(outcome.variant, 'standard');
 
-    // Two lines were asked for and the position has far more than two legal moves, so a build with
-    // MultiPV support must return two. Asserting `>= 1` instead would pass on an engine that
+    // Three lines were asked for and the position has far more than three legal moves, so a build
+    // satisfying Puzzle Generation's cold-start guarantee must return all three. Asserting `>= 1`
+    // instead would pass on an engine that
     // silently ignored the option.
-    assert.equal(outcome.lines.length, 2, 'multiPv: 2 must yield two distinct lines');
+    assert.equal(outcome.lines.length, 3, 'multiPv: 3 must yield three distinct lines');
 
     for (const line of outcome.lines) {
       assert.ok(line.depth > 0, 'a real search reports a depth');
@@ -54,6 +55,11 @@ test('real Stockfish: the production composition analyses the opening position',
       assert.ok(['cp', 'mate'].includes(line.evaluation.type));
       assert.ok(Number.isFinite(line.evaluation.value));
     }
+    assert.equal(
+      new Set(outcome.lines.map((line) => line.principalVariation[0])).size,
+      3,
+      'MultiPV 3 must produce three different candidate moves',
+    );
 
     // The opening position is close to equal and certainly not a forced mate. This is deliberately
     // loose — it is here to catch a parser returning garbage or a mis-signed score, not to pin an
