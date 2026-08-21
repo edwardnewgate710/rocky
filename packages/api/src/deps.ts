@@ -126,6 +126,12 @@ export interface ApiDependencies {
    */
   readonly openingExploration?: import('./openings/opening-exploration-service').OpeningExplorationService;
   /**
+   * Optional endgame training (ADR-0128). When absent, `POST /v1/endgames/*` responds 503.
+   * Composed whenever the analysis subsystem is available and can satisfy the fixed limits policy
+   * and the bundled database is not empty.
+   */
+  readonly endgameTraining?: import('./endgames/endgame-training-service').EndgameTrainingService;
+  /**
    * Optional GraphQL read layer (M10 inc 8). When absent, `POST /v1/graphql` responds 503.
    *
    * The subsystem repositories it resolves against are the optional ones above — it adds no data

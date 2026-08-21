@@ -32,6 +32,7 @@ export const DISPOSABLE_TEARDOWN_MAP: Record<DisposableKey, true> = {
   teams: true,
   forum: true,
   learning: true,
+  endgames: true,
   studies: true,
   passkeys: true,
   passwordReset: true,

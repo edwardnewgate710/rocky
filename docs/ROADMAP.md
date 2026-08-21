@@ -421,6 +421,27 @@ Mistake Predictor, increment 3) for the solution and move evaluation.
     flip), short note added.
   - ROADMAP updated; M8 remains 🚧.
 
+**Productionized in M15 Increment 20 (ADR-0128).** `POST /v1/endgames/next` and
+`POST /v1/endgames/attempt`, with a dedicated `/endgames` route. The engine is load-bearing here,
+unlike the Opening Explorer's, so this borrows the API-owned `AnalysisService` the way the Puzzle
+Generator does and adds no pool; it is stateless, so no table and no migration; and no AI provider
+is composed, so the coaching narrative stays off the wire. **The learner is not handed the answer:**
+`TrainingPosition` carries a full solution, and serving it beside the exercise would put the answer
+in the response that asks the question — the defect ADR-0095 fixed for lesson steps. `/next`
+publishes the position and the objective only and makes no engine call at all, so
+`EndgameTrainer.nextPosition` is deliberately unused. The authored `goal.distance` never leaves the
+dataset either, for the ADR-0127 reason. Three library hazards are contained rather than inherited:
+`legacyCpLoss` returns `Infinity` (hence a tagged `loss` union), the `'(none)'` sentinel never
+reaches JSON, and `random()` silently ignores its filter when nothing matches, so selection filters
+the catalogue itself and refuses instead of serving an endgame nobody asked for. The one that
+mattered most was not foreseen: a move that ends the game leaves `AnalysisService` with empty
+`lines` and a `terminal`, so checking only `lines.length` reported the engine as unavailable at the
+exact moment a learner stalemated the opponent — the classic K+Q blunder this trainer exists to
+teach. The attempt outcome is therefore a `judged | terminal` union, because a decided position is
+a result rather than a score (ADR-0116). The UI is its own route, not a sidebar section: every
+sidebar section is about the position already on the board, and that board belongs to the live game.
+Coach, Study Partner and Voice Coach remain deferred; Coach is unblocked by this increment.
+
 ### Increment 6: Coach ✅
 
 `Coach` — a composition layer that orchestrates the five existing feature

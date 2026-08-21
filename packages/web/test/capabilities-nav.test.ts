@@ -40,6 +40,7 @@ class FakeDocument {
 test('NAV_CAPABILITY_MAP maps every optional nav route to a capability key', () => {
   assert.deepEqual(NAV_CAPABILITY_MAP, {
     courses: 'learning',
+    endgames: 'endgameTrainer',
     studies: 'studies',
     teams: 'community',
     messages: 'messaging',

@@ -34,6 +34,7 @@ test('GET /v1/capabilities returns capability flags for all subsystems when pres
         // True with no engine configured at all — the only feature flag of which that is so,
         // because the answer is a bundled table lookup rather than a search (ADR-0127).
         openingExplorer: true,
+        endgameTrainer: true,
       },
       // The stub provider has no opinion about engine binaries, so the service permits every
       // variant — the documented default for a double. A real deployment narrows this to whatever

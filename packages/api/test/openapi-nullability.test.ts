@@ -174,7 +174,7 @@ test('every nullable schema in the document is well-formed, and there are 55 of 
     };
     walk(doc, '$');
 
-    assert.equal(nullables.length, 55, `nullable field count changed: ${nullables.length}`);
+    assert.equal(nullables.length, 58, `nullable field count changed: ${nullables.length}`);
 
     for (const { path, schema } of nullables) {
       const types = schema.type as readonly string[];

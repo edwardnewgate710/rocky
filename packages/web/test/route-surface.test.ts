@@ -6,6 +6,7 @@ import type { Route } from '../src/app/router.js';
 const SURFACE_IDS = [
   'lobby',
   'game-main',
+  'endgames',
   'profile',
   'leaderboard',
   'tournaments',
@@ -50,6 +51,7 @@ const ROUTE_CASES: Readonly<Record<Route['name'], RouteCase>> = {
     activeSurfaceId: 'thread',
   },
   courses: { route: { name: 'courses' }, activeSurfaceId: 'courses' },
+  endgames: { route: { name: 'endgames' }, activeSurfaceId: 'endgames' },
   course: { route: { name: 'course', slug: 'openings' }, activeSurfaceId: 'course' },
   lesson: { route: { name: 'lesson', id: 'l1' }, activeSurfaceId: 'lesson' },
   studies: { route: { name: 'studies' }, activeSurfaceId: 'studies' },

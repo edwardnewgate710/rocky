@@ -928,6 +928,8 @@ export interface CapabilitiesFlags {
    * without the server saying so.
    */
   readonly openingExplorer: boolean;
+  /** Curated endgame training positions and attempt evaluation (ADR-0128). */
+  readonly endgameTrainer: boolean;
 }
 
 /**
@@ -978,6 +980,7 @@ export function capabilitiesView(
     | 'mistakePrediction'
     | 'puzzleGeneration'
     | 'openingExploration'
+    | 'endgameTraining'
   >,
 ): CapabilitiesView {
   const puzzleVariants = deps.puzzleGeneration
@@ -997,6 +1000,7 @@ export function capabilitiesView(
       mistakePrediction: deps.mistakePrediction !== undefined,
       puzzleGeneration: puzzleVariants.length > 0,
       openingExplorer: deps.openingExploration !== undefined,
+      endgameTrainer: deps.endgameTraining !== undefined,
     },
     analysisVariants: deps.analysis
       ? VARIANTS.filter((variant) => deps.analysis?.supportsVariant(variant) === true)
@@ -1075,6 +1079,127 @@ export function puzzleGenerationView(
     solutionMove: outcome.solutionMove,
     solutionLine: [...outcome.solutionLine],
     difficulty: outcome.difficulty,
+  };
+}
+
+export interface EndgameLossViewCentipawns {
+  readonly kind: 'centipawns';
+  readonly value: number;
+}
+
+export interface EndgameLossViewDecisive {
+  readonly kind: 'decisive';
+}
+
+export type EndgameLossView = EndgameLossViewCentipawns | EndgameLossViewDecisive;
+
+export interface EndgameNextView {
+  readonly id: string;
+  readonly type: import('@chess-platform/ai-features').EndgameType;
+  readonly name: string;
+  readonly fen: string;
+  readonly sideToMove: 'w' | 'b';
+  readonly objective: 'mate' | 'win' | 'draw';
+  readonly difficulty: import('@chess-platform/ai-features').EndgameDifficulty;
+  readonly technique: string | null;
+}
+
+/**
+ * The training position as the learner may see it.
+ *
+ * @param outcome - the service's already-projected position.
+ * @returns the response body. Deliberately carries no solution, no evaluation and no authored mate
+ * distance: the service withheld them, and this restates the field list where a reviewer can read
+ * it against the schema (ADR-0128).
+ */
+export function endgameNextView(
+  outcome: import('./endgames/endgame-training-service.js').EndgameNextOutcome,
+): EndgameNextView {
+  return {
+    id: outcome.id,
+    type: outcome.type,
+    name: outcome.name,
+    fen: outcome.fen,
+    sideToMove: outcome.sideToMove,
+    objective: outcome.objective,
+    difficulty: outcome.difficulty,
+    technique: outcome.technique,
+  };
+}
+
+export interface EndgameEvaluationView {
+  readonly type: 'cp' | 'mate';
+  readonly value: number;
+}
+
+/** Common to both branches, so a client can render the verdict before discriminating. */
+interface EndgameAttemptCommonView {
+  readonly id: string;
+  readonly move: string;
+  readonly fenAfter: string;
+  readonly classification: 'optimal' | 'acceptable' | 'throws_result';
+  readonly goalPreserved: boolean;
+}
+
+export interface EndgameJudgedView extends EndgameAttemptCommonView {
+  readonly kind: 'judged';
+  readonly evalBefore: EndgameEvaluationView;
+  readonly evalAfter: EndgameEvaluationView;
+  readonly loss: EndgameLossView;
+  readonly betterMove: string | null;
+  readonly bestLine: readonly string[];
+  readonly depth: number;
+  readonly mateDistanceAfter: number | null;
+}
+
+/**
+ * The move ended the game, so there is no evaluation and no better move to offer — the position has
+ * a result instead of a score (ADR-0116). A separate branch rather than nulled-out fields, so a
+ * client cannot render a decided game as an evaluation of 0.00.
+ */
+export interface EndgameTerminalView extends EndgameAttemptCommonView {
+  readonly kind: 'terminal';
+  readonly terminal: { readonly reason: string; readonly result: string };
+}
+
+export type EndgameAttemptView = EndgameJudgedView | EndgameTerminalView;
+
+/**
+ * The verdict on a learner's move.
+ *
+ * @param outcome - the service's judgement, already JSON-safe.
+ * @returns the response body, discriminated on `kind`: a move that ended the game carries a result
+ * and no evaluation, because a decided position has no score to report (ADR-0116).
+ */
+export function endgameAttemptView(
+  outcome: import('./endgames/endgame-training-service.js').EndgameAttemptOutcome,
+): EndgameAttemptView {
+  const common = {
+    id: outcome.id,
+    move: outcome.move,
+    fenAfter: outcome.fenAfter,
+    classification: outcome.classification,
+    goalPreserved: outcome.goalPreserved,
+  };
+  if (outcome.kind === 'terminal') {
+    return { kind: 'terminal', ...common, terminal: outcome.terminal };
+  }
+  return {
+    kind: 'judged',
+    ...common,
+    evalBefore: {
+      type: outcome.evalBefore.type,
+      value: outcome.evalBefore.value,
+    },
+    evalAfter: {
+      type: outcome.evalAfter.type,
+      value: outcome.evalAfter.value,
+    },
+    loss: outcome.loss,
+    betterMove: outcome.betterMove,
+    bestLine: [...outcome.bestLine],
+    depth: outcome.depth,
+    mateDistanceAfter: outcome.mateDistanceAfter,
   };
 }
 

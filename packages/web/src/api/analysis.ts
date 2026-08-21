@@ -13,6 +13,10 @@ import type {
   PuzzleGenerationResponse,
   OpeningExplorationRequest,
   OpeningExplorationResponse,
+  EndgameNextRequest,
+  EndgamePosition,
+  EndgameAttemptRequest,
+  EndgameAttemptResult,
 } from './models.js';
 
 export class AnalysisApi {
@@ -127,6 +131,54 @@ export class AnalysisApi {
       method: 'POST',
       path: '/v1/analysis/puzzle',
       body: { fen: body.fen, variant: body.variant },
+      auth: true,
+      ...(signal !== undefined ? { signal } : {}),
+    });
+  }
+
+  /**
+   * Fetch the next endgame training position (M15 inc 20).
+   *
+   * POST /v1/endgames/next, auth: true.
+   *
+   * Sends only `type`, `difficulty`, and `id` when provided. Built field by field
+   * rather than spread — the server refuses unknown properties. No retry.
+   */
+  nextEndgame(
+    body: EndgameNextRequest = {},
+    signal?: AbortSignal,
+  ): Promise<EndgamePosition> {
+    return this.execute<EndgamePosition>({
+      method: 'POST',
+      path: '/v1/endgames/next',
+      body: {
+        ...(body.type !== undefined ? { type: body.type } : {}),
+        ...(body.difficulty !== undefined ? { difficulty: body.difficulty } : {}),
+        ...(body.id !== undefined ? { id: body.id } : {}),
+      },
+      auth: true,
+      ...(signal !== undefined ? { signal } : {}),
+    });
+  }
+
+  /**
+   * Submit an attempt for the current endgame position (M15 inc 20).
+   *
+   * POST /v1/endgames/attempt, auth: true.
+   *
+   * Sends only `id` and `move` field by field. No retry.
+   */
+  attemptEndgame(
+    body: EndgameAttemptRequest,
+    signal?: AbortSignal,
+  ): Promise<EndgameAttemptResult> {
+    return this.execute<EndgameAttemptResult>({
+      method: 'POST',
+      path: '/v1/endgames/attempt',
+      body: {
+        id: body.id,
+        move: body.move,
+      },
       auth: true,
       ...(signal !== undefined ? { signal } : {}),
     });

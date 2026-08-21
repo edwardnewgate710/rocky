@@ -4,7 +4,47 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-21 — M15 Increment 19: opening identification ships without the invented statistics._
+_Last updated: 2026-08-22 — M15 Increment 20: endgame training ships without handing over the answer._
+
+## M15 Increment 20 — Endgame Trainer Productionization (ADR-0128)
+
+The M8 `EndgameTrainer` was library-complete with no importer, API, capability or UI. It now runs
+through `POST /v1/endgames/next` and `POST /v1/endgames/attempt`, with a dedicated `/endgames`
+route in the web app.
+
+Its engine is load-bearing, unlike the Opening Explorer's, so this borrows the API-owned
+`AnalysisService` exactly as the Puzzle Generator does and adds no pool. It is stateless — no table,
+no migration — and no AI provider is composed, so the coaching narrative and everything that
+accompanies it stays off the wire.
+
+**The learner is not handed the answer.** `TrainingPosition` carries a full solution — best move,
+best line, evaluation, mate distance — and serving it beside the exercise would put the answer in
+the response that asks the question. That is the defect ADR-0095 fixed for lesson steps, in the same
+shape. `/next` publishes the position and the objective only and makes **no engine call at all**;
+the engine's figures are reachable exactly once, through `/attempt`, after the learner has moved.
+`EndgameTrainer.nextPosition` is deliberately unused for that reason.
+
+**No authored number is published as a measured one.** Each entry carries an authored goal, and for
+a mate an authored distance that nothing cross-checks against the engine. The wire carries the
+objective (`mate`/`win`/`draw`) and the engine's own `mateDistanceAfter`; the authored distance
+never leaves the dataset. Same decision as the opening statistics in ADR-0127.
+
+Server-owned policy: `/attempt` takes `{ id, move }` and looks the entry up itself, so a client can
+neither choose the position nor the goal it is graded against; standard chess only; fixed depth and
+time with MultiPV 1; a UCI shape check before any engine work; only `IllegalMoveError` becomes a
+422; an empty engine result answers 503 rather than throwing on `results[0]`; and one
+`endgameTraining` bucket at 20/user and 40/IP covers both routes, sized for the two searches an
+attempt costs.
+
+Two library traps are contained rather than inherited. `legacyCpLoss` returns `Infinity`, which
+`JSON.stringify` turns into an untyped `null`, so the wire carries
+`loss: {kind:'centipawns',value} | {kind:'decisive'}`. And `BundledEndgameDatabase.random` falls
+back to the first entry when a filter matches nothing, so the service filters the catalogue itself
+and answers 422 instead of serving an endgame nobody asked for.
+
+The UI is its own route rather than a game-sidebar section: every existing sidebar section is about
+the position already on the board, and the board there belongs to the live game. Coach, Study
+Partner and Voice Coach remain deferred; Coach is unblocked by this increment.
 
 ## M15 Increment 19 — Opening Explorer Productionization (ADR-0127)
 

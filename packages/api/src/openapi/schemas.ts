@@ -248,7 +248,21 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       },
       capabilities: {
         type: 'object',
-        required: ['learning', 'studies', 'achievements', 'search', 'social', 'messaging', 'community', 'analysis', 'moveExplanation', 'mistakePrediction', 'puzzleGeneration', 'openingExplorer'],
+        required: [
+          'learning',
+          'studies',
+          'achievements',
+          'search',
+          'social',
+          'messaging',
+          'community',
+          'analysis',
+          'moveExplanation',
+          'mistakePrediction',
+          'puzzleGeneration',
+          'openingExplorer',
+          'endgameTrainer',
+        ],
         properties: {
           learning: { type: 'boolean' },
           studies: { type: 'boolean' },
@@ -262,6 +276,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
           mistakePrediction: { type: 'boolean' },
           puzzleGeneration: { type: 'boolean' },
           openingExplorer: { type: 'boolean' },
+          endgameTrainer: { type: 'boolean' },
         },
         additionalProperties: false,
       },
@@ -1877,6 +1892,176 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       },
     },
     additionalProperties: false,
+  },
+
+  // --- Endgame Training (ADR-0128) ---
+  EndgameType: {
+    type: 'string',
+    enum: [
+      'KQ_vs_K',
+      'KR_vs_K',
+      'KP_vs_K',
+      'KBB_vs_K',
+      'KBN_vs_K',
+      'KNN_vs_K',
+      'KRB_vs_K',
+      'KQ_vs_KR',
+      'Lucena',
+      'Philidor',
+      'Opposition',
+      'KRP_vs_KR',
+      'KQP_vs_KQ',
+      'KPP_vs_K',
+      'KBP_vs_K',
+      'KNP_vs_K',
+    ],
+  },
+
+  EndgameDifficulty: {
+    type: 'string',
+    enum: ['beginner', 'intermediate', 'advanced'],
+  },
+
+  EndgameObjective: {
+    type: 'string',
+    enum: ['mate', 'win', 'draw'],
+  },
+
+  EndgameNextRequest: {
+    type: 'object',
+    properties: {
+      type: { $ref: '#/components/schemas/EndgameType' },
+      difficulty: { $ref: '#/components/schemas/EndgameDifficulty' },
+      id: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 64,
+        description:
+          'A specific catalogue entry. Mutually exclusive with the filters: a request carrying both '
+          + 'is refused, because the two express different intentions and silently honouring one '
+          + 'would hide the caller mistake that produced them.',
+      },
+    },
+    additionalProperties: false,
+  },
+
+  EndgameNextResponse: {
+    type: 'object',
+    required: ['id', 'type', 'name', 'fen', 'sideToMove', 'objective', 'difficulty', 'technique'],
+    properties: {
+      id: { type: 'string' },
+      type: { $ref: '#/components/schemas/EndgameType' },
+      name: { type: 'string' },
+      fen: { type: 'string' },
+      sideToMove: { type: 'string', enum: ['w', 'b'] },
+      objective: { $ref: '#/components/schemas/EndgameObjective' },
+      difficulty: { $ref: '#/components/schemas/EndgameDifficulty' },
+      technique: nullableString,
+    },
+    additionalProperties: false,
+  },
+
+  EndgameAttemptRequest: {
+    type: 'object',
+    required: ['id', 'move'],
+    properties: {
+      id: { type: 'string', minLength: 1, maxLength: 64 },
+      move: { type: 'string', minLength: 4, maxLength: 5 },
+    },
+    additionalProperties: false,
+  },
+
+  EndgameLoss: {
+    oneOf: [
+      {
+        type: 'object',
+        required: ['kind', 'value'],
+        properties: {
+          kind: { type: 'string', enum: ['centipawns'] },
+          value: { type: 'integer' },
+        },
+        additionalProperties: false,
+      },
+      {
+        type: 'object',
+        required: ['kind'],
+        properties: {
+          kind: { type: 'string', enum: ['decisive'] },
+        },
+        additionalProperties: false,
+      },
+    ],
+  },
+
+  // `number`, not `integer`: these are `EngineResult.evaluation` values passed through unrounded,
+  // and `AnalysisLine.evaluation.value` and `PuzzleEvaluation.value` publish the same engine data
+  // the same way. Declaring an integer would have the response violate its own schema the first
+  // time an engine reported a fractional centipawn.
+  EndgameEvaluation: {
+    type: 'object',
+    required: ['type', 'value'],
+    properties: {
+      type: { type: 'string', enum: ['cp', 'mate'] },
+      value: { type: 'number' },
+    },
+    additionalProperties: false,
+  },
+
+  // Two branches, because a move that ends the game has a result rather than an evaluation
+  // (ADR-0116) — and in a mate trainer that is the common case, not the exception: the mating move
+  // ends it and so does the classic stalemate blunder. Nulled-out evaluation fields would let a
+  // client render a decided game as 0.00.
+  EndgameAttemptResponse: {
+    oneOf: [
+      {
+        type: 'object',
+        required: [
+          'kind',
+          'id',
+          'move',
+          'fenAfter',
+          'classification',
+          'goalPreserved',
+          'evalBefore',
+          'evalAfter',
+          'loss',
+          'betterMove',
+          'bestLine',
+          'depth',
+          'mateDistanceAfter',
+        ],
+        properties: {
+          kind: { type: 'string', enum: ['judged'] },
+          id: { type: 'string' },
+          move: { type: 'string' },
+          fenAfter: { type: 'string' },
+          classification: { type: 'string', enum: ['optimal', 'acceptable', 'throws_result'] },
+          goalPreserved: { type: 'boolean' },
+          evalBefore: { $ref: '#/components/schemas/EndgameEvaluation' },
+          evalAfter: { $ref: '#/components/schemas/EndgameEvaluation' },
+          loss: { $ref: '#/components/schemas/EndgameLoss' },
+          betterMove: nullableString,
+          bestLine: { type: 'array', items: { type: 'string' } },
+          depth: { type: 'number' },
+          mateDistanceAfter: nullable({ type: 'number' }),
+        },
+        additionalProperties: false,
+      },
+      {
+        type: 'object',
+        required: ['kind', 'id', 'move', 'fenAfter', 'classification', 'goalPreserved', 'terminal'],
+        properties: {
+          kind: { type: 'string', enum: ['terminal'] },
+          id: { type: 'string' },
+          move: { type: 'string' },
+          fenAfter: { type: 'string' },
+          classification: { type: 'string', enum: ['optimal', 'acceptable', 'throws_result'] },
+          goalPreserved: { type: 'boolean' },
+          terminal: terminalOutcomeSchema,
+        },
+        additionalProperties: false,
+      },
+    ],
   },
 
   // --- Mistake Prediction (ADR-0118) ---

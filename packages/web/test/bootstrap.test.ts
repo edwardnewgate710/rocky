@@ -357,6 +357,7 @@ test('bootstrap returns a fresh result with every public named field', () => {
     teams: true,
     forum: true,
     learning: true,
+    endgames: true,
     studies: true,
     passkeys: true,
     passwordReset: true,

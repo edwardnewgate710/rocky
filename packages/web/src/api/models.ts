@@ -222,6 +222,11 @@ export interface SystemCapabilities {
    * There is no variant list beside it: the feature serves exactly `standard`. See ADR-0127.
    */
   readonly openingExplorer?: boolean;
+  /**
+   * Endgame trainer. Optional because a server predating it omits the field, and a
+   * missing flag must read as off rather than as permission.
+   */
+  readonly endgameTrainer?: boolean;
 }
 
 export interface CapabilitiesResponse {
@@ -1049,3 +1054,65 @@ export interface MistakePredictionRequest {
   readonly move: string;
 }
 
+// --- Endgame Trainer (M15 inc 20) -------------------------------------------
+
+export interface EndgameNextRequest {
+  readonly type?: string;
+  readonly difficulty?: string;
+  readonly id?: string;
+}
+
+export interface EndgamePosition {
+  readonly id: string;
+  readonly type: string;
+  readonly name: string;
+  readonly fen: string;
+  readonly sideToMove: 'w' | 'b' | string;
+  readonly objective: 'mate' | 'win' | 'draw';
+  readonly difficulty: string;
+  readonly technique: string | null;
+}
+
+export type EndgameLoss =
+  | { readonly kind: 'centipawns'; readonly value: number }
+  | { readonly kind: 'decisive' };
+
+export interface EndgameAttemptRequest {
+  readonly id: string;
+  readonly move: string;
+}
+
+/** Shared by both branches, so a verdict can be rendered before discriminating. */
+interface EndgameAttemptCommon {
+  readonly id: string;
+  readonly move: string;
+  readonly fenAfter: string;
+  readonly classification: 'optimal' | 'acceptable' | 'throws_result';
+  readonly goalPreserved: boolean;
+}
+
+/** The game continued, so the engine has an opinion about the position. */
+export interface EndgameJudgedResult extends EndgameAttemptCommon {
+  readonly kind: 'judged';
+  readonly evalBefore: AnalysisEvaluation;
+  readonly evalAfter: AnalysisEvaluation;
+  readonly loss: EndgameLoss;
+  readonly betterMove: string | null;
+  readonly bestLine: readonly string[];
+  readonly depth: number;
+  readonly mateDistanceAfter: number | null;
+}
+
+/**
+ * The move ended the game, so there is a result rather than a score (ADR-0116).
+ *
+ * Not a rare branch: in a mate trainer the winning move is checkmate and the classic blunder is
+ * stalemate. A separate shape rather than nulled-out fields, so this can never be rendered as an
+ * evaluation of 0.00.
+ */
+export interface EndgameTerminalResult extends EndgameAttemptCommon {
+  readonly kind: 'terminal';
+  readonly terminal: { readonly reason: string; readonly result: string };
+}
+
+export type EndgameAttemptResult = EndgameJudgedResult | EndgameTerminalResult;

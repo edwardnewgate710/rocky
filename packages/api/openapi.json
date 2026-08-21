@@ -2677,6 +2677,178 @@
         }
       }
     },
+    "/v1/endgames/next": {
+      "post": {
+        "summary": "Select a training endgame position matching optional criteria",
+        "tags": [
+          "endgames"
+        ],
+        "operationId": "post_v1_endgames_next",
+        "responses": {
+          "200": {
+            "description": "The selected training position without solution or evaluation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EndgameNextResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid filters or no matching position",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Endgame training is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EndgameNextRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/endgames/attempt": {
+      "post": {
+        "summary": "Judge a learner move in a training endgame position",
+        "tags": [
+          "endgames"
+        ],
+        "operationId": "post_v1_endgames_attempt",
+        "responses": {
+          "200": {
+            "description": "Move evaluation, classification, and resulting position",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EndgameAttemptResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unknown endgame id, or malformed/illegal move",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Endgame training is not configured or engine is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EndgameAttemptRequest"
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/ai/move-explanation": {
       "post": {
         "summary": "Explain a move in a position with engine grounding",
@@ -12494,7 +12666,8 @@
               "moveExplanation",
               "mistakePrediction",
               "puzzleGeneration",
-              "openingExplorer"
+              "openingExplorer",
+              "endgameTrainer"
             ],
             "properties": {
               "learning": {
@@ -12531,6 +12704,9 @@
                 "type": "boolean"
               },
               "openingExplorer": {
+                "type": "boolean"
+              },
+              "endgameTrainer": {
                 "type": "boolean"
               }
             },
@@ -16461,6 +16637,338 @@
           }
         },
         "additionalProperties": false
+      },
+      "EndgameType": {
+        "type": "string",
+        "enum": [
+          "KQ_vs_K",
+          "KR_vs_K",
+          "KP_vs_K",
+          "KBB_vs_K",
+          "KBN_vs_K",
+          "KNN_vs_K",
+          "KRB_vs_K",
+          "KQ_vs_KR",
+          "Lucena",
+          "Philidor",
+          "Opposition",
+          "KRP_vs_KR",
+          "KQP_vs_KQ",
+          "KPP_vs_K",
+          "KBP_vs_K",
+          "KNP_vs_K"
+        ]
+      },
+      "EndgameDifficulty": {
+        "type": "string",
+        "enum": [
+          "beginner",
+          "intermediate",
+          "advanced"
+        ]
+      },
+      "EndgameObjective": {
+        "type": "string",
+        "enum": [
+          "mate",
+          "win",
+          "draw"
+        ]
+      },
+      "EndgameNextRequest": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/EndgameType"
+          },
+          "difficulty": {
+            "$ref": "#/components/schemas/EndgameDifficulty"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "A specific catalogue entry. Mutually exclusive with the filters: a request carrying both is refused, because the two express different intentions and silently honouring one would hide the caller mistake that produced them."
+          }
+        },
+        "additionalProperties": false
+      },
+      "EndgameNextResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "name",
+          "fen",
+          "sideToMove",
+          "objective",
+          "difficulty",
+          "technique"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/EndgameType"
+          },
+          "name": {
+            "type": "string"
+          },
+          "fen": {
+            "type": "string"
+          },
+          "sideToMove": {
+            "type": "string",
+            "enum": [
+              "w",
+              "b"
+            ]
+          },
+          "objective": {
+            "$ref": "#/components/schemas/EndgameObjective"
+          },
+          "difficulty": {
+            "$ref": "#/components/schemas/EndgameDifficulty"
+          },
+          "technique": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "EndgameAttemptRequest": {
+        "type": "object",
+        "required": [
+          "id",
+          "move"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "move": {
+            "type": "string",
+            "minLength": 4,
+            "maxLength": 5
+          }
+        },
+        "additionalProperties": false
+      },
+      "EndgameLoss": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "value"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "centipawns"
+                ]
+              },
+              "value": {
+                "type": "integer"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "decisive"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "EndgameEvaluation": {
+        "type": "object",
+        "required": [
+          "type",
+          "value"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "cp",
+              "mate"
+            ]
+          },
+          "value": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EndgameAttemptResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "id",
+              "move",
+              "fenAfter",
+              "classification",
+              "goalPreserved",
+              "evalBefore",
+              "evalAfter",
+              "loss",
+              "betterMove",
+              "bestLine",
+              "depth",
+              "mateDistanceAfter"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "judged"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "move": {
+                "type": "string"
+              },
+              "fenAfter": {
+                "type": "string"
+              },
+              "classification": {
+                "type": "string",
+                "enum": [
+                  "optimal",
+                  "acceptable",
+                  "throws_result"
+                ]
+              },
+              "goalPreserved": {
+                "type": "boolean"
+              },
+              "evalBefore": {
+                "$ref": "#/components/schemas/EndgameEvaluation"
+              },
+              "evalAfter": {
+                "$ref": "#/components/schemas/EndgameEvaluation"
+              },
+              "loss": {
+                "$ref": "#/components/schemas/EndgameLoss"
+              },
+              "betterMove": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "bestLine": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "depth": {
+                "type": "number"
+              },
+              "mateDistanceAfter": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "id",
+              "move",
+              "fenAfter",
+              "classification",
+              "goalPreserved",
+              "terminal"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "terminal"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "move": {
+                "type": "string"
+              },
+              "fenAfter": {
+                "type": "string"
+              },
+              "classification": {
+                "type": "string",
+                "enum": [
+                  "optimal",
+                  "acceptable",
+                  "throws_result"
+                ]
+              },
+              "goalPreserved": {
+                "type": "boolean"
+              },
+              "terminal": {
+                "type": "object",
+                "required": [
+                  "reason",
+                  "result"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "enum": [
+                      "checkmate",
+                      "stalemate",
+                      "insufficient_material",
+                      "fifty_move",
+                      "threefold",
+                      "variant_win",
+                      "variant_draw"
+                    ]
+                  },
+                  "result": {
+                    "type": "string",
+                    "enum": [
+                      "1-0",
+                      "0-1",
+                      "1/2-1/2"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
       },
       "MistakePredictionRequest": {
         "type": "object",

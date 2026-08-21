@@ -21,6 +21,7 @@ import type { SystemCapabilities } from '../api/models.js';
 /** Mapping from nav link `data-route` attributes to system capability keys. */
 export const NAV_CAPABILITY_MAP: Record<string, keyof SystemCapabilities> = {
   courses: 'learning',
+  endgames: 'endgameTrainer',
   studies: 'studies',
   teams: 'community',
   messages: 'messaging',
@@ -156,6 +157,15 @@ export function mistakePredictionSupportsVariant(payload: unknown, variant: stri
  */
 export function openingExplorerEnabled(payload: unknown): boolean {
   return capabilityFlags(payload)?.['openingExplorer'] === true;
+}
+
+/**
+ * Whether this deployment serves endgame training (M15 inc 20).
+ *
+ * Fails closed on a missing or malformed payload, for the same reason the others do.
+ */
+export function endgameTrainerEnabled(payload: unknown): boolean {
+  return capabilityFlags(payload)?.['endgameTrainer'] === true;
 }
 
 export function puzzleGenerationEnabled(payload: unknown): boolean {

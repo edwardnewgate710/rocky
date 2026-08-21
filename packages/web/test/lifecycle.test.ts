@@ -36,6 +36,7 @@ function createMockBootstrapped(
     teams: disposables.teams as Bootstrapped['teams'],
     forum: disposables.forum as Bootstrapped['forum'],
     learning: disposables.learning as Bootstrapped['learning'],
+    endgames: disposables.endgames as Bootstrapped['endgames'],
     studies: disposables.studies as Bootstrapped['studies'],
     passkeys: disposables.passkeys as Bootstrapped['passkeys'],
     passwordReset: disposables.passwordReset as Bootstrapped['passwordReset'],

@@ -93,6 +93,8 @@ import {
   openingExplorationView,
   mistakePredictionView,
   puzzleGenerationView,
+  endgameNextView,
+  endgameAttemptView,
 } from './presenters';
 import { DEFAULT_ANALYSIS_LIMITS } from './analysis/limits';
 import { TournamentService } from './tournament/service';
@@ -159,6 +161,11 @@ export interface RouteDeps {
    * 503. Independent of the analysis subsystem — it borrows no engine and no provider.
    */
   readonly openingExploration?: import('./openings/opening-exploration-service').OpeningExplorationService;
+  /**
+   * Optional endgame training (ADR-0128). When absent, `POST /v1/endgames/*` responds 503.
+   * Borrows the analysis subsystem; composes no AI provider.
+   */
+  readonly endgameTraining?: import('./endgames/endgame-training-service').EndgameTrainingService;
 }
 
 /** Narrows without a cast, so the request array reaches the service as the type it was checked to be. */
@@ -1618,6 +1625,101 @@ export function buildRouter(deps: RouteDeps): Router {
       return json(200, mistakePredictionView(outcome));
     },
   );
+
+  // --- Endgame Training (ADR-0128) -------------------------------------------
+  //
+  // Standard chess only: `endgame-trainer.ts` hardcodes `variant: 'chess'` and the dataset is
+  // standard positions. Neither route accepts a `variant`.
+  router.post(
+    '/v1/endgames/next',
+    doc({
+      summary: 'Select a training endgame position matching optional criteria',
+      tags: ['endgames'],
+      security: 'bearer',
+      requestSchema: 'EndgameNextRequest',
+      responses: {
+        200: ['EndgameNextResponse', 'The selected training position without solution or evaluation'],
+        401: ['Error', 'Authentication required'],
+        422: ['Error', 'Invalid filters or no matching position'],
+        429: ['Error', 'Rate limit exceeded'],
+        503: ['Error', 'Endgame training is not configured'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const identity = requireAuth(ctx);
+      const service = deps.endgameTraining;
+      if (!service) throw HttpError.unavailable('endgame training is not configured');
+
+      const body = strictObject(ctx.body, ['type', 'difficulty', 'id']);
+      const type = optString(body, 'type', { min: 1, max: 32, trim: true });
+      const difficulty = optString(body, 'difficulty', { min: 1, max: 32, trim: true });
+      const id = optString(body, 'id', { min: 1, max: 64, trim: true });
+
+      await admit([
+        {
+          key: `endgame-training:user:${identity.userId}`,
+          limit: config.rateLimit.endgameTraining.perUser,
+        },
+        {
+          key: `endgame-training:ip:${ctx.ip ?? 'unknown'}`,
+          limit: config.rateLimit.endgameTraining.perIp,
+        },
+      ]);
+
+      const outcome = service.next({
+        ...(type !== undefined ? { type } : {}),
+        ...(difficulty !== undefined ? { difficulty } : {}),
+        ...(id !== undefined ? { id } : {}),
+      });
+
+      return json(200, endgameNextView(outcome));
+    },
+  );
+
+  router.post(
+    '/v1/endgames/attempt',
+    doc({
+      summary: 'Judge a learner move in a training endgame position',
+      tags: ['endgames'],
+      security: 'bearer',
+      requestSchema: 'EndgameAttemptRequest',
+      responses: {
+        200: ['EndgameAttemptResponse', 'Move evaluation, classification, and resulting position'],
+        401: ['Error', 'Authentication required'],
+        422: ['Error', 'Unknown endgame id, or malformed/illegal move'],
+        429: ['Error', 'Rate limit exceeded'],
+        503: ['Error', 'Endgame training is not configured or engine is unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const identity = requireAuth(ctx);
+      const service = deps.endgameTraining;
+      if (!service) throw HttpError.unavailable('endgame training is not configured');
+
+      // The client never sends the entry, the FEN or the goal — the server looks the entry up by id.
+      const body = strictObject(ctx.body, ['id', 'move']);
+      const id = reqString(body, 'id', { min: 1, max: 64, trim: true });
+      const move = reqString(body, 'move', { min: 4, max: 5, trim: true });
+
+      const charge = (): Promise<void> =>
+        admit([
+          {
+            key: `endgame-training:user:${identity.userId}`,
+            limit: config.rateLimit.endgameTraining.perUser,
+          },
+          {
+            key: `endgame-training:ip:${ctx.ip ?? 'unknown'}`,
+            limit: config.rateLimit.endgameTraining.perIp,
+          },
+        ]);
+
+      const outcome = await service.attempt({ id, move }, charge);
+      return json(200, endgameAttemptView(outcome));
+    },
+  );
+
 
   // --- Move Explanation ------------------------------------------------------
   router.post(

@@ -81,6 +81,7 @@ import { AntiCheatAnalysisService } from './anti-cheat/analysis-service';
 import { createAnalysisFromEnv, createMistakePrediction, createPuzzleGeneration } from './analysis/composition';
 import { createOpeningExploration } from './openings/composition';
 import { createAiFromEnv, createMoveExplanation } from './ai/composition';
+import { createEndgameTraining } from './endgames/composition';
 import { EventStoreGameSource } from './anti-cheat/source';
 import { EventStoreBotTimingSource } from './bot-detection/source';
 
@@ -155,6 +156,10 @@ export interface PgBootstrapOptions {
   /** Opening identification (ADR-0127). Defaults to {@link createOpeningExploration}. */
   readonly openingExploration?:
     | import('./openings/opening-exploration-service').OpeningExplorationService
+    | undefined;
+  /** Endgame training (ADR-0128). Defaults to {@link createEndgameTraining}. */
+  readonly endgameTraining?:
+    | import('./endgames/endgame-training-service').EndgameTrainingService
     | undefined;
   readonly searchRepository?: SearchRepository;
   readonly semanticSearchRepository?: SemanticSearchRepository;
@@ -251,6 +256,11 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
   // Opening exploration (ADR-0127) is composed unconditionally: it borrows nothing from the
   // analysis subsystem and needs no provider, so it is available on a deployment that has neither.
   const openingExploration = options.openingExploration ?? createOpeningExploration();
+
+  // Endgame training (ADR-0128) borrows the analysis subsystem.
+  const endgameTraining = options.endgameTraining ?? (analysisComposition
+    ? createEndgameTraining(analysisComposition.service)
+    : undefined);
 
   const searchEnabled = process.env['SEARCH_ENABLED'] !== '0';
   const searchRepository = searchEnabled
@@ -368,6 +378,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ...(mistakePrediction ? { mistakePrediction } : {}),
     ...(puzzleGeneration ? { puzzleGeneration } : {}),
     ...(openingExploration ? { openingExploration } : {}),
+    ...(endgameTraining ? { endgameTraining } : {}),
     botTimingSource: new EventStoreBotTimingSource(eventStore),
     // Production observability (M13): structured logs to stdout, a scrape
     // registry backing GET /v1/metrics, and tracer emitting spans to logs.

@@ -15,6 +15,7 @@
       <nav class="nav">
         <a href="/" data-route="lobby">Lobby</a>
         <a href="/courses" data-route="courses">Learn</a>
+        <a href="/endgames" data-route="endgames">Endgames</a>
         <a href="/studies" data-route="studies">Studies</a>
         <a href="/profile" data-route="profile">Profile</a>
         <a href="/tournaments" data-route="tournaments">Tournaments</a>
@@ -402,6 +403,35 @@
         <button id="composer-submit" type="submit">Send</button>
       </form>
       <p id="conversation-error" class="error" role="alert"></p>
+    </section>
+    <!-- Endgame trainer (M15 inc 20, ADR-0128). Its own route rather than a game-sidebar section:
+         every sidebar section is about the position already on the board, and that board belongs to
+         the live game. The board here is read-only and the move is typed, mirroring a lesson's move
+         step — building a second interactive board is a larger piece of work than this needs. -->
+    <section id="endgames" class="endgames" aria-label="Endgame trainer" hidden>
+      <h2>Endgame trainer</h2>
+      <div class="endgame-actions">
+        <button id="endgame-next" type="button" class="button">New position</button>
+      </div>
+      <p id="endgame-note" class="count" role="status" aria-live="polite"></p>
+      <div id="endgame-error" class="error" role="alert" hidden></div>
+      <div class="endgame-layout">
+        <div class="endgame-board-wrapper" role="region" aria-label="Training position (read-only)">
+          <div id="endgame-board" class="endgame-board"></div>
+        </div>
+        <div class="endgame-side">
+          <div id="endgame-position-rows" class="panel-list" aria-label="Training position"></div>
+          <form id="endgame-form" class="step-form">
+            <label class="sr-only" for="endgame-move">Your move, in UCI (for example e2e4)</label>
+            <input id="endgame-move" class="step-san-input" type="text" autocomplete="off"
+                   maxlength="5" placeholder="e2e4" />
+            <button id="endgame-submit" type="submit" class="button">Play move</button>
+          </form>
+          <div id="endgame-result" class="endgame-result" aria-busy="false" hidden>
+            <div id="endgame-rows" class="panel-list" aria-label="Verdict"></div>
+          </div>
+        </div>
+      </div>
     </section>
     <section id="courses" class="courses" aria-label="Courses" hidden>
       <h2>Courses</h2>

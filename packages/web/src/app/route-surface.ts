@@ -18,6 +18,7 @@ const ROUTE_SURFACE_IDS: Readonly<Record<Route['name'], string | null>> = {
   courses: 'courses',
   course: 'course',
   lesson: 'lesson',
+  endgames: 'endgames',
   studies: 'studies',
   study: 'study',
   'study-chapter': 'study-chapter',

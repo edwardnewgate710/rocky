@@ -35,6 +35,7 @@ import {
   SEARCH_EMBEDDING_DIMENSIONS,
 } from '@chess-platform/search';
 import { createOpeningExploration } from '../src/openings/composition';
+import { createEndgameTraining } from '../src/endgames/composition';
 import { InMemorySocialGraphRepository } from '@chess-platform/social';
 import { InMemoryMessagingRepository } from '@chess-platform/messaging';
 import { InMemoryCommunityRepository } from '@chess-platform/community';
@@ -73,6 +74,7 @@ export interface Harness {
   readonly mistakePrediction?: import('../src/analysis/mistake-prediction-service').MistakePredictionService;
   readonly puzzleGeneration?: import('../src/analysis/puzzle-generation-service').PuzzleGenerationService;
   readonly openingExploration?: import('../src/openings/opening-exploration-service').OpeningExplorationService;
+  readonly endgameTraining?: import('../src/endgames/endgame-training-service').EndgameTrainingService;
   readonly clock: ManualClock;
   readonly tokens: AccessTokenService;
   readonly emailSender: InMemoryEmailSender;
@@ -139,6 +141,10 @@ export interface HarnessOptions {
   readonly withoutOpeningExploration?: boolean;
   /** Substitute the service — e.g. one built over a different opening database. */
   readonly openingExploration?: import('../src/openings/opening-exploration-service').OpeningExplorationService;
+  /** Pass true to simulate a server constructed without endgame training. */
+  readonly withoutEndgameTraining?: boolean;
+  /** Inject an optional endgame training service. */
+  readonly endgameTraining?: import('../src/endgames/endgame-training-service').EndgameTrainingService;
 }
 
 export async function startHarness(
@@ -218,6 +224,9 @@ export async function startHarness(
   const openingExploration = harnessOptions.withoutOpeningExploration
     ? undefined
     : (harnessOptions.openingExploration ?? createOpeningExploration());
+  const endgameTraining = harnessOptions.withoutEndgameTraining
+    ? undefined
+    : (harnessOptions.endgameTraining ?? (harnessOptions.analysis ? createEndgameTraining(harnessOptions.analysis) : undefined));
   const server = createApiServer({
     repos, hasher, tokens, clock, ids, rateLimiter, tournamentRepo, gameLauncher, liveView,
     emailSender: harnessOptions.emailSender ?? emailSender,
@@ -239,6 +248,7 @@ export async function startHarness(
     ...(harnessOptions.mistakePrediction ? { mistakePrediction: harnessOptions.mistakePrediction } : {}),
     ...(harnessOptions.puzzleGeneration ? { puzzleGeneration: harnessOptions.puzzleGeneration } : {}),
     ...(openingExploration ? { openingExploration } : {}),
+    ...(endgameTraining ? { endgameTraining } : {}),
     ...(harnessOptions.readiness ? { readiness: harnessOptions.readiness } : {}),
     ...(harnessOptions.logger ? { logger: harnessOptions.logger } : {}),
     ...(harnessOptions.tracer ? { tracer: harnessOptions.tracer } : {}),
@@ -271,6 +281,7 @@ export async function startHarness(
     mistakePrediction: harnessOptions.mistakePrediction,
     puzzleGeneration: harnessOptions.puzzleGeneration,
     openingExploration,
+    endgameTraining,
     clock,
     tokens,
     emailSender,

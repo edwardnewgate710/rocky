@@ -103,6 +103,7 @@ export function createApiServer(deps: ApiDependencies, options: ApiServerOptions
     mistakePrediction: deps.mistakePrediction,
     puzzleGeneration: deps.puzzleGeneration,
     openingExploration: deps.openingExploration,
+    endgameTraining: deps.endgameTraining,
   });
 
   const authenticate = (authorization: string | undefined): Identity | null => {

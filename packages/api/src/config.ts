@@ -105,6 +105,10 @@ export interface RateLimitConfig {
     readonly perUser: RateLimitEndpointConfig;
     readonly perIp: RateLimitEndpointConfig;
   };
+  readonly endgameTraining: {
+    readonly perUser: RateLimitEndpointConfig;
+    readonly perIp: RateLimitEndpointConfig;
+  };
 }
 
 export const DEFAULT_ACCESS_TOKEN_TTL_SEC = 15 * 60;
@@ -181,6 +185,12 @@ export const DEFAULT_RATE_LIMIT: RateLimitConfig = {
   openingExploration: {
     perUser: { maxRequests: 60, windowMs: 60 * 1000 }, // 60 / min
     perIp: { maxRequests: 120, windowMs: 60 * 1000 }, // 120 / min
+  },
+  // Endgame training costs up to two engine searches and no provider call, identical to mistake
+  // prediction. Its own bucket prevents training attempts from consuming ordinary analysis quota.
+  endgameTraining: {
+    perUser: { maxRequests: 20, windowMs: 60 * 1000 }, // 20 / min
+    perIp: { maxRequests: 40, windowMs: 60 * 1000 }, // 40 / min
   },
 };
 

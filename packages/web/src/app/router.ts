@@ -36,6 +36,7 @@ export type Route =
   | { readonly name: 'courses' }
   | { readonly name: 'course'; readonly slug: string }
   | { readonly name: 'lesson'; readonly id: string }
+  | { readonly name: 'endgames' }
   | { readonly name: 'studies' }
   | { readonly name: 'study'; readonly id: string }
   | { readonly name: 'study-chapter'; readonly id: string; readonly chapterId: string }
@@ -78,6 +79,9 @@ export function parseRoute(pathname: string): Route {
   if (segments[0] === 'courses') {
     if (segments.length === 1) return { name: 'courses' };
     return { name: 'course', slug: decodeSegment(segments[1]!) };
+  }
+  if (segments[0] === 'endgames') {
+    return segments.length === 1 ? { name: 'endgames' } : { name: 'not-found' };
   }
   if (segments[0] === 'lessons') {
     if (segments.length >= 2) {
@@ -153,6 +157,8 @@ export function routeToPath(route: Route): string {
       return `/courses/${route.slug}`;
     case 'lesson':
       return `/lessons/${route.id}`;
+    case 'endgames':
+      return '/endgames';
     case 'studies':
       return '/studies';
     case 'study':

@@ -38,6 +38,8 @@ import type { SearchController } from './search-controller.js';
 import { mountSearch } from './search-mount.js';
 import type { LearningController } from './learning-controller.js';
 import { mountCourseDetail, mountCourseList, mountLesson } from './learning-mounts.js';
+import { mountEndgames } from './endgame-mount.js';
+import type { MountedEndgames } from './endgame-mount.js';
 import type { StudiesController } from './studies-controller.js';
 import { mountStudiesList, mountStudyChapter, mountStudyDetail } from './studies-mounts.js';
 import { mountConversation, mountMessagesInbox } from './messaging-mounts.js';
@@ -72,6 +74,7 @@ export interface BootstrappedDisposables {
   readonly teams: TeamsController | null;
   readonly forum: ForumController | null;
   readonly learning: LearningController | null;
+  readonly endgames: MountedEndgames | null;
   readonly studies: StudiesController | null;
   readonly passkeys: { dispose: () => void } | null;
   readonly passwordReset: { dispose: () => void } | null;
@@ -110,6 +113,7 @@ function createBootstrapped(
     teams: null,
     forum: null,
     learning: null,
+    endgames: null,
     studies: null,
     passkeys: null,
     passwordReset: null,
@@ -239,6 +243,7 @@ export function bootstrap(
   let selfProfileSessionHandler: ((session: AuthSession | null) => void) | null = null;
   let setPlayBotAuthenticated: ((authenticated: boolean) => void) | null = null;
   let gameSessionHandler: ((session: AuthSession | null) => void) | null = null;
+  let endgameSessionHandler: (() => void) | null = null;
   const auth = new AuthController({
     client: app.api,
     ...(deps?.webauthnAdapter !== undefined ? { webauthnAdapter: deps.webauthnAdapter } : {}),
@@ -265,6 +270,7 @@ export function bootstrap(
         setPlayBotAuthenticated?.(session !== null);
         selfProfileSessionHandler?.(session);
         gameSessionHandler?.(session);
+        endgameSessionHandler?.();
       },
       onPending: (pending) => {
         if (authSubmitEl instanceof HTMLButtonElement) {
@@ -501,6 +507,25 @@ export function bootstrap(
         sessionPresent: auth.currentSession !== null,
         restorePromise,
       }),
+    });
+  }
+
+  /** Mount the trainer and route authentication transitions into it. */
+  const mountEndgamesRoute = (): MountedEndgames => {
+    const mounted = mountEndgames({
+      doc,
+      client: app.api,
+      isAuthenticated: () => auth.currentSession !== null,
+    });
+    endgameSessionHandler = mounted.onSessionChange;
+    return mounted;
+  };
+
+  // --- Endgame trainer (/endgames) ---
+  const endgamesEl = doc.getElementById('endgames');
+  if (endgamesEl && route.name === 'endgames') {
+    return createBootstrapped(app, auth, theme, {
+      endgames: mountEndgamesRoute(),
     });
   }
 
