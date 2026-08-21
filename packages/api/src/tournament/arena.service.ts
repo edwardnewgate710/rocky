@@ -9,7 +9,18 @@ import type { GameLauncher } from './launcher';
 export interface CreateArenaCommand {
   readonly id: string;
   readonly name: string;
-  readonly variant: 'standard' | 'chess960';
+  /**
+   * Taken from `ArenaConfig`, the same way `timeControl` below already is, because that is where
+   * this value is going and it is the only place entitled to say what it may be.
+   *
+   * It used to read `'standard' | 'chess960'`, which was wrong in both directions at once: it left
+   * out the five variants an arena can genuinely run, and it named the one M15 Increment 14 stopped
+   * anybody creating. The route cast into it, so the compiler was silenced rather than satisfied —
+   * an atomic arena worked, while the type said it could not exist. Nothing branches on this field
+   * yet, so nothing was mishandled; the cost was the next person to branch on it being told there
+   * were two cases when there are seven. ADR-0123 §consequences.
+   */
+  readonly variant: ArenaConfig['variant'];
   readonly timeControl: ArenaConfig['timeControl'];
   readonly durationMs: number;
 }

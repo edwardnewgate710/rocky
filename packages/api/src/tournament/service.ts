@@ -10,7 +10,8 @@ export interface CreateTournamentCommand {
   readonly id: string;
   readonly name: string;
   readonly format: 'round_robin' | 'swiss';
-  readonly variant: 'standard' | 'chess960';
+  /** From `RoundBasedConfig`, as `timeControl` below. See `CreateArenaCommand.variant`. */
+  readonly variant: RoundBasedConfig['variant'];
   readonly timeControl: RoundBasedConfig['timeControl'];
   readonly rounds?: number; // required if swiss
   readonly tiebreakOrder?: RoundBasedConfig['tiebreakOrder'];

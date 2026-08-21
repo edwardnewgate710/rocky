@@ -1541,14 +1541,7 @@ export function buildRouter(deps: RouteDeps): Router {
       }
       const body = strictObject(ctx.body, ['name', 'format', 'variant', 'timeControl', 'rounds', 'durationMs', 'tiebreakOrder']);
       const format = oneOf(reqString(body, 'format'), ['round_robin', 'swiss', 'arena'], 'format');
-      // The cast is not this increment's, and it is wrong in a way worth naming rather than
-      // tidying past: `CreateArenaCommand.variant` is declared `'standard' | 'chess960'`, so an
-      // arena for any of the other five creatable variants is already being passed through a type
-      // that says it cannot exist. Widening that declaration is a change to the arena service and
-      // belongs to whoever owns it. What this increment removes is only the redundant second parse
-      // — `parseCreatableVariant` validates against a subset of what `parseVariant` accepts, so the
-      // second call could never reject anything the first had let through.
-      const variant = parseCreatableVariant(reqString(body, 'variant')) as 'standard' | 'chess960';
+      const variant = parseCreatableVariant(reqString(body, 'variant'));
       const timeControl = parseTimeControl(body['timeControl']);
 
       if (format === 'arena') {
