@@ -412,6 +412,17 @@ export class InMemoryCommunityRepository implements CommunityRepository {
       joinedAt: at,
     };
     this.memberships.set(this.memberKey(teamId, playerId), mem);
+
+    for (const [requestId, request] of this.joinRequests) {
+      if (request.teamId === teamId && request.playerId === playerId && request.status === 'pending') {
+        this.joinRequests.set(requestId, {
+          ...request,
+          status: 'accepted',
+          respondedAt: at,
+        });
+      }
+    }
+
     return mem;
   }
 

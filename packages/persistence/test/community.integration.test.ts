@@ -100,6 +100,22 @@ test('pg community repository integration tests', { skip }, async () => {
       (err: any) => err instanceof CommunityRuleError && err.code === 'already_requested'
     );
 
+    // A direct public join resolves an existing pending request in the same transaction. A later
+    // moderation attempt cannot change membership state through a stale request.
+    const directRequestId = uuidv7();
+    await repo.createJoinRequest(directRequestId, requestTeamId, bob, t1);
+    const directMembership = await repo.joinTeam(requestTeamId, bob, t2);
+    assert.equal(directMembership.joinedAt.toISOString(), t2.toISOString());
+    assert.deepEqual(await repo.listOutgoingJoinRequests(bob), { total: 0, items: [] });
+    await repo.updateMemberRole(requestTeamId, alice, bob, 'admin');
+    await assert.rejects(
+      () => repo.respondToJoinRequest(directRequestId, alice, 'accepted', new Date(t2.getTime() + 1_000)),
+      (err: unknown) => err instanceof CommunityRuleError && err.code === 'invalid_transition'
+    );
+    const preservedMembership = await repo.getMembership(requestTeamId, bob, alice);
+    assert.equal(preservedMembership?.role, 'admin');
+    assert.equal(preservedMembership?.joinedAt.toISOString(), t2.toISOString());
+
     // Respond to join request
     const acceptedReq = await repo.respondToJoinRequest(reqId1, alice, 'accepted', t2);
     assert.equal(acceptedReq.status, 'accepted');
@@ -235,6 +251,18 @@ test('pg community repository integration tests', { skip }, async () => {
     const filterPendingEmpty = await repo.listJoinRequests(filterTeamId, alice, { status: 'pending', limit: 1, offset: 1 });
     assert.equal(filterPendingEmpty.total, 1);
     assert.equal(filterPendingEmpty.items.length, 0);
+
+    const outgoingIndex = await pool.query<{ indexdef: string }>(
+      `SELECT indexdef FROM pg_indexes
+       WHERE schemaname = current_schema()
+         AND indexname = 'community_join_requests_pending_by_player_idx'`
+    );
+    assert.equal(outgoingIndex.rows.length, 1);
+    assert.match(
+      outgoingIndex.rows[0].indexdef,
+      /\(player_id, created_at DESC, id(?: ASC)?\)/
+    );
+    assert.match(outgoingIndex.rows[0].indexdef, /WHERE .*status.*pending/);
   } finally {
     // Cleanup created users
     if (createdUserIds.length > 0) {

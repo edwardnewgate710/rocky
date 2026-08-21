@@ -162,6 +162,22 @@ test('InMemoryCommunityRepository unit tests', async (t) => {
       (err: any) => err instanceof CommunityRuleError && err.code === 'already_requested'
     );
 
+    // Directly joining a public team resolves the caller's pending request atomically. A later
+    // moderation attempt must not overwrite the membership role or original join time.
+    await repo.createTeam('direct-request-team', 'direct-request-team', 'Direct Requests', '', 'public', alice, t0);
+    await repo.createJoinRequest('direct-request', 'direct-request-team', charlie, t1);
+    const directMembership = await repo.joinTeam('direct-request-team', charlie, t2);
+    assert.equal(directMembership.joinedAt, t2);
+    assert.deepEqual(await repo.listOutgoingJoinRequests(charlie), { total: 1, items: [req1] });
+    await repo.updateMemberRole('direct-request-team', alice, charlie, 'admin');
+    await assert.rejects(
+      () => repo.respondToJoinRequest('direct-request', alice, 'accepted', new Date(t2.getTime() + 1_000)),
+      (err: unknown) => err instanceof CommunityRuleError && err.code === 'invalid_transition'
+    );
+    const preservedMembership = await repo.getMembership('direct-request-team', charlie, alice);
+    assert.equal(preservedMembership?.role, 'admin');
+    assert.equal(preservedMembership?.joinedAt, t2);
+
     // A visible-team non-admin cannot respond to a request.
     await assert.rejects(
       async () => repo.respondToJoinRequest('r1', dave, 'accepted', t2),

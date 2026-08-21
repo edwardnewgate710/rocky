@@ -55,6 +55,8 @@ The existing lifecycle is retained:
 
 - `pending` rows are present;
 - `accepted`, `declined`, and `cancelled` rows are absent;
+- directly joining a visible public team atomically accepts that caller's pending request, so it
+  cannot remain as stale moderation state;
 - terminal rows remain stored and remain available through the existing owner/admin moderation
   history.
 
@@ -79,6 +81,8 @@ in ADR-0069.
   presentation metadata.
 - Reload recovery is available through a self resource, while cross-user enumeration is absent by
   construction.
+- A partial requester/status/order index keeps pending self-list pagination independent of retained
+  terminal history growth.
 - The web client is unchanged. It has owner/admin moderation UI but no existing requester
   join/cancel surface to restore; designing discovery or navigation would exceed this decision.
 - Regression coverage compares the private-existing and missing HTTP errors side by side, and

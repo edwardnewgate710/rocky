@@ -445,6 +445,13 @@ export class PgCommunityRepository implements CommunityRepository {
         [teamId, playerId, at]
       ).catch(rethrowMissingResource);
 
+      await client.query(
+        `UPDATE community_join_requests
+         SET status = 'accepted', responded_at = $3
+         WHERE team_id = $1 AND player_id = $2 AND status = 'pending'`,
+        [teamId, playerId, at]
+      );
+
       await client.query('COMMIT');
       return rowToMembership(res.rows[0]);
     } catch (err) {
