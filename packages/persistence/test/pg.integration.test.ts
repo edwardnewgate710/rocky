@@ -22,18 +22,18 @@ test('migrations apply and are idempotent', { skip }, async () => {
 
     const index = await pool.query<{
       indisvalid: boolean;
-      columns: string[];
+      columns: string;
       definition: string;
       predicate: string;
     }>(
       `SELECT i.indisvalid,
-              ARRAY(
+              array_to_string(ARRAY(
                 SELECT a.attname
                   FROM unnest(i.indkey) WITH ORDINALITY AS indexed_column(attnum, position)
                   JOIN pg_attribute a
                     ON a.attrelid = i.indrelid AND a.attnum = indexed_column.attnum
                  ORDER BY indexed_column.position
-              ) AS columns,
+              ), ',') AS columns,
               pg_get_indexdef(i.indexrelid) AS definition,
               pg_get_expr(i.indpred, i.indrelid) AS predicate
          FROM pg_index i
@@ -41,7 +41,7 @@ test('migrations apply and are idempotent', { skip }, async () => {
         WHERE c.relname = 'community_join_requests_pending_by_player_idx'`,
     );
     assert.equal(index.rows[0]?.indisvalid, true);
-    assert.deepEqual(index.rows[0]?.columns, ['player_id', 'created_at', 'id']);
+    assert.equal(index.rows[0]?.columns, 'player_id,created_at,id');
     assert.match(index.rows[0]?.definition ?? '', /\(player_id, created_at DESC, id\)/);
     assert.match(index.rows[0]?.predicate ?? '', /status/);
     assert.match(index.rows[0]?.predicate ?? '', /'pending'/);
