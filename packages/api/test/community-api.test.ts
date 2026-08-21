@@ -10,6 +10,7 @@ const AUTH_MATRIX_ENDPOINTS: Array<[method: string, path: string]> = [
   ['PATCH', '/v1/teams/00000000-0000-7000-8000-000000000001/members/00000000-0000-7000-8000-000000000002'],
   ['POST', '/v1/teams/00000000-0000-7000-8000-000000000001/transfer-ownership'],
   ['POST', '/v1/teams/00000000-0000-7000-8000-000000000001/join-requests'],
+  ['GET', '/v1/me/join-requests'],
   ['GET', '/v1/teams/00000000-0000-7000-8000-000000000001/join-requests'],
   ['POST', '/v1/teams/00000000-0000-7000-8000-000000000001/join-requests/00000000-0000-7000-8000-000000000003/respond'],
   ['DELETE', '/v1/teams/00000000-0000-7000-8000-000000000001/join-requests/00000000-0000-7000-8000-000000000003'],
@@ -174,33 +175,40 @@ describe('/v1/teams and /v1/forum REST API endpoints', () => {
       assert.equal(transferOwnership.status, 200);
       assert.equal(transferOwnership.body.newOwner.role, 'owner');
 
-      // 6. Join request lifecycle for private team
-      const createReq = await harness.json('POST', `/v1/teams/${privTeam.id}/join-requests`, {
+      // 6. Join request lifecycle for a visible team
+      const requestTeamRes = await harness.json('POST', '/v1/teams', {
+        token: alice.token,
+        body: { slug: 'request-team', name: 'Request Team', description: '', visibility: 'public' },
+      });
+      assert.equal(requestTeamRes.status, 201);
+      const requestTeam = requestTeamRes.body;
+
+      const createReq = await harness.json('POST', `/v1/teams/${requestTeam.id}/join-requests`, {
         token: charlie.token,
       });
       assert.equal(createReq.status, 201);
       const reqId = createReq.body.id;
 
-      // Alice (owner of private team) views join requests
-      const listReqs = await harness.json('GET', `/v1/teams/${privTeam.id}/join-requests`, {
+      // Alice (owner) views join requests
+      const listReqs = await harness.json('GET', `/v1/teams/${requestTeam.id}/join-requests`, {
         token: alice.token,
       });
       assert.equal(listReqs.status, 200);
       assert.equal(listReqs.body.total, 1);
 
       // Alice accepts request
-      const respondReq = await harness.json('POST', `/v1/teams/${privTeam.id}/join-requests/${reqId}/respond`, {
+      const respondReq = await harness.json('POST', `/v1/teams/${requestTeam.id}/join-requests/${reqId}/respond`, {
         token: alice.token,
         body: { status: 'accepted' },
       });
       assert.equal(respondReq.status, 200);
       assert.equal(respondReq.body.status, 'accepted');
 
-      // Now Charlie is a member of private team and can GET private team details
-      const getPrivMember = await harness.json('GET', `/v1/teams/${privTeam.id}`, {
+      // Acceptance creates membership.
+      const getMember = await harness.json('GET', `/v1/teams/${requestTeam.id}`, {
         token: charlie.token,
       });
-      assert.equal(getPrivMember.status, 200);
+      assert.equal(getMember.status, 200);
 
       // 7. Forum thread & post lifecycle
       const createThreadRes = await harness.json('POST', `/v1/teams/${pubTeam.id}/forum/threads`, {
@@ -249,6 +257,131 @@ describe('/v1/teams and /v1/forum REST API endpoints', () => {
     }
   });
 
+  it('private-team creation is indistinguishable from missing, while self-list exposes only own pending request state', async () => {
+    const harness = await startHarness();
+    try {
+      const alice = await harness.makeUser('AlicePrivacy');
+      const bob = await harness.makeUser('BobPrivacy');
+      const charlie = await harness.makeUser('CharliePrivacy');
+
+      const privateTeam = await harness.json('POST', '/v1/teams', {
+        token: alice.token,
+        body: { slug: 'privacy-private', name: 'Private Presentation', description: 'secret', visibility: 'private' },
+      });
+      assert.equal(privateTeam.status, 201);
+
+      const oracleHeaders = { 'x-request-id': '00000000-0000-7000-8000-000000000016' };
+      const hidden = await harness.json('POST', `/v1/teams/${privateTeam.body.id}/join-requests`, {
+        token: bob.token,
+        headers: oracleHeaders,
+      });
+      const missing = await harness.json(
+        'POST',
+        '/v1/teams/00000000-0000-7000-8000-999999999999/join-requests',
+        { token: bob.token, headers: oracleHeaders }
+      );
+      assert.deepEqual(
+        { status: hidden.status, body: hidden.body },
+        { status: missing.status, body: missing.body },
+        'an invisible private team and a missing team must have indistinguishable external responses'
+      );
+
+      const bobTeam = await harness.json('POST', '/v1/teams', {
+        token: alice.token,
+        body: { slug: 'privacy-bob', name: 'Bob Request Team', visibility: 'public' },
+      });
+      const bobRequest = await harness.json('POST', `/v1/teams/${bobTeam.body.id}/join-requests`, {
+        token: bob.token,
+      });
+      assert.equal(bobRequest.status, 201, 'public-team request creation remains supported');
+
+      const duplicate = await harness.json('POST', `/v1/teams/${bobTeam.body.id}/join-requests`, {
+        token: bob.token,
+      });
+      assert.equal(duplicate.status, 409, 'visible-team duplicate semantics remain unchanged');
+
+      const charlieTeam = await harness.json('POST', '/v1/teams', {
+        token: alice.token,
+        body: { slug: 'privacy-charlie', name: 'Charlie Request Team', visibility: 'public' },
+      });
+      const charlieRequest = await harness.json('POST', `/v1/teams/${charlieTeam.body.id}/join-requests`, {
+        token: charlie.token,
+      });
+      assert.equal(charlieRequest.status, 201);
+
+      // An arbitrary playerId is not part of the contract and cannot override the authenticated actor.
+      const spoofed = await harness.json(
+        'GET',
+        `/v1/me/join-requests?playerId=${encodeURIComponent(charlie.userId)}`,
+        { token: bob.token }
+      );
+      assert.equal(spoofed.status, 200);
+      assert.equal(spoofed.body.total, 1);
+      assert.deepEqual(spoofed.body.items.map((item: { id: string }) => item.id), [bobRequest.body.id]);
+
+      // Existing owner/admin moderation remains team-scoped and unchanged.
+      const moderation = await harness.json('GET', `/v1/teams/${bobTeam.body.id}/join-requests?status=pending`, {
+        token: alice.token,
+      });
+      assert.equal(moderation.status, 200);
+      assert.deepEqual(moderation.body.items.map((item: { id: string }) => item.id), [bobRequest.body.id]);
+
+      // Turn the team private after the request to model a legacy private pending row. The self-list
+      // returns cancellation state, not private-team presentation metadata.
+      const makePrivate = await harness.json('PATCH', `/v1/teams/${bobTeam.body.id}`, {
+        token: alice.token,
+        body: { visibility: 'private' },
+      });
+      assert.equal(makePrivate.status, 200);
+      const legacy = await harness.json('GET', '/v1/me/join-requests', { token: bob.token });
+      assert.equal(legacy.status, 200);
+      assert.equal(legacy.body.total, 1);
+      assert.equal(legacy.body.items[0].teamId, bobTeam.body.id);
+      assert.deepEqual(
+        Object.keys(legacy.body.items[0]).sort(),
+        ['createdAt', 'id', 'playerId', 'respondedAt', 'status', 'teamId'],
+        'self-list must not include private team name, slug, description, or visibility'
+      );
+
+      const cancelOther = await harness.json(
+        'DELETE',
+        `/v1/teams/${charlieTeam.body.id}/join-requests/${charlieRequest.body.id}`,
+        { token: bob.token }
+      );
+      assert.equal(cancelOther.status, 404, 'a requester cannot cancel another player request');
+
+      const cancelled = await harness.json(
+        'DELETE',
+        `/v1/teams/${bobTeam.body.id}/join-requests/${bobRequest.body.id}`,
+        { token: bob.token }
+      );
+      assert.equal(cancelled.status, 200);
+      const afterCancel = await harness.json('GET', '/v1/me/join-requests', { token: bob.token });
+      assert.deepEqual(afterCancel.body, { total: 0, items: [] });
+
+      for (const [suffix, status] of [['declined', 'declined'], ['accepted', 'accepted']] as const) {
+        const team = await harness.json('POST', '/v1/teams', {
+          token: alice.token,
+          body: { slug: `privacy-${suffix}`, name: `${suffix} Request Team`, visibility: 'public' },
+        });
+        const request = await harness.json('POST', `/v1/teams/${team.body.id}/join-requests`, {
+          token: bob.token,
+        });
+        assert.equal(request.status, 201);
+        const response = await harness.json(
+          'POST',
+          `/v1/teams/${team.body.id}/join-requests/${request.body.id}/respond`,
+          { token: alice.token, body: { status } }
+        );
+        assert.equal(response.status, 200);
+        const afterResponse = await harness.json('GET', '/v1/me/join-requests', { token: bob.token });
+        assert.deepEqual(afterResponse.body, { total: 0, items: [] }, `${status} requests are terminal`);
+      }
+    } finally {
+      await harness.close();
+    }
+  });
+
   // Pins the JoinRequestView wire contract against its OpenAPI schema. The schema declared a
   // required `updatedAt` the presenter never emitted and omitted the `respondedAt` it always did
   // (M10 inc 4 through M14 inc 28) — the same drift ADR-0088 fixed for ForumPostView. Nothing
@@ -262,7 +395,7 @@ describe('/v1/teams and /v1/forum REST API endpoints', () => {
 
       const teamRes = await harness.json('POST', '/v1/teams', {
         token: alice.token,
-        body: { slug: 'contract-test-team', name: 'Contract Test Team', visibility: 'private' },
+        body: { slug: 'contract-test-team', name: 'Contract Test Team', visibility: 'public' },
       });
       assert.equal(teamRes.status, 201);
       const teamId = teamRes.body.id;
@@ -280,6 +413,14 @@ describe('/v1/teams and /v1/forum REST API endpoints', () => {
       assert.equal(createRes.status, 201);
       assertShape(createRes.body, 'POST /join-requests');
       assert.equal(createRes.body.respondedAt, null);
+
+      // Simulate a legacy pending row: requests created while visible remain moderatable if the
+      // owner later makes the team private.
+      const makePrivate = await harness.json('PATCH', `/v1/teams/${teamId}`, {
+        token: alice.token,
+        body: { visibility: 'private' },
+      });
+      assert.equal(makePrivate.status, 200);
 
       // Pending, from the list route — a separate serialization path from the create response.
       const listRes = await harness.json('GET', `/v1/teams/${teamId}/join-requests`, {
@@ -314,7 +455,7 @@ describe('/v1/teams and /v1/forum REST API endpoints', () => {
 
       const teamRes = await harness.json('POST', '/v1/teams', {
         token: alice.token,
-        body: { slug: 'filter-team', name: 'Filter Team', visibility: 'private' },
+        body: { slug: 'filter-team', name: 'Filter Team', visibility: 'public' },
       });
       const teamId = teamRes.body.id;
 

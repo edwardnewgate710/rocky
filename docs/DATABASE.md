@@ -493,6 +493,10 @@ CREATE TABLE community_join_requests (
 CREATE UNIQUE INDEX community_join_requests_one_pending_per_player
   ON community_join_requests (team_id, player_id) WHERE status = 'pending';
 
+CREATE INDEX community_join_requests_pending_by_player_idx
+  ON community_join_requests (player_id, created_at DESC, id ASC)
+  WHERE status = 'pending';
+
 CREATE TABLE community_forum_threads (
   id           UUID        NOT NULL PRIMARY KEY,
   team_id      UUID        NOT NULL REFERENCES community_teams(id) ON DELETE CASCADE,
@@ -517,7 +521,7 @@ CREATE TABLE community_forum_posts (
 );
 ```
 
-Stores teams, memberships, join requests, forum threads, and forum posts. Enforces single-owner invariant per team via partial unique index `community_memberships_one_owner_per_team` and at-most-one pending join request per player per team via `community_join_requests_one_pending_per_player`. All referencing FK columns are indexed to avoid full table scans on cascading user or team deletions.
+Stores teams, memberships, join requests, forum threads, and forum posts. Enforces single-owner invariant per team via partial unique index `community_memberships_one_owner_per_team` and at-most-one pending join request per player per team via `community_join_requests_one_pending_per_player`. Pending requester self-lists use the partial `(player_id, created_at DESC, id ASC)` index. All referencing FK columns are indexed to avoid full table scans on cascading user or team deletions.
 
 ### 4.18 Achievements (`achievement_progress` table, Migration 0018)
 
@@ -655,10 +659,14 @@ is a keyed hash (lookup without storing raw email). No credential is ever logged
 ## 5. Migrations
 
 - **Forward-only, numbered SQL files:** `persistence/migrations/NNNN_name.sql`,
-  applied in order, each in its own transaction.
+  applied in order and transactionally by default. A strictly validated
+  `migrate:online-index` directive permits one `CREATE INDEX CONCURRENTLY`
+  statement for deployment-safe index additions.
 - **Ledger table** `schema_migrations(version INT PK, name TEXT, applied_at,
-  checksum TEXT)`; the runner refuses to run if a previously-applied file's
-  checksum changed (immutability of history).
+  checksum TEXT, state TEXT)`; the runner refuses to run if a previously-applied
+  file's checksum changed (immutability of history). Online index migrations are
+  recorded as `pending` before execution, so a valid completed index is finalized
+  after interruption and an invalid concurrent index is dropped and retried.
 - **Runner** is a tiny dependency-light script (`npm run migrate`) usable in CI,
   local dev, and as a K8s init-container/Job later. No heavyweight ORM/migration
   framework — it hides SQL we want to own and review.

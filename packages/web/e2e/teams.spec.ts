@@ -112,17 +112,23 @@ test('private team owner sees pending join request, accepts it, and requester ap
 
     const teamSlug = `priv-team-${suffix}`;
     const createResp = await request.post('/v1/teams', {
-      data: { name: `Priv Team ${suffix}`, slug: teamSlug, description: 'Private e2e team', visibility: 'private' },
+      data: { name: `Priv Team ${suffix}`, slug: teamSlug, description: 'Private e2e team', visibility: 'public' },
       headers: { Authorization: `Bearer ${ownerAuth.tokens.accessToken}` },
     });
     expect(createResp.ok()).toBeTruthy();
     const team = await createResp.json();
 
-    // Requester posts a join request to the private team
+    // Create while visible, then make the team private. This models a legacy pending request and
+    // keeps the moderation UI covered without bypassing the private-team existence boundary.
     const joinReqResp = await request.post(`/v1/teams/${team.id}/join-requests`, {
       headers: { Authorization: `Bearer ${reqAuth.tokens.accessToken}` },
     });
     expect(joinReqResp.ok()).toBeTruthy();
+    const makePrivateResp = await request.patch(`/v1/teams/${team.id}`, {
+      data: { visibility: 'private' },
+      headers: { Authorization: `Bearer ${ownerAuth.tokens.accessToken}` },
+    });
+    expect(makePrivateResp.ok()).toBeTruthy();
 
     await ownerCtx.addCookies([{
       name: 'gambit_refresh',
@@ -196,7 +202,7 @@ test('a rejected join-request response leaves the queue interactive', async ({ b
 
     const teamSlug = `priv-409-${suffix}`;
     const createResp = await request.post('/v1/teams', {
-      data: { name: `Priv 409 ${suffix}`, slug: teamSlug, description: 'Private e2e team', visibility: 'private' },
+      data: { name: `Priv 409 ${suffix}`, slug: teamSlug, description: 'Private e2e team', visibility: 'public' },
       headers: { Authorization: `Bearer ${ownerAuth.tokens.accessToken}` },
     });
     expect(createResp.ok()).toBeTruthy();
@@ -206,6 +212,11 @@ test('a rejected join-request response leaves the queue interactive', async ({ b
       headers: { Authorization: `Bearer ${reqAuth.tokens.accessToken}` },
     });
     expect(joinReqResp.ok()).toBeTruthy();
+    const makePrivateResp = await request.patch(`/v1/teams/${team.id}`, {
+      data: { visibility: 'private' },
+      headers: { Authorization: `Bearer ${ownerAuth.tokens.accessToken}` },
+    });
+    expect(makePrivateResp.ok()).toBeTruthy();
 
     await ownerCtx.addCookies([{
       name: 'gambit_refresh',

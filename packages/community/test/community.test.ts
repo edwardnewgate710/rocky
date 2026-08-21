@@ -134,44 +134,87 @@ test('InMemoryCommunityRepository unit tests', async (t) => {
       (err: any) => err instanceof CommunityRuleError && err.code === 'already_member'
     );
 
-    // Submit join request for private team
-    const req1 = await repo.createJoinRequest('r1', 'priv', bob, t1);
+    const privateError = async (teamId: string): Promise<CommunityRuleError> => {
+      try {
+        await repo.createJoinRequest('private-probe', teamId, charlie, t1);
+        assert.fail('private or missing team must not accept a join request');
+      } catch (err) {
+        assert.ok(err instanceof CommunityRuleError);
+        return err;
+      }
+    };
+
+    // A private team hidden from Charlie and a missing team are indistinguishable at the domain boundary.
+    const hidden = await privateError('priv');
+    const missing = await privateError('never-existed');
+    assert.deepEqual(
+      { code: hidden.code, message: hidden.message },
+      { code: missing.code, message: missing.message }
+    );
+
+    // Public teams remain requestable.
+    const req1 = await repo.createJoinRequest('r1', 'pub', charlie, t1);
     assert.equal(req1.status, 'pending');
 
     // Duplicate pending request rejected
     await assert.rejects(
-      async () => repo.createJoinRequest('r2', 'priv', bob, t2),
+      async () => repo.createJoinRequest('r1-duplicate', 'pub', charlie, t2),
       (err: any) => err instanceof CommunityRuleError && err.code === 'already_requested'
     );
 
-    // Non-member charlie cannot respond to request
+    // Directly joining a public team resolves the caller's pending request atomically. A later
+    // moderation attempt must not overwrite the membership role or original join time.
+    await repo.createTeam('direct-request-team', 'direct-request-team', 'Direct Requests', '', 'public', alice, t0);
+    await repo.createJoinRequest('direct-request', 'direct-request-team', charlie, t1);
+    const directMembership = await repo.joinTeam('direct-request-team', charlie, t2);
+    assert.equal(directMembership.joinedAt, t2);
+    assert.deepEqual(await repo.listOutgoingJoinRequests(charlie), { total: 1, items: [req1] });
+    await repo.updateMemberRole('direct-request-team', alice, charlie, 'admin');
     await assert.rejects(
-      async () => repo.respondToJoinRequest('r1', charlie, 'accepted', t2),
-      (err: any) => err instanceof CommunityRuleError && err.code === 'not_found'
+      () => repo.respondToJoinRequest('direct-request', alice, 'accepted', new Date(t2.getTime() + 1_000)),
+      (err: unknown) => err instanceof CommunityRuleError && err.code === 'invalid_transition'
+    );
+    const preservedMembership = await repo.getMembership('direct-request-team', charlie, alice);
+    assert.equal(preservedMembership?.role, 'admin');
+    assert.equal(preservedMembership?.joinedAt, t2);
+
+    // A visible-team non-admin cannot respond to a request.
+    await assert.rejects(
+      async () => repo.respondToJoinRequest('r1', dave, 'accepted', t2),
+      (err: any) => err instanceof CommunityRuleError && err.code === 'not_authorized'
     );
 
-    // Alice (owner) accepts bob's request
+    // Alice (owner) accepts Charlie's request. Responded requests leave the requester self-list.
     const accepted = await repo.respondToJoinRequest('r1', alice, 'accepted', t2);
     assert.equal(accepted.status, 'accepted');
-    const bobPrivMem = await repo.getMembership('priv', bob, alice);
-    assert.ok(bobPrivMem);
+    const charlieMem = await repo.getMembership('pub', charlie, alice);
+    assert.ok(charlieMem);
+    assert.deepEqual(await repo.listOutgoingJoinRequests(charlie), { total: 0, items: [] });
 
-    // Charlie submits request and cancels it
-    await repo.createJoinRequest('r2', 'priv', charlie, t2);
+    // A legacy pending request remains recoverable after its team becomes private, but only by its requester.
+    await repo.createTeam('request-team', 'request-team', 'Requests', '', 'public', alice, t0);
+    await repo.createJoinRequest('r2', 'request-team', dave, t2);
+    await repo.updateTeam('request-team', alice, { visibility: 'private' }, t2);
+    const outgoing = await repo.listOutgoingJoinRequests(dave);
+    assert.equal(outgoing.total, 1);
+    assert.equal(outgoing.items[0].id, 'r2');
+    assert.equal(outgoing.items[0].teamId, 'request-team');
+    assert.deepEqual(await repo.listOutgoingJoinRequests(bob), { total: 0, items: [] });
 
-    // Before that: a stranger must get the same answer for a real request id and an invented one.
+    // A stranger must get the same answer for a real request id and an invented one.
     // A join request is visible to its requester and the team's admins; `not_authorized` on a live
     // id while an invented one answers `not_found` is an oracle over request ids (invariant 8).
     for (const targetId of ['r2', 'r-never-existed']) {
       await assert.rejects(
-        () => repo.cancelJoinRequest(targetId, dave, t2),
+        () => repo.cancelJoinRequest(targetId, bob, t2),
         (err: unknown) => err instanceof CommunityRuleError && err.code === 'not_found',
         `cancelling '${targetId}' as a stranger must look like a missing request`
       );
     }
 
-    const cancelled = await repo.cancelJoinRequest('r2', charlie, t2);
+    const cancelled = await repo.cancelJoinRequest('r2', dave, t2);
     assert.equal(cancelled.status, 'cancelled');
+    assert.deepEqual(await repo.listOutgoingJoinRequests(dave), { total: 0, items: [] });
   });
 
   await t.test('5. Public vs private team visibility & forum access', async () => {
@@ -288,7 +331,7 @@ test('InMemoryCommunityRepository unit tests', async (t) => {
 
   await t.test('9. listJoinRequests status filtering before pagination', async () => {
     await repo.clear();
-    await repo.createTeam('t1', 'team-1', 'Team 1', '', 'private', alice, t0);
+    await repo.createTeam('t1', 'team-1', 'Team 1', '', 'public', alice, t0);
     // Create requests: r1 (accepted, t0), r2 (accepted, t1), r3 (pending, t2)
     await repo.createJoinRequest('req-1', 't1', bob, t0);
     await repo.respondToJoinRequest('req-1', alice, 'accepted', t1);

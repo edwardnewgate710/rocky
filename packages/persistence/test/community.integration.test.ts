@@ -69,18 +69,52 @@ test('pg community repository integration tests', { skip }, async () => {
     );
 
     // 3. Join requests & pending request unique index constraint
-    const privTeamId = uuidv7();
-    await repo.createTeam(privTeamId, 'pg-priv-team', 'PG Private Team', 'Desc', 'private', alice, t0);
+    const hiddenTeamId = uuidv7();
+    await repo.createTeam(hiddenTeamId, 'pg-hidden-team', 'PG Hidden Team', 'Desc', 'private', alice, t0);
+    const captureCreateError = async (teamId: string): Promise<CommunityRuleError> => {
+      try {
+        await repo.createJoinRequest(uuidv7(), teamId, charlie, t1);
+        assert.fail('private or missing team must not accept a join request');
+      } catch (err) {
+        assert.ok(err instanceof CommunityRuleError);
+        return err;
+      }
+    };
+    const hidden = await captureCreateError(hiddenTeamId);
+    const missing = await captureCreateError(uuidv7());
+    assert.deepEqual(
+      { code: hidden.code, message: hidden.message },
+      { code: missing.code, message: missing.message }
+    );
+
+    const requestTeamId = uuidv7();
+    await repo.createTeam(requestTeamId, 'pg-request-team', 'PG Request Team', 'Desc', 'public', alice, t0);
 
     const reqId1 = uuidv7();
-    const req1 = await repo.createJoinRequest(reqId1, privTeamId, charlie, t1);
+    const req1 = await repo.createJoinRequest(reqId1, requestTeamId, charlie, t1);
     assert.equal(req1.status, 'pending');
 
     // Partial unique index for one pending request per (team, player)
     await assert.rejects(
-      async () => repo.createJoinRequest(uuidv7(), privTeamId, charlie, t2),
+      async () => repo.createJoinRequest(uuidv7(), requestTeamId, charlie, t2),
       (err: any) => err instanceof CommunityRuleError && err.code === 'already_requested'
     );
+
+    // A direct public join resolves an existing pending request in the same transaction. A later
+    // moderation attempt cannot change membership state through a stale request.
+    const directRequestId = uuidv7();
+    await repo.createJoinRequest(directRequestId, requestTeamId, bob, t1);
+    const directMembership = await repo.joinTeam(requestTeamId, bob, t2);
+    assert.equal(directMembership.joinedAt.toISOString(), t2.toISOString());
+    assert.deepEqual(await repo.listOutgoingJoinRequests(bob), { total: 0, items: [] });
+    await repo.updateMemberRole(requestTeamId, alice, bob, 'admin');
+    await assert.rejects(
+      () => repo.respondToJoinRequest(directRequestId, alice, 'accepted', new Date(t2.getTime() + 1_000)),
+      (err: unknown) => err instanceof CommunityRuleError && err.code === 'invalid_transition'
+    );
+    const preservedMembership = await repo.getMembership(requestTeamId, bob, alice);
+    assert.equal(preservedMembership?.role, 'admin');
+    assert.equal(preservedMembership?.joinedAt.toISOString(), t2.toISOString());
 
     // Respond to join request
     const acceptedReq = await repo.respondToJoinRequest(reqId1, alice, 'accepted', t2);
@@ -109,7 +143,7 @@ test('pg community repository integration tests', { skip }, async () => {
     // Asserting instead that "an advisory lock blocks a second acquirer" would be testing Postgres,
     // not this adapter — and it passes whichever order the adapter uses.
     const concurrentTeamId = uuidv7();
-    await repo.createTeam(concurrentTeamId, 'pg-concur-team', 'Concur Team', 'Desc', 'private', alice, t0);
+    await repo.createTeam(concurrentTeamId, 'pg-concur-team', 'Concur Team', 'Desc', 'public', alice, t0);
     const raceReqId = uuidv7();
     await repo.createJoinRequest(raceReqId, concurrentTeamId, bob, t0);
 
@@ -146,8 +180,13 @@ test('pg community repository integration tests', { skip }, async () => {
     // not be able to tell a real request id from an invented one.
     const probeReqId = uuidv7();
     const probeTeamId = uuidv7();
-    await repo.createTeam(probeTeamId, 'pg-probe-team', 'Probe Team', 'Desc', 'private', alice, t0);
+    await repo.createTeam(probeTeamId, 'pg-probe-team', 'Probe Team', 'Desc', 'public', alice, t0);
     await repo.createJoinRequest(probeReqId, probeTeamId, bob, t0);
+    await repo.updateTeam(probeTeamId, alice, { visibility: 'private' }, t1);
+    const bobOutgoing = await repo.listOutgoingJoinRequests(bob);
+    assert.equal(bobOutgoing.total, 1);
+    assert.equal(bobOutgoing.items[0].id, probeReqId);
+    assert.deepEqual(await repo.listOutgoingJoinRequests(charlie), { total: 0, items: [] });
     for (const targetId of [probeReqId, uuidv7()]) {
       await assert.rejects(
         async () => repo.cancelJoinRequest(targetId, charlie, t1),
@@ -155,6 +194,8 @@ test('pg community repository integration tests', { skip }, async () => {
         `cancelling '${targetId}' as a stranger must look like a missing request`
       );
     }
+    await repo.cancelJoinRequest(probeReqId, bob, t1);
+    assert.deepEqual(await repo.listOutgoingJoinRequests(bob), { total: 0, items: [] });
 
     // 5c. A team id that is not a UUID at all. The in-memory adapter treats ids as plain strings and
     // simply misses, so nothing here was under test: against Postgres the same value is compared to
@@ -189,7 +230,7 @@ test('pg community repository integration tests', { skip }, async () => {
 
     // 7. listJoinRequests status filtering before pagination in PgCommunityRepository
     const filterTeamId = uuidv7();
-    await repo.createTeam(filterTeamId, 'pg-filter-team', 'Filter Team', 'Desc', 'private', alice, t0);
+    await repo.createTeam(filterTeamId, 'pg-filter-team', 'Filter Team', 'Desc', 'public', alice, t0);
     const r1Id = uuidv7();
     const r2Id = uuidv7();
     const r3Id = uuidv7();
