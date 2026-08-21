@@ -251,18 +251,6 @@ test('pg community repository integration tests', { skip }, async () => {
     const filterPendingEmpty = await repo.listJoinRequests(filterTeamId, alice, { status: 'pending', limit: 1, offset: 1 });
     assert.equal(filterPendingEmpty.total, 1);
     assert.equal(filterPendingEmpty.items.length, 0);
-
-    const outgoingIndex = await pool.query<{ indexdef: string }>(
-      `SELECT indexdef FROM pg_indexes
-       WHERE schemaname = current_schema()
-         AND indexname = 'community_join_requests_pending_by_player_idx'`
-    );
-    assert.equal(outgoingIndex.rows.length, 1);
-    assert.match(
-      outgoingIndex.rows[0].indexdef,
-      /\(player_id, created_at DESC, id(?: ASC)?\)/
-    );
-    assert.match(outgoingIndex.rows[0].indexdef, /WHERE .*status.*pending/);
   } finally {
     // Cleanup created users
     if (createdUserIds.length > 0) {

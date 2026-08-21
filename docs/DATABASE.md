@@ -493,9 +493,6 @@ CREATE TABLE community_join_requests (
 CREATE UNIQUE INDEX community_join_requests_one_pending_per_player
   ON community_join_requests (team_id, player_id) WHERE status = 'pending';
 
-CREATE INDEX community_join_requests_pending_by_player_idx
-  ON community_join_requests (player_id, created_at DESC, id ASC) WHERE status = 'pending';
-
 CREATE TABLE community_forum_threads (
   id           UUID        NOT NULL PRIMARY KEY,
   team_id      UUID        NOT NULL REFERENCES community_teams(id) ON DELETE CASCADE,
@@ -520,7 +517,7 @@ CREATE TABLE community_forum_posts (
 );
 ```
 
-Stores teams, memberships, join requests, forum threads, and forum posts. Enforces single-owner invariant per team via partial unique index `community_memberships_one_owner_per_team` and at-most-one pending join request per player per team via `community_join_requests_one_pending_per_player`. The partial `community_join_requests_pending_by_player_idx` supports requester-scoped pending pagination without scanning and sorting retained terminal history. All referencing FK columns are indexed to avoid full table scans on cascading user or team deletions.
+Stores teams, memberships, join requests, forum threads, and forum posts. Enforces single-owner invariant per team via partial unique index `community_memberships_one_owner_per_team` and at-most-one pending join request per player per team via `community_join_requests_one_pending_per_player`. All referencing FK columns are indexed to avoid full table scans on cascading user or team deletions.
 
 ### 4.18 Achievements (`achievement_progress` table, Migration 0018)
 
