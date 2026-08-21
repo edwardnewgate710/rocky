@@ -154,6 +154,13 @@ export const GAME_ELEMENT_IDS = [
   'puzzle-error',
   'puzzle-result',
   'puzzle-rows',
+  'opening',
+  'opening-heading',
+  'opening-run',
+  'opening-note',
+  'opening-error',
+  'opening-result',
+  'opening-rows',
   'explain',
   'explain-run',
   'explain-note',
@@ -197,11 +204,19 @@ export function createGameDocument(): {
       id === 'explain-result' ||
       id === 'assess' ||
       id === 'assess-error' ||
-      id === 'assess-result'
+      id === 'assess-result' ||
+      id === 'opening' ||
+      id === 'opening-error' ||
+      id === 'opening-result'
     ) {
       el.hidden = true;
     }
-    if (id === 'analysis-results' || id === 'assess-result' || id === 'puzzle-result') {
+    if (
+      id === 'analysis-results' ||
+      id === 'assess-result' ||
+      id === 'puzzle-result' ||
+      id === 'opening-result'
+    ) {
       el.setAttribute('aria-busy', 'false');
     }
     elements.set(id, el);
@@ -215,7 +230,16 @@ export function createGameDocument(): {
   return { doc, elements };
 }
 
-export function makeState(fen: string, ply = 0, turn: WsColor = 'w'): StateView {
+/**
+ * `moves` defaults to empty, which is what most fixtures want. Opening identification is the one
+ * feature that reads the ledger rather than the position, so it passes a real one.
+ */
+export function makeState(
+  fen: string,
+  ply = 0,
+  turn: WsColor = 'w',
+  moves: readonly { readonly ply: number; readonly uci: string; readonly san: string; readonly by: WsColor }[] = [],
+): StateView {
   return {
     gameId: 'g-test-1',
     variant: 'standard',
@@ -229,7 +253,7 @@ export function makeState(fen: string, ply = 0, turn: WsColor = 'w'): StateView 
     turnStartedAt: null,
     status: { over: false },
     drawOffer: null,
-    moves: [],
+    moves,
     legalMoves: {},
   };
 }

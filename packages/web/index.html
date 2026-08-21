@@ -158,6 +158,20 @@
             </div>
           </div>
         </section>
+        <!-- A sibling of the engine panel rather than a block inside it, and both halves of that
+             matter. The section above is titled "Engine" and is revealed only when one is
+             configured; identifying an opening is a table lookup that needs no engine at all
+             (ADR-0127), so nesting it there would both mislabel it and hide it on exactly the
+             deployments it was built to serve. -->
+        <section id="opening" class="analysis-panel" aria-labelledby="opening-heading" hidden>
+          <h2 id="opening-heading" class="analysis-title">Opening</h2>
+          <button id="opening-run" type="button" class="button">Identify opening</button>
+          <p id="opening-note" class="count" role="status" aria-live="polite"></p>
+          <div id="opening-error" class="error" role="alert" hidden></div>
+          <div id="opening-result" class="opening-result" aria-busy="false" hidden>
+            <div id="opening-rows" class="panel-list"></div>
+          </div>
+        </section>
       </aside>
     </main>
     <section id="auth" class="auth" aria-labelledby="auth-heading">

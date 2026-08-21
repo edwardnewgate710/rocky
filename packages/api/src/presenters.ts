@@ -917,6 +917,17 @@ export interface CapabilitiesFlags {
   readonly mistakePrediction: boolean;
   /** Fixed-policy, engine-only tactic discovery (ADR-0125). */
   readonly puzzleGeneration: boolean;
+  /**
+   * Bundled opening identification (ADR-0127).
+   *
+   * Alone among the feature flags here it does not imply `analysis`, and is not implied by it: the
+   * answer is a table lookup and a legality replay, so it is true on a deployment with no engine
+   * binary and false on one whose bundled dataset is empty however good its engine is. There is no
+   * variant list beside it because there is nothing to list — the feature serves exactly
+   * `standard`, and a one-element array would invite a client to treat it as a set that could grow
+   * without the server saying so.
+   */
+  readonly openingExplorer: boolean;
 }
 
 /**
@@ -966,6 +977,7 @@ export function capabilitiesView(
     | 'moveExplanation'
     | 'mistakePrediction'
     | 'puzzleGeneration'
+    | 'openingExploration'
   >,
 ): CapabilitiesView {
   const puzzleVariants = deps.puzzleGeneration
@@ -984,11 +996,48 @@ export function capabilitiesView(
       moveExplanation: deps.moveExplanation !== undefined,
       mistakePrediction: deps.mistakePrediction !== undefined,
       puzzleGeneration: puzzleVariants.length > 0,
+      openingExplorer: deps.openingExploration !== undefined,
     },
     analysisVariants: deps.analysis
       ? VARIANTS.filter((variant) => deps.analysis?.supportsVariant(variant) === true)
       : [],
     puzzleVariants,
+  };
+}
+
+/**
+ * The service outcome is already the public shape: it is the projection, built in the service so
+ * that dropping the bundled statistics is a property of the only path to the wire rather than a
+ * step a second caller could skip. See `openings/opening-exploration-service.ts`.
+ */
+export type OpeningExplorationView =
+  import('./openings/opening-exploration-service.js').OpeningExplorationOutcome;
+
+/**
+ * Copy the service outcome onto the wire shape.
+ *
+ * A copy rather than a pass-through so the published field list is written out in one place a
+ * reviewer can read against the schema; the statistics were already dropped upstream.
+ *
+ * @param outcome - what the service concluded.
+ * @returns the response body, carrying no opening statistics.
+ */
+export function openingExplorationView(
+  outcome: import('./openings/opening-exploration-service.js').OpeningExplorationOutcome,
+): OpeningExplorationView {
+  return {
+    moves: [...outcome.moves],
+    found: outcome.found,
+    eco: outcome.eco,
+    name: outcome.name,
+    matchedMoves: outcome.matchedMoves,
+    outOfBook: outcome.outOfBook,
+    continuations: outcome.continuations.map((continuation) => ({
+      move: continuation.move,
+      san: continuation.san,
+      eco: continuation.eco,
+      name: continuation.name,
+    })),
   };
 }
 

@@ -145,6 +145,19 @@ export function mistakePredictionSupportsVariant(payload: unknown, variant: stri
 }
 
 /** Whether fixed-policy tactic discovery is composed in this deployment (ADR-0125). */
+/**
+ * Whether this deployment can identify openings.
+ *
+ * No variant gate beside it, unlike {@link puzzleGenerationSupportsVariant}: the feature serves
+ * exactly `standard` and publishes no list, so the caller checks the game's variant itself rather
+ * than reading a one-element set that could be mistaken for a growable one (ADR-0127).
+ *
+ * Fails closed on a missing or malformed payload, for the same reason the others do.
+ */
+export function openingExplorerEnabled(payload: unknown): boolean {
+  return capabilityFlags(payload)?.['openingExplorer'] === true;
+}
+
 export function puzzleGenerationEnabled(payload: unknown): boolean {
   return capabilityFlags(payload)?.['puzzleGeneration'] === true;
 }

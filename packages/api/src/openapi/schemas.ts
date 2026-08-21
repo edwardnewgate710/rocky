@@ -7,6 +7,7 @@
 
 import { ROLES, SEEK_COLORS, TIME_CONTROL_KINDS, VARIANTS, CREATABLE_VARIANTS } from '../domain';
 import { DEFAULT_ANALYSIS_LIMITS } from '../analysis/limits';
+import { MAX_EXPLORED_PLIES } from '../openings/opening-exploration-service';
 import type { ComponentSchemas, JsonSchema } from './types';
 import { nullable } from './types';
 
@@ -247,7 +248,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       },
       capabilities: {
         type: 'object',
-        required: ['learning', 'studies', 'achievements', 'search', 'social', 'messaging', 'community', 'analysis', 'moveExplanation', 'mistakePrediction', 'puzzleGeneration'],
+        required: ['learning', 'studies', 'achievements', 'search', 'social', 'messaging', 'community', 'analysis', 'moveExplanation', 'mistakePrediction', 'puzzleGeneration', 'openingExplorer'],
         properties: {
           learning: { type: 'boolean' },
           studies: { type: 'boolean' },
@@ -260,6 +261,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
           moveExplanation: { type: 'boolean' },
           mistakePrediction: { type: 'boolean' },
           puzzleGeneration: { type: 'boolean' },
+          openingExplorer: { type: 'boolean' },
         },
         additionalProperties: false,
       },
@@ -1823,6 +1825,58 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
         additionalProperties: false,
       },
     ],
+  },
+
+  // --- Opening Exploration (ADR-0127) ---
+  //
+  // `variant` is required and enumerated over every variant rather than fixed to `standard`, so a
+  // caller naming another one is refused by the server's own rule with a 422 that says why, instead
+  // of being rejected by the schema as a malformed request for a field that looked optional.
+  OpeningExplorationRequest: {
+    type: 'object',
+    required: ['variant', 'moves'],
+    properties: {
+      variant: { type: 'string', enum: [...VARIANTS] },
+      moves: {
+        type: 'array',
+        maxItems: MAX_EXPLORED_PLIES,
+        items: { type: 'string', minLength: 4, maxLength: 5 },
+      },
+      initialFen: { type: 'string', minLength: 1, maxLength: 200 },
+    },
+    additionalProperties: false,
+  },
+
+  // Carries no statistics. The bundled dataset's figures are illustrative rather than measured, so
+  // there is deliberately no field on the wire that a client could render as real data (ADR-0127).
+  OpeningContinuationView: {
+    type: 'object',
+    required: ['move', 'san', 'eco', 'name'],
+    properties: {
+      move: { type: 'string' },
+      san: nullableString,
+      eco: nullableString,
+      name: nullableString,
+    },
+    additionalProperties: false,
+  },
+
+  OpeningExplorationResponse: {
+    type: 'object',
+    required: ['moves', 'found', 'eco', 'name', 'matchedMoves', 'outOfBook', 'continuations'],
+    properties: {
+      moves: { type: 'array', items: { type: 'string' } },
+      found: { type: 'boolean' },
+      eco: nullableString,
+      name: nullableString,
+      matchedMoves: { type: 'integer' },
+      outOfBook: { type: 'boolean' },
+      continuations: {
+        type: 'array',
+        items: { $ref: '#/components/schemas/OpeningContinuationView' },
+      },
+    },
+    additionalProperties: false,
   },
 
   // --- Mistake Prediction (ADR-0118) ---

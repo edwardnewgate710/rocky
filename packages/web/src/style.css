@@ -1129,6 +1129,22 @@ button:disabled {
   padding-top: 12px;
 }
 
+/* The rows read as one column with the engine panel's, so they carry its treatment; the section
+   itself reuses `.analysis-panel` rather than defining a second panel look. */
+.opening-result {
+  margin-top: 8px;
+}
+
+.opening-label {
+  color: var(--muted);
+  min-width: 5.5rem;
+}
+
+.opening-value {
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
 .puzzle-result {
   margin-top: 8px;
 }

@@ -215,6 +215,13 @@ export interface SystemCapabilities {
   readonly community: boolean;
   readonly analysis: boolean;
   readonly puzzleGeneration?: boolean;
+  /**
+   * Bundled opening identification. Optional because a server predating it omits the field, and a
+   * missing flag must read as off rather than as permission.
+   *
+   * There is no variant list beside it: the feature serves exactly `standard`. See ADR-0127.
+   */
+  readonly openingExplorer?: boolean;
 }
 
 export interface CapabilitiesResponse {
@@ -836,6 +843,41 @@ export interface WebAuthnLoginVerifyRequest {
 }
 
 // --- Engine Analysis (M15 inc 2) -------------------------------------------
+
+// --- Opening Exploration (M15 inc 19, ADR-0127) -----------------------------
+
+export interface OpeningExplorationRequest {
+  readonly variant: string;
+  /** UCI, from the standard starting position, ply 1 first. The server caps the length at 60. */
+  readonly moves: readonly string[];
+  /** Optional; when sent it must be the standard starting position, which is all the server serves. */
+  readonly initialFen?: string;
+}
+
+/**
+ * One book move out of the identified line.
+ *
+ * Carries no statistics, and must not grow one from this side either. The bundled dataset's
+ * win-rate figures are illustrative rather than measured, so the server publishes no field for
+ * them (ADR-0127) — rendering an invented number is the failure this shape exists to prevent.
+ */
+export interface OpeningContinuationView {
+  readonly move: string;
+  readonly san: string | null;
+  readonly eco: string | null;
+  readonly name: string | null;
+}
+
+export interface OpeningExplorationResponse {
+  /** The sequence the server answered about, echoed so a late response can be recognised as stale. */
+  readonly moves: readonly string[];
+  readonly found: boolean;
+  readonly eco: string | null;
+  readonly name: string | null;
+  readonly matchedMoves: number;
+  readonly outOfBook: boolean;
+  readonly continuations: readonly OpeningContinuationView[];
+}
 
 export interface AnalysisEvaluation {
   readonly type: 'cp' | 'mate';

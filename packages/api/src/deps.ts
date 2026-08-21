@@ -116,6 +116,16 @@ export interface ApiDependencies {
    */
   readonly puzzleGeneration?: import('./analysis/puzzle-generation-service').PuzzleGenerationService;
   /**
+   * Optional opening identification (ADR-0127). When absent, `POST /v1/openings/explore` responds
+   * 503.
+   *
+   * Independent of every other optional feature here, and of the engine: the answer is a bundled
+   * table lookup plus a legality replay, so a deployment with no engine binary and no AI provider
+   * serves this in full. Optional anyway, because a build carrying an empty dataset can identify
+   * nothing and must be able to say so.
+   */
+  readonly openingExploration?: import('./openings/opening-exploration-service').OpeningExplorationService;
+  /**
    * Optional GraphQL read layer (M10 inc 8). When absent, `POST /v1/graphql` responds 503.
    *
    * The subsystem repositories it resolves against are the optional ones above — it adds no data

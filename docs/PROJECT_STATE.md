@@ -4,7 +4,44 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-21 — M15 Increment 18: production identity email is wired and token-safe._
+_Last updated: 2026-08-21 — M15 Increment 19: opening identification ships without the invented statistics._
+
+## M15 Increment 19 — Opening Explorer Productionization (ADR-0127)
+
+The M8 `OpeningExplorer` was library-complete with no importer, API, capability or UI. It now runs
+through `POST /v1/openings/explore` and the game sidebar's **Identify opening** action.
+
+It is the first M8 productionization that borrows nothing: no engine, no AI provider, no second
+subsystem. `OpeningExplorer` is constructed with a database and neither optional port, so no path
+through it can reach an engine or a completion, and the feature answers in full on a deployment
+that has neither. `openingExplorer` is consequently the one capability flag that neither implies
+nor is implied by `analysis`; it is derived from the composed dependency, and an empty bundled
+dataset composes to `undefined` so the flag reports the truth rather than a constant.
+
+**The bundled statistics do not reach the wire, and that is the point of the increment.** The
+dataset's own header says its `games`/`whiteWins` figures are "approximate aggregate figures for
+illustration … not sourced from a specific database". Publishing them would put invented numbers in
+front of a reader with nothing on the page to say so. The service returns a projection with no
+statistics field, `OpeningContinuationView` publishes `additionalProperties: false` over exactly
+`move`/`san`/`eco`/`name`, and the projection lives in the service rather than the presenter so
+that dropping them is a property of the only path to the wire.
+
+Server-owned policy: `standard` only (`variant` is required, so another variant is refused with a
+422 instead of silently receiving an answer about a different game); the standard start position
+only, with `initialFen` optional-but-checked because the gateway snapshot carries no start position
+and no creation route accepts one today; a 60-ply ceiling that refuses rather than truncates; a UCI
+shape check before any position is constructed; and an ordinary 60/user, 120/IP bucket charged up
+front, since there is no expensive phase to admit into. Only `IllegalMoveError` becomes a 422 — any
+other throw is ours and stays a 500.
+
+Transpositions are not identified: `BundledOpeningDatabase.lookup` matches an entry whose moves are
+a prefix of the submitted sequence, so `1.Nf3 Nc6 2.e4 e5 3.Bb5` returns "no known opening" while
+`1.e4 e5 2.Nf3 Nc6 3.Bb5` returns C60. Pinned by a test rather than widened — position-keyed lookup
+is a different dataset, and it is the corpus question again.
+
+The sidebar reads `GameController.moveSequence`, which returns the whole UCI ledger from ply 1 or
+`null` when it is not a contiguous run from the start. Opening statistics, a real corpus, engine
+evaluation, LLM narrative, a transposition-aware matcher, and Chess960 remain deferred.
 
 ## M15 Increment 18 — Production Email Delivery + Token-Logging Hardening (ADR-0126)
 

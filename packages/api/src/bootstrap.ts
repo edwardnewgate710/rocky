@@ -79,6 +79,7 @@ import type { AnalysisProvider } from '@chess-platform/engine';
 import { EngineBackedEvaluator } from '@chess-platform/anti-cheat/engine';
 import { AntiCheatAnalysisService } from './anti-cheat/analysis-service';
 import { createAnalysisFromEnv, createMistakePrediction, createPuzzleGeneration } from './analysis/composition';
+import { createOpeningExploration } from './openings/composition';
 import { createAiFromEnv, createMoveExplanation } from './ai/composition';
 import { EventStoreGameSource } from './anti-cheat/source';
 import { EventStoreBotTimingSource } from './bot-detection/source';
@@ -151,6 +152,10 @@ export interface PgBootstrapOptions {
   readonly analysis?: import('./analysis/composition').AnalysisComposition | undefined;
   /** AI subsystem behind Move Explanation (ADR-0115). Defaults to {@link createAiFromEnv}. */
   readonly ai?: import('./ai/composition').AiComposition | undefined;
+  /** Opening identification (ADR-0127). Defaults to {@link createOpeningExploration}. */
+  readonly openingExploration?:
+    | import('./openings/opening-exploration-service').OpeningExplorationService
+    | undefined;
   readonly searchRepository?: SearchRepository;
   readonly semanticSearchRepository?: SemanticSearchRepository;
   readonly embeddingProvider?: EmbeddingProvider;
@@ -242,6 +247,10 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
   const puzzleGeneration = analysisComposition
     ? createPuzzleGeneration(analysisComposition.service)
     : undefined;
+
+  // Opening exploration (ADR-0127) is composed unconditionally: it borrows nothing from the
+  // analysis subsystem and needs no provider, so it is available on a deployment that has neither.
+  const openingExploration = options.openingExploration ?? createOpeningExploration();
 
   const searchEnabled = process.env['SEARCH_ENABLED'] !== '0';
   const searchRepository = searchEnabled
@@ -358,6 +367,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ...(moveExplanation ? { moveExplanation } : {}),
     ...(mistakePrediction ? { mistakePrediction } : {}),
     ...(puzzleGeneration ? { puzzleGeneration } : {}),
+    ...(openingExploration ? { openingExploration } : {}),
     botTimingSource: new EventStoreBotTimingSource(eventStore),
     // Production observability (M13): structured logs to stdout, a scrape
     // registry backing GET /v1/metrics, and tracer emitting spans to logs.

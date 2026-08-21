@@ -182,6 +182,28 @@ export class GameController {
   }
 
   /**
+   * The full authoritative UCI move sequence from ply 1, or `null` when there is not one.
+   *
+   * Unlike {@link lastReplayedMove} this is available for a game joined mid-play: the gateway's
+   * snapshot carries the whole ledger, so every `MoveView.uci` back to the first is on the wire
+   * even when the position each was played from is not.
+   *
+   * `null` rather than a best effort when the ledger is not a contiguous run from ply 1. An
+   * opening is identified by a sequence read from the start, so a gap — or a ledger that begins
+   * part-way through — would name an opening for moves that were never played in that order. There
+   * is no partial answer to give, and giving one would be wrong rather than incomplete.
+   */
+  get moveSequence(): readonly string[] | null {
+    const state = this.lastState;
+    if (state === null || state.snapshot === null) return null;
+    const moves = state.moves;
+    for (let i = 0; i < moves.length; i++) {
+      if (moves[i]!.ply !== i + 1) return null;
+    }
+    return moves.map((move) => move.uci);
+  }
+
+  /**
    * Submit an intended move (UCI) to the server via GameSync. Returns the
    * pending move info, or `null` if the send failed (e.g. not a player or
    * socket not open).

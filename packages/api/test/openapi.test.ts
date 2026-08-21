@@ -1,7 +1,8 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { startHarness } from './helpers';
-import { joinRequestView, learnerStepView, teamView, teamDetailView, attemptResultView, capabilitiesView, sessionView, moveExplanationView, puzzleGenerationView } from '../src/presenters';
+import { joinRequestView, learnerStepView, teamView, teamDetailView, attemptResultView, capabilitiesView, sessionView, moveExplanationView, puzzleGenerationView, openingExplorationView } from '../src/presenters';
+import { MAX_EXPLORED_PLIES } from '../src/openings/opening-exploration-service';
 import type { JoinRequest, Team } from '@chess-platform/community';
 import type { AttemptResult, LessonStep } from '@chess-platform/learning';
 import type { JsonSchema } from '../src/openapi/types';
@@ -547,3 +548,54 @@ test('PuzzleGenerationResponse: every result branch matches its served schema', 
   }
 });
 
+
+/**
+ * The opening contract, and the field it deliberately does not have.
+ *
+ * `OpeningContinuationView` is the schema that keeps the bundled statistics off the wire
+ * (ADR-0127). Asserting the presenter's keys against `required` *and* `properties` means a field
+ * added to either side alone fails here; `additionalProperties: false` closes the third route in,
+ * where a value rides along without a schema entry at all.
+ */
+test('OpeningExplorationResponse: the served view matches its schema, statistics included in neither', async () => {
+  const h = await startHarness();
+  try {
+    const schemas = (h.server.openapiDocument() as any).components.schemas;
+    const response = schemas.OpeningExplorationResponse;
+    const continuation = schemas.OpeningContinuationView;
+    const request = schemas.OpeningExplorationRequest;
+
+    const view = openingExplorationView({
+      moves: ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1b5'],
+      found: true,
+      eco: 'C60',
+      name: 'Ruy Lopez (Spanish Opening)',
+      matchedMoves: 5,
+      outOfBook: false,
+      continuations: [{ move: 'a7a6', san: 'a6', eco: 'C70', name: 'Ruy Lopez, Morphy Defense' }],
+    });
+
+    assert.deepEqual(Object.keys(view).sort(), [...response.required].sort());
+    assert.deepEqual(Object.keys(view).sort(), Object.keys(response.properties).sort());
+    assert.equal(response.additionalProperties, false);
+
+    assert.deepEqual([...continuation.required].sort(), ['eco', 'move', 'name', 'san']);
+    assert.deepEqual(Object.keys(continuation.properties).sort(), ['eco', 'move', 'name', 'san']);
+    assert.equal(continuation.additionalProperties, false);
+    assert.deepEqual(Object.keys(view.continuations[0]!).sort(), ['eco', 'move', 'name', 'san']);
+
+    // The request publishes the server's ply ceiling rather than leaving a caller to discover it
+    // from a 422, and accepts nothing else.
+    assert.deepEqual([...request.required].sort(), ['moves', 'variant']);
+    assert.deepEqual(Object.keys(request.properties).sort(), ['initialFen', 'moves', 'variant']);
+    assert.equal(request.properties.moves.maxItems, MAX_EXPLORED_PLIES);
+    assert.equal(request.additionalProperties, false);
+
+    assert.ok(
+      [...schemas.Capabilities.properties.capabilities.required].includes('openingExplorer'),
+      'the capability is required, so a client can rely on its presence',
+    );
+  } finally {
+    await h.close();
+  }
+});

@@ -11,6 +11,8 @@ import type {
   MistakePredictionResponse,
   PuzzleGenerationRequest,
   PuzzleGenerationResponse,
+  OpeningExplorationRequest,
+  OpeningExplorationResponse,
 } from './models.js';
 
 export class AnalysisApi {
@@ -83,6 +85,33 @@ export class AnalysisApi {
         fen: body.fen,
         variant: body.variant,
         move: body.move,
+      },
+      auth: true,
+      ...(signal !== undefined ? { signal } : {}),
+    });
+  }
+
+  /**
+   * Identify the opening for a move sequence read from the standard starting position (M15 inc 19).
+   *
+   * POST /v1/openings/explore, auth: true. No engine is involved on the server side, so unlike
+   * {@link analyse} this costs no worker — but it is still not retried, because a repeat would only
+   * ask a deterministic table the same question twice.
+   *
+   * Sends only `variant`, `moves` and (when supplied) `initialFen`; the server rejects any other
+   * property, so the body is built field by field rather than spread.
+   */
+  exploreOpening(
+    body: OpeningExplorationRequest,
+    signal?: AbortSignal,
+  ): Promise<OpeningExplorationResponse> {
+    return this.execute<OpeningExplorationResponse>({
+      method: 'POST',
+      path: '/v1/openings/explore',
+      body: {
+        variant: body.variant,
+        moves: [...body.moves],
+        ...(body.initialFen === undefined ? {} : { initialFen: body.initialFen }),
       },
       auth: true,
       ...(signal !== undefined ? { signal } : {}),

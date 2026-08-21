@@ -34,6 +34,7 @@ import {
   InMemorySemanticSearchRepository,
   SEARCH_EMBEDDING_DIMENSIONS,
 } from '@chess-platform/search';
+import { createOpeningExploration } from '../src/openings/composition';
 import { InMemorySocialGraphRepository } from '@chess-platform/social';
 import { InMemoryMessagingRepository } from '@chess-platform/messaging';
 import { InMemoryCommunityRepository } from '@chess-platform/community';
@@ -71,6 +72,7 @@ export interface Harness {
   readonly moveExplanation?: import('../src/ai/move-explanation-service').MoveExplanationService;
   readonly mistakePrediction?: import('../src/analysis/mistake-prediction-service').MistakePredictionService;
   readonly puzzleGeneration?: import('../src/analysis/puzzle-generation-service').PuzzleGenerationService;
+  readonly openingExploration?: import('../src/openings/opening-exploration-service').OpeningExplorationService;
   readonly clock: ManualClock;
   readonly tokens: AccessTokenService;
   readonly emailSender: InMemoryEmailSender;
@@ -128,6 +130,15 @@ export interface HarnessOptions {
   readonly mistakePrediction?: import('../src/analysis/mistake-prediction-service').MistakePredictionService;
   /** Inject an optional puzzle generation service. */
   readonly puzzleGeneration?: import('../src/analysis/puzzle-generation-service').PuzzleGenerationService;
+  /**
+   * Opening exploration is present by default, unlike the engine-backed features above.
+   * Production composes it unconditionally — it needs no engine and no provider — so a harness that
+   * omitted it would test a deployment that cannot exist. Pass `withoutOpeningExploration` for the
+   * one that can: a build whose bundled dataset is empty.
+   */
+  readonly withoutOpeningExploration?: boolean;
+  /** Substitute the service — e.g. one built over a different opening database. */
+  readonly openingExploration?: import('../src/openings/opening-exploration-service').OpeningExplorationService;
 }
 
 export async function startHarness(
@@ -204,6 +215,9 @@ export async function startHarness(
   const graphql = harnessOptions.withoutGraphql
     ? undefined
     : { introspection: harnessOptions.graphqlIntrospection === true };
+  const openingExploration = harnessOptions.withoutOpeningExploration
+    ? undefined
+    : (harnessOptions.openingExploration ?? createOpeningExploration());
   const server = createApiServer({
     repos, hasher, tokens, clock, ids, rateLimiter, tournamentRepo, gameLauncher, liveView,
     emailSender: harnessOptions.emailSender ?? emailSender,
@@ -224,6 +238,7 @@ export async function startHarness(
     ...(harnessOptions.moveExplanation ? { moveExplanation: harnessOptions.moveExplanation } : {}),
     ...(harnessOptions.mistakePrediction ? { mistakePrediction: harnessOptions.mistakePrediction } : {}),
     ...(harnessOptions.puzzleGeneration ? { puzzleGeneration: harnessOptions.puzzleGeneration } : {}),
+    ...(openingExploration ? { openingExploration } : {}),
     ...(harnessOptions.readiness ? { readiness: harnessOptions.readiness } : {}),
     ...(harnessOptions.logger ? { logger: harnessOptions.logger } : {}),
     ...(harnessOptions.tracer ? { tracer: harnessOptions.tracer } : {}),
@@ -255,6 +270,7 @@ export async function startHarness(
     moveExplanation: harnessOptions.moveExplanation,
     mistakePrediction: harnessOptions.mistakePrediction,
     puzzleGeneration: harnessOptions.puzzleGeneration,
+    openingExploration,
     clock,
     tokens,
     emailSender,

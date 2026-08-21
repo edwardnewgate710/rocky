@@ -34,6 +34,8 @@ export interface JsonSchema {
   readonly maximum?: number;
   readonly minLength?: number;
   readonly maxLength?: number;
+  /** Array bound. Published so a caller learns a server ceiling from the contract, not from a 422. */
+  readonly maxItems?: number;
   readonly default?: string | number | boolean;
   readonly example?: unknown;
   readonly oneOf?: readonly JsonSchema[];

@@ -29,10 +29,21 @@ import {
   mistakePredictionSupportsVariant,
   moveExplanationEnabled,
   moveExplanationSupportsVariant,
+  openingExplorerEnabled,
   puzzleGenerationEnabled,
   puzzleGenerationSupportsVariant,
 } from './capabilities-nav.js';
 import { PuzzleController } from './puzzle-controller.js';
+import { MAX_OPENING_PLIES, OpeningController } from './opening-controller.js';
+import type { OpeningTarget } from './opening-controller.js';
+import {
+  OPENING_MESSAGES,
+  clearOpening,
+  renderOpeningError,
+  renderOpeningNote,
+  renderOpeningResult,
+  setOpeningBusy,
+} from './opening-view.js';
 import {
   clearPuzzle,
   PUZZLE_MESSAGES,
@@ -300,6 +311,120 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     );
   };
 
+  // Opening identification (M15 inc 19), keyed on the game's move order rather than its position.
+  const openingBlockEl = doc.getElementById('opening');
+  const openingRunBtn = doc.getElementById('opening-run') as HTMLButtonElement | null;
+  const openingNoteEl = doc.getElementById('opening-note');
+  const openingErrorEl = doc.getElementById('opening-error');
+  const openingResultEl = doc.getElementById('opening-result');
+  const openingRowsEl = doc.getElementById('opening-rows');
+  let openingAvailable = false;
+
+  /** Clear the section's content back to the unanswered state, leaving its visibility alone. */
+  const resetOpeningBlock = (): void => {
+    if (openingRowsEl && openingResultEl) clearOpening(openingRowsEl, openingResultEl);
+    if (openingErrorEl) renderOpeningError(openingErrorEl, null);
+    if (openingNoteEl) renderOpeningNote(openingNoteEl, OPENING_MESSAGES.idle);
+  };
+  resetOpeningBlock();
+  // The section lives in `index.html` and outlives the mount, so a previous game's reveal is still
+  // in effect here. Re-hidden explicitly rather than left alone: `refreshOpeningControls` reveals
+  // it only when the capability says so, and the capability read can fail — in which case nothing
+  // would hide it again, and a deployment that does not offer the feature would show it.
+  if (openingBlockEl) openingBlockEl.hidden = true;
+
+  /**
+   * What the server can be asked about, or the reason there is nothing to ask.
+   *
+   * One computation rather than a predicate plus a parallel set of tests for the note, because the
+   * two would be free to disagree about why the control is off — and the reasons are not
+   * interchangeable to a reader: a game past the ceiling has left the opening behind, while one
+   * with an unrecoverable ledger is a limitation of what arrived.
+   *
+   * In every unavailable case sending the request would spend a refusal to learn something already
+   * known here, so the control declines instead.
+   */
+  type OpeningAvailability =
+    | { readonly kind: 'ready'; readonly target: OpeningTarget }
+    | { readonly kind: 'off' }
+    | { readonly kind: 'unsupported-variant' }
+    | { readonly kind: 'no-moves' }
+    | { readonly kind: 'no-sequence' }
+    | { readonly kind: 'beyond-opening' };
+
+  const openingAvailability = (): OpeningAvailability => {
+    if (!openingAvailable) return { kind: 'off' };
+    if (currentVariant === null) return { kind: 'no-sequence' };
+    if (currentVariant !== 'standard') return { kind: 'unsupported-variant' };
+    const moves = controller.moveSequence;
+    if (moves === null) return { kind: 'no-sequence' };
+    // An empty ledger is answerable — the server returns a clean no-match — but the answer is known
+    // in advance and is not worth a request, so the control waits for a move to be played.
+    if (moves.length === 0) return { kind: 'no-moves' };
+    if (moves.length > MAX_OPENING_PLIES) return { kind: 'beyond-opening' };
+    return { kind: 'ready', target: { variant: currentVariant, moves } };
+  };
+
+  /** @returns the target when there is one, for the controller's own `getTarget` port. */
+  const openingTarget = (): OpeningTarget | null => {
+    const availability = openingAvailability();
+    return availability.kind === 'ready' ? availability.target : null;
+  };
+
+  /** Why the control is off, said in the terms a reader cares about. `null` means it is on. */
+  const openingNoteFor = (availability: OpeningAvailability): string | null => {
+    switch (availability.kind) {
+      case 'ready': return null;
+      case 'unsupported-variant': return OPENING_MESSAGES.unsupportedVariant;
+      case 'no-moves': return OPENING_MESSAGES.noMoves;
+      case 'beyond-opening': return OPENING_MESSAGES.beyondOpening;
+      default: return OPENING_MESSAGES.noSequence;
+    }
+  };
+
+  /** Bring the button state and the note back into agreement with the game and the session. */
+  const refreshOpeningControls = (): void => {
+    if (analysisDisposed || !openingAvailable) return;
+    if (openingBlockEl) openingBlockEl.hidden = false;
+    const authed = isUserAuthenticated();
+    const availability = openingAvailability();
+    if (openingRunBtn) {
+      openingRunBtn.disabled =
+        !authed || availability.kind !== 'ready' || openingController.isPending;
+    }
+    if (!openingNoteEl) return;
+    // Only overwrite a note this block owns, so a result note or a failure stays on screen.
+    const owned = new Set<string>([
+      OPENING_MESSAGES.idle,
+      OPENING_MESSAGES.signedOut,
+      OPENING_MESSAGES.unsupportedVariant,
+      OPENING_MESSAGES.noMoves,
+      OPENING_MESSAGES.noSequence,
+      OPENING_MESSAGES.beyondOpening,
+      '',
+    ]);
+    if (!owned.has(openingNoteEl.textContent ?? '')) return;
+    renderOpeningNote(
+      openingNoteEl,
+      authed ? (openingNoteFor(availability) ?? OPENING_MESSAGES.idle) : OPENING_MESSAGES.signedOut,
+    );
+  };
+
+  /**
+   * Tell the controller what the game is now about.
+   *
+   * Called on every authoritative change, not only the ones that produce a target. When the target
+   * disappears — the ledger outran the ceiling, stopped being contiguous, or the variant left
+   * standard — a displayed result would otherwise keep describing a move order the game no longer
+   * has, and `refreshOpeningControls` would not correct the note, because a result note is not one
+   * this block owns. Raised in the Qodo and CodeRabbit reviews of PR #150.
+   */
+  const openingStateChanged = (): void => {
+    const availability = openingAvailability();
+    if (availability.kind === 'ready') openingController.sequenceChanged(availability.target);
+    else openingController.targetLost();
+  };
+
   // Move Explanation block (M15 inc 4), inside the same panel.
   const explainBlockEl = doc.getElementById('explain');
   const explainRunBtn = doc.getElementById('explain-run') as HTMLButtonElement | null;
@@ -513,6 +638,53 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     },
   });
 
+  const openingController = new OpeningController({
+    client: deps.client,
+    getTarget: openingTarget,
+    callbacks: {
+      onPhase: (phase) => {
+        if (openingResultEl) setOpeningBusy(openingResultEl, phase === 'loading');
+        refreshOpeningControls();
+        if (phase === 'loading') {
+          if (openingNoteEl) renderOpeningNote(openingNoteEl, OPENING_MESSAGES.running);
+          if (openingErrorEl) renderOpeningError(openingErrorEl, null);
+        }
+      },
+      onResult: (result) => {
+        const note = openingRowsEl && openingResultEl
+          ? renderOpeningResult(openingRowsEl, openingResultEl, result)
+          : null;
+        if (openingNoteEl) renderOpeningNote(openingNoteEl, note);
+        if (openingErrorEl) renderOpeningError(openingErrorEl, null);
+      },
+      onFailure: (failure) => {
+        resetOpeningBlock();
+        const noteFor: Partial<Record<typeof failure, string>> = {
+          'rate-limited': OPENING_MESSAGES.rateLimited,
+          unavailable: OPENING_MESSAGES.unavailable,
+          unauthenticated: OPENING_MESSAGES.signedOut,
+          'unsupported-variant': OPENING_MESSAGES.unsupportedVariant,
+        };
+        const note = noteFor[failure];
+        if (note) {
+          if (openingNoteEl) renderOpeningNote(openingNoteEl, note);
+        } else {
+          if (openingNoteEl) renderOpeningNote(openingNoteEl, null);
+          if (openingErrorEl) {
+            renderOpeningError(
+              openingErrorEl,
+              failure === 'rejected' ? OPENING_MESSAGES.rejected : OPENING_MESSAGES.failed,
+            );
+          }
+        }
+      },
+      onInvalidated: () => {
+        resetOpeningBlock();
+        if (openingNoteEl) renderOpeningNote(openingNoteEl, OPENING_MESSAGES.sequenceChanged);
+      },
+    },
+  });
+
   const assessController = new AssessController({
     client: deps.client,
     getTarget: lastMoveTarget,
@@ -703,10 +875,14 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
         board.setPosition(fen);
         analysisController.positionChanged(fen);
         if (currentVariant) puzzleController.positionChanged({ fen, variant: currentVariant });
+        // Keyed on the ledger rather than the position, and told about every change including the
+        // ones that leave nothing to ask about.
+        openingStateChanged();
         explainController.targetChanged();
         assessController.targetChanged();
         refreshAnalysisControls();
         refreshPuzzleControls();
+        refreshOpeningControls();
         refreshExplainControls();
         refreshAssessControls();
       },
@@ -717,6 +893,11 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
         assessController.targetChanged();
         refreshExplainControls();
         refreshAssessControls();
+        // The ledger can be replaced at an unchanged position — an authoritative snapshot taken
+        // where the board already was — and `onPosition` stays silent for that. Opening
+        // identification reads the ledger, so it has to hear about this one too.
+        openingStateChanged();
+        refreshOpeningControls();
       },
       onTurn: (myTurn: boolean) => board.setTurn(myTurn),
       onClock: (whiteMs: number, blackMs: number) => {
@@ -745,6 +926,9 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
           // whenever capabilities answered first.
           refreshExplainControls();
           refreshAssessControls();
+          // And this one, which gates on the variant harder than the rest: it serves `standard`
+          // alone, so before the variant arrives it has no target and the control stays off.
+          refreshOpeningControls();
         }
 
         let liveAnnouncement = '';
@@ -914,6 +1098,10 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     void puzzleController.find();
   });
 
+  bindClick(openingRunBtn, () => {
+    void openingController.identify();
+  });
+
   bindClick(btnOfferDraw, () => controller.offerDraw());
   bindClick(btnClaimFlag, () => controller.claimFlag());
   bindClick(btnAcceptDraw, () => controller.acceptDraw());
@@ -984,7 +1172,13 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
   // on every in-app click — the refetch `capabilities-nav.ts` already documents avoiding.
   void loadCapabilities(deps.client)
     .then((flags) => {
-      if (analysisDisposed || !analysisEnabled(flags)) return;
+      if (analysisDisposed) return;
+      // Read before the engine gate below, and deliberately not behind it. Opening identification
+      // borrows no engine, so a deployment with none still serves it — and every other block here
+      // is inside that early return (ADR-0127).
+      openingAvailable = openingExplorerEnabled(flags);
+      refreshOpeningControls();
+      if (!analysisEnabled(flags)) return;
       analysisCapabilities = flags;
       analysisAvailable = true;
       if (analysisSectionEl) {
@@ -1045,6 +1239,7 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
       explainController.dispose();
       assessController.dispose();
       puzzleController.dispose();
+      openingController.dispose();
     },
   };
 
@@ -1060,10 +1255,12 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
         if (t !== undefined) gameSync.setToken(t);
         if (!analysisDisposed) refreshAnalysisControls();
         if (!analysisDisposed) refreshPuzzleControls();
+        if (!analysisDisposed) refreshOpeningControls();
       })
       .catch(() => {
         if (!analysisDisposed) refreshAnalysisControls();
         if (!analysisDisposed) refreshPuzzleControls();
+        if (!analysisDisposed) refreshOpeningControls();
       })
       .finally(() => {
         if (gameRouteActive) gameSync.start();
@@ -1084,6 +1281,7 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
       refreshExplainControls();
       refreshAssessControls();
       refreshPuzzleControls();
+      refreshOpeningControls();
     },
   };
 }

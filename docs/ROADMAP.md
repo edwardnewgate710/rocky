@@ -374,6 +374,22 @@ known opening" result — never a fabricated one.
   - ADR-0006 updated with the new port type and bundled-dataset decision.
   - ROADMAP updated; M8 remains 🚧.
 
+**Productionized in M15 Increment 19 (ADR-0127).** The game sidebar now exposes an authenticated,
+capability-gated **Identify opening** action backed by `POST /v1/openings/explore`. It is the first
+M8 productionization that borrows no engine and no AI provider: the answer is a bundled-table lookup
+plus a legality replay, so a deployment with no `STOCKFISH_PATH` and no provider key serves it in
+full, and `openingExplorer` is therefore the one capability flag that neither implies nor is implied
+by `analysis`. The server owns every policy — `standard` only (required, so another variant is
+refused rather than silently answered), the standard start position only, and a 60-ply ceiling that
+refuses rather than truncates, because `lookup` matches on a prefix and a truncated answer would
+usually look right. **The bundled statistics are not published.** The dataset's own header calls its
+`games`/`whiteWins` figures "approximate aggregate figures for illustration … not sourced from a
+specific database", so the projection that reaches the wire has no field to carry them and
+`additionalProperties: false` keeps it that way; real statistics need a real corpus. Transpositions
+remain unidentified — `lookup` keys on the move sequence, not the position — and that is now pinned
+by a test rather than quietly widened. This adds no engine evaluation, LLM narrative, opening
+statistics, master-game database, position-keyed matcher or Chess960 support.
+
 ### Increment 5: Endgame Trainer ✅
 
 `EndgameTrainer` — serves a training endgame and, given a learner's attempted

@@ -90,6 +90,7 @@ import {
   capabilitiesView,
   analysisView,
   moveExplanationView,
+  openingExplorationView,
   mistakePredictionView,
   puzzleGenerationView,
 } from './presenters';
@@ -153,6 +154,16 @@ export interface RouteDeps {
   readonly mistakePrediction?: import('./analysis/mistake-prediction-service').MistakePredictionService;
   /** Optional puzzle generation (ADR-0125). When absent, `POST /v1/analysis/puzzle` responds 503. */
   readonly puzzleGeneration?: import('./analysis/puzzle-generation-service').PuzzleGenerationService;
+  /**
+   * Optional opening identification (ADR-0127). When absent, `POST /v1/openings/explore` responds
+   * 503. Independent of the analysis subsystem — it borrows no engine and no provider.
+   */
+  readonly openingExploration?: import('./openings/opening-exploration-service').OpeningExplorationService;
+}
+
+/** Narrows without a cast, so the request array reaches the service as the type it was checked to be. */
+function isStringArray(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
 
 const PUBLIC: AuthPolicy = { required: false };
@@ -1491,6 +1502,64 @@ export function buildRouter(deps: RouteDeps): Router {
 
       const outcome = await service.generate({ fen, variant }, charge);
       return json(200, puzzleGenerationView(outcome));
+    },
+  );
+
+  // --- Opening Exploration ---------------------------------------------------
+  //
+  // Under `/v1/openings/` and not `/v1/analysis/`, because that prefix is a claim about what serves
+  // the request and no engine does: the answer is a bundled table lookup plus a legality replay.
+  // A deployment with no engine binary configured answers this in full.
+  router.post(
+    '/v1/openings/explore',
+    doc({
+      summary: 'Identify the opening for a move sequence from the standard starting position',
+      tags: ['openings'],
+      security: 'bearer',
+      requestSchema: 'OpeningExplorationRequest',
+      responses: {
+        200: ['OpeningExplorationResponse', 'The identified opening, or a clean no-match result'],
+        401: ['Error', 'Authentication required'],
+        422: ['Error', 'Unsupported variant or starting position, or a malformed, illegal or over-long move sequence'],
+        429: ['Error', 'Rate limit exceeded'],
+        503: ['Error', 'Opening exploration is not configured'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const identity = requireAuth(ctx);
+      const service = deps.openingExploration;
+      if (!service) throw HttpError.unavailable('opening exploration is not configured');
+
+      const body = strictObject(ctx.body, ['variant', 'moves', 'initialFen']);
+      const variant = reqString(body, 'variant', { min: 1, max: 32, trim: true });
+      const initialFen = optString(body, 'initialFen', { min: 1, max: 200, trim: true });
+      const rawMoves = body['moves'];
+      if (!isStringArray(rawMoves)) {
+        throw HttpError.validation('"moves" is required', { moves: 'must be an array of strings' });
+      }
+
+      // Charged once the body is a body, and before the service does anything with it. The engine
+      // routes defer their charge until work is about to begin because the quota they spend is an
+      // expensive-work quota; this is an ordinary bucket over an ordinary request, so it covers the
+      // whole of it. A body that is not even the right shape is still refused for free above.
+      await admit([
+        {
+          key: `opening-exploration:user:${identity.userId}`,
+          limit: config.rateLimit.openingExploration.perUser,
+        },
+        {
+          key: `opening-exploration:ip:${ctx.ip ?? 'unknown'}`,
+          limit: config.rateLimit.openingExploration.perIp,
+        },
+      ]);
+
+      const outcome = await service.explore({
+        variant,
+        moves: rawMoves,
+        ...(initialFen === undefined ? {} : { initialFen }),
+      });
+      return json(200, openingExplorationView(outcome));
     },
   );
 

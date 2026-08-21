@@ -2505,6 +2505,92 @@
         }
       }
     },
+    "/v1/openings/explore": {
+      "post": {
+        "summary": "Identify the opening for a move sequence from the standard starting position",
+        "tags": [
+          "openings"
+        ],
+        "operationId": "post_v1_openings_explore",
+        "responses": {
+          "200": {
+            "description": "The identified opening, or a clean no-match result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningExplorationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unsupported variant or starting position, or a malformed, illegal or over-long move sequence",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Opening exploration is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpeningExplorationRequest"
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/analysis/mistake-prediction": {
       "post": {
         "summary": "Classify a candidate move as ok, inaccuracy, mistake or blunder",
@@ -12407,7 +12493,8 @@
               "analysis",
               "moveExplanation",
               "mistakePrediction",
-              "puzzleGeneration"
+              "puzzleGeneration",
+              "openingExplorer"
             ],
             "properties": {
               "learning": {
@@ -12441,6 +12528,9 @@
                 "type": "boolean"
               },
               "puzzleGeneration": {
+                "type": "boolean"
+              },
+              "openingExplorer": {
                 "type": "boolean"
               }
             },
@@ -16253,6 +16343,124 @@
             "additionalProperties": false
           }
         ]
+      },
+      "OpeningExplorationRequest": {
+        "type": "object",
+        "required": [
+          "variant",
+          "moves"
+        ],
+        "properties": {
+          "variant": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "chess960",
+              "kingofthehill",
+              "atomic",
+              "crazyhouse",
+              "threecheck",
+              "horde",
+              "racingkings"
+            ]
+          },
+          "moves": {
+            "type": "array",
+            "maxItems": 60,
+            "items": {
+              "type": "string",
+              "minLength": 4,
+              "maxLength": 5
+            }
+          },
+          "initialFen": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "additionalProperties": false
+      },
+      "OpeningContinuationView": {
+        "type": "object",
+        "required": [
+          "move",
+          "san",
+          "eco",
+          "name"
+        ],
+        "properties": {
+          "move": {
+            "type": "string"
+          },
+          "san": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "eco": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "OpeningExplorationResponse": {
+        "type": "object",
+        "required": [
+          "moves",
+          "found",
+          "eco",
+          "name",
+          "matchedMoves",
+          "outOfBook",
+          "continuations"
+        ],
+        "properties": {
+          "moves": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "found": {
+            "type": "boolean"
+          },
+          "eco": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "matchedMoves": {
+            "type": "integer"
+          },
+          "outOfBook": {
+            "type": "boolean"
+          },
+          "continuations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpeningContinuationView"
+            }
+          }
+        },
+        "additionalProperties": false
       },
       "MistakePredictionRequest": {
         "type": "object",

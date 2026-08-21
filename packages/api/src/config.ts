@@ -101,6 +101,10 @@ export interface RateLimitConfig {
     readonly perUser: RateLimitEndpointConfig;
     readonly perIp: RateLimitEndpointConfig;
   };
+  readonly openingExploration: {
+    readonly perUser: RateLimitEndpointConfig;
+    readonly perIp: RateLimitEndpointConfig;
+  };
 }
 
 export const DEFAULT_ACCESS_TOKEN_TTL_SEC = 15 * 60;
@@ -168,6 +172,15 @@ export const DEFAULT_RATE_LIMIT: RateLimitConfig = {
   puzzleGeneration: {
     perUser: { maxRequests: 20, windowMs: 60 * 1000 }, // 20 / min
     perIp: { maxRequests: 40, windowMs: 60 * 1000 }, // 40 / min
+  },
+  // Opening exploration acquires no engine, so this is an ordinary bucket rather than an
+  // expensive-work quota: the cost is replaying at most `MAX_EXPLORED_PLIES` moves through the
+  // rules and scanning a bundled table. Still its own bucket rather than a share of `analysis` —
+  // identifying an opening must not consume the quota a player needs to analyse a position, and
+  // charging a cheap request against an expensive ceiling would misprice both.
+  openingExploration: {
+    perUser: { maxRequests: 60, windowMs: 60 * 1000 }, // 60 / min
+    perIp: { maxRequests: 120, windowMs: 60 * 1000 }, // 120 / min
   },
 };
 
