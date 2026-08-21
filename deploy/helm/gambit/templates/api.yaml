@@ -117,6 +117,13 @@ spec:
                 secretKeyRef:
                   name: {{ include "gambit.secretName" $ }}
                   key: ACCESS_TOKEN_SECRET
+            {{- if eq $.Values.email.provider "resend" }}
+            - name: RESEND_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "gambit.secretName" $ }}
+                  key: RESEND_API_KEY
+            {{- end }}
             - name: PORT
               valueFrom:
                 configMapKeyRef:
@@ -127,6 +134,26 @@ spec:
                 configMapKeyRef:
                   name: {{ include "gambit.configMapName" $ }}
                   key: NODE_ENV
+            - name: EMAIL_PROVIDER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "gambit.configMapName" $ }}
+                  key: EMAIL_PROVIDER
+            - name: EMAIL_FROM
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "gambit.configMapName" $ }}
+                  key: EMAIL_FROM
+            - name: PUBLIC_WEB_ORIGIN
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "gambit.configMapName" $ }}
+                  key: PUBLIC_WEB_ORIGIN
+            - name: EMAIL_TIMEOUT_MS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "gambit.configMapName" $ }}
+                  key: EMAIL_TIMEOUT_MS
             {{- if not $.Values.search.enabled }}
             # M11 (ADR-0055): absolute kill switch. With this set the API never
             # constructs a search repository and GET /v1/search returns 503.

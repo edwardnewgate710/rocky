@@ -30,9 +30,11 @@ function operationFor(route: RouteDef): Record<string, unknown> {
   const doc = route.doc;
   const responses: Record<string, unknown> = {};
   for (const [status, resp] of Object.entries(doc.responses)) {
-    responses[status] = resp.schema
+    const response: Record<string, unknown> = resp.schema
       ? { description: resp.description, ...bodyRef(resp.schema) }
       : { description: resp.description };
+    if (resp.headers) response['headers'] = resp.headers;
+    responses[status] = response;
   }
   // Every operation can surface the standard error envelope.
   if (!responses['400']) responses['400'] = { description: 'Bad request', ...bodyRef('Error') };

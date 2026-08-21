@@ -160,6 +160,8 @@ jobs:
       CANARY_WEIGHT: ${{ needs.validate.outputs.canary_weight }}
       ACTIVE_COLOR: ${{ needs.validate.outputs.active_color }}
       TARGET_COLOR: ${{ needs.validate.outputs.target_color }}
+      EMAIL_FROM: ${{ vars.EMAIL_FROM }}
+      PUBLIC_WEB_ORIGIN: ${{ vars.PUBLIC_WEB_ORIGIN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -260,6 +262,16 @@ jobs:
 
       - name: Pre-flight template validation and Helm upgrade
         run: |
+          if [ -z "$EMAIL_FROM" ] || [ -z "$PUBLIC_WEB_ORIGIN" ]; then
+            echo "::error::EMAIL_FROM and PUBLIC_WEB_ORIGIN GitHub Environment variables are required."
+            exit 1
+          fi
+
+          EMAIL_ARGS=(
+            "--set-string" "email.from=${EMAIL_FROM}"
+            "--set-string" "email.publicWebOrigin=${PUBLIC_WEB_ORIGIN}"
+          )
+
           # Build extra set parameters based on selected rollout strategy (ADR-0075)
           # Defined ONCE so pre-flight validation and helm upgrade cannot drift.
           EXTRA_ARGS=()
@@ -308,6 +320,7 @@ jobs:
           echo "Executing pre-flight helm template validation..."
           helm template gambit deploy/helm/gambit \
             -f "deploy/environments/${ENVIRONMENT}.values.yaml" \
+            "${EMAIL_ARGS[@]}" \
             "${EXTRA_ARGS[@]}" > /dev/null
           echo "Pre-flight helm template validation passed."
 
@@ -319,6 +332,7 @@ jobs:
             --wait \
             --timeout 5m0s \
             -f "deploy/environments/${ENVIRONMENT}.values.yaml" \
+            "${EMAIL_ARGS[@]}" \
             "${EXTRA_ARGS[@]}"
 
       - name: Post-deploy smoke check

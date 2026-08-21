@@ -43,8 +43,18 @@ helm install gambit deploy/helm/gambit \
   --set secrets.externalSecrets.secretStore.name=gambit-store \
   --set secrets.externalSecrets.secretStore.kind=SecretStore \
   --set secrets.externalSecrets.accessTokenSecret.key=gambit/access-token \
-  --set secrets.externalSecrets.postgresPassword.key=gambit/postgres-password
+  --set secrets.externalSecrets.resendApiKey.key=gambit/resend-api-key \
+  --set secrets.externalSecrets.postgresPassword.key=gambit/postgres-password \
+  --set email.from=security@your-verified-domain.example \
+  --set email.publicWebOrigin=https://your-public-web-origin.example
 ```
+
+Production email uses only Resend. Set `email.from` and `email.publicWebOrigin`, and provide
+`RESEND_API_KEY` through `secrets.existingSecret` or External Secrets. The chart does not accept an
+inline provider credential or default sender/origin. The automated deploy workflow reads the two
+non-secret values from the selected GitHub Environment's `EMAIL_FROM` and `PUBLIC_WEB_ORIGIN`
+variables. `email.provider=console` is available only with a non-production `config.nodeEnv` and
+prints no recipient, token, or completed URL.
 
 ## Search indexer
 

@@ -1,6 +1,36 @@
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { startHarness } from './helpers';
+import type { EmailDeliveryResult, EmailSender } from '../src/ports/email';
+import { JsonLogger } from '../src/ports/logger';
+
+class FailingEmailSender implements EmailSender {
+  readonly unsafeValues: string[] = [];
+
+  sendPasswordReset(to: string, token: string): Promise<EmailDeliveryResult> {
+    return this.reject(to, token, '/password-reset');
+  }
+
+  sendEmailVerification(to: string, token: string): Promise<EmailDeliveryResult> {
+    return this.reject(to, token, '/email-verify');
+  }
+
+  private reject(to: string, token: string, route: string): Promise<EmailDeliveryResult> {
+    const values = [to, token, `https://chess.example.com${route}#token=${token}`, 'provider-key'];
+    this.unsafeValues.push(...values);
+    return Promise.reject(new Error(`provider echoed ${values.join(' ')}`));
+  }
+}
+
+class HangingResetSender implements EmailSender {
+  sendPasswordReset(): Promise<EmailDeliveryResult> {
+    return new Promise(() => undefined);
+  }
+
+  async sendEmailVerification(): Promise<EmailDeliveryResult> {
+    return { outcome: 'success' };
+  }
+}
 
 describe('Identity Recovery (API)', () => {
   it('handles password reset flow and email verification', async () => {
@@ -142,6 +172,178 @@ describe('Identity Recovery (API)', () => {
         body: { handle: 'emailthief', password: 'password123', email: 'owner@example.com' },
       });
       assert.equal(dup.status, 409);
+    } finally {
+      await env.close();
+    }
+  });
+
+  it('rejects malformed registration email before creating an account', async () => {
+    const env = await startHarness();
+    try {
+      const response = await env.json('POST', '/v1/auth/register', {
+        body: { handle: 'invalidemail', password: 'password123', email: 'not-an-email' },
+      });
+
+      assert.equal(response.status, 422);
+      assert.equal(response.body.error.code, 'validation_failed');
+      assert.equal(response.body.error.details.email, 'invalid format');
+      assert.equal(await env.repos.users.findByHandle('invalidemail'), null);
+      assert.equal(env.emailSender.sent.length, 0);
+    } finally {
+      await env.close();
+    }
+  });
+
+  it('keeps registration successful and the account usable when verification delivery fails', async () => {
+    const sender = new FailingEmailSender();
+    const logs: string[] = [];
+    const env = await startHarness({}, {
+      emailSender: sender,
+      logger: new JsonLogger({}, { level: 'debug', sink: (line) => logs.push(line) }),
+    });
+    try {
+      const register = await env.json('POST', '/v1/auth/register', {
+        body: {
+          handle: 'deliveryfailure',
+          password: 'password123',
+          email: 'deliveryfailure@example.com',
+        },
+      });
+      assert.equal(register.status, 201);
+      assert.ok(await env.repos.users.findByHandle('deliveryfailure'));
+
+      const resend = await env.json('POST', '/v1/auth/email/verification/request', {
+        token: register.body.tokens.accessToken,
+      });
+      assert.equal(resend.status, 202);
+
+      const login = await env.json('POST', '/v1/auth/login', {
+        body: { handle: 'deliveryfailure', password: 'password123' },
+      });
+      assert.equal(login.status, 200);
+      const rendered = logs.join('\n');
+      for (const unsafe of sender.unsafeValues) assert.ok(!rendered.includes(unsafe));
+    } finally {
+      await env.close();
+    }
+  });
+
+  it('makes reset responses indistinguishable under delivery failure and never waits on provider I/O', async () => {
+    const failing = await startHarness({}, { emailSender: new FailingEmailSender() });
+    try {
+      await failing.json('POST', '/v1/auth/register', {
+        body: { handle: 'resetfailure', password: 'password123', email: 'resetfailure@example.com' },
+      });
+
+      const existing = await failing.json('POST', '/v1/auth/password-reset/request', {
+        body: { handleOrEmail: 'resetfailure@example.com' },
+      });
+      const missing = await failing.json('POST', '/v1/auth/password-reset/request', {
+        body: { handleOrEmail: 'missing@example.com' },
+      });
+
+      assert.equal(existing.status, missing.status);
+      assert.deepEqual(existing.body, missing.body);
+      assert.equal(existing.headers.get('content-type'), missing.headers.get('content-type'));
+    } finally {
+      await failing.close();
+    }
+
+    const hanging = await startHarness({}, { emailSender: new HangingResetSender() });
+    try {
+      await hanging.repos.users.create({
+        id: '01945e20-0000-7000-8000-000000000001',
+        handle: 'hangreset',
+        email: 'hangreset@example.com',
+      });
+      const response = await Promise.race([
+        hanging.json('POST', '/v1/auth/password-reset/request', {
+          body: { handleOrEmail: 'hangreset@example.com' },
+        }),
+        new Promise<never>((_resolve, reject) => {
+          setTimeout(() => reject(new Error('password-reset response waited for email delivery')), 250);
+        }),
+      ]);
+      assert.equal(response.status, 202);
+    } finally {
+      await hanging.close();
+    }
+  });
+
+  it('lets an authenticated user replace and resend their verification token', async () => {
+    const env = await startHarness();
+    try {
+      const register = await env.json('POST', '/v1/auth/register', {
+        body: {
+          handle: 'resendverify',
+          password: 'password123',
+          email: 'resendverify@example.com',
+        },
+      });
+      const originalToken = env.emailSender.sent[0]!.token;
+
+      const unauthenticated = await env.json('POST', '/v1/auth/email/verification/request');
+      assert.equal(unauthenticated.status, 401);
+
+      const resent = await env.json('POST', '/v1/auth/email/verification/request', {
+        token: register.body.tokens.accessToken,
+      });
+      assert.equal(resent.status, 202);
+      assert.equal(env.emailSender.sent.length, 2);
+      const replacementToken = env.emailSender.sent[1]!.token;
+      assert.notEqual(replacementToken, originalToken);
+
+      const superseded = await env.json('POST', '/v1/auth/email/verify', {
+        body: { token: originalToken },
+      });
+      assert.equal(superseded.status, 401);
+      const replacement = await env.json('POST', '/v1/auth/email/verify', {
+        body: { token: replacementToken },
+      });
+      assert.equal(replacement.status, 204);
+
+      const alreadyVerified = await env.json('POST', '/v1/auth/email/verification/request', {
+        token: register.body.tokens.accessToken,
+      });
+      assert.equal(alreadyVerified.status, 202);
+      assert.equal(env.emailSender.sent.length, 2);
+    } finally {
+      await env.close();
+    }
+  });
+
+  it('does not issue a replacement when verification wins a concurrent resend', async () => {
+    const env = await startHarness();
+    try {
+      const register = await env.json('POST', '/v1/auth/register', {
+        body: {
+          handle: 'verifyrace',
+          password: 'password123',
+          email: 'verifyrace@example.com',
+        },
+      });
+      const originalToken = env.emailSender.sent[0]!.token;
+
+      const [verification, resend] = await Promise.all([
+        env.json('POST', '/v1/auth/email/verify', { body: { token: originalToken } }),
+        env.json('POST', '/v1/auth/email/verification/request', {
+          token: register.body.tokens.accessToken,
+        }),
+      ]);
+
+      assert.equal(resend.status, 202);
+      if (verification.status === 204) {
+        assert.equal(env.emailSender.sent.length, 1);
+        assert.ok((await env.repos.users.findByHandle('verifyrace'))?.emailVerifiedAt);
+      } else {
+        assert.equal(verification.status, 401);
+        assert.equal(env.emailSender.sent.length, 2);
+        const replacementToken = env.emailSender.sent[1]!.token;
+        const replacement = await env.json('POST', '/v1/auth/email/verify', {
+          body: { token: replacementToken },
+        });
+        assert.equal(replacement.status, 204);
+      }
     } finally {
       await env.close();
     }

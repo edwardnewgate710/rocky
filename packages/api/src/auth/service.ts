@@ -198,15 +198,7 @@ export class AuthService {
     const roles: Role[] = ['user'];
 
     if (input.email) {
-      const verifyToken = randomBytes(32).toString('hex');
-      const verifyHash = createHash('sha256').update(verifyToken).digest('hex');
-      await this.repos.identityTokens.create({
-        tokenHash: verifyHash,
-        userId: user.id,
-        kind: 'email_verify',
-        expiresAt: new Date(this.clock.now() + 24 * 60 * 60 * 1000), // 24 hours
-      });
-      await this.emailSender.sendEmailVerification(input.email, verifyToken);
+      await this.issueEmailVerification(user.id, input.email);
     }
 
     const tokens = await this.startSession(user, roles, meta);
@@ -413,13 +405,41 @@ export class AuthService {
     if (user && user.email) {
       const resetToken = randomBytes(32).toString('hex');
       const resetHash = createHash('sha256').update(resetToken).digest('hex');
-      await this.repos.identityTokens.create({
+      await this.repos.identityTokens.replaceActive({
         tokenHash: resetHash,
         userId: user.id,
         kind: 'password_reset',
         expiresAt: new Date(this.clock.now() + 30 * 60 * 1000), // 30 minutes
-      });
-      await this.emailSender.sendPasswordReset(user.email, resetToken);
+      }, new Date(this.clock.now()));
+      this.dispatchEmail(() => this.emailSender.sendPasswordReset(user.email!, resetToken));
+    }
+  }
+
+  async requestEmailVerification(userId: string, meta: RequestMeta): Promise<void> {
+    const user = await this.repos.users.findById(userId);
+    await this.audit(meta, user?.id ?? null, 'auth.email.verification.request', null);
+    if (!user?.email) return;
+    await this.issueEmailVerification(user.id, user.email);
+  }
+
+  private async issueEmailVerification(userId: string, email: string): Promise<void> {
+    const token = randomBytes(32).toString('hex');
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const issued = await this.repos.identityTokens.replaceActiveEmailVerification({
+      tokenHash,
+      userId,
+      expiresAt: new Date(this.clock.now() + 24 * 60 * 60 * 1000), // 24 hours
+    }, new Date(this.clock.now()));
+    if (!issued) return;
+    this.dispatchEmail(() => this.emailSender.sendEmailVerification(email, token));
+  }
+
+  /** Delivery is best-effort on the request path; provider outcomes belong to bounded metrics. */
+  private dispatchEmail(send: () => Promise<unknown>): void {
+    try {
+      void send().catch(() => undefined);
+    } catch {
+      // Contain a sender that violates its async contract without exposing its error or payload.
     }
   }
 
@@ -443,17 +463,14 @@ export class AuthService {
 
   async verifyEmail(token: string, meta: RequestMeta): Promise<void> {
     const tokenHash = createHash('sha256').update(token).digest('hex');
-    const consumed = await this.repos.identityTokens.consume(
+    const consumed = await this.repos.identityTokens.consumeEmailVerification(
       tokenHash,
-      'email_verify',
       new Date(this.clock.now())
     );
     if (!consumed) {
       await this.audit(meta, null, 'auth.email.verify.fail', null);
       throw HttpError.unauthorized('invalid or expired verification token');
     }
-
-    await this.repos.users.markEmailVerified(consumed.userId, new Date(this.clock.now()));
     await this.audit(meta, consumed.userId, 'auth.email.verify', consumed.userId);
   }
 

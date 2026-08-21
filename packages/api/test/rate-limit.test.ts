@@ -3,6 +3,7 @@ import { test, describe } from 'node:test';
 import { startHarness } from './helpers';
 import { ManualClock } from '../src/ports/clock';
 import { InMemoryRateLimiter } from '../src/ports/in-memory-rate-limiter';
+import { DEFAULT_RATE_LIMIT } from '../src/config';
 
 describe('InMemoryRateLimiter', () => {
   test('allows requests within limit and denies when exceeded', () => {
@@ -217,6 +218,46 @@ describe('Auth Endpoints Rate Limiting Integration', () => {
       });
       assert.equal(blockedIp.status, 429, 'Blocked by IP limit');
       assert.equal(blockedIp.headers.get('retry-after'), '3600'); // 60 mins
+    } finally {
+      await h.close();
+    }
+  });
+
+  test('email verification resend is rate limited per authenticated user and IP atomically', async () => {
+    const h = await startHarness({
+      trustProxy: true,
+      rateLimit: {
+        ...DEFAULT_RATE_LIMIT,
+        emailVerificationRequest: {
+          perUser: { maxRequests: 1, windowMs: 60_000 },
+          perIp: { maxRequests: 2, windowMs: 60_000 },
+        },
+      },
+    });
+    try {
+      const alice = await h.makeUser('verify-alice');
+      const bob = await h.makeUser('verify-bob');
+      const carol = await h.makeUser('verify-carol');
+      const headers = { 'x-forwarded-for': '192.0.2.18' };
+
+      assert.equal((await h.json('POST', '/v1/auth/email/verification/request', {
+        token: alice.token,
+        headers,
+      })).status, 202);
+      const aliceBlocked = await h.json('POST', '/v1/auth/email/verification/request', {
+        token: alice.token,
+        headers,
+      });
+      assert.equal(aliceBlocked.status, 429);
+      assert.equal(aliceBlocked.headers.get('retry-after'), '60');
+      assert.equal((await h.json('POST', '/v1/auth/email/verification/request', {
+        token: bob.token,
+        headers,
+      })).status, 202, 'a user refusal must not spend the shared IP bucket');
+      assert.equal((await h.json('POST', '/v1/auth/email/verification/request', {
+        token: carol.token,
+        headers,
+      })).status, 429);
     } finally {
       await h.close();
     }

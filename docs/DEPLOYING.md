@@ -30,7 +30,9 @@ kind load docker-image ghcr.io/senasehs19-oss/gambit-web:latest
 # 2. Install the chart
 helm install gambit deploy/helm/gambit \
   --set secrets.accessTokenSecret="$(openssl rand -base64 48)" \
-  --set secrets.postgresPassword="$(openssl rand -base64 24)"
+  --set secrets.postgresPassword="$(openssl rand -base64 24)" \
+  --set config.nodeEnv=development \
+  --set email.provider=console
 
 # 3. Check that everything is running
 kubectl get pods
@@ -78,10 +80,15 @@ helm install gambit deploy/helm/gambit \
 | `secrets.existingSecret` | `""` | Existing Secret containing the required keys |
 | `secrets.accessTokenSecret` | `""` | Required HMAC secret when `existingSecret` is not set |
 | `secrets.postgresPassword` | `""` | Required when bundled Postgres is enabled |
+| `email.provider` | `resend` | Single production transport; `console` is development-only |
+| `email.from` | `""` | Required plain sender address on a Resend-verified domain |
+| `email.publicWebOrigin` | `""` | Required HTTPS origin that must be trusted for fragment identity links |
+| `email.timeoutMs` | `5000` | Bounded provider timeout in milliseconds |
 | `secrets.externalSecrets.enabled` | `false` | Enable External Secrets Operator integration (ADR-0044) |
 | `secrets.externalSecrets.secretStore.name` | `""` | SecretStore / ClusterSecretStore name |
 | `secrets.externalSecrets.secretStore.kind` | `SecretStore` | SecretStore or ClusterSecretStore |
 | `secrets.externalSecrets.accessTokenSecret.key` | `""` | Backing store key for ACCESS_TOKEN_SECRET |
+| `secrets.externalSecrets.resendApiKey.key` | `""` | Backing store key for RESEND_API_KEY |
 | `secrets.externalSecrets.postgresPassword.key` | `""` | Backing store key for POSTGRES_PASSWORD |
 | `web.ingress.enabled` | `true` | Enable Ingress for the web service |
 | `web.ingress.host` | `gambit.local` | Ingress hostname |
@@ -104,16 +111,21 @@ helm install gambit deploy/helm/gambit \
 
 **Never commit real secret values.** The chart templates secrets from
 `.Values.secrets`. There are no placeholder credentials: Helm rendering fails
-closed when the access-token secret is missing or shorter than 32 characters.
-Provide secrets via:
+closed when the access-token secret is missing or shorter than 32 characters. Production Resend
+delivery also requires an existing Secret or External Secrets reference containing
+`RESEND_API_KEY`; the provider credential is not accepted as an inline chart value.
+For a local/development install, provide inline application secrets and select the safe console
+sender explicitly:
 
 ```bash
 helm install gambit deploy/helm/gambit \
   --set secrets.accessTokenSecret="<your-secret>" \
-  --set secrets.postgresPassword="<your-password>"
+  --set secrets.postgresPassword="<your-password>" \
+  --set config.nodeEnv=development \
+  --set email.provider=console
 ```
 
-Alternatively reference a pre-existing Secret by setting `secrets.existingSecret`, or use the **External Secrets Operator** integration (`secrets.externalSecrets.enabled=true`) to sync directly from a secrets manager (AWS Secrets Manager, GCP Secret Manager, Vault, etc.).
+Alternatively reference a pre-existing Secret by setting `secrets.existingSecret`, or use the **External Secrets Operator** integration (`secrets.externalSecrets.enabled=true`) to sync directly from a secrets manager (AWS Secrets Manager, GCP Secret Manager, Vault, etc.). A production existing Secret contains `RESEND_API_KEY` as well as `ACCESS_TOKEN_SECRET` (and `POSTGRES_PASSWORD` when bundled Postgres is enabled).
 
 ### External secrets (production)
 
@@ -129,7 +141,10 @@ helm install gambit deploy/helm/gambit \
   --set secrets.externalSecrets.secretStore.name="gambit-store" \
   --set secrets.externalSecrets.secretStore.kind="SecretStore" \
   --set secrets.externalSecrets.accessTokenSecret.key="production/gambit/access-token" \
-  --set secrets.externalSecrets.postgresPassword.key="production/gambit/postgres-password"
+  --set secrets.externalSecrets.resendApiKey.key="production/gambit/resend-api-key" \
+  --set secrets.externalSecrets.postgresPassword.key="production/gambit/postgres-password" \
+  --set email.from="security@your-verified-domain.example" \
+  --set email.publicWebOrigin="https://your-public-web-origin.example"
 ```
 
 When enabled, the chart renders an `ExternalSecret` custom resource (`apiVersion: external-secrets.io/v1`) that ESO reconciles into a Kubernetes Secret named `<fullname>-secret`. The API and Gateway deployments consume this Secret seamlessly. Note that `secrets.externalSecrets` and `secrets.existingSecret` are mutually exclusive.
@@ -145,7 +160,9 @@ helm install gambit deploy/helm/gambit \
   --set redis.enabled=false \
   --set externalDatabaseUrl="postgres://user:pass@db.example.com:5432/gambit" \
   --set externalRedisUrl="redis://redis.example.com:6379" \
-  --set secrets.accessTokenSecret="<your-secret>"
+  --set secrets.existingSecret="gambit-production-secrets" \
+  --set email.from="security@your-verified-domain.example" \
+  --set email.publicWebOrigin="https://your-public-web-origin.example"
 ```
 
 When `postgres.enabled=false`, the chart does not create the Postgres
@@ -317,6 +334,11 @@ Pushing `v1.2.3` triggers `.github/workflows/release.yml`, which:
 
 ### 2. Deploy to staging
 
+Before deploying, define `EMAIL_FROM` and `PUBLIC_WEB_ORIGIN` as non-secret variables in both the
+`staging` and `production` GitHub Environments. The sender domain must be verified in Resend; the
+origin must be the reachable canonical HTTPS web origin. The workflow fails before Helm if either
+variable is absent. Keep `RESEND_API_KEY` in the Kubernetes Secret/ExternalSecret described above.
+
 Once images publish, trigger `.github/workflows/deploy.yml` manually via **workflow_dispatch** (or automatically via `release: [published]`):
 - **version**: `1.2.3`
 - **environment**: `staging`
@@ -327,6 +349,8 @@ The pipeline validates image existence in GHCR, verifies the `KUBECONFIG` secret
 helm upgrade --install gambit deploy/helm/gambit \
   --atomic --wait --timeout 5m0s \
   -f deploy/environments/staging.values.yaml \
+  --set-string email.from="$EMAIL_FROM" \
+  --set-string email.publicWebOrigin="$PUBLIC_WEB_ORIGIN" \
   --set images.api.tag=1.2.3 \
   --set images.gateway.tag=1.2.3 \
   --set images.web.tag=1.2.3
@@ -404,12 +428,16 @@ See `docs/adr/0057-search-indexer-deployment.md` and `docs/adr/0061-embedding-pi
 # Lint the chart
 helm lint deploy/helm/gambit \
   --set secrets.accessTokenSecret="$(openssl rand -base64 48)" \
-  --set secrets.postgresPassword="$(openssl rand -base64 24)"
+  --set secrets.postgresPassword="$(openssl rand -base64 24)" \
+  --set config.nodeEnv=development \
+  --set email.provider=console
 
 # Render templates (default values)
 helm template deploy/helm/gambit \
   --set secrets.accessTokenSecret="$(openssl rand -base64 48)" \
-  --set secrets.postgresPassword="$(openssl rand -base64 24)"
+  --set secrets.postgresPassword="$(openssl rand -base64 24)" \
+  --set config.nodeEnv=development \
+  --set email.provider=console
 
 # Render templates (external datastores)
 helm template deploy/helm/gambit \
@@ -417,12 +445,16 @@ helm template deploy/helm/gambit \
   --set postgres.enabled=false \
   --set redis.enabled=false \
   --set externalDatabaseUrl=postgres://user:pass@db.example.com:5432/gambit \
-  --set externalRedisUrl=redis://redis.example.com:6379
+  --set externalRedisUrl=redis://redis.example.com:6379 \
+  --set config.nodeEnv=development \
+  --set email.provider=console
 
 # Validate against Kubernetes schemas
 helm template deploy/helm/gambit \
   --set secrets.accessTokenSecret="$(openssl rand -base64 48)" \
   --set secrets.postgresPassword="$(openssl rand -base64 24)" \
+  --set config.nodeEnv=development \
+  --set email.provider=console \
   | kubeconform -strict -summary
 
 # Render the progressive-delivery strategies (they add objects the default
@@ -430,6 +462,8 @@ helm template deploy/helm/gambit \
 helm template deploy/helm/gambit \
   --set secrets.accessTokenSecret="$(openssl rand -base64 48)" \
   --set secrets.postgresPassword="$(openssl rand -base64 24)" \
+  --set config.nodeEnv=development \
+  --set email.provider=console \
   --set rollout.strategy=blueGreen \
   --set rollout.blueGreen.colors.green.tag=0.2.0 \
   | kubeconform -strict -summary
@@ -437,6 +471,8 @@ helm template deploy/helm/gambit \
 helm template deploy/helm/gambit \
   --set secrets.accessTokenSecret="$(openssl rand -base64 48)" \
   --set secrets.postgresPassword="$(openssl rand -base64 24)" \
+  --set config.nodeEnv=development \
+  --set email.provider=console \
   --set rollout.strategy=canary \
   --set rollout.canary.tag=0.2.0 \
   | kubeconform -strict -summary

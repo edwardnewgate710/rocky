@@ -86,7 +86,10 @@ await server.listen(8080);
 
 ## Production (Postgres)
 
-Requires `ACCESS_TOKEN_SECRET` and `DATABASE_URL`.
+Requires `ACCESS_TOKEN_SECRET`, `DATABASE_URL`, and a valid production email configuration:
+`EMAIL_PROVIDER=resend`, `RESEND_API_KEY`, `EMAIL_FROM`, and `PUBLIC_WEB_ORIGIN`. There is no
+production console fallback. `PUBLIC_WEB_ORIGIN` is the trusted HTTPS origin used for reset and
+verification fragment links; it is never derived from request headers.
 
 ```ts
 import { createPgApiServer } from '@chess-platform/api/pg';

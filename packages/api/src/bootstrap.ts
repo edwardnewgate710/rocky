@@ -40,8 +40,8 @@ import type { EmbeddingProvider, SearchRepository, SemanticSearchRepository } fr
 import type { SocialGraphRepository } from '@chess-platform/social';
 import type { MessagingRepository } from '@chess-platform/messaging';
 import type { CommunityRepository } from '@chess-platform/community';
-import { ConsoleEmailSender } from './ports/email';
 import type { EmailSender } from './ports/email';
+import { createEmailSenderFromEnv } from './email/composition';
 import { JsonLogger } from './ports/logger';
 import type { Logger, LogLevel } from './ports/logger';
 import { InMemoryMetrics } from './ports/metrics';
@@ -190,6 +190,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
   const clock = options.clock ?? systemClock;
   const ids = options.ids ?? uuidv7Generator;
   const config = resolveConfig(options.config);
+  const metrics = options.metrics ?? new InMemoryMetrics();
   const hasher = options.hasher ?? new ScryptPasswordHasher();
   const tokens = new AccessTokenService({
     secret: config.accessTokenSecret,
@@ -297,7 +298,6 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     : undefined;
 
   const logger = options.logger ?? new JsonLogger({ service: 'api' }, { level: resolveLogLevel() });
-  const metrics = options.metrics ?? new InMemoryMetrics();
   const logExporter = new LoggingSpanExporter(logger);
   const otlpTracesUrl = resolveOtlpTracesEndpoint(
     process.env['OTEL_EXPORTER_OTLP_TRACES_ENDPOINT'],
@@ -342,7 +342,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     tournamentRepo,
     gameLauncher,
     liveView: options.liveView ?? new DurableTournamentLiveView(tournamentRepo, eventStore),
-    emailSender: options.emailSender ?? new ConsoleEmailSender(),
+    emailSender: options.emailSender ?? createEmailSenderFromEnv(process.env, metrics),
     ...(antiCheatAnalysis ? { antiCheatAnalysis } : {}),
     ...(searchRepository ? { searchRepository } : {}),
     ...(semanticSearchRepository ? { semanticSearchRepository } : {}),

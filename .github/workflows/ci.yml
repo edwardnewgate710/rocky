@@ -714,6 +714,8 @@ jobs:
           helm lint deploy/helm/gambit
           --set secrets.accessTokenSecret=test-only-access-token-secret-32-bytes-minimum
           --set secrets.postgresPassword=test-only-postgres-password
+          --set config.nodeEnv=development
+          --set email.provider=console
 
       - name: Helm rejects missing access-token secret
         run: |
@@ -727,12 +729,16 @@ jobs:
           helm template deploy/helm/gambit \
             --set secrets.accessTokenSecret=test-only-access-token-secret-32-bytes-minimum \
             --set secrets.postgresPassword=test-only-postgres-password \
+            --set config.nodeEnv=development \
+            --set email.provider=console \
             | kubeconform -strict -summary
 
       - name: Helm template (external datastores) + kubeconform
         run: |
           helm template deploy/helm/gambit \
             --set secrets.accessTokenSecret=test-only-access-token-secret-32-bytes-minimum \
+            --set config.nodeEnv=development \
+            --set email.provider=console \
             --set postgres.enabled=false \
             --set redis.enabled=false \
             --set externalDatabaseUrl=postgres://user:pass@db.example.com:5432/gambit \
@@ -749,6 +755,9 @@ jobs:
             --set secrets.externalSecrets.enabled=true \
             --set secrets.externalSecrets.secretStore.name=gambit-store \
             --set secrets.externalSecrets.accessTokenSecret.key=gambit/access-token \
+            --set secrets.externalSecrets.resendApiKey.key=gambit/resend-api-key \
+            --set-string email.from=security@example.test \
+            --set-string email.publicWebOrigin=https://app.example.test \
             | kubeconform -strict -ignore-missing-schemas -summary
 
       # M14 inc 9 (ADR-0075): the progressive-delivery strategies render more
@@ -759,6 +768,8 @@ jobs:
           helm template deploy/helm/gambit \
             --set secrets.accessTokenSecret=test-only-access-token-secret-32-bytes-minimum \
             --set secrets.postgresPassword=test-only-postgres-password \
+            --set config.nodeEnv=development \
+            --set email.provider=console \
             --set rollout.strategy=blueGreen \
             --set rollout.blueGreen.colors.green.tag=0.2.0 \
             | kubeconform -strict -summary
@@ -768,6 +779,8 @@ jobs:
           helm template deploy/helm/gambit \
             --set secrets.accessTokenSecret=test-only-access-token-secret-32-bytes-minimum \
             --set secrets.postgresPassword=test-only-postgres-password \
+            --set config.nodeEnv=development \
+            --set email.provider=console \
             --set rollout.strategy=canary \
             --set rollout.canary.tag=0.2.0 \
             --set rollout.canary.weight=25 \

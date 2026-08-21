@@ -98,6 +98,11 @@ export class InMemoryUsersRepository implements UsersRepository {
     return this.byId.get(id) ?? null;
   }
 
+  emailIsUnverified(id: string): boolean {
+    const user = this.byId.get(id);
+    return user !== undefined && user.emailVerifiedAt === null;
+  }
+
   async findByIds(ids: readonly string[]): Promise<readonly UserRow[]> {
     // Unknown ids are dropped rather than yielding a null slot, matching the Postgres adapter:
     // `WHERE id = ANY(...)` returns the rows that exist and says nothing about the rest. Callers
@@ -120,6 +125,10 @@ export class InMemoryUsersRepository implements UsersRepository {
   }
 
   async markEmailVerified(userId: string, at: Date): Promise<void> {
+    this.markEmailVerifiedNow(userId, at);
+  }
+
+  markEmailVerifiedNow(userId: string, at: Date): void {
     const row = this.byId.get(userId);
     if (row) {
       this.byId.set(userId, { ...row, emailVerifiedAt: at });
@@ -564,6 +573,8 @@ export class InMemoryTournamentsRepository implements TournamentsRepository {
 export class InMemoryIdentityTokensRepository implements IdentityTokensRepository {
   private readonly byHash = new Map<string, IdentityTokenRow>();
 
+  constructor(private readonly users: InMemoryUsersRepository) {}
+
   async create(token: NewIdentityToken): Promise<IdentityTokenRow> {
     const row: IdentityTokenRow = {
       tokenHash: token.tokenHash,
@@ -575,6 +586,23 @@ export class InMemoryIdentityTokensRepository implements IdentityTokensRepositor
     };
     this.byHash.set(row.tokenHash, row);
     return row;
+  }
+
+  async replaceActive(token: NewIdentityToken, at: Date): Promise<IdentityTokenRow> {
+    for (const [hash, row] of this.byHash) {
+      if (row.userId === token.userId && row.kind === token.kind && row.usedAt === null) {
+        this.byHash.set(hash, { ...row, usedAt: at });
+      }
+    }
+    return this.create(token);
+  }
+
+  async replaceActiveEmailVerification(
+    token: Omit<NewIdentityToken, 'kind'>,
+    at: Date,
+  ): Promise<IdentityTokenRow | null> {
+    if (!this.users.emailIsUnverified(token.userId)) return null;
+    return this.replaceActive({ ...token, kind: 'email_verify' }, at);
   }
 
   async consume(
@@ -591,6 +619,19 @@ export class InMemoryIdentityTokensRepository implements IdentityTokensRepositor
     // Simulate atomic update
     const consumed = { ...row, usedAt: at };
     this.byHash.set(tokenHash, consumed);
+    return consumed;
+  }
+
+  async consumeEmailVerification(tokenHash: string, at: Date): Promise<IdentityTokenRow | null> {
+    const row = this.byHash.get(tokenHash);
+    if (!row) return null;
+    if (!this.users.emailIsUnverified(row.userId)) return null;
+    if (row.kind !== 'email_verify' || row.usedAt !== null || row.expiresAt.getTime() <= at.getTime()) {
+      return null;
+    }
+    const consumed = { ...row, usedAt: at };
+    this.byHash.set(tokenHash, consumed);
+    this.users.markEmailVerifiedNow(consumed.userId, at);
     return consumed;
   }
 }
@@ -716,17 +757,18 @@ export function createInMemoryRepositories(clock: Clock = systemClock): InMemory
   const seeks = new InMemorySeeksRepository(clock);
   const games = new InMemoryGamesRepository();
   const events = new InMemoryEventStore(() => clock.now());
+  const users = new InMemoryUsersRepository(clock);
   
   return {
     events,
-    users: new InMemoryUsersRepository(clock),
+    users,
     sessions: new InMemorySessionsRepository(clock),
     ratings: new InMemoryRatingsRepository(clock),
     games,
     seeks,
     audit: new InMemoryAuditRepository(),
     tournaments: new InMemoryTournamentsRepository(),
-    identityTokens: new InMemoryIdentityTokensRepository(),
+    identityTokens: new InMemoryIdentityTokensRepository(users),
     webauthnLoginChallenges: new InMemoryWebAuthnLoginChallengesRepository(),
     webauthnCredentials: new InMemoryWebAuthnCredentialsRepository(),
     seekAcceptor: new InMemorySeekAcceptor(seeks, events, games, clock),

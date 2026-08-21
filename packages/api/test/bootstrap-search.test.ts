@@ -7,7 +7,11 @@ import { InMemorySearchRepository } from '@chess-platform/search';
 test('createPgDependencies: searchRepository present by default and absent when SEARCH_ENABLED=0', () => {
   const originalEnv = process.env['SEARCH_ENABLED'];
   const originalSecret = process.env['ACCESS_TOKEN_SECRET'];
+  const originalNodeEnv = process.env['NODE_ENV'];
+  const originalEmailProvider = process.env['EMAIL_PROVIDER'];
   process.env['ACCESS_TOKEN_SECRET'] = 'test-secret-at-least-32-chars-long-12345';
+  process.env['NODE_ENV'] = 'test';
+  process.env['EMAIL_PROVIDER'] = 'console';
   const pool = new Pool();
 
   try {
@@ -45,6 +49,10 @@ test('createPgDependencies: searchRepository present by default and absent when 
     } else {
       delete process.env['ACCESS_TOKEN_SECRET'];
     }
+    if (originalNodeEnv !== undefined) process.env['NODE_ENV'] = originalNodeEnv;
+    else delete process.env['NODE_ENV'];
+    if (originalEmailProvider !== undefined) process.env['EMAIL_PROVIDER'] = originalEmailProvider;
+    else delete process.env['EMAIL_PROVIDER'];
     void pool.end();
   }
 });

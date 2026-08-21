@@ -20,6 +20,7 @@ import { createApiServer } from '../src/server';
 import type { ApiServer } from '../src/server';
 import { InMemoryGameLauncher } from '../src/tournament/launcher';
 import { InMemoryEmailSender } from '../src/ports/email';
+import type { EmailSender } from '../src/ports/email';
 import { InMemoryEventStore } from '@chess-platform/persistence';
 import type { PositionEvaluator } from '@chess-platform/anti-cheat';
 import { AntiCheatAnalysisService } from '../src/anti-cheat/analysis-service';
@@ -85,6 +86,8 @@ export interface Harness {
 
 /** Extra server dependencies a test may override (beyond the config). */
 export interface HarnessOptions {
+  /** Override outbound email delivery while retaining the in-memory sender for token inspection. */
+  readonly emailSender?: EmailSender;
   /** Readiness probe backing `/v1/ready`; default resolves (healthy). */
   readonly readiness?: () => Promise<void>;
   /** Structured logger; inject a capturing one to assert on log output. */
@@ -202,7 +205,8 @@ export async function startHarness(
     ? undefined
     : { introspection: harnessOptions.graphqlIntrospection === true };
   const server = createApiServer({
-    repos, hasher, tokens, clock, ids, rateLimiter, tournamentRepo, gameLauncher, liveView, emailSender,
+    repos, hasher, tokens, clock, ids, rateLimiter, tournamentRepo, gameLauncher, liveView,
+    emailSender: harnessOptions.emailSender ?? emailSender,
     config: resolved,
     botTimingSource: new EventStoreBotTimingSource(antiCheatEventStore),
     ...(antiCheatAnalysis ? { antiCheatAnalysis } : {}),

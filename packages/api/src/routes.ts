@@ -13,6 +13,7 @@ import type { TiebreakKey } from '@chess-platform/tournament';
 import type { RatingRow, TournamentsRepository } from '@chess-platform/persistence';
 import { AuthService } from './auth/service';
 import type { RequestMeta } from './auth/service';
+import { EMAIL_ADDRESS_PATTERN } from './email/address.js';
 import type { Repositories } from './deps';
 import { Game, classifySpeed } from '@chess-platform/game';
 import { parseRole, parseSeekColor, parseTimeControl, parseUuid, parseVariant, parseCreatableVariant, VARIANTS, CREATABLE_VARIANTS, HANDLE_PATTERN, UUID_PATTERN } from './domain';
@@ -300,7 +301,7 @@ export function buildRouter(deps: RouteDeps): Router {
         throw HttpError.conflict('handle is reserved');
       }
       const password = reqString(body, 'password', { min: 8, max: 1024 });
-      const email = optString(body, 'email', { max: 320, trim: true });
+      const email = optString(body, 'email', { max: 320, trim: true, pattern: EMAIL_ADDRESS_PATTERN });
       const result = await auth.register({ handle, password, email: email ?? null }, meta(ctx));
       return json(201, {
         user: selfUser(result.user, result.roles),
@@ -499,6 +500,41 @@ export function buildRouter(deps: RouteDeps): Router {
 
       await auth.verifyEmail(token, meta(ctx));
       return noContent();
+    },
+  );
+
+  router.post(
+    '/v1/auth/email/verification/request',
+    doc({
+      summary: "Replace and resend the caller's email-verification token",
+      tags: ['auth'],
+      security: 'bearer',
+      responses: {
+        202: [undefined, 'Accepted'],
+        401: ['Error', 'Authentication required'],
+        429: ['Error', 'Rate limit exceeded', {
+          'Retry-After': {
+            description: 'Seconds until the rejected rate-limit bucket admits another request',
+            schema: { type: 'integer', minimum: 0 },
+          },
+        }],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const identity = requireAuth(ctx);
+      await admit([
+        {
+          key: `email-verification:user:${identity.userId}`,
+          limit: config.rateLimit.emailVerificationRequest.perUser,
+        },
+        {
+          key: `email-verification:ip:${ctx.ip ?? 'unknown'}`,
+          limit: config.rateLimit.emailVerificationRequest.perIp,
+        },
+      ]);
+      await auth.requestEmailVerification(identity.userId, meta(ctx));
+      return { status: 202 };
     },
   );
 
@@ -5376,13 +5412,17 @@ interface DocSpec {
   requestSchema?: string;
   requestBodyRequired?: boolean;
   params?: RouteDoc['params'];
-  responses: Record<number, [string | undefined, string]>;
+  responses: Record<number, [string | undefined, string, RouteDoc['responses'][number]['headers']?]>;
 }
 
 function doc(spec: DocSpec): RouteDoc {
-  const responses: Record<number, { description: string; schema?: string }> = {};
-  for (const [status, [schema, description]] of Object.entries(spec.responses)) {
-    responses[Number(status)] = schema ? { description, schema } : { description };
+  const responses: Record<number, RouteDoc['responses'][number]> = {};
+  for (const [status, [schema, description, headers]] of Object.entries(spec.responses)) {
+    responses[Number(status)] = {
+      description,
+      ...(schema ? { schema } : {}),
+      ...(headers ? { headers } : {}),
+    };
   }
   return {
     summary: spec.summary,

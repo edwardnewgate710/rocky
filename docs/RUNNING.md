@@ -163,6 +163,11 @@ The script:
 | `WEB_PORT` | `3000` | No | Web frontend host port |
 | `ENGINE_BOT` | `1` in Compose | No | Set to `"0"` to disable the autonomous engine bot mover in the gateway (ADR-0080) |
 | `STOCKFISH_PATH` | `/usr/local/bin/stockfish` in the gateway image | Required if `ENGINE_BOT=1` outside the image | Path to the Stockfish UCI executable binary |
+| `EMAIL_PROVIDER` | `console` in Compose | Yes | `console` is explicit development-only; production requires `resend` |
+| `RESEND_API_KEY` | none | Production | Resend credential; inject through a secret manager and never log it |
+| `EMAIL_FROM` | none | Production | One plain sender address |
+| `PUBLIC_WEB_ORIGIN` | none | Production | Trusted HTTPS origin for reset/verification fragment links |
+| `EMAIL_TIMEOUT_MS` | `5000` | No | Provider timeout, integer 100–30000 ms |
 
 
 **Never commit real secrets.** The `.env.example` has development defaults only.

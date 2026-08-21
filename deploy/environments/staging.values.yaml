@@ -9,6 +9,12 @@
 config:
   nodeEnv: staging
 
+email:
+  provider: resend
+  # deploy.yml supplies both values from the staging GitHub Environment variables.
+  from: ""
+  publicWebOrigin: ""
+
 images:
   api:
     tag: "0.1.0"
@@ -29,4 +35,5 @@ gateway:
   replicas: 2
 
 secrets:
+  # Must contain ACCESS_TOKEN_SECRET and RESEND_API_KEY.
   existingSecret: "gambit-staging-secrets"

@@ -83,8 +83,17 @@ export interface NewIdentityToken {
 
 export interface IdentityTokensRepository {
   create(token: NewIdentityToken): Promise<IdentityTokenRow>;
+  /** Atomically supersede every unused token of the same kind for this user. */
+  replaceActive(token: NewIdentityToken, at: Date): Promise<IdentityTokenRow>;
+  /** Atomically issue a replacement only while the owning user's email remains unverified. */
+  replaceActiveEmailVerification(
+    token: Omit<NewIdentityToken, 'kind'>,
+    at: Date,
+  ): Promise<IdentityTokenRow | null>;
   /** Atomically consume a token. Returns null if missing, expired, or already used. */
   consume(tokenHash: string, kind: IdentityTokenKind, at: Date): Promise<IdentityTokenRow | null>;
+  /** Atomically consume an email token and mark its owning user verified. */
+  consumeEmailVerification(tokenHash: string, at: Date): Promise<IdentityTokenRow | null>;
 }
 
 // --- WebAuthn Credentials ----------------------------------------------------

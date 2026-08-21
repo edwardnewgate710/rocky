@@ -6,6 +6,9 @@ Date: 2026-07-19
 
 Accepted
 
+Amended by [ADR-0126](0126-production-email-delivery.md): `ConsoleEmailSender` is no longer the
+production default; production uses a required, bounded Resend transport and safe logging rules.
+
 ## Context
 
 We need to provide users a secure way to recover forgotten passwords and to verify their email addresses. This is the first step in the M4 Identity Hardening milestone.
@@ -21,7 +24,7 @@ To send an email (either for password reset or email verification), the platform
     - Tokens are TTL-bound: 30 minutes for password reset (`password_reset`), and 24 hours for email verification (`email_verify`).
     - The `kind` of token is enforced by a `CHECK` constraint (lookup style), avoiding native Postgres ENUMs per our database guidelines.
 3. **Email Sending Port**: We define an `EmailSender` port with `sendPasswordReset` and `sendEmailVerification`.
-    - We provide an `InMemoryEmailSender` for tests and a `ConsoleEmailSender` as the production default until a real email provider integration is built. No third-party dependencies (like `nodemailer`) are introduced at this stage.
+    - We provide an `InMemoryEmailSender` for tests and initially used a `ConsoleEmailSender` as the production default. ADR-0126 replaces that temporary decision with required Resend production delivery; console delivery is now explicit development-only and never prints tokens or recipients.
 
 ## Consequences
 

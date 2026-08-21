@@ -54,6 +54,12 @@ deployment_doc() {
 HELM_SECRETS=(
   --set secrets.accessTokenSecret=test-only-access-token-secret-32-bytes-minimum
   --set secrets.postgresPassword=test-only-postgres-password
+  --set config.nodeEnv=development
+  --set email.provider=console
+)
+HELM_PRODUCTION_EMAIL=(
+  --set-string email.from=security@example.test
+  --set-string email.publicWebOrigin=https://app.example.test
 )
 
 helm template "$CHART_DIR" "${HELM_SECRETS[@]}" > "$TMPDIR/default.yaml" 2>/dev/null
@@ -61,6 +67,8 @@ helm template "$CHART_DIR" "${HELM_SECRETS[@]}" > "$TMPDIR/default.yaml" 2>/dev/
 # Render external-datastore override
 helm template "$CHART_DIR" \
   --set secrets.accessTokenSecret=test-only-access-token-secret-32-bytes-minimum \
+  --set config.nodeEnv=development \
+  --set email.provider=console \
   --set postgres.enabled=false \
   --set redis.enabled=false \
   --set externalDatabaseUrl=postgres://user:pass@db.example.com:5432/gambit \
@@ -76,10 +84,19 @@ helm template "$CHART_DIR" \
   --set secrets.externalSecrets.enabled=true \
   --set secrets.externalSecrets.secretStore.name=gambit-store \
   --set secrets.externalSecrets.accessTokenSecret.key=gambit/access-token \
+  --set secrets.externalSecrets.resendApiKey.key=gambit/resend-api-key \
+  "${HELM_PRODUCTION_EMAIL[@]}" \
   > "$TMPDIR/external-secrets.yaml" 2>/dev/null
 
+# Production delivery accepts a Secret reference, never an inline provider credential.
+helm template "$CHART_DIR" \
+  --set secrets.existingSecret=test-production-secrets \
+  "${HELM_PRODUCTION_EMAIL[@]}" \
+  > "$TMPDIR/production-email.yaml" 2>/dev/null
+
 # Rendering without a secret must fail closed.
-if helm template "$CHART_DIR" > /dev/null 2>&1; then
+if helm template "$CHART_DIR" \
+     --set config.nodeEnv=development --set email.provider=console > /dev/null 2>&1; then
   echo "Chart rendered without ACCESS_TOKEN_SECRET"
   exit 1
 fi
@@ -146,6 +163,14 @@ check "External: Gateway REDIS_URL = externalRedisUrl" "$([ "$GW_REDIS_EXT" = 'r
 # --- 5. Secrets come from the Secret (not hardcoded) ---
 API_SECRET_REF=$(yq '. | select(.kind=="Deployment" and .metadata.name | test("api")) | .spec.template.spec.containers[] | select(.name=="api") | .env[] | select(.name=="ACCESS_TOKEN_SECRET") | .valueFrom.secretKeyRef.name' "$TMPDIR/default.yaml" 2>/dev/null || echo "")
 check "API ACCESS_TOKEN_SECRET from Secret" "$([ "$API_SECRET_REF" = 'release-name-gambit-secret' ] && echo 0 || echo 1)"
+
+API_RESEND_REF=$(yq '. | select(.kind=="Deployment" and .metadata.name | test("api")) | .spec.template.spec.containers[] | select(.name=="api") | .env[] | select(.name=="RESEND_API_KEY") | .valueFrom.secretKeyRef.name' "$TMPDIR/production-email.yaml" 2>/dev/null || echo "")
+check "Production API RESEND_API_KEY from existing Secret" "$([ "$API_RESEND_REF" = 'test-production-secrets' ] && echo 0 || echo 1)"
+
+API_EMAIL_PROVIDER=$(yq '. | select(.kind=="Deployment" and .metadata.name | test("api")) | .spec.template.spec.containers[] | select(.name=="api") | .env[] | select(.name=="EMAIL_PROVIDER") | .valueFrom.configMapKeyRef.key' "$TMPDIR/production-email.yaml" 2>/dev/null || echo "")
+API_PUBLIC_ORIGIN=$(yq '. | select(.kind=="Deployment" and .metadata.name | test("api")) | .spec.template.spec.containers[] | select(.name=="api") | .env[] | select(.name=="PUBLIC_WEB_ORIGIN") | .valueFrom.configMapKeyRef.key' "$TMPDIR/production-email.yaml" 2>/dev/null || echo "")
+check "API EMAIL_PROVIDER from ConfigMap" "$([ "$API_EMAIL_PROVIDER" = 'EMAIL_PROVIDER' ] && echo 0 || echo 1)"
+check "API PUBLIC_WEB_ORIGIN from ConfigMap" "$([ "$API_PUBLIC_ORIGIN" = 'PUBLIC_WEB_ORIGIN' ] && echo 0 || echo 1)"
 
 GW_SECRET_REF=$(yq '. | select(.kind=="Deployment" and .metadata.name | test("gateway")) | .spec.template.spec.containers[] | select(.name=="gateway") | .env[] | select(.name=="ACCESS_TOKEN_SECRET") | .valueFrom.secretKeyRef.name' "$TMPDIR/default.yaml" 2>/dev/null || echo "")
 check "Gateway ACCESS_TOKEN_SECRET from Secret" "$([ "$GW_SECRET_REF" = 'release-name-gambit-secret' ] && echo 0 || echo 1)"
@@ -527,7 +552,8 @@ fi
 echo ""
 echo "Workflow strategy flag compositions (deploy.yml):"
 
-if helm template "$CHART_DIR" "${HELM_SECRETS[@]}" -f deploy/environments/production.values.yaml \
+if helm template "$CHART_DIR" -f deploy/environments/production.values.yaml \
+     "${HELM_PRODUCTION_EMAIL[@]}" \
      --set rollout.strategy=rolling \
      --set images.api.tag=1.2.3 \
      --set images.gateway.tag=1.2.3 \
@@ -537,7 +563,8 @@ else
   check "Workflow composition: rolling renders cleanly with production values" 1
 fi
 
-if helm template "$CHART_DIR" "${HELM_SECRETS[@]}" -f deploy/environments/production.values.yaml \
+if helm template "$CHART_DIR" -f deploy/environments/production.values.yaml \
+     "${HELM_PRODUCTION_EMAIL[@]}" \
      --set rollout.strategy=blueGreen \
      --set rollout.blueGreen.activeColor=blue \
      --set rollout.blueGreen.colors.blue.tag=1.2.3 \
@@ -547,7 +574,8 @@ else
   check "Workflow composition: blueGreen renders cleanly with production values" 1
 fi
 
-if helm template "$CHART_DIR" "${HELM_SECRETS[@]}" -f deploy/environments/production.values.yaml \
+if helm template "$CHART_DIR" -f deploy/environments/production.values.yaml \
+     "${HELM_PRODUCTION_EMAIL[@]}" \
      --set rollout.strategy=canary \
      --set rollout.canary.tag=1.2.3 \
      --set rollout.canary.weight=10 \

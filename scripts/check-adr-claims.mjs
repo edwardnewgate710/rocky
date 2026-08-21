@@ -64,6 +64,16 @@ const ALLOWED = new Map([
     'http_req_failed',
     'A k6 built-in, as above (ADR-0065).',
   ],
+  [
+    'email_hash',
+    'A database column named by identity and search ADRs. The email metric namespace makes it look ' +
+      'metric-shaped, but those references describe stored PII rather than operator telemetry.',
+  ],
+  [
+    'email_verify',
+    'An identity-token kind and email-delivery purpose named by ADRs. It is a bounded label value, ' +
+      'not a standalone metric.',
+  ],
 ]);
 
 const problems = [];

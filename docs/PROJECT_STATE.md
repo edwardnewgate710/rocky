@@ -4,7 +4,26 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-21 — M15 Increment 17: Puzzle Generator is production-wired._
+_Last updated: 2026-08-21 — M15 Increment 18: production identity email is wired and token-safe._
+
+## M15 Increment 18 — Production Email Delivery + Token-Logging Hardening (ADR-0126)
+
+The production API now requires one Resend transport instead of silently falling back to
+`ConsoleEmailSender`. `PUBLIC_WEB_ORIGIN` is validated at startup and produces the existing
+`/password-reset#token=...` and `/email-verify#token=...` fragment links. Helm supplies the API key
+only through an existing Secret or External Secrets Operator reference; missing production email
+configuration prevents startup.
+
+Delivery has a bounded timeout and emits only fixed-purpose/outcome/latency metrics. Provider
+bodies, credentials, recipient addresses, raw tokens and completed token URLs never reach logging
+or metric inputs. The development console sender likewise prints only a suppression marker.
+
+Reset and registration responses no longer await provider I/O. Reset stays externally identical
+for existing and missing accounts even when delivery fails; registration stays successful after
+the account transaction commits. Authenticated `POST /v1/auth/email/verification/request` provides
+a rate-limited recovery path, and replacement issuance atomically invalidates prior unused tokens
+of the same user/kind, including under concurrent Postgres requests. A durable outbox/queue remains
+deferred.
 
 ## M15 Increment 17 — Puzzle Generator Productionization (ADR-0125)
 
@@ -821,8 +840,8 @@ line, so `?token=...` reached the web tier on the first navigation before any sc
 nginx's default access log retained a live credential that `replaceState` could not retract. A
 fragment is never transmitted, so the secret now arrives without having touched the server. Both
 flows moved together rather than leaving the older one exposed. No delivered link breaks, because
-nothing in the repository composes these URLs yet - `EmailSender.sendEmailVerification` is handed a
-bare token - but any real provider must emit the fragment form.
+at the time nothing in the repository composed these URLs. M15 Increment 18 (ADR-0126) now composes
+both fragment forms from the validated deployment-owned public origin.
 
 The token is still captured and the fragment cleared with `history.replaceState` before app
 composition, the capabilities request, or session restoration; that now protects the location bar and
@@ -844,11 +863,10 @@ reuses the existing auth visual system; the only new CSS is one scoped rule hold
 at the system's existing 44px touch target, which the shared `@media (pointer: coarse)` rule does not
 reach on a narrow desktop window.
 
-Real provider delivery and opening a link from an actual email client remain release/manual QA:
-`ConsoleEmailSender` is still the default, so no automated gate exercises a delivered message end to
-end. There is no resend-verification affordance and no verification status in the UI, because no
-existing public model exposes one. Terraform, cloud provisioning, and 100k-user cluster validation
-remain deferred.
+That delivery limitation was closed in M15 Increment 18 (ADR-0126): production now requires Resend
+and exposes an authenticated resend-verification API. Opening a real delivered message remains
+release/manual QA, and no verification status is surfaced in the UI. Terraform, cloud provisioning,
+and 100k-user cluster validation remain deferred.
 
 ## M14 Increment 47 - Local Two-Gateway WebSocket Load Baseline (ADR-0111)
 
@@ -2176,7 +2194,7 @@ analysis cache remains a future **ADR-0003** (would amend `DATABASE.md`).
 
 ### Exact next step for the next agent
 
-M14 Inc45 is complete: password-recovery web UI is implemented and verified in `@chess-platform/web` over the existing M4 server contracts (`POST /v1/auth/password-reset/request` and `POST /v1/auth/password-reset/confirm`). Production email delivery remains deployment/provider-dependent (`ConsoleEmailSender` default per ADR-0026).
+M14 Inc45 is complete: password-recovery web UI is implemented and verified in `@chess-platform/web` over the existing M4 server contracts (`POST /v1/auth/password-reset/request` and `POST /v1/auth/password-reset/confirm`). Production delivery was subsequently closed in M15 Increment 18 (ADR-0126).
 
 ## 8. Historical build & test snapshot
 

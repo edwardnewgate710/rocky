@@ -91,10 +91,16 @@ export interface DocParam {
 }
 
 /** One documented response. */
+export interface DocHeader {
+  readonly description: string;
+  readonly schema: JsonSchema;
+}
+
 export interface DocResponse {
   readonly description: string;
   /** Component name (key under `components.schemas`) for the body, if any. */
   readonly schema?: string;
+  readonly headers?: Readonly<Record<string, DocHeader>>;
 }
 
 /** The OpenAPI contract a route advertises. */

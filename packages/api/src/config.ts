@@ -74,6 +74,10 @@ export interface RateLimitConfig {
     readonly perIp: RateLimitEndpointConfig;
     readonly perTarget: RateLimitEndpointConfig;
   };
+  readonly emailVerificationRequest: {
+    readonly perIp: RateLimitEndpointConfig;
+    readonly perUser: RateLimitEndpointConfig;
+  };
   readonly webauthnLogin: {
     readonly perIp: RateLimitEndpointConfig;
     readonly perHandle: RateLimitEndpointConfig;
@@ -125,6 +129,10 @@ export const DEFAULT_RATE_LIMIT: RateLimitConfig = {
   passwordResetRequest: {
     perIp: { maxRequests: 5, windowMs: 60 * 60 * 1000 }, // 5 / 60 min
     perTarget: { maxRequests: 3, windowMs: 60 * 60 * 1000 }, // 3 / 60 min
+  },
+  emailVerificationRequest: {
+    perIp: { maxRequests: 5, windowMs: 60 * 60 * 1000 }, // 5 / 60 min
+    perUser: { maxRequests: 3, windowMs: 60 * 60 * 1000 }, // 3 / 60 min
   },
   webauthnLogin: {
     perIp: { maxRequests: 10, windowMs: 5 * 60 * 1000 }, // 10 / 5 min

@@ -21,7 +21,12 @@ import { createPgDependencies } from '../src/bootstrap';
 /** `createPgDependencies` needs a token secret; it never connects the pool in these tests. */
 function withEnv<T>(overrides: Record<string, string | undefined>, run: () => T): T {
   const saved = new Map<string, string | undefined>();
-  const applied = { ACCESS_TOKEN_SECRET: 'test-secret-at-least-32-chars-long-12345', ...overrides };
+  const applied = {
+    ACCESS_TOKEN_SECRET: 'test-secret-at-least-32-chars-long-12345',
+    NODE_ENV: 'test',
+    EMAIL_PROVIDER: 'console',
+    ...overrides,
+  };
   for (const [key, value] of Object.entries(applied)) {
     saved.set(key, process.env[key]);
     if (value === undefined) delete process.env[key];

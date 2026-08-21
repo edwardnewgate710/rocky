@@ -25,6 +25,8 @@ function withEnv<T>(overrides: Record<string, string | undefined>, run: () => T)
   const saved = new Map<string, string | undefined>();
   const applied = {
     ACCESS_TOKEN_SECRET: 'test-secret-at-least-32-chars-long-12345',
+    NODE_ENV: 'test',
+    EMAIL_PROVIDER: 'console',
     // Cleared by default so a developer's own key in the ambient environment cannot make a test
     // that asserts "absent" pass or fail for reasons the test never stated.
     AI_OPENAI_API_KEY: undefined,

@@ -800,6 +800,103 @@ export class PgIdentityTokensRepository implements IdentityTokensRepository {
     };
   }
 
+  async replaceActive(token: NewIdentityToken, at: Date): Promise<IdentityTokenRow> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      // The user row is a stable lock even when there are no earlier token rows. It serializes two
+      // concurrent resend requests so the later request supersedes the earlier token rather than
+      // leaving both usable.
+      await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [token.userId]);
+      await client.query(
+        `UPDATE identity_tokens
+         SET used_at = $3
+         WHERE user_id = $1 AND kind = $2 AND used_at IS NULL`,
+        [token.userId, token.kind, at],
+      );
+      const res = await client.query<{
+        token_hash: string;
+        user_id: string;
+        kind: string;
+        created_at: Date;
+        expires_at: Date;
+        used_at: Date | null;
+      }>(
+        `INSERT INTO identity_tokens (token_hash, user_id, kind, expires_at)
+         VALUES ($1, $2, $3, $4)
+         RETURNING token_hash, user_id, kind, created_at, expires_at, used_at`,
+        [token.tokenHash, token.userId, token.kind, token.expiresAt],
+      );
+      await client.query('COMMIT');
+      const row = res.rows[0]!;
+      return {
+        tokenHash: row.token_hash,
+        userId: row.user_id,
+        kind: row.kind as IdentityTokenKind,
+        createdAt: row.created_at,
+        expiresAt: row.expires_at,
+        usedAt: row.used_at,
+      };
+    } catch (error) {
+      await rollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async replaceActiveEmailVerification(
+    token: Omit<NewIdentityToken, 'kind'>,
+    at: Date,
+  ): Promise<IdentityTokenRow | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const user = await client.query<{ email_verified_at: Date | null }>(
+        'SELECT email_verified_at FROM users WHERE id = $1 FOR UPDATE',
+        [token.userId],
+      );
+      if (!user.rows[0] || user.rows[0].email_verified_at !== null) {
+        await client.query('COMMIT');
+        return null;
+      }
+      await client.query(
+        `UPDATE identity_tokens
+         SET used_at = $2
+         WHERE user_id = $1 AND kind = 'email_verify' AND used_at IS NULL`,
+        [token.userId, at],
+      );
+      const res = await client.query<{
+        token_hash: string;
+        user_id: string;
+        kind: string;
+        created_at: Date;
+        expires_at: Date;
+        used_at: Date | null;
+      }>(
+        `INSERT INTO identity_tokens (token_hash, user_id, kind, expires_at)
+         VALUES ($1, $2, 'email_verify', $3)
+         RETURNING token_hash, user_id, kind, created_at, expires_at, used_at`,
+        [token.tokenHash, token.userId, token.expiresAt],
+      );
+      await client.query('COMMIT');
+      const row = res.rows[0]!;
+      return {
+        tokenHash: row.token_hash,
+        userId: row.user_id,
+        kind: row.kind as IdentityTokenKind,
+        createdAt: row.created_at,
+        expiresAt: row.expires_at,
+        usedAt: row.used_at,
+      };
+    } catch (error) {
+      await rollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async consume(
     tokenHash: string,
     kind: IdentityTokenKind,
@@ -829,6 +926,74 @@ export class PgIdentityTokensRepository implements IdentityTokensRepository {
       expiresAt: r.expires_at,
       usedAt: r.used_at,
     };
+  }
+
+  async consumeEmailVerification(tokenHash: string, at: Date): Promise<IdentityTokenRow | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      // Read the owner first, then take the same stable user-row lock used by replacement. The
+      // token is re-checked after the lock, so a replacement that won the race makes consumption
+      // fail, while a successful consumption makes a waiting replacement observe verification.
+      const owner = await client.query<{ user_id: string }>(
+        `SELECT user_id FROM identity_tokens
+         WHERE token_hash = $1 AND kind = 'email_verify'`,
+        [tokenHash],
+      );
+      if (!owner.rows[0]) {
+        await client.query('COMMIT');
+        return null;
+      }
+      const userId = owner.rows[0].user_id;
+      const locked = await client.query<{ email_verified_at: Date | null }>(
+        'SELECT email_verified_at FROM users WHERE id = $1 FOR UPDATE',
+        [userId],
+      );
+      if (!locked.rows[0] || locked.rows[0].email_verified_at !== null) {
+        await client.query('COMMIT');
+        return null;
+      }
+      const res = await client.query<{
+        token_hash: string;
+        user_id: string;
+        kind: string;
+        created_at: Date;
+        expires_at: Date;
+        used_at: Date | null;
+      }>(
+        `UPDATE identity_tokens
+         SET used_at = $2
+         WHERE token_hash = $1
+           AND kind = 'email_verify'
+           AND used_at IS NULL
+           AND expires_at > $2
+         RETURNING token_hash, user_id, kind, created_at, expires_at, used_at`,
+        [tokenHash, at],
+      );
+      const row = res.rows[0];
+      if (!row) {
+        await client.query('COMMIT');
+        return null;
+      }
+      await client.query(
+        'UPDATE users SET email_verified_at = $2 WHERE id = $1',
+        [row.user_id, at],
+      );
+      await client.query('COMMIT');
+      return {
+        tokenHash: row.token_hash,
+        userId: row.user_id,
+        kind: row.kind as IdentityTokenKind,
+        createdAt: row.created_at,
+        expiresAt: row.expires_at,
+        usedAt: row.used_at,
+      };
+    } catch (error) {
+      await rollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }
 

@@ -71,6 +71,21 @@ test('protected operations declare bearer security', async () => {
   }
 });
 
+test('email verification resend documents authentication and rate limiting', async () => {
+  const h = await startHarness();
+  try {
+    const op = (h.server.openapiDocument() as any)
+      .paths['/v1/auth/email/verification/request'].post;
+    assert.deepEqual(op.security, [{ bearerAuth: [] }]);
+    assert.equal(op.responses['202'].description, 'Accepted');
+    assert.equal(op.responses['401'].content['application/json'].schema.$ref, '#/components/schemas/Error');
+    assert.equal(op.responses['429'].content['application/json'].schema.$ref, '#/components/schemas/Error');
+    assert.equal(op.responses['429'].headers['Retry-After'].schema.type, 'integer');
+  } finally {
+    await h.close();
+  }
+});
+
 test('the spec is served at GET /v1/openapi.json', async () => {
   const h = await startHarness();
   try {

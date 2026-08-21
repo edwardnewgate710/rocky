@@ -148,6 +148,7 @@ test('every multi-bucket route hands both buckets to a single admission', () => 
   const expected: Record<string, readonly string[]> = {
     '/v1/auth/login': ['login:ip:', 'login:handle:'],
     '/v1/auth/password-reset/request': ['password-reset:ip:', 'password-reset:target:'],
+    '/v1/auth/email/verification/request': ['email-verification:user:', 'email-verification:ip:'],
     '/v1/auth/webauthn/login/options': ['webauthn-login:ip:', 'webauthn-login:handle:'],
     '/v1/analysis': ['analysis:user:', 'analysis:ip:'],
     '/v1/analysis/mistake-prediction': ['mistake-prediction:user:', 'mistake-prediction:ip:'],

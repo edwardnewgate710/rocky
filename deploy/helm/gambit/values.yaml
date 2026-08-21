@@ -238,6 +238,16 @@ search:
 externalDatabaseUrl: ""
 externalRedisUrl: ""
 
+# --- Transactional email (M15 inc 18, ADR-0126) ---
+# The API supports exactly one production transport. PUBLIC_WEB_ORIGIN is an explicit trusted
+# origin; links are never derived from request Host / forwarded headers.
+email:
+  provider: resend
+  # Required for Resend. Set these per deployment; no fake production domain is accepted by default.
+  from: ""
+  publicWebOrigin: ""
+  timeoutMs: "5000"
+
 # --- Secrets ---
 # ACCESS_TOKEN_SECRET and POSTGRES_PASSWORD are never defaulted. Rendering
 # fails until explicit values or an existing Secret are supplied.
@@ -274,6 +284,9 @@ secrets:
       key: ""
       property: ""
     postgresPassword:
+      key: ""
+      property: ""
+    resendApiKey:
       key: ""
       property: ""
 

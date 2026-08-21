@@ -1,7 +1,19 @@
 {{/*
 ConfigMap for non-secret environment variables shared across services.
-Secrets (ACCESS_TOKEN_SECRET, POSTGRES_PASSWORD) live in the Secret, not here.
+Secrets (ACCESS_TOKEN_SECRET, POSTGRES_PASSWORD, RESEND_API_KEY) live in the Secret, not here.
 */}}
+{{- if and (eq .Values.config.nodeEnv "production") (ne .Values.email.provider "resend") }}
+{{- fail "production config requires email.provider=resend" }}
+{{- end }}
+{{- if not (has .Values.email.provider (list "resend" "console")) }}
+{{- fail "email.provider must be resend or console" }}
+{{- end }}
+{{- if and (eq .Values.email.provider "resend") (empty .Values.email.from) }}
+{{- fail "email.from is required when email.provider=resend" }}
+{{- end }}
+{{- if and (eq .Values.email.provider "resend") (empty .Values.email.publicWebOrigin) }}
+{{- fail "email.publicWebOrigin is required when email.provider=resend" }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -17,3 +29,7 @@ data:
   CMD_FORWARD_TIMEOUT_MS: {{ .Values.config.cmdForwardTimeoutMs | quote }}
   OWNERSHIP_LEASE_TTL_SEC: {{ .Values.config.ownershipLeaseTtlSec | quote }}
   OWNERSHIP_RENEWAL_INTERVAL_SEC: {{ .Values.config.ownershipRenewalIntervalSec | quote }}
+  EMAIL_PROVIDER: {{ .Values.email.provider | quote }}
+  EMAIL_FROM: {{ .Values.email.from | quote }}
+  PUBLIC_WEB_ORIGIN: {{ .Values.email.publicWebOrigin | quote }}
+  EMAIL_TIMEOUT_MS: {{ .Values.email.timeoutMs | quote }}

@@ -51,7 +51,10 @@ services:
       DATABASE_URL: postgres://gambit:${POSTGRES_PASSWORD:-gambit_dev}@postgres:5432/gambit
       ACCESS_TOKEN_SECRET: ${ACCESS_TOKEN_SECRET:-dev-secret-change-me-in-production-at-least-32-bytes!!}
       PORT: "8080"
-      NODE_ENV: production
+      # Local development explicitly selects the safe, non-delivering console sender. Production
+      # Helm deployments require Resend and fail startup when its configuration is missing.
+      NODE_ENV: development
+      EMAIL_PROVIDER: console
       # Engine analysis (ADR-0113). The image installs Stockfish and sets STOCKFISH_PATH, so the
       # analysis pool is available; these only tighten it. The pool is deliberately small and its
       # queue short — analysis is a CPU-amplification surface, so saturation should be refused
