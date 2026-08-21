@@ -2806,7 +2806,7 @@ export function buildRouter(deps: RouteDeps): Router {
   router.post(
     '/v1/teams/:id/join-requests',
     doc({
-      summary: 'Request to join a private team',
+      summary: 'Request to join a visible team',
       tags: ['community'],
       security: 'bearer',
       params: [pathParam('id', 'Team ID (UUID)')],
@@ -2830,6 +2830,34 @@ export function buildRouter(deps: RouteDeps): Router {
       } catch (err) {
         mapCommunityError(err);
       }
+    },
+  );
+
+  // 10a. GET /v1/me/join-requests
+  router.get(
+    '/v1/me/join-requests',
+    doc({
+      summary: 'List my pending team join requests',
+      tags: ['community'],
+      security: 'bearer',
+      params: [limitParam(), offsetParam()],
+      responses: {
+        200: ['JoinRequestList', 'Paginated pending join requests owned by the caller'],
+        503: ['Error', 'Community service unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const repo = checkCommunityRepo();
+      const actorId = requireAuth(ctx).userId;
+      const limit = parseLimit(ctx.query, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+      const offset = parseOffset(ctx.query);
+
+      const page = await repo.listOutgoingJoinRequests(actorId, { limit, offset });
+      return json(200, {
+        total: page.total,
+        items: page.items.map(joinRequestView),
+      });
     },
   );
 
@@ -2917,8 +2945,7 @@ export function buildRouter(deps: RouteDeps): Router {
       params: [pathParam('id', 'Team ID (UUID)'), pathParam('reqId', 'Join request ID (UUID)')],
       responses: {
         200: ['JoinRequestView', 'Join request cancelled'],
-        403: ['Error', 'Only requester can cancel join request'],
-        404: ['Error', 'Join request not found'],
+        404: ['Error', 'Join request not found or not owned by caller'],
         409: ['Error', 'Join request is not pending'],
         503: ['Error', 'Community service unavailable'],
       },

@@ -646,12 +646,13 @@ export class PgCommunityRepository implements CommunityRepository {
       await client.query('BEGIN');
       await lockTeam(client, teamId);
 
-      const teamRes = await client.query<TeamRow>(
-        `SELECT id, visibility FROM community_teams WHERE id = $1`,
-        [teamId]
-      );
-      if (teamRes.rows.length === 0) {
-        throw new CommunityRuleError('not_found', `Team '${teamId}' not found`);
+      try {
+        await this.findVisibleTeam(client, teamId, playerId);
+      } catch (err) {
+        if (err instanceof CommunityRuleError && err.code === 'not_found') {
+          throw new CommunityRuleError('not_found', 'Team not found');
+        }
+        throw err;
       }
 
       const existingMem = await this.getMembershipInternal(client, teamId, playerId);
@@ -804,6 +805,32 @@ export class PgCommunityRepository implements CommunityRepository {
     } finally {
       client.release();
     }
+  }
+
+  async listOutgoingJoinRequests(
+    playerId: PlayerId,
+    options?: PageOptions
+  ): Promise<Page<JoinRequest>> {
+    const countRes = await this.pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count
+       FROM community_join_requests
+       WHERE player_id = $1 AND status = 'pending'`,
+      [playerId]
+    );
+    const total = Number(countRes.rows[0]?.count ?? '0');
+
+    const params: unknown[] = [playerId];
+    const pagination = paginationClause(params, options);
+    const res = await this.pool.query<JoinRequestRow>(
+      `SELECT id, team_id, player_id, status, created_at, responded_at
+       FROM community_join_requests
+       WHERE player_id = $1 AND status = 'pending'
+       ORDER BY created_at DESC, id ASC
+       ${pagination}`,
+      params
+    );
+
+    return { total, items: res.rows.map(rowToJoinRequest) };
   }
 
   async listJoinRequests(

@@ -23,6 +23,7 @@ import {
   roleRank,
 } from './model';
 import {
+  compareIds,
   compareMembers,
   comparePosts,
   compareTeams,
@@ -47,13 +48,18 @@ import { paginate } from './pagination';
  * 3. Slugs are unique, normalized (lowercase, trimmed), non-empty, and constrained to `SLUG_REGEX`.
  *    Inputs failing normalization or character constraints are rejected with `invalid_slug`. Slugs already
  *    taken throw `slug_taken`.
- * 4. `public` teams can be joined directly. `private` teams require a join request; accepting one
- *    creates the membership with role `member`. Accepting/declining a join request requires `admin` or above.
+ * 4. `public` teams can be joined directly and may receive join requests. A non-member cannot open
+ *    a join request for a `private` team by bare team id: an invisible private team and a missing team
+ *    both read as the same `not_found`. Accepting a legacy request creates membership with role `member`.
+ *    Accepting/declining a join request requires `admin` or above.
  *    The requester may cancel their own pending request. A second pending request for the same (team, player)
  *    is rejected (`already_requested`). Someone who is already a member cannot open a request (`already_member`).
+ *    Requester self-listing returns only that player's pending rows; accepted, declined, and cancelled
+ *    rows remain available to moderation history but are absent from the self-list.
  * 5. Access control for public vs private teams:
- *    - `private` teams, their memberships, join requests, forum threads, and posts are completely
- *      invisible to non-members and read as `not_found`.
+ *    - `private` teams, their memberships, moderation join-request listing, forum threads, and posts
+ *      are invisible to non-members and read as `not_found`. A requester may recover only their own
+ *      pending request row; that row carries no team presentation metadata.
  *    - `public` teams, their memberships, forum threads, and posts are readable by anyone (including non-members),
  *      but creating threads or posting in a public team forum is writable only by members (`not_authorized` for non-members).
  * 6. Thread/post titles and bodies must be non-empty after trimming, bounded by exported constants, and stored trimmed.
@@ -146,6 +152,11 @@ export interface CommunityRepository {
     actorId: PlayerId,
     at: Date
   ): Promise<JoinRequest>;
+
+  listOutgoingJoinRequests(
+    playerId: PlayerId,
+    options?: PageOptions
+  ): Promise<Page<JoinRequest>>;
 
   listJoinRequests(
     teamId: TeamId,
@@ -529,9 +540,13 @@ export class InMemoryCommunityRepository implements CommunityRepository {
     playerId: PlayerId,
     at: Date
   ): Promise<JoinRequest> {
-    const team = this.teams.get(teamId);
-    if (!team) {
-      throw new CommunityRuleError('not_found', `Team '${teamId}' not found`);
+    try {
+      await this.findVisibleTeam(teamId, playerId);
+    } catch (err) {
+      if (err instanceof CommunityRuleError && err.code === 'not_found') {
+        throw new CommunityRuleError('not_found', 'Team not found');
+      }
+      throw err;
     }
 
     const existingMem = this.getMembershipInternal(teamId, playerId);
@@ -627,6 +642,21 @@ export class InMemoryCommunityRepository implements CommunityRepository {
     };
     this.joinRequests.set(requestId, updatedReq);
     return updatedReq;
+  }
+
+  async listOutgoingJoinRequests(
+    playerId: PlayerId,
+    options?: PageOptions
+  ): Promise<Page<JoinRequest>> {
+    const requests: JoinRequest[] = [];
+    for (const req of this.joinRequests.values()) {
+      if (req.playerId === playerId && req.status === 'pending') {
+        requests.push(req);
+      }
+    }
+
+    requests.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || compareIds(a.id, b.id));
+    return paginate(requests, options);
   }
 
   async listJoinRequests(
