@@ -19,7 +19,25 @@ test('migrations apply and are idempotent', { skip }, async () => {
   try {
     const dir = join(process.cwd(), 'migrations');
     await migrate(pool, dir);
+
+    const index = await pool.query<{ indisvalid: boolean; definition: string }>(
+      `SELECT i.indisvalid, pg_get_indexdef(i.indexrelid) AS definition
+         FROM pg_index i
+         JOIN pg_class c ON c.oid = i.indexrelid
+        WHERE c.relname = 'community_join_requests_pending_by_player_idx'`,
+    );
+    assert.equal(index.rows[0]?.indisvalid, true);
+    assert.match(index.rows[0]?.definition ?? '', /\(player_id, created_at DESC, id\)/);
+    assert.match(index.rows[0]?.definition ?? '', /WHERE \(status = 'pending'::text\)/);
+
     assert.equal(await migrate(pool, dir), 0, 're-running applies nothing');
+
+    await pool.query("UPDATE schema_migrations SET state = 'pending' WHERE version = 23");
+    assert.equal(await migrate(pool, dir), 1, 're-running completes an interrupted online index');
+    const migration = await pool.query<{ state: string }>(
+      'SELECT state FROM schema_migrations WHERE version = 23',
+    );
+    assert.equal(migration.rows[0]?.state, 'applied');
   } finally {
     await pool.end();
   }

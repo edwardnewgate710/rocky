@@ -66,6 +66,12 @@ slug, description, or visibility. This is important for legacy rows and for requ
 a team was public and made private later: the requester can recover the id needed for cancellation
 without gaining a weaker private-team presentation oracle.
 
+The pending self-list query is backed by a partial `(player_id, created_at DESC, id ASC)` index.
+Because old application replicas continue writing during progressive delivery, that index is
+installed with `CREATE INDEX CONCURRENTLY`. The migration ledger records the operation as pending
+before the non-transactional statement, allowing an interrupted run to validate and finalize a
+completed index or safely retry an invalid one.
+
 ### 3. Existing moderation and cancellation routes remain the lifecycle authorities
 
 Owner/admin listing and response stay on the team-scoped routes from ADR-0096. Requesters cancel
