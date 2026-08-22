@@ -3,7 +3,7 @@
  *
  * `EndgameTrainer` requires an `AnalysisProvider` and accepts an optional `AiProvider`. This service
  * supplies no `AiProvider` and keeps the library engineless: it executes its own two searches against
- * {@link AnalysisService} with fixed server policy (depth 16, 1,000 ms, MultiPV 1) and hands those
+ * {@link AnalysisPort} with fixed server policy (depth 16, 1,000 ms, MultiPV 1) and hands those
  * pre-computed results into `evaluateAttempt`.
  *
  * Two entry points:
@@ -32,7 +32,7 @@ import type {
 } from '@chess-platform/engine';
 import { HttpError } from '../http/errors.js';
 import { DEFAULT_ANALYSIS_LIMITS } from '../analysis/limits.js';
-import type { AnalysisService } from '../analysis/service.js';
+import type { AnalysisPort } from '../analysis/service.js';
 
 export const ENDGAME_MULTI_PV = 1;
 export const ENDGAME_DEPTH = DEFAULT_ANALYSIS_LIMITS.defaultDepth;
@@ -149,7 +149,7 @@ function adjudicateTerminal(
 }
 
 export interface EndgameTrainingServiceOptions {
-  readonly analysis: AnalysisService;
+  readonly analysis: AnalysisPort;
   readonly database?: EndgameDatabase | undefined;
 }
 
@@ -170,7 +170,7 @@ const NOOP_ENGINE: AnalysisProvider = {
 };
 
 export class EndgameTrainingService {
-  private readonly analysis: AnalysisService;
+  private readonly analysis: AnalysisPort;
   private readonly database: EndgameDatabase;
   private readonly trainer: EndgameTrainer;
 
@@ -217,6 +217,30 @@ export class EndgameTrainingService {
       difficulty: entry.difficulty,
       technique: entry.technique ?? null,
     };
+  }
+
+  /**
+   * Identify a position as one of the catalogue's training endgames.
+   *
+   * Added for the Coach orchestrator (ADR-0129), which needs to say "this is the Lucena position"
+   * without becoming a way to read the answer the trainer withholds. It returns
+   * {@link EndgameNextOutcome} — the same projection `next` returns, from the same `project` — so
+   * the withholding rule is enforced once and cannot be bypassed by taking a different route to the
+   * same catalogue entry. There is deliberately no variant of this that returns `EndgameEntry`.
+   *
+   * Matching is on the exact FEN, which is what `Coach.findEndgameForFen` in `ai-features` does.
+   * That makes it fire when a learner is literally on a catalogue position and not otherwise:
+   * recognising an arbitrary K+P ending as "a K+P ending" would need a material classifier that
+   * does not exist, and inventing one here would be the Coach fabricating a lesson — the one thing
+   * its own contract says it never does.
+   *
+   * @param fen - the position to identify.
+   * @returns the training position, solution withheld, or `undefined` when the catalogue has no
+   * entry at this exact FEN.
+   */
+  identify(fen: string): EndgameNextOutcome | undefined {
+    const entry = this.database.all().find((candidate) => candidate.fen === fen);
+    return entry ? this.project(entry) : undefined;
   }
 
   /**

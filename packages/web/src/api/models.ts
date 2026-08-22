@@ -227,6 +227,14 @@ export interface SystemCapabilities {
    * missing flag must read as off rather than as permission.
    */
   readonly endgameTrainer?: boolean;
+  /**
+   * Coaching over the other features (M15 inc 21, ADR-0129).
+   *
+   * Optional because a server predating it omits the field entirely, and a missing flag has to read
+   * as off rather than as permission. True when *any* of the five features it composes is present,
+   * so it says the endpoint will answer — not that every section will.
+   */
+  readonly coach?: boolean;
 }
 
 export interface CapabilitiesResponse {
@@ -1116,3 +1124,64 @@ export interface EndgameTerminalResult extends EndgameAttemptCommon {
 }
 
 export type EndgameAttemptResult = EndgameJudgedResult | EndgameTerminalResult;
+
+// --- Coaching (M15 inc 21, ADR-0129) ---------------------------------------
+
+/**
+ * Why a coaching section carries no value.
+ *
+ * `unsupported` and `unavailable` are different answers and the UI shows different words for them:
+ * a feature this server never built will not appear because the reader tried again, while one that
+ * failed on this request may well answer the next.
+ */
+export type CoachOmissionReason =
+  | 'not_requested'
+  | 'not_applicable'
+  | 'unsupported'
+  | 'unavailable'
+  | 'cancelled';
+
+/** Always one of the two shapes — never an absent key, never `null`. */
+export type CoachSection<T> =
+  | {
+      readonly kind: 'present';
+      readonly value: T;
+    }
+  | {
+      readonly kind: 'omitted';
+      readonly reason: CoachOmissionReason;
+    };
+
+/**
+ * A tactic in the position, without the tactic.
+ *
+ * There is no solution field here and the server sends none: `/v1/analysis/puzzle` publishes the
+ * solution because a caller studying their own position asked for it, but a coaching hint that hands
+ * over the answer has stopped being a hint (ADR-0129 §3).
+ */
+export interface CoachPuzzle {
+  readonly kind: 'puzzle';
+  readonly fen: string;
+  readonly variant: string;
+  readonly difficulty: 'easy' | 'medium' | 'hard' | 'brilliant';
+}
+
+export interface CoachRequest {
+  readonly fen: string;
+  readonly variant: string;
+  readonly move?: string;
+  readonly moves?: readonly string[];
+}
+
+/** Each section reuses the model of the feature's own endpoint, because the server reuses its view. */
+export interface CoachResponse {
+  readonly fen: string;
+  readonly variant: string;
+  readonly move: string | null;
+  readonly mistake: CoachSection<MistakePredictionResponse>;
+  readonly explanation: CoachSection<MoveExplanationResponse>;
+  readonly opening: CoachSection<OpeningExplorationResponse>;
+  readonly puzzle: CoachSection<CoachPuzzle>;
+  readonly endgame: CoachSection<EndgamePosition>;
+  readonly featuresFired: readonly string[];
+}

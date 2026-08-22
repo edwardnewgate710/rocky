@@ -168,6 +168,19 @@ export function endgameTrainerEnabled(payload: unknown): boolean {
   return capabilityFlags(payload)?.['endgameTrainer'] === true;
 }
 
+/**
+ * Whether this deployment coaches (M15 inc 21, ADR-0129).
+ *
+ * True when *any* of the five features the Coach composes is present, so it says the endpoint will
+ * answer — not that every section will. Which sections to expect is read from the five flags; this
+ * one only decides whether to offer the control at all.
+ *
+ * Fails closed on a missing or malformed payload, for the same reason the others do.
+ */
+export function coachEnabled(payload: unknown): boolean {
+  return capabilityFlags(payload)?.['coach'] === true;
+}
+
 export function puzzleGenerationEnabled(payload: unknown): boolean {
   return capabilityFlags(payload)?.['puzzleGeneration'] === true;
 }

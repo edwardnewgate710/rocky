@@ -109,6 +109,10 @@ export interface RateLimitConfig {
     readonly perUser: RateLimitEndpointConfig;
     readonly perIp: RateLimitEndpointConfig;
   };
+  readonly coach: {
+    readonly perUser: RateLimitEndpointConfig;
+    readonly perIp: RateLimitEndpointConfig;
+  };
 }
 
 export const DEFAULT_ACCESS_TOKEN_TTL_SEC = 15 * 60;
@@ -191,6 +195,24 @@ export const DEFAULT_RATE_LIMIT: RateLimitConfig = {
   endgameTraining: {
     perUser: { maxRequests: 20, windowMs: 60 * 1000 }, // 20 / min
     perIp: { maxRequests: 40, windowMs: 60 * 1000 }, // 40 / min
+  },
+  // Coaching is the most expensive request this API serves, so it gets the smallest budget.
+  //
+  // One accepted call costs at most four engine searches — the position at MultiPV 1, the position
+  // after the played move at MultiPV 1, the position after the engine's preferred move at MultiPV 1,
+  // and the position again at MultiPV 3 for tactic discovery — plus one provider call. The
+  // MultiPV 1 search of the position is issued twice, by two different feature services, and
+  // `RequestScopedAnalysis` collapses it; without that de-duplication the same request would be five
+  // searches.
+  //
+  // `mistakePrediction` and `endgameTraining` cost two searches and no provider call, and are set
+  // at 20/min. Eight is that budget scaled by the ratio of the work, not a number chosen by feel:
+  // four searches is twice two, and the provider call is the part with a bill attached. The per-user
+  // limit is the one that binds; the per-IP limit is twice it so that a shared NAT is not treated as
+  // a single abuser, matching every other bucket in this file.
+  coach: {
+    perUser: { maxRequests: 8, windowMs: 60 * 1000 }, // 8 / min
+    perIp: { maxRequests: 16, windowMs: 60 * 1000 }, // 16 / min
   },
 };
 

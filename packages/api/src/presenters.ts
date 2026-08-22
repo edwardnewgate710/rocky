@@ -930,6 +930,17 @@ export interface CapabilitiesFlags {
   readonly openingExplorer: boolean;
   /** Curated endgame training positions and attempt evaluation (ADR-0128). */
   readonly endgameTrainer: boolean;
+  /**
+   * Coaching that orchestrates the other feature flags above (ADR-0129).
+   *
+   * True when *any* of `moveExplanation`, `mistakePrediction`, `puzzleGeneration`,
+   * `openingExplorer` or `endgameTrainer` is, because the Coach owns no dependency of its own and
+   * reports each section's availability individually inside the response. So this is not a promise
+   * that every section will answer — it is the narrower claim that at least one can, which is the
+   * only claim a single boolean can honestly make about five features. A client that needs to know
+   * which sections to expect reads the five flags, not this one.
+   */
+  readonly coach: boolean;
 }
 
 /**
@@ -981,6 +992,7 @@ export function capabilitiesView(
     | 'puzzleGeneration'
     | 'openingExploration'
     | 'endgameTraining'
+    | 'coach'
   >,
 ): CapabilitiesView {
   const puzzleVariants = deps.puzzleGeneration
@@ -1001,6 +1013,7 @@ export function capabilitiesView(
       puzzleGeneration: puzzleVariants.length > 0,
       openingExplorer: deps.openingExploration !== undefined,
       endgameTrainer: deps.endgameTraining !== undefined,
+      coach: deps.coach !== undefined,
     },
     analysisVariants: deps.analysis
       ? VARIANTS.filter((variant) => deps.analysis?.supportsVariant(variant) === true)
@@ -1382,8 +1395,111 @@ export function moveExplanationView(
   };
 }
 
+/**
+ * What the Coach says about a tactic in the position.
+ *
+ * There is no `solutionMove` and no `solutionLine`, and their absence is the contract rather than an
+ * oversight. `/v1/puzzles/generate` publishes both, because a caller asking "is my position a
+ * tactic, and what is it" is studying their own position. A coaching hint that hands over the tactic
+ * has stopped being a hint, which is the ADR-0095 defect in a different costume — so the Coach says
+ * only that a tactic is there and how hard it is.
+ */
+export interface CoachPuzzleView {
+  readonly kind: 'puzzle';
+  readonly fen: string;
+  readonly variant: string;
+  readonly difficulty: import('@chess-platform/ai-features').PuzzleDifficulty;
+}
 
+/**
+ * One section of a coaching response.
+ *
+ * Always one of the two shapes, never an absent key and never `null`: a client that gets nothing back
+ * for a section should be able to say *why* it got nothing, and "the engine is down" and "your move
+ * was already the best one" are not the same message to show a learner.
+ */
+export type CoachSectionView<T> =
+  | {
+      readonly kind: 'present';
+      readonly value: T;
+    }
+  | {
+      readonly kind: 'omitted';
+      readonly reason: import('./coach/coach-service.js').CoachOmissionReason;
+    };
 
+export interface CoachView {
+  readonly fen: string;
+  readonly variant: string;
+  readonly move: string | null;
+  readonly mistake: CoachSectionView<MistakePredictionView>;
+  readonly explanation: CoachSectionView<MoveExplanationView>;
+  readonly opening: CoachSectionView<OpeningExplorationView>;
+  readonly puzzle: CoachSectionView<CoachPuzzleView>;
+  readonly endgame: CoachSectionView<EndgameNextView>;
+  readonly featuresFired: readonly string[];
+}
 
+/**
+ * The coaching response.
+ *
+ * Four of the five sections are rendered by the *existing* presenter for that feature, and that is
+ * the mechanism by which the Coach cannot publish more than each feature's own route does: there is
+ * no second projection here to drift from the first, so a field withheld at `/v1/endgames/next` is
+ * withheld here by construction rather than by a rule someone has to remember.
+ *
+ * The puzzle section is the deliberate exception. It is projected field by field from the already
+ * narrowed `CoachPuzzleOutcome` and never through `puzzleGenerationView`, which publishes the
+ * solution.
+ *
+ * @param outcome - the orchestrator's result.
+ * @returns the response body, with every object built explicitly and nothing spread.
+ */
+export function coachView(
+  outcome: import('./coach/coach-service.js').CoachOutcome,
+): CoachView {
+  const mistake: CoachSectionView<MistakePredictionView> =
+    outcome.mistake.kind === 'present'
+      ? { kind: 'present', value: mistakePredictionView(outcome.mistake.value) }
+      : { kind: 'omitted', reason: outcome.mistake.reason };
 
+  const explanation: CoachSectionView<MoveExplanationView> =
+    outcome.explanation.kind === 'present'
+      ? { kind: 'present', value: moveExplanationView(outcome.explanation.value) }
+      : { kind: 'omitted', reason: outcome.explanation.reason };
 
+  const opening: CoachSectionView<OpeningExplorationView> =
+    outcome.opening.kind === 'present'
+      ? { kind: 'present', value: openingExplorationView(outcome.opening.value) }
+      : { kind: 'omitted', reason: outcome.opening.reason };
+
+  const puzzle: CoachSectionView<CoachPuzzleView> =
+    outcome.puzzle.kind === 'present'
+      ? {
+          kind: 'present',
+          value: {
+            kind: 'puzzle',
+            fen: outcome.puzzle.value.fen,
+            variant: outcome.puzzle.value.variant,
+            difficulty: outcome.puzzle.value.difficulty,
+          },
+        }
+      : { kind: 'omitted', reason: outcome.puzzle.reason };
+
+  const endgame: CoachSectionView<EndgameNextView> =
+    outcome.endgame.kind === 'present'
+      ? { kind: 'present', value: endgameNextView(outcome.endgame.value) }
+      : { kind: 'omitted', reason: outcome.endgame.reason };
+
+  return {
+    fen: outcome.fen,
+    variant: outcome.variant,
+    move: outcome.move,
+    mistake,
+    explanation,
+    opening,
+    puzzle,
+    endgame,
+    featuresFired: [...outcome.featuresFired],
+  };
+}

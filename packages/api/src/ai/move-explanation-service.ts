@@ -13,8 +13,9 @@ import type { Variant } from '@chess-platform/core';
 import type { MoveExplainer } from '@chess-platform/ai-features';
 import { AiError } from '@chess-platform/ai-orchestrator';
 import { HttpError } from '../http/errors.js';
-import type { AnalysisService } from '../analysis/service.js';
+import type { AnalysisPort } from '../analysis/service.js';
 import { coreFenValidator } from '../analysis/fen-validator.js';
+import { isUciShape } from '../analysis/uci.js';
 import type { TerminalReason } from '../analysis/terminal.js';
 import { describeTerminal, fromStatus, terminalOutcome } from '../analysis/terminal.js';
 
@@ -83,22 +84,14 @@ export interface MoveExplanationOutcome {
 }
 
 export interface MoveExplanationServiceOptions {
-  readonly analysis: AnalysisService;
+  readonly analysis: AnalysisPort;
   readonly explainer: MoveExplainer;
 }
 
-/**
- * A cheap shape filter, and *not* the legality check.
- *
- * It exists to reject obvious junk before building a `Position`, and to bound what reaches the
- * matcher. The authority is {@link Position.play}, which resolves the move against generated legal
- * moves and throws when there is no match; this regex could not tell a legal move from an illegal
- * one and is never asked to.
- */
-const UCI_SHAPE = /^(?:[a-h][1-8][a-h][1-8][qrbn]?|[PNBRQ]@[a-h][1-8])$/;
+
 
 export class MoveExplanationService {
-  private readonly analysis: AnalysisService;
+  private readonly analysis: AnalysisPort;
   private readonly explainer: MoveExplainer;
   private readonly fenValidator = coreFenValidator;
 
@@ -131,7 +124,7 @@ export class MoveExplanationService {
       throw HttpError.validation('unsupported variant', { variant: 'unsupported variant' });
     }
 
-    if (!UCI_SHAPE.test(input.move)) {
+    if (!isUciShape(input.move)) {
       throw HttpError.validation('invalid move', { move: 'invalid move' });
     }
 

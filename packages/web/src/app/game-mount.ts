@@ -30,6 +30,7 @@ import {
   moveExplanationEnabled,
   moveExplanationSupportsVariant,
   openingExplorerEnabled,
+  coachEnabled,
   puzzleGenerationEnabled,
   puzzleGenerationSupportsVariant,
 } from './capabilities-nav.js';
@@ -44,6 +45,16 @@ import {
   renderOpeningResult,
   setOpeningBusy,
 } from './opening-view.js';
+import { CoachController, MAX_COACH_PLIES } from './coach-controller.js';
+import type { CoachTarget } from './coach-controller.js';
+import {
+  COACH_MESSAGES,
+  clearCoach,
+  renderCoachError,
+  renderCoachNote,
+  renderCoachResult,
+  setCoachBusy,
+} from './coach-view.js';
 import {
   clearPuzzle,
   PUZZLE_MESSAGES,
@@ -320,6 +331,15 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
   const openingRowsEl = doc.getElementById('opening-rows');
   let openingAvailable = false;
 
+  // Coaching section (M15 inc 21, ADR-0129).
+  const coachBlockEl = doc.getElementById('coach');
+  const coachRunBtn = doc.getElementById('coach-run') as HTMLButtonElement | null;
+  const coachNoteEl = doc.getElementById('coach-note');
+  const coachErrorEl = doc.getElementById('coach-error');
+  const coachResultEl = doc.getElementById('coach-result');
+  const coachRowsEl = doc.getElementById('coach-rows');
+  let coachAvailable = false;
+
   /** Clear the section's content back to the unanswered state, leaving its visibility alone. */
   const resetOpeningBlock = (): void => {
     if (openingRowsEl && openingResultEl) clearOpening(openingRowsEl, openingResultEl);
@@ -332,6 +352,63 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
   // it only when the capability says so, and the capability read can fail — in which case nothing
   // would hide it again, and a deployment that does not offer the feature would show it.
   if (openingBlockEl) openingBlockEl.hidden = true;
+
+  /** Clear the section back to its unasked state: no rows, no error, the idle note. */
+  const resetCoachBlock = (): void => {
+    if (coachRowsEl && coachResultEl) clearCoach(coachRowsEl, coachResultEl);
+    if (coachErrorEl) renderCoachError(coachErrorEl, null);
+    if (coachNoteEl) renderCoachNote(coachNoteEl, COACH_MESSAGES.idle);
+  };
+  resetCoachBlock();
+  if (coachBlockEl) coachBlockEl.hidden = true;
+
+  /**
+   * What the Coach should be asked about, or `null` when there is nothing to ask.
+   *
+   * The move sequence is sent only while it is within the server's ply ceiling. Past it the opening
+   * section of the response would be refused, and the request would fail as a whole rather than
+   * simply losing that one section — so the sequence is dropped and the other four still answer.
+   */
+  const coachTarget = (): CoachTarget | null => {
+    if (!coachAvailable || !currentVariant || !controller?.fen) return null;
+    const last = controller.lastReplayedMove;
+    const moves = controller.moveSequence;
+    // `lastReplayedMove.fen` is the position the move was played *from*; `controller.fen` is the
+    // position it produced. A move is judged against the position it was played in, so the two must
+    // travel together — pairing the played move with the resulting position asks the server to play
+    // a move that has already been played, which is illegal in almost every position and answered
+    // 422 for every move-coaching request. `lastMoveTarget` below has always paired them correctly;
+    // this did not.
+    return {
+      fen: last ? last.fen : controller.fen,
+      variant: currentVariant,
+      ...(last ? { move: last.uci } : {}),
+      ...(moves && moves.length > 0 && moves.length <= MAX_COACH_PLIES ? { moves } : {}),
+    };
+  };
+
+  /**
+   * The single place the coaching control's enabled state is decided.
+   *
+   * Split out for the same reason as its siblings: two places deciding it is how they came to
+   * disagree last time. Returns early when the deployment does not coach, so the section stays
+   * hidden rather than appearing disabled with no explanation.
+   */
+  const refreshCoachControls = (): void => {
+    if (analysisDisposed || !coachAvailable) return;
+    if (coachBlockEl) coachBlockEl.hidden = false;
+    const authed = isUserAuthenticated();
+    if (coachRunBtn) {
+      coachRunBtn.disabled = !authed || coachTarget() === null || coachController.isPending;
+    }
+    if (!coachNoteEl) return;
+    // Only the notes this function owns are replaced. A "position changed" or "too many requests"
+    // message belongs to whatever put it there, and overwriting it here would hide the answer to a
+    // question the reader just asked.
+    const owned = new Set<string>([COACH_MESSAGES.idle, COACH_MESSAGES.signedOut, '']);
+    if (!owned.has(coachNoteEl.textContent ?? '')) return;
+    renderCoachNote(coachNoteEl, authed ? COACH_MESSAGES.idle : COACH_MESSAGES.signedOut);
+  };
 
   /**
    * What the server can be asked about, or the reason there is nothing to ask.
@@ -419,6 +496,12 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
    * has, and `refreshOpeningControls` would not correct the note, because a result note is not one
    * this block owns. Raised in the Qodo and CodeRabbit reviews of PR #150.
    */
+  /** Tell the controller the board moved, and re-decide whether the control should be offered. */
+  const coachStateChanged = (): void => {
+    coachController.positionChanged(coachTarget());
+    refreshCoachControls();
+  };
+
   const openingStateChanged = (): void => {
     const availability = openingAvailability();
     if (availability.kind === 'ready') openingController.sequenceChanged(availability.target);
@@ -685,6 +768,53 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     },
   });
 
+  const coachController = new CoachController({
+    client: deps.client,
+    getTarget: coachTarget,
+    callbacks: {
+      onPhase: (phase) => {
+        if (coachResultEl) setCoachBusy(coachResultEl, phase === 'loading');
+        refreshCoachControls();
+        if (phase === 'loading') {
+          if (coachNoteEl) renderCoachNote(coachNoteEl, COACH_MESSAGES.running);
+          if (coachErrorEl) renderCoachError(coachErrorEl, null);
+        }
+      },
+      onResult: (result) => {
+        const note = coachRowsEl && coachResultEl
+          ? renderCoachResult(coachRowsEl, coachResultEl, result)
+          : null;
+        if (coachNoteEl) renderCoachNote(coachNoteEl, note);
+        if (coachErrorEl) renderCoachError(coachErrorEl, null);
+      },
+      onFailure: (failure) => {
+        resetCoachBlock();
+        const noteFor: Partial<Record<typeof failure, string>> = {
+          'rate-limited': COACH_MESSAGES.rateLimited,
+          unavailable: COACH_MESSAGES.unavailable,
+          unauthenticated: COACH_MESSAGES.signedOut,
+          'unsupported-variant': COACH_MESSAGES.unsupportedVariant,
+        };
+        const note = noteFor[failure];
+        if (note) {
+          if (coachNoteEl) renderCoachNote(coachNoteEl, note);
+        } else {
+          if (coachNoteEl) renderCoachNote(coachNoteEl, null);
+          if (coachErrorEl) {
+            renderCoachError(
+              coachErrorEl,
+              failure === 'rejected' ? COACH_MESSAGES.rejected : COACH_MESSAGES.failed,
+            );
+          }
+        }
+      },
+      onInvalidated: () => {
+        resetCoachBlock();
+        if (coachNoteEl) renderCoachNote(coachNoteEl, COACH_MESSAGES.positionChanged);
+      },
+    },
+  });
+
   const assessController = new AssessController({
     client: deps.client,
     getTarget: lastMoveTarget,
@@ -878,6 +1008,9 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
         // Keyed on the ledger rather than the position, and told about every change including the
         // ones that leave nothing to ask about.
         openingStateChanged();
+        // Coaching keys on the position *and* the last replayed move, so it hears about both this
+        // and `onExplainableChange` below — same reasoning as the opening section.
+        coachStateChanged();
         explainController.targetChanged();
         assessController.targetChanged();
         refreshAnalysisControls();
@@ -898,6 +1031,7 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
         // identification reads the ledger, so it has to hear about this one too.
         openingStateChanged();
         refreshOpeningControls();
+        coachStateChanged();
       },
       onTurn: (myTurn: boolean) => board.setTurn(myTurn),
       onClock: (whiteMs: number, blackMs: number) => {
@@ -929,6 +1063,9 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
           // And this one, which gates on the variant harder than the rest: it serves `standard`
           // alone, so before the variant arrives it has no target and the control stays off.
           refreshOpeningControls();
+          // Coaching has no target until the variant is known either, so it needs the same wake-up.
+          // Omitting it here is what left the opening control permanently disabled in M15 inc 19.
+          refreshCoachControls();
         }
 
         let liveAnnouncement = '';
@@ -1102,6 +1239,10 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     void openingController.identify();
   });
 
+  bindClick(coachRunBtn, () => {
+    void coachController.coach();
+  });
+
   bindClick(btnOfferDraw, () => controller.offerDraw());
   bindClick(btnClaimFlag, () => controller.claimFlag());
   bindClick(btnAcceptDraw, () => controller.acceptDraw());
@@ -1177,6 +1318,8 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
       // borrows no engine, so a deployment with none still serves it — and every other block here
       // is inside that early return (ADR-0127).
       openingAvailable = openingExplorerEnabled(flags);
+      coachAvailable = coachEnabled(flags);
+      refreshCoachControls();
       refreshOpeningControls();
       if (!analysisEnabled(flags)) return;
       analysisCapabilities = flags;
@@ -1240,6 +1383,7 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
       assessController.dispose();
       puzzleController.dispose();
       openingController.dispose();
+      coachController.dispose();
     },
   };
 
@@ -1256,11 +1400,13 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
         if (!analysisDisposed) refreshAnalysisControls();
         if (!analysisDisposed) refreshPuzzleControls();
         if (!analysisDisposed) refreshOpeningControls();
+        if (!analysisDisposed) refreshCoachControls();
       })
       .catch(() => {
         if (!analysisDisposed) refreshAnalysisControls();
         if (!analysisDisposed) refreshPuzzleControls();
         if (!analysisDisposed) refreshOpeningControls();
+        if (!analysisDisposed) refreshCoachControls();
       })
       .finally(() => {
         if (gameRouteActive) gameSync.start();
@@ -1282,6 +1428,15 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
       refreshAssessControls();
       refreshPuzzleControls();
       refreshOpeningControls();
+      // Signing out abandons the coaching on screen, not just the button.
+      //
+      // Refreshing the controls alone disabled the control and showed the signed-out note while the
+      // previous session's advice stayed rendered beside it — a page saying two contradictory things
+      // at once, and one account's answer left in front of whoever is there now. `targetLost` aborts
+      // anything in flight and clears the section, which is the same rule ADR-0074 applied to the
+      // social region. Raised in the Qodo review of PR #152.
+      if (!isUserAuthenticated()) coachController.targetLost();
+      refreshCoachControls();
     },
   };
 }

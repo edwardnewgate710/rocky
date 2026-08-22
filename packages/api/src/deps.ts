@@ -132,6 +132,13 @@ export interface ApiDependencies {
    */
   readonly endgameTraining?: import('./endgames/endgame-training-service').EndgameTrainingService;
   /**
+   * Coaching over the other feature services (ADR-0129).
+   *
+   * Present when at least one of them is, since it owns no dependency of its own — it is the five
+   * services this deployment already built, sequenced.
+   */
+  readonly coach?: import('./coach/coach-service').CoachService;
+  /**
    * Optional GraphQL read layer (M10 inc 8). When absent, `POST /v1/graphql` responds 503.
    *
    * The subsystem repositories it resolves against are the optional ones above — it adds no data

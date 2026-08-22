@@ -95,6 +95,7 @@ import {
   puzzleGenerationView,
   endgameNextView,
   endgameAttemptView,
+  coachView,
 } from './presenters';
 import { DEFAULT_ANALYSIS_LIMITS } from './analysis/limits';
 import { TournamentService } from './tournament/service';
@@ -166,6 +167,13 @@ export interface RouteDeps {
    * Borrows the analysis subsystem; composes no AI provider.
    */
   readonly endgameTraining?: import('./endgames/endgame-training-service').EndgameTrainingService;
+  /**
+   * Optional Coach orchestrator (ADR-0129). Absent means `POST /v1/coach` answers 503.
+   *
+   * Composed from the five feature services above rather than beside them, so it is present exactly
+   * when at least one of them is.
+   */
+  readonly coach?: import('./coach/coach-service').CoachService;
 }
 
 /** Narrows without a cast, so the request array reaches the service as the type it was checked to be. */
@@ -1717,6 +1725,92 @@ export function buildRouter(deps: RouteDeps): Router {
 
       const outcome = await service.attempt({ id, move }, charge);
       return json(200, endgameAttemptView(outcome));
+    },
+  );
+
+  // --- Coach (ADR-0129) ------------------------------------------------------
+  //
+  // One request, five sections, each answered by the feature service that already owns that
+  // question. This route adds no chess knowledge of its own; what it adds is the sequencing, the
+  // single quota that covers all of it, and the cancellation signal that stops the rest of the work
+  // when the caller goes away.
+  router.post(
+    '/v1/coach',
+    doc({
+      summary: 'Coach a position across mistake, explanation, opening, tactic and endgame analysis',
+      tags: ['coach'],
+      security: 'bearer',
+      requestSchema: 'CoachRequest',
+      responses: {
+        200: ['CoachResponse', 'Every section, each either present or explicitly omitted with a reason'],
+        401: ['Error', 'Authentication required'],
+        422: ['Error', 'Invalid FEN, variant, move, or an over-long move sequence'],
+        429: ['Error', 'Rate limit exceeded'],
+        503: ['Error', 'Coaching is not configured, or no feature could answer'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const identity = requireAuth(ctx);
+      const service = deps.coach;
+      if (!service) throw HttpError.unavailable('coaching is not configured');
+
+      // The position, the variant, the move played, and the sequence that reached it. Nothing else,
+      // and the omissions are the point: no depth, movetime, multiPv, threshold, provider, model,
+      // temperature or token field, because each of those would let a caller decide how much of a
+      // shared engine and a metered provider to spend on itself. `strictObject` refuses anything
+      // outside this list rather than ignoring it, so a client that tries finds out.
+      const body = strictObject(ctx.body, ['fen', 'variant', 'move', 'moves']);
+      const fen = reqString(body, 'fen', { min: 1, max: 200, trim: true });
+      const variant = parseVariant(reqString(body, 'variant'));
+      const move = optString(body, 'move', { min: 2, max: 6, trim: true });
+      let moves: readonly string[] | undefined;
+      if (body['moves'] !== undefined) {
+        const rawMoves = body['moves'];
+        // Bounded per element as well as in length. `isStringArray` only proves the entries are
+        // strings, and the array cap alone leaves 60 unbounded ones — the schema already promises
+        // `minLength: 2, maxLength: 6`, and a body that satisfies the overall size limit could
+        // otherwise carry 60 very long strings into the replay. `optString` bounds the single
+        // `move` field this way already; this is the same rule for the array.
+        if (!isStringArray(rawMoves) || rawMoves.some((m) => m.length < 2 || m.length > 6)) {
+          throw HttpError.validation('moves must be an array of UCI moves', {
+            moves: 'each entry must be a string of 2 to 6 characters',
+          });
+        }
+        moves = rawMoves;
+      }
+
+      // One `admit`, both buckets, and deferred until the service says the request is real.
+      //
+      // Both halves matter. One call because two would be two independent decisions, charging the
+      // first bucket before learning the second refused — the defect the `admit` helper exists to
+      // prevent. Deferred because an accepted request costs up to four engine searches and a
+      // provider call, while a malformed FEN costs nothing: charging on arrival would let a stream
+      // of junk empty a user's budget and, through the shared per-IP bucket, their neighbours' too.
+      const charge = (): Promise<void> =>
+        admit([
+          {
+            key: `coach:user:${identity.userId}`,
+            limit: config.rateLimit.coach.perUser,
+          },
+          {
+            key: `coach:ip:${ctx.ip ?? 'unknown'}`,
+            limit: config.rateLimit.coach.perIp,
+          },
+        ]);
+
+      const outcome = await service.coach(
+        {
+          fen,
+          variant,
+          ...(move !== undefined ? { move } : {}),
+          ...(moves !== undefined ? { moves } : {}),
+          signal: ctx.signal,
+        },
+        charge,
+      );
+
+      return json(200, coachView(outcome));
     },
   );
 

@@ -36,6 +36,8 @@ import {
 } from '@chess-platform/search';
 import { createOpeningExploration } from '../src/openings/composition';
 import { createEndgameTraining } from '../src/endgames/composition';
+import { createCoach } from '../src/coach/composition';
+import { createMistakePrediction, createPuzzleGeneration } from '../src/analysis/composition';
 import { InMemorySocialGraphRepository } from '@chess-platform/social';
 import { InMemoryMessagingRepository } from '@chess-platform/messaging';
 import { InMemoryCommunityRepository } from '@chess-platform/community';
@@ -143,6 +145,8 @@ export interface HarnessOptions {
   readonly openingExploration?: import('../src/openings/opening-exploration-service').OpeningExplorationService;
   /** Pass true to simulate a server constructed without endgame training. */
   readonly withoutEndgameTraining?: boolean;
+  /** Compose no Coach, so `POST /v1/coach` answers 503 and `capabilities.coach` is false. */
+  readonly withoutCoach?: boolean;
   /** Inject an optional endgame training service. */
   readonly endgameTraining?: import('../src/endgames/endgame-training-service').EndgameTrainingService;
 }
@@ -227,6 +231,33 @@ export async function startHarness(
   const endgameTraining = harnessOptions.withoutEndgameTraining
     ? undefined
     : (harnessOptions.endgameTraining ?? (harnessOptions.analysis ? createEndgameTraining(harnessOptions.analysis) : undefined));
+  // Coaching is composed the way production composes it: the engine-backed features are built over
+  // whichever analysis port the Coach hands the factory, not taken from the harness options.
+  //
+  // Building them here rather than reusing `harnessOptions.*` matters. Those options exist so a test
+  // can install a *stub* feature service, and a stub built over the shared analysis service would
+  // defeat the request-scoped port entirely — the searches would bypass the de-duplication and the
+  // cancellation signal, and the cost tests would be measuring the wrong object. An explicitly
+  // supplied service still wins, so a test that wants a stub can still have one.
+  const coach = harnessOptions.withoutCoach
+    ? undefined
+    : createCoach({
+        ...(harnessOptions.analysis ? { analysis: harnessOptions.analysis } : {}),
+        features: (analysis) => ({
+          ...(harnessOptions.moveExplanation ? { moveExplanation: harnessOptions.moveExplanation } : {}),
+          ...(analysis
+            ? { mistakePrediction: harnessOptions.mistakePrediction ?? createMistakePrediction(analysis) }
+            : {}),
+          ...(analysis
+            ? (() => {
+                const puzzle = harnessOptions.puzzleGeneration ?? createPuzzleGeneration(analysis);
+                return puzzle ? { puzzleGeneration: puzzle } : {};
+              })()
+            : {}),
+          ...(openingExploration ? { openingExploration } : {}),
+          ...(endgameTraining ? { endgameTraining } : {}),
+        }),
+      });
   const server = createApiServer({
     repos, hasher, tokens, clock, ids, rateLimiter, tournamentRepo, gameLauncher, liveView,
     emailSender: harnessOptions.emailSender ?? emailSender,
@@ -249,6 +280,7 @@ export async function startHarness(
     ...(harnessOptions.puzzleGeneration ? { puzzleGeneration: harnessOptions.puzzleGeneration } : {}),
     ...(openingExploration ? { openingExploration } : {}),
     ...(endgameTraining ? { endgameTraining } : {}),
+    ...(coach ? { coach } : {}),
     ...(harnessOptions.readiness ? { readiness: harnessOptions.readiness } : {}),
     ...(harnessOptions.logger ? { logger: harnessOptions.logger } : {}),
     ...(harnessOptions.tracer ? { tracer: harnessOptions.tracer } : {}),

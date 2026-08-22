@@ -19,7 +19,7 @@ import {
   OpenAiCompatibleAdapter,
 } from '@chess-platform/ai-orchestrator';
 import { MoveExplainer } from '@chess-platform/ai-features';
-import type { AnalysisService } from '../analysis/service.js';
+import type { AnalysisPort } from '../analysis/service.js';
 import { MoveExplanationService } from './move-explanation-service.js';
 
 /**
@@ -281,7 +281,7 @@ export function createAiFromEnv(env: NodeJS.ProcessEnv = process.env): AiComposi
  */
 export function createMoveExplanation(
   ai: AiComposition,
-  analysis: AnalysisService,
+  analysis: AnalysisPort,
 ): MoveExplanationService {
   const explainer = new MoveExplainer({
     ai: ai.orchestrator,

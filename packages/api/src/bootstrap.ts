@@ -82,6 +82,8 @@ import { createAnalysisFromEnv, createMistakePrediction, createPuzzleGeneration 
 import { createOpeningExploration } from './openings/composition';
 import { createAiFromEnv, createMoveExplanation } from './ai/composition';
 import { createEndgameTraining } from './endgames/composition';
+import { createCoach } from './coach/composition';
+import type { CoachFeatureFactory } from './coach/coach-service';
 import { EventStoreGameSource } from './anti-cheat/source';
 import { EventStoreBotTimingSource } from './bot-detection/source';
 
@@ -262,6 +264,30 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ? createEndgameTraining(analysisComposition.service)
     : undefined);
 
+  // Coaching (ADR-0129) composes the five features above and owns nothing else.
+  //
+  // A factory rather than a fixed bundle because the three engine-backed services must be built
+  // over the *request-scoped* analysis port: that is what de-duplicates the search two of them both
+  // make of the same position, and what carries the request's cancellation signal into all of them.
+  // They are stateless wrappers over a library object and a fixed policy — no I/O, no pool, no
+  // handle — so building them per request is cheap.
+  //
+  // The two engineless services are passed straight through, deliberately. `explore` and
+  // `identify` make no engine call at all, so there is nothing for a scoped port to de-duplicate or
+  // cancel, and rebuilding them per request would re-read a bundled dataset for no gain. The
+  // parameter is ignored for exactly that reason.
+  const coachFeatures: CoachFeatureFactory = (analysis) => ({
+    ...(analysis && aiComposition ? { moveExplanation: createMoveExplanation(aiComposition, analysis) } : {}),
+    ...(analysis ? { mistakePrediction: createMistakePrediction(analysis) } : {}),
+    ...(analysis ? { puzzleGeneration: createPuzzleGeneration(analysis) } : {}),
+    ...(openingExploration ? { openingExploration } : {}),
+    ...(endgameTraining ? { endgameTraining } : {}),
+  });
+  const coach = createCoach({
+    ...(analysisComposition ? { analysis: analysisComposition.service } : {}),
+    features: coachFeatures,
+  });
+
   const searchEnabled = process.env['SEARCH_ENABLED'] !== '0';
   const searchRepository = searchEnabled
     ? (options.searchRepository ?? new PgSearchRepository(pool))
@@ -379,6 +405,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ...(puzzleGeneration ? { puzzleGeneration } : {}),
     ...(openingExploration ? { openingExploration } : {}),
     ...(endgameTraining ? { endgameTraining } : {}),
+    ...(coach ? { coach } : {}),
     botTimingSource: new EventStoreBotTimingSource(eventStore),
     // Production observability (M13): structured logs to stdout, a scrape
     // registry backing GET /v1/metrics, and tracer emitting spans to logs.

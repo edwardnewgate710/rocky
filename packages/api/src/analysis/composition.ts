@@ -21,6 +21,7 @@ import { coreFenValidator } from './fen-validator.js';
 import type { AnalysisLimitsPolicy } from './limits.js';
 import { DEFAULT_ANALYSIS_LIMITS } from './limits.js';
 import { AnalysisService } from './service.js';
+import type { AnalysisPort } from './service.js';
 import { MistakePredictionService } from './mistake-prediction-service.js';
 import {
   PUZZLE_ANALYSIS_LIMITS,
@@ -217,7 +218,7 @@ export function createAnalysisFromEnv(
  * available on any deployment with an engine. `thresholds` is fixed here because it is server-owned
  * policy, and the request body has no field that reaches it.
  */
-export function createMistakePrediction(analysis: AnalysisService): MistakePredictionService {
+export function createMistakePrediction(analysis: AnalysisPort): MistakePredictionService {
   const predictor = new MistakePredictor({
     defaultVariant: 'standard',
     thresholds: DEFAULT_MISTAKE_THRESHOLDS,
@@ -232,7 +233,7 @@ export function createMistakePrediction(analysis: AnalysisService): MistakePredi
  * MultiPV request made through the supplied production {@link AnalysisService}.
  */
 export function createPuzzleGeneration(
-  analysis: AnalysisService,
+  analysis: AnalysisPort,
 ): PuzzleGenerationService | undefined {
   if (!analysis.canSatisfyLimits(PUZZLE_ANALYSIS_LIMITS)) return undefined;
   if (!VARIANTS.some((variant) =>

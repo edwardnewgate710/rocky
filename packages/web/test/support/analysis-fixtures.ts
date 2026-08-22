@@ -161,6 +161,13 @@ export const GAME_ELEMENT_IDS = [
   'opening-error',
   'opening-result',
   'opening-rows',
+  'coach',
+  'coach-heading',
+  'coach-run',
+  'coach-note',
+  'coach-error',
+  'coach-result',
+  'coach-rows',
   'explain',
   'explain-run',
   'explain-note',
@@ -207,7 +214,10 @@ export function createGameDocument(): {
       id === 'assess-result' ||
       id === 'opening' ||
       id === 'opening-error' ||
-      id === 'opening-result'
+      id === 'opening-result' ||
+      id === 'coach' ||
+      id === 'coach-error' ||
+      id === 'coach-result'
     ) {
       el.hidden = true;
     }

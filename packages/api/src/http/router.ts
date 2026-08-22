@@ -240,6 +240,20 @@ export class Router {
 
       const logger = runtime.logger.child({ requestId, traceId, method, path: route.path });
 
+      // Fires when the connection closes before the response is complete.
+      //
+      // Bound to the *response*, not the request: `req`'s `close` fires when the request body has
+      // been fully received, which for every route here happens long before the handler finishes,
+      // so aborting on it would cancel every request the instant its body arrived. `res.close`
+      // fires once, when the exchange is over either way, and `writableFinished` is what tells a
+      // completed response apart from an abandoned one.
+      const disconnect = new AbortController();
+      /** Abort the request's signal, but only when the exchange ended without a full response. */
+      const onClose = (): void => {
+        if (!res.writableFinished) disconnect.abort();
+      };
+      res.once('close', onClose);
+
       const ctx: RequestContext = {
         method: route.method,
         path: url.pathname,
@@ -253,9 +267,18 @@ export class Router {
         ip: clientIp(req, runtime.trustProxy ?? false),
         userAgent: headerString(req.headers['user-agent']) ?? null,
         auth,
+        signal: disconnect.signal,
       };
 
-      const result = await route.handler(ctx);
+      let result;
+      try {
+        result = await route.handler(ctx);
+      } finally {
+        // The listener holds the controller, and the controller is reachable from any signal the
+        // handler passed downstream. Removing it here keeps a long-lived socket from accumulating
+        // one per request on a keep-alive connection.
+        res.removeListener('close', onClose);
+      }
       writeResult(res, result);
 
       const durationMs = Date.now() - startMs;

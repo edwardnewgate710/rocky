@@ -4,7 +4,71 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-22 — M15 Increment 20: endgame training ships without handing over the answer._
+_Last updated: 2026-08-22 — M15 Increment 21: coaching orchestrates the production services._
+
+## M15 Increment 21 — Coach Productionization (ADR-0129)
+
+The last M8 feature reachable without a migration. `POST /v1/coach` coaches a position by
+orchestrating the five feature services that already exist, and appears as a section of the existing
+game analysis sidebar — coaching is about the position already on the board, which is what every
+other sidebar section is about.
+
+**The library `Coach` class is deliberately not what production runs.** Its constructor builds its
+own `MoveExplainer`, `MistakePredictor`, `OpeningExplorer`, `PuzzleGenerator` and `EndgameTrainer`
+on the raw engine port, which would route every request around all five services and therefore
+around every policy they own — the standard-only opening gate and its ply ceiling (ADR-0127), the
+finiteness guards and the `judged | terminal` union (ADR-0128), the terminal adjudication that
+stopped checkmate reading as `+0.00` (ADR-0116), the answer withholding of ADR-0095. None of that
+would fail loudly; it would produce plausible coaching with the guards missing.
+
+**A section may never publish more than its own route does.** Four of the five render through the
+feature's existing presenter, so there is no second projection to drift from the first, and the
+OpenAPI section schemas `$ref` the same response schemas. The endgame section reaches the catalogue
+through a new `EndgameTrainingService.identify(fen)` that shares `next`'s private `project()`,
+closing a real back door: a learner with a training position open could otherwise have pasted its
+FEN into `/v1/coach` and read the answer `/v1/endgames/next` withholds. The puzzle section is the
+one deliberate narrowing — it drops `solutionMove` and `solutionLine`, because "there is a tactic
+here" is a coaching prompt and "there is a tactic here and it is `c6d4`" is the answer.
+
+**Degradation is per section**, each carrying an explicit reason rather than a null:
+`not_requested`, `not_applicable`, `unsupported`, `unavailable`, `cancelled`. `unsupported` (never
+built here) is kept apart from `unavailable` (failed this time) because only the second is worth
+retrying, and the UI words them differently. The request fails only when nothing was delivered *and*
+something is broken — "every section unavailable" is unreachable once three are `not_requested`, and
+"nothing fired" would turn a genuinely quiet position into an error.
+
+**Cost.** Four engine searches worst case, not five: mistake prediction and move explanation both
+issue a byte-identical MultiPV 1 search of the position, and `RequestScopedAnalysis` collapses it —
+keyed on the complete argument set, storing the promise so concurrent duplicates coalesce rather
+than race. The engine's own LRU would collapse the sequential case but has no single-flight and is
+configurable, so the bound would have depended on `cacheEntries`. Sections run in sequence, never
+`Promise.all`. Its own bucket at 8/min per user, and composing the services internally charges none
+of theirs — the services never touch the limiter, and `onAccepted` comes from the route. A test sets
+each sibling bucket to one request and proves it is still unspent after two coaching calls.
+
+**Cancellation is wired for the first time in the codebase.** `AnalysisRequest.signal` always
+existed in the engine layer, but `RequestContext` carried no signal, no route observed client
+disconnect, and `AnalysisService.analyze` accepted none. The router now derives one from the
+response's `close` event — the response, not the request, whose `close` fires as soon as the body is
+received — and `analyze` combines a caller's signal with its timeout via `AbortSignal.any`,
+combined and never substituted, so a caller can shorten a search but never lengthen it past the
+deterministic ceiling. Every other route ignores it, exactly as before.
+
+`AnalysisPort` is extracted so a request-scoped decorator can stand where the concrete class was
+named; TypeScript compares classes with private members nominally, so a structural look-alike would
+not have been assignable. Types only.
+
+**Tests:** 18 service, 6 route, 7 controller, 5 mount. Twelve mutations run, twelve caught — and two
+of those mutations survived the first pass, exposing a cost test that played the engine's own best
+move (so the duplicate search it existed to check was never issued) and a legality test asserting
+the wrong property.
+
+Deferred: Study Partner (needs a durable `StudySessionStore` — table, port, adapter, migration, and
+it embeds a whole `CoachingResponse` per turn), Voice Coach, Tournament Commentator, the LLM
+narrative, Chess960, `studies.variant` CHECK → FK.
+
+Detailed in `docs/adr/0129-coach-orchestration.md`.
+
 
 ## M15 Increment 20 — Endgame Trainer Productionization (ADR-0128)
 

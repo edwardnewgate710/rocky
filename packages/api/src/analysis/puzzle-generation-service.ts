@@ -1,7 +1,7 @@
 /**
  * Production puzzle generation over the API-owned analysis subsystem.
  *
- * The service owns every cost and classification policy. It asks {@link AnalysisService} for one
+ * The service owns every cost and classification policy. It asks {@link AnalysisPort} for one
  * three-line search, then hands those already-computed lines to an engineless `PuzzleGenerator`.
  * There is therefore one acquisition path and no second pool for the library feature to reach.
  */
@@ -18,7 +18,7 @@ import type {
 } from '@chess-platform/ai-features';
 import { HttpError } from '../http/errors.js';
 import { DEFAULT_ANALYSIS_LIMITS } from './limits.js';
-import type { AnalysisService } from './service.js';
+import type { AnalysisPort } from './service.js';
 import { coreFenValidator } from './fen-validator.js';
 import { terminalOutcome } from './terminal.js';
 
@@ -75,11 +75,11 @@ export type PuzzleGenerationOutcome =
     };
 
 export interface PuzzleGenerationServiceOptions {
-  readonly analysis: AnalysisService;
+  readonly analysis: AnalysisPort;
 }
 
 export class PuzzleGenerationService {
-  private readonly analysis: AnalysisService;
+  private readonly analysis: AnalysisPort;
   /** No engine and no AI provider: pre-computed analysis is the only executable path. */
   private readonly generator = new PuzzleGenerator({
     defaultVariant: 'standard',

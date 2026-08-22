@@ -1187,6 +1187,57 @@ button:disabled {
   color: var(--text);
 }
 
+/* --- Coach (M15 inc 21, ADR-0129) --- */
+.coach-result {
+  margin-top: 8px;
+}
+
+.coach-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* A rule between sections, not around each: five bordered boxes in a 260px column reads as five
+   competing panels rather than one answer with five parts. */
+.coach-section:not(:first-child) {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.coach-section-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 0 0 4px;
+}
+
+.coach-label {
+  color: var(--muted);
+  min-width: 5.5rem;
+}
+
+.coach-value {
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.coach-prose {
+  margin: 4px 0 6px;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+/* Muted and italic: an omission is context for what is missing, and must not compete with the
+   sections that carry an actual answer. */
+.coach-omitted {
+  font-size: 0.8125rem;
+  color: var(--muted);
+  font-style: italic;
+}
+
 /* --- Mistake Prediction (M15 inc 5) ---
    The third block in the Engine panel, separated by the same hairline the explain block uses. Still
    not a new surface: one panel, three questions about the same board. */

@@ -100,7 +100,51 @@ export interface AnalysisServiceOptions {
   readonly supportsMultiPv?: (variant: string, count: number) => boolean;
 }
 
-export class AnalysisService {
+/**
+ * What a feature service needs from analysis, as an interface rather than the concrete class.
+ *
+ * Every one of the five feature services (mistake prediction, move explanation, puzzle generation,
+ * endgame training, and the Coach orchestrator that composes them) reaches the engine only through
+ * these four methods. Naming them is what lets `RequestScopedAnalysis` — which de-duplicates
+ * identical searches and threads a cancellation signal through them — be passed to a service that
+ * previously named `AnalysisService` directly. `AnalysisService` implements this as written; the
+ * change is types only, and no runtime behaviour moves.
+ */
+export interface AnalysisPort {
+  /** @returns whether this deployment has an engine that would serve `variant`. Advisory. */
+  supportsVariant(variant: string): boolean;
+  /** @returns whether the routed engine can honor `count` lines without clamping. */
+  supportsMultiPv(variant: string, count: number): boolean;
+  /** @returns whether this deployment's ceilings can honor every requested limit unchanged. */
+  canSatisfyLimits(requested: RequestedAnalysisLimits): boolean;
+  /** @returns the search result, after the server's own limits policy has been applied. */
+  analyze(input: AnalyzeInput): Promise<AnalysisOutcome>;
+}
+
+/**
+ * One analysis request as a feature service issues it.
+ *
+ * `signal` is deliberately absent from every route's request body and present here: cancellation is
+ * something the server learns from the socket, never something a client asks for in JSON.
+ */
+export interface AnalyzeInput {
+  readonly fen: string;
+  readonly variant: string;
+  readonly depth?: number | undefined;
+  readonly nodes?: number | undefined;
+  readonly movetimeMs?: number | undefined;
+  readonly multiPv?: number | undefined;
+  /**
+   * Cancels this search when the caller no longer needs it.
+   *
+   * Combined with — never replacing — the internal timeout controller below. The engine's own
+   * `AnalysisRequest.signal` already removes a queued job or stops an in-flight one, so this is the
+   * last missing link between a client disconnecting and a worker giving up its search.
+   */
+  readonly signal?: AbortSignal | undefined;
+}
+
+export class AnalysisService implements AnalysisPort {
   private readonly provider: AnalysisProvider;
   private readonly policy: AnalysisLimitsPolicy;
   private readonly timeoutGraceMs: number;
@@ -149,14 +193,14 @@ export class AnalysisService {
     );
   }
 
-  async analyze(input: {
-    fen: string;
-    variant: string;
-    depth?: number;
-    nodes?: number;
-    movetimeMs?: number;
-    multiPv?: number;
-  }): Promise<AnalysisOutcome> {
+  /**
+   * Search a position under this deployment's limits policy.
+   *
+   * @param input - the position, variant, requested limits, and an optional caller signal.
+   * @returns the lines the engine produced, or a terminal outcome for a decided position — which
+   * costs no search at all, because there is no move to find.
+   */
+  async analyze(input: AnalyzeInput): Promise<AnalysisOutcome> {
     const applied = applyAnalysisLimits(input, this.policy);
 
     // Validate here, not only inside the provider. `EngineManager` runs a `FenValidator` of its own,
@@ -195,6 +239,15 @@ export class AnalysisService {
       controller.abort();
     }, timeoutMs);
 
+    // The caller's signal is combined with the timeout, never substituted for it. A caller that
+    // cancels early should shorten this search; a caller that never cancels must not be able to
+    // lengthen it past the deterministic ceiling, which is what passing `input.signal` straight
+    // through would do. `AbortSignal.any` follows whichever fires first and is available
+    // unconditionally on the supported runtimes (`engines.node: >=22`, CI matrix 22.x and 24.x).
+    const signal = input.signal
+      ? AbortSignal.any([controller.signal, input.signal])
+      : controller.signal;
+
     try {
       const limits: AnalysisLimits = {
         depth: applied.depth,
@@ -208,7 +261,7 @@ export class AnalysisService {
         limits,
         multiPv: applied.multiPv,
         priority: JobPriority.LiveAnalysis,
-        signal: controller.signal,
+        signal,
       };
 
       const lines = await this.provider.analyze(request);

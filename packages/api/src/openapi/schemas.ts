@@ -8,6 +8,7 @@
 import { ROLES, SEEK_COLORS, TIME_CONTROL_KINDS, VARIANTS, CREATABLE_VARIANTS } from '../domain';
 import { DEFAULT_ANALYSIS_LIMITS } from '../analysis/limits';
 import { MAX_EXPLORED_PLIES } from '../openings/opening-exploration-service';
+import { MAX_COACH_PLIES } from '../coach/coach-service';
 import type { ComponentSchemas, JsonSchema } from './types';
 import { nullable } from './types';
 
@@ -262,6 +263,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
           'puzzleGeneration',
           'openingExplorer',
           'endgameTrainer',
+          'coach',
         ],
         properties: {
           learning: { type: 'boolean' },
@@ -277,6 +279,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
           puzzleGeneration: { type: 'boolean' },
           openingExplorer: { type: 'boolean' },
           endgameTrainer: { type: 'boolean' },
+          coach: { type: 'boolean' },
         },
         additionalProperties: false,
       },
@@ -2138,6 +2141,174 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
         items: { type: 'string' },
       },
       depth: { type: 'integer' },
+    },
+    additionalProperties: false,
+  },
+
+  // --- Coach orchestration (ADR-0129) ---
+  //
+  // Every present branch below `$ref`s the response schema of the feature's own route. That is not
+  // brevity — it is the contract. A section cannot describe more than the endpoint it mirrors,
+  // because there is no second schema here to describe it with. The one exception is the puzzle
+  // section, and the exception runs the other way: it names a *narrower* schema than
+  // `PuzzleGenerationResponse`, which publishes `solutionMove` and `solutionLine`.
+
+  /**
+   * A tactic, without the tactic.
+   *
+   * `additionalProperties: false` over four named fields, so a solution cannot arrive here even if a
+   * future presenter change tried to put one in — the response would fail its own contract test.
+   */
+  CoachPuzzleView: {
+    type: 'object',
+    required: ['kind', 'fen', 'variant', 'difficulty'],
+    properties: {
+      kind: { type: 'string', enum: ['puzzle'] },
+      fen: { type: 'string' },
+      variant: { type: 'string', enum: [...VARIANTS] },
+      difficulty: { type: 'string', enum: ['easy', 'medium', 'hard', 'brilliant'] },
+    },
+    additionalProperties: false,
+  },
+
+  /** Why a section is empty. A closed enum, so every case is one a client can be written against. */
+  CoachOmittedSection: {
+    type: 'object',
+    required: ['kind', 'reason'],
+    properties: {
+      kind: { type: 'string', enum: ['omitted'] },
+      reason: {
+        type: 'string',
+        enum: ['not_requested', 'not_applicable', 'unsupported', 'unavailable', 'cancelled'],
+      },
+    },
+    additionalProperties: false,
+  },
+
+  CoachMistakeSection: {
+    oneOf: [
+      {
+        type: 'object',
+        required: ['kind', 'value'],
+        properties: {
+          kind: { type: 'string', enum: ['present'] },
+          value: { $ref: '#/components/schemas/MistakePredictionResponse' },
+        },
+        additionalProperties: false,
+      },
+      { $ref: '#/components/schemas/CoachOmittedSection' },
+    ],
+  },
+
+  CoachExplanationSection: {
+    oneOf: [
+      {
+        type: 'object',
+        required: ['kind', 'value'],
+        properties: {
+          kind: { type: 'string', enum: ['present'] },
+          value: { $ref: '#/components/schemas/MoveExplanationResponse' },
+        },
+        additionalProperties: false,
+      },
+      { $ref: '#/components/schemas/CoachOmittedSection' },
+    ],
+  },
+
+  CoachOpeningSection: {
+    oneOf: [
+      {
+        type: 'object',
+        required: ['kind', 'value'],
+        properties: {
+          kind: { type: 'string', enum: ['present'] },
+          value: { $ref: '#/components/schemas/OpeningExplorationResponse' },
+        },
+        additionalProperties: false,
+      },
+      { $ref: '#/components/schemas/CoachOmittedSection' },
+    ],
+  },
+
+  CoachPuzzleSection: {
+    oneOf: [
+      {
+        type: 'object',
+        required: ['kind', 'value'],
+        properties: {
+          kind: { type: 'string', enum: ['present'] },
+          value: { $ref: '#/components/schemas/CoachPuzzleView' },
+        },
+        additionalProperties: false,
+      },
+      { $ref: '#/components/schemas/CoachOmittedSection' },
+    ],
+  },
+
+  CoachEndgameSection: {
+    oneOf: [
+      {
+        type: 'object',
+        required: ['kind', 'value'],
+        properties: {
+          kind: { type: 'string', enum: ['present'] },
+          value: { $ref: '#/components/schemas/EndgameNextResponse' },
+        },
+        additionalProperties: false,
+      },
+      { $ref: '#/components/schemas/CoachOmittedSection' },
+    ],
+  },
+
+  CoachRequest: {
+    type: 'object',
+    description:
+      'A position to coach, and optionally a move played in it and the sequence that reached it. '
+      + 'There is deliberately no depth, nodes, movetime, multiPv, threshold, provider, model, '
+      + 'temperature or token field: every one of those is server-owned policy, and a request that '
+      + 'could name them would be choosing how much of a shared engine to spend on itself. What the '
+      + 'caller controls is which questions apply — omitting "move" means there is no move to judge — '
+      + 'never how expensively they are answered.',
+    required: ['fen', 'variant'],
+    properties: {
+      fen: { type: 'string', minLength: 1, maxLength: 200 },
+      variant: { type: 'string', enum: [...VARIANTS] },
+      move: { type: 'string', minLength: 2, maxLength: 6 },
+      moves: {
+        type: 'array',
+        maxItems: MAX_COACH_PLIES,
+        items: { type: 'string', minLength: 2, maxLength: 6 },
+      },
+    },
+    additionalProperties: false,
+  },
+
+  CoachResponse: {
+    type: 'object',
+    required: [
+      'fen',
+      'variant',
+      'move',
+      'mistake',
+      'explanation',
+      'opening',
+      'puzzle',
+      'endgame',
+      'featuresFired',
+    ],
+    properties: {
+      fen: { type: 'string' },
+      variant: { type: 'string', enum: [...VARIANTS] },
+      move: nullableString,
+      mistake: { $ref: '#/components/schemas/CoachMistakeSection' },
+      explanation: { $ref: '#/components/schemas/CoachExplanationSection' },
+      opening: { $ref: '#/components/schemas/CoachOpeningSection' },
+      puzzle: { $ref: '#/components/schemas/CoachPuzzleSection' },
+      endgame: { $ref: '#/components/schemas/CoachEndgameSection' },
+      featuresFired: {
+        type: 'array',
+        items: { type: 'string' },
+      },
     },
     additionalProperties: false,
   },

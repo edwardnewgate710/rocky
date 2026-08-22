@@ -104,6 +104,7 @@ export function createApiServer(deps: ApiDependencies, options: ApiServerOptions
     puzzleGeneration: deps.puzzleGeneration,
     openingExploration: deps.openingExploration,
     endgameTraining: deps.endgameTraining,
+    coach: deps.coach,
   });
 
   const authenticate = (authorization: string | undefined): Identity | null => {

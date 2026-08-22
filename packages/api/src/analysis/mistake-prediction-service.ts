@@ -16,8 +16,9 @@ import { Position } from '@chess-platform/core';
 import type { Variant } from '@chess-platform/core';
 import type { MistakePredictor, MistakeClassification } from '@chess-platform/ai-features';
 import { HttpError } from '../http/errors.js';
-import type { AnalysisService } from './service.js';
+import type { AnalysisPort } from './service.js';
 import { coreFenValidator } from './fen-validator.js';
+import { isUciShape } from './uci.js';
 import type { TerminalReason } from './terminal.js';
 import { describeTerminal, fromStatus } from './terminal.js';
 
@@ -94,21 +95,14 @@ export interface MistakePredictionOutcome {
 }
 
 export interface MistakePredictionServiceOptions {
-  readonly analysis: AnalysisService;
+  readonly analysis: AnalysisPort;
   readonly predictor: MistakePredictor;
 }
 
-/**
- * A cheap shape filter, and *not* the legality check.
- *
- * Identical to the one Move Explanation uses, and for the same reason: it rejects obvious junk before
- * a `Position` is built and bounds what reaches the matcher. The authority is {@link Position.play},
- * which resolves the move against generated legal moves and throws when there is no match.
- */
-const UCI_SHAPE = /^(?:[a-h][1-8][a-h][1-8][qrbn]?|[PNBRQ]@[a-h][1-8])$/;
+
 
 export class MistakePredictionService {
-  private readonly analysis: AnalysisService;
+  private readonly analysis: AnalysisPort;
   private readonly predictor: MistakePredictor;
   private readonly fenValidator = coreFenValidator;
 
@@ -142,7 +136,7 @@ export class MistakePredictionService {
       throw HttpError.validation('unsupported variant', { variant: 'unsupported variant' });
     }
 
-    if (!UCI_SHAPE.test(input.move)) {
+    if (!isUciShape(input.move)) {
       throw HttpError.validation('invalid move', { move: 'invalid move' });
     }
 

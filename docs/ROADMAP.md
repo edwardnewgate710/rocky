@@ -472,6 +472,52 @@ relevant, calls them, and aggregates their structured outputs.
   - ADR-0006 updated with the composition/orchestration pattern.
   - ROADMAP updated; M8 remains 🚧.
 
+**Productionized in M15 Increment 21 (ADR-0129).** `POST /v1/coach`, as a section of the existing
+game analysis sidebar rather than a route of its own — every sidebar section is about the position
+already on the board, and coaching is exactly that. The `Coach` class in `ai-features` is
+deliberately **not** what production runs. Its constructor builds its own `MoveExplainer`,
+`MistakePredictor`, `OpeningExplorer`, `PuzzleGenerator` and `EndgameTrainer` on the raw engine
+port, which would route every coaching request around all five production services and therefore
+around every policy they own: the standard-only opening gate and its 60-ply ceiling (ADR-0127), the
+finiteness guards and the `judged | terminal` union (ADR-0128), the terminal adjudication that
+stopped checkmate reading as `+0.00` (ADR-0116), and the answer withholding of ADR-0095. None of
+that would fail loudly — it would produce plausible coaching with the guards missing. So the service
+calls the same five services the five routes call and adds nothing but sequencing.
+
+**A section may never publish more than its own route does.** Four of the five render through the
+feature's existing presenter, so there is no second projection to drift; the OpenAPI section schemas
+`$ref` the same response schemas. The endgame section reaches the catalogue through a new
+`identify(fen)` that shares `next`'s projection, closing a real back door — a learner with a
+training position open could otherwise have pasted its FEN into `/v1/coach` and read the answer
+`/v1/endgames/next` withholds. The puzzle section is the one deliberate narrowing: it drops
+`solutionMove` and `solutionLine`, because "there is a tactic here" is a coaching prompt and
+"there is a tactic here and it is `c6d4`" is the answer.
+
+**It degrades by section**, each carrying an explicit reason rather than a null — and `unsupported`
+(this deployment never built the feature) is kept apart from `unavailable` (it failed this time),
+because only the second is worth retrying. The request fails only when nothing was delivered *and*
+something is broken: "every section unavailable" is unreachable once three are `not_requested`, and
+"nothing fired" would turn a genuinely quiet position into an error.
+
+**Four engine searches, not five.** Mistake prediction and move explanation both issue a
+byte-identical MultiPV 1 search of the position; `RequestScopedAnalysis` collapses it, keyed on the
+complete argument set and storing the promise so concurrent duplicates coalesce rather than race.
+The engine's own LRU would collapse the sequential case, but it has no single-flight and is
+configurable, so the bound would have depended on `cacheEntries`. Sections run in sequence, never
+`Promise.all`: concurrency would multiply the acquisitions one request holds, defeat that
+de-duplication, and leave nothing to cancel. Its own 8/min bucket, and composing the services
+internally charges none of theirs — the services never touch the limiter, and the `onAccepted`
+callback comes from the route.
+
+**Cancellation is wired for the first time.** `AnalysisRequest.signal` always existed in the engine
+layer, but `RequestContext` carried no signal, no route observed disconnect, and `analyze` accepted
+none. The router now derives one from the response's `close` event (the response, not the request,
+whose `close` fires as soon as the body is received), and `analyze` combines a caller's signal with
+its timeout via `AbortSignal.any` — combined, never substituted, so a caller can shorten a search
+but never lengthen it past the ceiling.
+
+Study Partner, Voice Coach, Tournament Commentator and the LLM narrative remain deferred.
+
 ### Increment 7: Study Partner ✅
 
 `StudyPartner` — a stateful multi-step learning session that tracks the

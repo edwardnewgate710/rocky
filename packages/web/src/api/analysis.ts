@@ -17,6 +17,8 @@ import type {
   EndgamePosition,
   EndgameAttemptRequest,
   EndgameAttemptResult,
+  CoachRequest,
+  CoachResponse,
 } from './models.js';
 
 export class AnalysisApi {
@@ -178,6 +180,34 @@ export class AnalysisApi {
       body: {
         id: body.id,
         move: body.move,
+      },
+      auth: true,
+      ...(signal !== undefined ? { signal } : {}),
+    });
+  }
+
+  /**
+   * Coach a position across every feature the server composes (M15 inc 21, ADR-0129).
+   *
+   * POST /v1/coach, auth: true.
+   *
+   * Sends `fen`, `variant`, and optionally `move` and `moves` — field by field, and nothing else.
+   * There is deliberately no depth, multiPv, movetime, nodes, threshold, provider, model,
+   * temperature or maxTokens: each is server-owned policy, and the endpoint refuses a body carrying
+   * one rather than ignoring it, so sending any of them would fail the whole request.
+   *
+   * No retry. One accepted call can cost the server four engine searches and a provider call, so a
+   * client that retried on its own would multiply the most expensive request in the API.
+   */
+  coach(body: CoachRequest, signal?: AbortSignal): Promise<CoachResponse> {
+    return this.execute<CoachResponse>({
+      method: 'POST',
+      path: '/v1/coach',
+      body: {
+        fen: body.fen,
+        variant: body.variant,
+        ...(body.move !== undefined ? { move: body.move } : {}),
+        ...(body.moves !== undefined ? { moves: [...body.moves] } : {}),
       },
       auth: true,
       ...(signal !== undefined ? { signal } : {}),

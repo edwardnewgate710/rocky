@@ -40,6 +40,19 @@ export interface RequestContext {
   readonly userAgent: string | null;
   /** Present only after authentication middleware resolves a valid token. */
   readonly auth: Identity | null;
+  /**
+   * Aborts when the client goes away before the response is written.
+   *
+   * A handler is free to ignore it — every route did until the Coach (ADR-0129), and ignoring it
+   * only means the work finishes and the result is discarded, which is the behaviour that was
+   * already there. A handler that does observe it can stop spending on an answer nobody will read:
+   * the engine's `AnalysisRequest.signal` already removes a queued job or stops an in-flight
+   * search, so this was the last missing link between a closed socket and an idle worker.
+   *
+   * Always present, never optional, so a handler cannot silently skip cancellation by forgetting a
+   * null check.
+   */
+  readonly signal: AbortSignal;
 }
 
 /** What a handler returns; the router serializes it to the wire. */
