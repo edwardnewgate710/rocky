@@ -11,7 +11,7 @@
  */
 
 import type { CoachingResponse, CoachRequest } from './coach-types.js';
-import type { Coach } from './coach.js';
+import type { CoachPort } from './coach-port.js';
 import type { AiProvider } from '@chess-platform/ai-orchestrator';
 import type {
   SpeechSynthesizer,
@@ -84,8 +84,8 @@ export type CoachAloudRequest = CoachRequest;
 
 /** Options for constructing a `VoiceCoach`. */
 export interface VoiceCoachOptions {
-  /** The Coach (composition layer over the five features). */
-  readonly coach: Coach;
+  /** The coaching capability (composition layer over the five features). */
+  readonly coach: CoachPort;
   /** Optional: speech synthesizer port (for `speak` convenience method). */
   readonly synthesizer?: SpeechSynthesizer;
   /** Optional: speech recognizer port (for `listen` convenience method). */

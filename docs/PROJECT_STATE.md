@@ -4,7 +4,22 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-23 — M15 Increment 24: the published capability document matches what the routes will do._
+_Last updated: 2026-08-24 — M15 Increment 25: Study Partner and Voice Coach depend on a narrow coaching capability._
+
+## M15 Increment 25 — CoachPort extraction (ADR-0133)
+
+`StudyPartner` and `VoiceCoach` no longer require the concrete library `Coach`. Both depend on the
+one-method `CoachPort` their call sites actually use, while `Coach` satisfies that port structurally.
+The public package export and both constructor contracts are pinned by compile-time tests; bare-port
+fakes also drive each consumer, so restoring either dependency to `Coach` fails the build.
+
+This is an enabling refactor, not production wiring. No second library `Coach` and no adapter were
+added. `CoachService` deliberately does not satisfy the port: its section-withholding reasons,
+puzzle-solution omission, and rate-limit acceptance callback cannot be bridged truthfully by a
+structural adapter. Durable study-session persistence, ownership, routes, migration, and Voice Coach
+speech providers remain deferred.
+
+Detailed in `docs/adr/0133-coach-port.md`.
 
 ## M15 Increment 24 — Capability parity (ADR-0132)
 
@@ -272,6 +287,14 @@ sets derived from the declarations, so omitting one is `TS2741` rather than a 50
 Deferred: live-game commentary, a durable store of generated prose, arena commentary, Study Partner
 (needs a durable `StudySessionStore` and a `CoachPort` extraction — the library `Coach` is not what
 production runs), Voice Coach, Chess960, `studies.variant` CHECK → FK.
+
+> **The `CoachPort` half is done (ADR-0133).** `StudyPartner` and `VoiceCoach` now take a one-method
+> `CoachPort` that the library `Coach` satisfies structurally, so neither is welded to the concrete
+> class any more. **Study Partner and Voice Coach remain deferred**: this removed one blocker, not the
+> list. A durable `StudySessionStore`, session ownership, routes and a migration are untouched, as are
+> Voice Coach's speech providers — and `CoachService` deliberately does *not* satisfy the port, because
+> its withholding, puzzle-solution and rate-charging contracts genuinely differ. ADR-0133 §3 records
+> what a production adapter would take.
 
 Detailed in `docs/adr/0130-tournament-commentary.md`.
 

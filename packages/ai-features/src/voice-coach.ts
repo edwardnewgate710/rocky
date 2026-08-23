@@ -2,8 +2,8 @@
  * `VoiceCoach` — M8 increment 8.
  *
  * Turns coaching output into speech-ready text.  The Voice Coach
- * **composes the `Coach`** — it does not re-implement analysis.  All
- * chess facts still come from the Coach / feature modules (engine-verified).
+ * **composes a `CoachPort`** — it does not re-implement analysis.  All
+ * chess facts still come from the coach / feature modules (engine-verified).
  * The Voice Coach only reshapes text for speech; it invents no assessments.
  *
  * The real, tested contribution is the **verbalization logic**: converting
@@ -22,7 +22,7 @@
 import type { AiProvider, CompletionRequest, EngineGrounding } from '@chess-platform/ai-orchestrator';
 import { buildGroundedMessages } from '@chess-platform/ai-orchestrator';
 
-import { Coach } from './coach.js';
+import type { CoachPort } from './coach-port.js';
 import type { CoachingResponse, CoachRequest } from './coach-types.js';
 import type { MistakeVerdict } from './mistake-types.js';
 import type { MoveExplanationResponse } from './types.js';
@@ -54,13 +54,13 @@ import type {
 /**
  * Turns coaching into speech-ready output.
  *
- * The Voice Coach composes the `Coach` (it does not re-implement
+ * The Voice Coach composes a `CoachPort` (it does not re-implement
  * analysis).  Its contribution is the verbalization: converting
  * `CoachingResponse` fields into an ordered list of short, natural
  * spoken segments ready for TTS.
  */
 export class VoiceCoach {
-  private readonly coach: Coach;
+  private readonly coach: CoachPort;
   private readonly synthesizer: SpeechSynthesizer | undefined;
   private readonly recognizer: SpeechRecognizer | undefined;
   private readonly ai: AiProvider | undefined;
@@ -77,11 +77,11 @@ export class VoiceCoach {
   }
 
   /**
-   * Run the Coach and verbalize the result.
+   * Run the coaching capability and verbalize the result.
    *
-   * Calls `Coach.coach(request)` to get the structured coaching response,
+   * Calls `CoachPort.coach(request)` to get the structured coaching response,
    * then transforms it into an ordered list of spoken segments.  The
-   * Coach is actually called — analysis is not re-implemented here.
+   * coaching capability is actually called — analysis is not re-implemented here.
    */
   async coachAloud(request: CoachRequest): Promise<SpokenCoaching> {
     const coaching = await this.coach.coach(request);

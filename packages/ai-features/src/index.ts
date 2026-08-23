@@ -93,6 +93,7 @@ export type { EndgameDatabase, EndgameEntry, EndgameGoal, EndgameType, EndgameDi
 export { Coach } from './coach.js';
 export type { CoachOptions, CoachFeatures } from './coach.js';
 export type { CoachRequest, CoachingResponse } from './coach-types.js';
+export type { CoachPort } from './coach-port.js';
 
 // Study Partner (M8 increment 7)
 export { StudyPartner, computeProgress, emptyProgress } from './study-partner.js';

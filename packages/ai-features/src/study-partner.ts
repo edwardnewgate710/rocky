@@ -5,8 +5,8 @@
  * progress across several positions/moves.  This is the first M8
  * feature with session state.
  *
- * The Study Partner orchestrates the Coach; it does not re-implement
- * analysis.  Each turn, it uses the `Coach` to analyze the learner's
+ * The Study Partner orchestrates a coach; it does not re-implement
+ * analysis.  Each turn, it uses its `CoachPort` to analyze the learner's
  * current position/move, records the outcome into the session, and
  * advances the learning plan.  Verified chess facts still originate
  * from the engine via the features.
@@ -24,7 +24,7 @@
 import type { AiProvider, CompletionRequest, EngineGrounding, TokenUsage } from '@chess-platform/ai-orchestrator';
 import { buildGroundedMessages } from '@chess-platform/ai-orchestrator';
 
-import { Coach } from './coach.js';
+import type { CoachPort } from './coach-port.js';
 import type { CoachingResponse } from './coach-types.js';
 import type { MistakeClassification } from './mistake-types.js';
 
@@ -44,8 +44,13 @@ import type {
 export interface StudyPartnerOptions {
   /** The study session store port. */
   readonly store: StudySessionStore;
-  /** The Coach (composition layer over the five features). */
-  readonly coach: Coach;
+  /**
+   * The coaching capability (composition layer over the five features).
+   *
+   * A {@link CoachPort}, not the concrete `Coach`: this reads one method, and taking the class meant
+   * a production caller could only satisfy it by building another library `Coach`.
+   */
+  readonly coach: CoachPort;
   /** The AI completion provider (M7 port, optional narrative). */
   readonly ai?: AiProvider;
   /** Default temperature for the LLM call. */
@@ -69,7 +74,7 @@ export interface StudyPartnerOptions {
  */
 export class StudyPartner {
   private readonly store: StudySessionStore;
-  private readonly coach: Coach;
+  private readonly coach: CoachPort;
   private readonly ai: AiProvider | undefined;
   private readonly temperature: number;
   private readonly maxTokens: number;
