@@ -343,9 +343,11 @@ hold this change, and neither is claimed here to be understood.
   A cosmetic mismatch, not a capability lie.
 - **An authenticated capabilities surface for moderator features.** Named as the right shape for
   `antiCheatAnalysis` and `botTimingSource` above; not built, because nothing asks for it yet.
-- **Clicking a search mode discards text typed since the page loaded.** `createModeInput`
-  (`packages/web/src/app/search-mount.ts`) closes over `request.query`, captured when the route
-  mounted, so `navigateToSearchMode` navigates with the old query and the mount then resets the input
-  to match. Pre-existing — the closure is untouched by this change — and found by the adversarial
-  review of this branch. It is a real, user-visible defect, but a different one from capability
-  parity, with its own tests to write, so it is recorded rather than folded in here.
+- ~~**Clicking a search mode discards text typed since the page loaded.**~~ `createModeInput`
+  (`packages/web/src/app/search-mount.ts`) closed over `request.query`, captured when the route
+  mounted, so `navigateToSearchMode` navigated with the old query and the mount then reset the input
+  to match. Pre-existing — the closure was untouched by this ADR's change — and found by the
+  adversarial review of this branch. **Fixed in a follow-up on `fix/m15-search-mode-stale-query`:**
+  the query is now a `() => string` read when a mode is chosen rather than a string captured when the
+  selector renders, falling back to the mounted query only where there is no header input at all.
+  Recorded here rather than moved, so the trail from symptom to cause survives.

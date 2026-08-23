@@ -82,11 +82,18 @@ function navigateToSearchMode(query: string, mode: SearchMode): void {
   window.dispatchEvent(new PopStateEvent('popstate'));
 }
 
+/**
+ * @param currentQuery - read at change time, not at render time.
+ *
+ * Closing over the query captured when the route mounted discarded anything typed since: fill the
+ * header box, click **Semantic** without pressing enter, and the navigation carried the old term
+ * while the remount reset the box to match it. Tracked from M15 Increment 24 and fixed here.
+ */
 function createModeInput(
   doc: Document,
   option: SearchModeOption,
   activeMode: SearchMode,
-  query: string,
+  currentQuery: () => string,
 ): HTMLInputElement {
   const input = doc.createElement('input');
   input.type = 'radio';
@@ -94,7 +101,7 @@ function createModeInput(
   input.value = option.value;
   input.checked = option.value === activeMode;
   input.addEventListener('change', () => {
-    if (input.checked) navigateToSearchMode(query, option.value);
+    if (input.checked) navigateToSearchMode(currentQuery(), option.value);
   });
   return input;
 }
@@ -103,14 +110,14 @@ function createModeControl(
   doc: Document,
   option: SearchModeOption,
   activeMode: SearchMode,
-  query: string,
+  currentQuery: () => string,
 ): HTMLLabelElement {
   const control = doc.createElement('label');
   control.className = 'cg-seg';
   const label = doc.createElement('span');
   label.className = 'cg-seg-label';
   label.textContent = option.label;
-  control.append(createModeInput(doc, option, activeMode, query), label);
+  control.append(createModeInput(doc, option, activeMode, currentQuery), label);
   return control;
 }
 
@@ -118,12 +125,12 @@ function renderModeSelector(
   doc: Document,
   container: HTMLElement,
   activeMode: SearchMode,
-  query: string,
+  currentQuery: () => string,
   modes: readonly SearchModeOption[],
 ): void {
   container.innerHTML = '';
   for (const option of modes) {
-    container.appendChild(createModeControl(doc, option, activeMode, query));
+    container.appendChild(createModeControl(doc, option, activeMode, currentQuery));
   }
 }
 
@@ -250,7 +257,10 @@ export function mountSearch(
           doc,
           elements.mode,
           mode,
-          request.query,
+          // Read when a mode is chosen, not now. The visitor may have typed since this rendered,
+          // and `main.ts`'s submit handler already reads the box the same way — switching mode
+          // should carry the same term pressing enter would.
+          () => elements.input?.value.trim() ?? request.query,
           availableModes(semanticAvailable),
         );
       }

@@ -54,6 +54,23 @@ function harness(search: string): SearchHarness {
   const pushed: string[] = [];
   const originalLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
   const originalHistory = Object.getOwnPropertyDescriptor(globalThis, 'history');
+  // Choosing a mode calls `navigateToSearchMode`, which pushes state and then dispatches a
+  // `popstate` so the router re-runs. Neither global exists under `node --test`.
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  const originalPopState = Object.getOwnPropertyDescriptor(globalThis, 'PopStateEvent');
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: { dispatchEvent: () => true },
+  });
+  Object.defineProperty(globalThis, 'PopStateEvent', {
+    configurable: true,
+    value: class {
+      readonly type: string;
+      constructor(type: string) {
+        this.type = type;
+      }
+    },
+  });
   Object.defineProperty(globalThis, 'location', { configurable: true, value: { search } });
   Object.defineProperty(globalThis, 'history', {
     configurable: true,
@@ -75,6 +92,10 @@ function harness(search: string): SearchHarness {
       else delete (globalThis as { location?: unknown }).location;
       if (originalHistory) Object.defineProperty(globalThis, 'history', originalHistory);
       else delete (globalThis as { history?: unknown }).history;
+      if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
+      else delete (globalThis as { window?: unknown }).window;
+      if (originalPopState) Object.defineProperty(globalThis, 'PopStateEvent', originalPopState);
+      else delete (globalThis as { PopStateEvent?: unknown }).PopStateEvent;
     },
   };
 }
@@ -404,5 +425,71 @@ test('a new mount clears the previous query results before the flags settle', as
     controller.dispose();
   } finally {
     second.restore();
+  }
+});
+
+/**
+ * Choosing a mode carries the term the visitor has typed, not the one the route mounted with.
+ *
+ * `createModeInput` used to close over the query captured at mount. Type a new term into the header
+ * box, click **Semantic** without pressing enter, and the navigation carried the old term while the
+ * remount reset the box to match it — the typed text was gone, with no indication it had been
+ * discarded. Found by the adversarial review of PR #155 and tracked from M15 Increment 24.
+ *
+ * The mount-time value is still the fallback, for a document with no header input at all.
+ */
+test('changing mode uses the query typed since mount, not the one it mounted with', async () => {
+  const h = harness('?q=rook');
+  try {
+    const controller = mountSearch(h.doc, h.client, flags(true, true));
+    await settle();
+
+    const input = h.elements.get('search-input');
+    const mode = h.elements.get('search-mode');
+    assert.ok(input);
+    assert.ok(mode);
+    assert.equal(input.value, 'rook', 'the mount seeds the box from the URL');
+
+    // The visitor edits the box and picks a mode without pressing enter.
+    input.value = '  bishop  ';
+    const semantic = mode.children[1]?.children[0];
+    assert.ok(semantic, 'semantic must be the second rendered mode');
+    semantic.checked = true;
+    for (const fire of semantic.listeners['change'] ?? []) fire(new Event('change'));
+
+    assert.deepEqual(
+      h.pushed,
+      ['/search?q=bishop&mode=semantic'],
+      'the mode change must carry the typed term, trimmed, exactly as pressing enter would',
+    );
+    controller.dispose();
+  } finally {
+    h.restore();
+  }
+});
+
+/** With no header input in the document, the mount-time query is still what a mode change carries. */
+test('changing mode falls back to the mounted query when there is no input element', async () => {
+  const h = harness('?q=rook');
+  try {
+    const docWithoutInput = {
+      getElementById: (id: string) => (id === 'search-input' ? null : h.elements.get(id) ?? null),
+      createElement: () => new FakeElement(),
+    } as unknown as Document;
+
+    const controller = mountSearch(docWithoutInput, h.client, flags(true, true));
+    await settle();
+
+    const mode = h.elements.get('search-mode');
+    assert.ok(mode);
+    const hybrid = mode.children[2]?.children[0];
+    assert.ok(hybrid);
+    hybrid.checked = true;
+    for (const fire of hybrid.listeners['change'] ?? []) fire(new Event('change'));
+
+    assert.deepEqual(h.pushed, ['/search?q=rook&mode=hybrid']);
+    controller.dispose();
+  } finally {
+    h.restore();
   }
 });
