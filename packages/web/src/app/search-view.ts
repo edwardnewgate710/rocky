@@ -59,3 +59,38 @@ export function renderSearchPrompt(container: HTMLElement): void {
     body: 'Search for players, games, or tournaments above.',
   });
 }
+
+/**
+ * What the search route shows on a deployment that has search switched off.
+ *
+ * Reached by a deep link or a shared URL, since the header form is hidden on such a deployment
+ * (ADR-0132 §5). It says the feature is off rather than issuing a request that is guaranteed to
+ * answer 503 and showing the visitor the server's refusal — a 503 reads as "broken", and this is
+ * not broken, it is configured.
+ */
+export function renderSearchUnavailable(container: HTMLElement): void {
+  renderEmpty(container, {
+    mark: '🔍',
+    title: 'Search is unavailable',
+    body: 'This server has search switched off. Nothing else is affected.',
+  });
+}
+
+/**
+ * What the route shows when the capability answer never arrived.
+ *
+ * Distinct from {@link renderSearchUnavailable}, which is a claim about how the deployment is
+ * configured. A failed or malformed `GET /v1/capabilities` is not evidence of that, and saying so
+ * would be inventing a fact — the same class of mistake as offering a control that cannot work,
+ * pointed the other way.
+ *
+ * Reload rather than a retry button, because `loadCapabilities` memoises for the page's lifetime
+ * with deliberately no reset seam: within this page there is nothing left to retry.
+ */
+export function renderSearchUndetermined(container: HTMLElement): void {
+  renderEmpty(container, {
+    mark: '🔍',
+    title: 'Search is unavailable',
+    body: 'Gambit could not check whether this server offers search. Reload the page to try again.',
+  });
+}

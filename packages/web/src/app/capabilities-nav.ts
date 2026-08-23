@@ -75,6 +75,85 @@ export function analysisEnabled(payload: unknown): boolean {
 }
 
 /**
+ * Whether this deployment serves keyword search at all.
+ *
+ * Same fail-closed rule as {@link analysisEnabled}. `SEARCH_ENABLED=0` — the Helm chart's
+ * `search.enabled: false`, an absolute kill switch per ADR-0055 — leaves the repository
+ * unconstructed and every mode of `GET /v1/search` answering 503, keyword included.
+ *
+ * This is the authoritative gate for the whole search surface: the header form, the mode selector,
+ * and whether the route issues a request at all (ADR-0132 §5).
+ */
+export function searchEnabled(payload: unknown): boolean {
+  return capabilityFlags(payload)?.['search'] === true;
+}
+
+/**
+ * Whether the server *said* search is off, as opposed to not having answered.
+ *
+ * {@link searchEnabled} is the gate and treats both the same, correctly: an unanswered question must
+ * not open a control. But they are not the same thing to tell a visitor. `loadCapabilities` turns a
+ * failed request into `null` and memoises it for the page, so without this distinction a transient
+ * discovery outage is reported as "this server has search switched off" — a claim about the
+ * deployment's configuration, made on no evidence, and one that then stands for the rest of the
+ * visit. Raised by the Qodo review of PR #155.
+ *
+ * Only an explicit `false` is the server saying so. Everything else — a missing flag, a malformed
+ * body, a failed request — means we do not know, and the route says that instead.
+ */
+export function searchExplicitlyDisabled(payload: unknown): boolean {
+  return capabilityFlags(payload)?.['search'] === false;
+}
+
+/**
+ * Whether this deployment serves the semantic and hybrid search modes.
+ *
+ * Requires **both** flags. `GET /v1/search` serves three modes from two dependency sets the server
+ * gates separately, so keyword search can work while the other two answer 503 — that is
+ * `search.semanticEnabled: false` in the Helm chart, a supported configuration rather than a broken
+ * one (ADR-0132).
+ *
+ * The composition root only ever builds the semantic pair when keyword search is on
+ * (`bootstrap.ts`), so `semanticSearch: true` with `search: false` should not occur — and this asks
+ * anyway. Leaning on a server-side invariant the wire does not state is the habit this increment
+ * exists to break; the cost of checking is one comparison.
+ *
+ * Before these flags existed the mode selector offered all three unconditionally, which is exactly
+ * the failure the comment on {@link analysisEnabled} describes: a control whose every request
+ * answers 503.
+ */
+export function semanticSearchEnabled(payload: unknown): boolean {
+  const flags = capabilityFlags(payload);
+  return flags?.['search'] === true && flags['semanticSearch'] === true;
+}
+
+/**
+ * Reveal the header search form when, and only when, this deployment serves search.
+ *
+ * The form ships `hidden` in `index.html` and is revealed here, rather than shipping visible and
+ * being removed. That is the opposite default from the nav links above, and deliberately so: a link
+ * removed a moment after paint is a link the visitor may already have clicked, and the search form
+ * is worse than a link because submitting it navigates to a route that would then have to explain
+ * itself. Fail-closed with no flash costs an unavailable-looking search box for as long as one
+ * memoised request takes; the alternative costs a guaranteed 503 (ADR-0132 §5).
+ *
+ * It is a form rather than an `a[data-route]`, so {@link routesToRemove} cannot reach it — which is
+ * why the gap this closes survived the review that found it.
+ *
+ * Exported and taking the payload rather than the client, for the same reason {@link routesToRemove}
+ * is pure: {@link loadCapabilities} memoises for the page's lifetime with no reset seam, so a test
+ * cannot vary the answer twice in one process. The decision is the part worth covering exhaustively
+ * and it does not need the fetch.
+ */
+export function applySearchCapability(doc: Document, flags: unknown): void {
+  // `getElementById` is already typed `HTMLElement | null`, so no `instanceof` narrowing is needed —
+  // and none is wanted: `HTMLElement` is not a global under `node --test`, so the guard that reads
+  // as defensive would be the one thing here that throws.
+  const form = doc.getElementById('search-form');
+  if (form) form.hidden = !searchEnabled(flags);
+}
+
+/**
  * The `capabilities` sub-object of a capabilities response, or `undefined` when the payload is not
  * one.
  *
@@ -254,9 +333,12 @@ export async function loadCapabilities(api: GambitClient): Promise<unknown> {
 }
 
 export async function applyNavCapabilities(doc: Document, api: GambitClient): Promise<void> {
-  for (const route of routesToRemove(capabilityFlags(await loadCapabilities(api)))) {
+  const payload = await loadCapabilities(api);
+  for (const route of routesToRemove(capabilityFlags(payload))) {
     for (const link of doc.querySelectorAll(`nav a[data-route="${route}"]`)) {
       link.remove();
     }
   }
+  // The search form is a nav affordance too, and gated the other way round — see below.
+  applySearchCapability(doc, payload);
 }

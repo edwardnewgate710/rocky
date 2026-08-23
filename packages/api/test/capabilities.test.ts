@@ -24,6 +24,7 @@ test('GET /v1/capabilities returns capability flags for all subsystems when pres
         studies: true,
         achievements: true,
         search: true,
+        semanticSearch: true,
         social: true,
         messaging: true,
         community: true,

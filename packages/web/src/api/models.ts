@@ -210,10 +210,36 @@ export interface SystemCapabilities {
   readonly studies: boolean;
   readonly achievements: boolean;
   readonly search: boolean;
+  /**
+   * Semantic and hybrid search modes (ADR-0132).
+   *
+   * The one flag here that must never be inferred from another. `GET /v1/search` serves three modes
+   * from two dependency sets the server gates separately — keyword needs a search repository, the
+   * other two need a vector repository *and* an embedding provider — so `search: true` says nothing
+   * about them. A deployment with keyword search working and both other modes answering 503 is a
+   * supported configuration, offered by the Helm chart as `search.semanticEnabled`.
+   *
+   * Optional because a server predating it omits the field, and a missing flag must read as off
+   * rather than as permission. The cost of that rule here is two modes hidden on an older server
+   * that could serve them; the alternative is two buttons that cannot.
+   */
+  readonly semanticSearch?: boolean;
   readonly social: boolean;
   readonly messaging: boolean;
   readonly community: boolean;
   readonly analysis: boolean;
+  /**
+   * Engine-grounded move explanation, and engine-grounded mistake prediction (ADR-0115, ADR-0118).
+   *
+   * These are a type-completeness fix, not a new capability: the API has emitted both since those
+   * ADRs, and `capabilities-nav.ts` has had working `moveExplanationEnabled` and
+   * `mistakePredictionEnabled` predicates all along — they read through `capabilityFlags()`, which
+   * returns `Record<string, unknown>` and so never consulted this interface. ADR-0131 recorded the
+   * omission as "very likely deliberate"; it was not, it simply had no consequence, which is why
+   * nothing caught it. Optional for the same reason as every flag below.
+   */
+  readonly moveExplanation?: boolean;
+  readonly mistakePrediction?: boolean;
   readonly puzzleGeneration?: boolean;
   /**
    * Bundled opening identification. Optional because a server predating it omits the field, and a

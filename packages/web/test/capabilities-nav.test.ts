@@ -8,11 +8,16 @@ import {
   routesToRemove,
   analysisEnabled,
   analysisSupportsVariant,
+  applySearchCapability,
+  searchEnabled,
+  semanticSearchEnabled,
 } from '../src/app/capabilities-nav.js';
 
 class FakeElement {
   readonly route: string;
   removed = false;
+  /** The header search form ships hidden and is revealed by capability, unlike the nav links. */
+  hidden = true;
 
   constructor(route: string) {
     this.route = route;
@@ -25,8 +30,14 @@ class FakeElement {
 
 class FakeDocument {
   readonly elements: FakeElement[];
-  constructor(elements: FakeElement[]) {
+  readonly searchForm: FakeElement | null;
+  constructor(elements: FakeElement[], searchForm: FakeElement | null = null) {
     this.elements = elements;
+    this.searchForm = searchForm;
+  }
+
+  getElementById(id: string): FakeElement | null {
+    return id === 'search-form' ? this.searchForm : null;
   }
 
   querySelectorAll(selector: string): Element[] {
@@ -110,13 +121,19 @@ test('the false capabilities lose their links and the true ones keep them', asyn
   const studiesLink = new FakeElement('studies');
   const teamsLink = new FakeElement('teams');
   const messagesLink = new FakeElement('messages');
-  const doc = new FakeDocument([coursesLink, studiesLink, teamsLink, messagesLink]);
+  const searchForm = new FakeElement('search-form');
+  const doc = new FakeDocument([coursesLink, studiesLink, teamsLink, messagesLink], searchForm);
   const api = new GambitClient({ baseUrl: 'https://api.test', transport });
 
   await applyNavCapabilities(doc as unknown as Document, api);
 
   assert.equal(coursesLink.removed, true);
   assert.equal(teamsLink.removed, true);
+  // The header form is gated by the same pass and the same payload. Asserted here rather than in
+  // its own test because the fetch is memoised for the process, so this is the only place a real
+  // `applyNavCapabilities` call has an answer of its own; the decision itself is covered purely
+  // below. Without this the two halves could be wired to nothing and every other test would pass.
+  assert.equal(searchForm.hidden, false, 'this payload reports search: true');
   assert.equal(studiesLink.removed, false);
   assert.equal(messagesLink.removed, false);
 
@@ -221,4 +238,104 @@ test('analysisSupportsVariant fails open when the list is absent but the flag is
   );
   // But an absent list cannot resurrect a disabled feature.
   assert.equal(analysisSupportsVariant({ capabilities: { analysis: false } }, 'standard'), false);
+});
+
+/**
+ * The three states `GET /v1/search` can be in, as the client must read them (ADR-0132 §5).
+ *
+ * `search` is the authoritative gate for the whole surface: `SEARCH_ENABLED=0` — the chart's
+ * `search.enabled: false` — removes the repository and every mode answers 503, keyword included.
+ * `semanticSearch` gates the two extra modes *on top of* it, so it is never enough on its own.
+ */
+test('searchEnabled and semanticSearchEnabled read the two flags as a hierarchy', () => {
+  const caps = (c: Record<string, unknown>): unknown => ({ capabilities: c });
+
+  // Search off: nothing is available, whatever else the payload claims. The composition root never
+  // produces this pairing; the client declines to depend on that.
+  assert.equal(searchEnabled(caps({ search: false, semanticSearch: true })), false);
+  assert.equal(
+    semanticSearchEnabled(caps({ search: false, semanticSearch: true })),
+    false,
+    'semantic modes cannot outlive the repository they are built beside',
+  );
+
+  // Keyword only: the shape `search.semanticEnabled: false` publishes.
+  assert.equal(searchEnabled(caps({ search: true, semanticSearch: false })), true);
+  assert.equal(semanticSearchEnabled(caps({ search: true, semanticSearch: false })), false);
+
+  // Both.
+  assert.equal(searchEnabled(caps({ search: true, semanticSearch: true })), true);
+  assert.equal(semanticSearchEnabled(caps({ search: true, semanticSearch: true })), true);
+
+  // A server predating `semanticSearch` still serves keyword.
+  assert.equal(searchEnabled(caps({ search: true })), true);
+  assert.equal(semanticSearchEnabled(caps({ search: true })), false);
+});
+
+/** "Not answered" in all its shapes, for both predicates. */
+test('both search predicates fail closed on anything that is not an explicit true', () => {
+  for (const payload of [
+    null,
+    undefined,
+    {},
+    { capabilities: {} },
+    'capabilities',
+    { capabilities: { search: 'true', semanticSearch: 'true' } },
+    { capabilities: { search: 1, semanticSearch: 1 } },
+    { capabilities: null },
+  ]) {
+    const where = JSON.stringify(payload) ?? 'undefined';
+    assert.equal(searchEnabled(payload), false, `searchEnabled(${where})`);
+    assert.equal(semanticSearchEnabled(payload), false, `semanticSearchEnabled(${where})`);
+  }
+});
+
+/**
+ * The header search form is revealed by capability, and ships hidden.
+ *
+ * This is the entry point the first version of ADR-0132 missed: a `<form>` in the nav, not an
+ * `a[data-route]`, so {@link routesToRemove} cannot reach it — and it sits on every page. Gating the
+ * `/search` mount while leaving this active was the one-level-away partial fix.
+ *
+ * Revealed rather than removed, the opposite default from the nav links, because a control shown
+ * and then withdrawn may already have been used, and submitting this one navigates.
+ *
+ * Tested through the pure function for the reason the file has been doing that throughout: the
+ * fetch is memoised for the process, so the cases that matter cannot each have their own answer.
+ */
+test('the header search form is revealed only by an explicit search capability', () => {
+  const form = new FakeElement('search-form');
+  assert.equal(form.hidden, true, 'it must ship hidden, or there is a window in which to click it');
+
+  const doc = (): Document => new FakeDocument([], form) as unknown as Document;
+
+  applySearchCapability(doc(), { capabilities: { search: true, semanticSearch: false } });
+  assert.equal(form.hidden, false, 'keyword-only is still search');
+
+  applySearchCapability(doc(), { capabilities: { search: false, semanticSearch: true } });
+  assert.equal(
+    form.hidden,
+    true,
+    'a search box on a deployment with search off is an entry point into a disabled feature',
+  );
+
+  applySearchCapability(doc(), { capabilities: { search: true, semanticSearch: true } });
+  assert.equal(form.hidden, false);
+});
+
+/** Every shape of "not answered" leaves it hidden, including an older server and a failed request. */
+test('the header search form stays hidden when capabilities do not answer', () => {
+  for (const payload of [null, undefined, {}, { capabilities: {} }, { capabilities: { search: 'true' } }]) {
+    const form = new FakeElement('search-form');
+    form.hidden = false;
+    applySearchCapability(new FakeDocument([], form) as unknown as Document, payload);
+    assert.equal(form.hidden, true, `payload ${JSON.stringify(payload) ?? 'undefined'}`);
+  }
+});
+
+/** A page with no such form must not throw — the route mounts on documents that lack the nav. */
+test('applySearchCapability tolerates a document without the header form', () => {
+  applySearchCapability(new FakeDocument([], null) as unknown as Document, {
+    capabilities: { search: true },
+  });
 });

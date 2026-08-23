@@ -64,6 +64,19 @@ export class SearchController {
     this.disposed = true;
   }
 
+  /**
+   * Whether {@link dispose} has been called.
+   *
+   * `search` already refuses to run after disposal, so this exists for the *other* thing a mount
+   * does after an await: touch the DOM. `mountSearch` resolves the capability flags asynchronously
+   * and renders the mode selector when they arrive, which on a fast navigation can land after the
+   * route it belongs to is gone. Reading it here rather than reassigning `dispose` on the instance
+   * keeps the disposal contract in the class that owns it.
+   */
+  get isDisposed(): boolean {
+    return this.disposed;
+  }
+
   private isCurrent(generation: number): boolean {
     return !this.disposed && generation === this.requestGeneration;
   }

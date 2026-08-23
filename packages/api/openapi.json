@@ -12977,6 +12977,7 @@
               "studies",
               "achievements",
               "search",
+              "semanticSearch",
               "social",
               "messaging",
               "community",
@@ -13000,6 +13001,9 @@
                 "type": "boolean"
               },
               "search": {
+                "type": "boolean"
+              },
+              "semanticSearch": {
                 "type": "boolean"
               },
               "social": {

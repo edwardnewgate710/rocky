@@ -892,6 +892,18 @@ export interface CapabilitiesFlags {
   readonly studies: boolean;
   readonly achievements: boolean;
   readonly search: boolean;
+  /**
+   * Semantic and hybrid search modes (ADR-0132; the modes themselves are ADR-0060).
+   *
+   * Independent of {@link CapabilitiesFlags.search}, and the one flag here that a client must not
+   * infer from another. `GET /v1/search` serves three modes from two different dependency sets:
+   * keyword needs the search repository, while semantic and hybrid need a vector repository *and* an
+   * embedding provider, which the composition root gates on `SEMANTIC_SEARCH_ENABLED` rather than on
+   * `SEARCH_ENABLED`. The Helm chart offers that as `search.semanticEnabled`, so a deployment with
+   * working keyword search and both other modes answering 503 is a supported configuration, not a
+   * misconfiguration — and before this flag existed it was one the wire could not describe.
+   */
+  readonly semanticSearch: boolean;
   readonly social: boolean;
   readonly messaging: boolean;
   readonly community: boolean;
@@ -992,6 +1004,8 @@ export function capabilitiesView(
     | 'studiesRepository'
     | 'achievementsRepository'
     | 'searchRepository'
+    | 'semanticSearchRepository'
+    | 'embeddingProvider'
     | 'socialGraphRepository'
     | 'messagingRepository'
     | 'communityRepository'
@@ -1014,6 +1028,11 @@ export function capabilitiesView(
       studies: deps.studiesRepository !== undefined,
       achievements: deps.achievementsRepository !== undefined,
       search: deps.searchRepository !== undefined,
+      // Both, and in the same order the route reads them (`routes.ts`, the semantic branch of
+      // `GET /v1/search`): the two are composed and decomposed together, but the flag is a claim
+      // about what that branch will do, so it is built from what that branch actually requires.
+      semanticSearch:
+        deps.semanticSearchRepository !== undefined && deps.embeddingProvider !== undefined,
       social: deps.socialGraphRepository !== undefined,
       messaging: deps.messagingRepository !== undefined,
       community: deps.communityRepository !== undefined,
@@ -1032,6 +1051,71 @@ export function capabilitiesView(
     puzzleVariants,
   };
 }
+
+/**
+ * Optional dependencies that are deliberately **not** published as capabilities.
+ *
+ * Exported as a type so the parity test can read this list rather than restate it; it emits no
+ * runtime value. Each name is a decision, and the decision is the point — see
+ * {@link EveryOptionalDependencyIsClassified} below.
+ *
+ * - `logger`, `metrics`, `tracer`, `readiness` are infrastructure. A visitor has no control whose
+ *   availability they describe, and `GET /v1/metrics` and `GET /v1/ready` are operator surfaces.
+ * - `antiCheatAnalysis` and `botTimingSource` back moderator routes. They are absent here because
+ *   this document is public and unauthenticated; publishing them would tell every caller which
+ *   deployments can detect them. If a moderator UI ever needs to know, it needs an authenticated
+ *   capabilities surface, not a new key on this one.
+ * - `graphql` is genuinely optional to the client and already degrades on its own:
+ *   `packages/web/src/api/graphql.ts` latches `available` from the first 503 and returns `null`
+ *   thereafter, so callers fall back to `shortId` and no control is offered that cannot work. That
+ *   is the same fail-closed outcome a flag would buy, reached without one.
+ */
+export type NotAPublishedCapability =
+  | 'logger'
+  | 'metrics'
+  | 'tracer'
+  | 'readiness'
+  | 'antiCheatAnalysis'
+  | 'botTimingSource'
+  | 'graphql';
+
+/**
+ * Every optional dependency is either a published capability or explicitly not one.
+ *
+ * ADR-0131 made the *forwarding* of optional dependencies exhaustive at compile time, and recorded
+ * this file as the remaining gap: a new optional feature never added to `capabilitiesView` is
+ * invisible to `GET /v1/capabilities`, and nothing complains. That entry called the fix blocked on
+ * "deciding which optional dependencies are user-facing capabilities, which is a judgement call
+ * rather than a derivation". The framing was the mistake. The judgement cannot be derived — but
+ * *skipping* it can be made impossible, which is the property actually wanted.
+ *
+ * So the capability source set is read off the presenter's own parameter rather than restated:
+ * `Parameters<typeof capabilitiesView>[0]` cannot drift from the function, because it *is* the
+ * function's parameter. That is the lesson ADR-0131 §6a paid for — an assertion that names a type
+ * separately guards the name, not the code.
+ *
+ * Add an optional dependency and this stops being `never`, so the initialiser fails with
+ * `TS2322` until someone either gives it a flag or writes it into
+ * {@link NotAPublishedCapability} above. The hand-written half is acceptable for the same reason
+ * `ConstructedHere` was in ADR-0131 §1b: it is **fail-loud**. Drop a name from it and this breaks
+ * immediately, rather than quietly covering one key fewer.
+ *
+ * The reverse direction needs no assertion. A flag with nothing computing it is already `TS2741` on
+ * the returned object literal, because {@link CapabilitiesFlags} is the declared return type.
+ */
+type EveryOptionalDependencyIsClassified =
+  Exclude<
+    import('./deps.js').OptionalDependencyKey,
+    keyof Parameters<typeof capabilitiesView>[0] | NotAPublishedCapability
+  > extends never
+    ? true
+    : never;
+
+// Not exported: an exported `const` is emitted into the JavaScript and becomes public runtime API,
+// which is how a compile-time assertion shipped as a value in ADR-0131 and had to be taken back out.
+// `void` satisfies `noUnusedLocals` without that.
+const everyOptionalDependencyIsClassified: EveryOptionalDependencyIsClassified = true;
+void everyOptionalDependencyIsClassified;
 
 /**
  * The service outcome is already the public shape: it is the projection, built in the service so

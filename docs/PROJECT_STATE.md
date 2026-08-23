@@ -4,7 +4,107 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-23 — M15 Increment 23: compile-time dependency parity in the API composition root._
+_Last updated: 2026-08-23 — M15 Increment 24: the published capability document matches what the routes will do._
+
+## M15 Increment 24 — Capability parity (ADR-0132)
+
+The gap Increment 23 recorded, closed — and a live instance of it, found while confirming the gap was
+worth closing at all.
+
+`GET /v1/search` serves three modes from two dependency sets the server gates separately. Keyword
+needs `searchRepository`; semantic and hybrid need `semanticSearchRepository` **and**
+`embeddingProvider`, gated on `SEMANTIC_SEARCH_ENABLED` rather than `SEARCH_ENABLED`. The Helm chart
+offers that as `search.semanticEnabled`, and `values.yaml` says what happens: "Disabling leaves
+keyword search untouched and makes those two modes return 503."
+
+The published contract had one boolean for all three, and the client rendered all three
+unconditionally — `SEARCH_MODES` in `search-mount.ts` was a module constant gated on nothing. **On a
+supported chart configuration the visitor got two buttons whose every use answered
+`service_unavailable`,** with the raw server message in the error slot. That violates a rule this
+codebase already states, on `analysisEnabled`: an unanswered question must not surface "a control
+whose every request would answer 503".
+
+**`semanticSearch` is now published,** built from both dependencies because the route reads both.
+`ApiDependencies` permits either alone even though production composes them together, and a flag is a
+claim about what the route will do rather than about how the composition root happens to be written.
+
+**Skipping the classification is now impossible.** ADR-0131 called this blocked on "deciding which
+optional dependencies are user-facing capabilities, which is a judgement call rather than a
+derivation". The framing was the mistake: the judgement cannot be derived, but *skipping* it can be
+made impossible, which is the property actually wanted.
+`Exclude<OptionalDependencyKey, keyof Parameters<typeof capabilitiesView>[0] | NotAPublishedCapability>`
+must be `never`, so a new optional dependency fails `TS2322` until someone gives it a flag or writes
+it into the exclusion list with a reason. The source set is read off the presenter's own parameter,
+not restated — ADR-0131 §6a's lesson. The hand-written half is acceptable for the same reason
+`ConstructedHere` was: drop a name and the assertion breaks immediately.
+
+**The client offers nothing until the server has answered, at every entry point.** The two flags are
+a hierarchy: `search` gates the whole surface, `semanticSearch` gates the two extra modes on top of
+it. Search off yields an honest unavailable notice and **no request at all**; search on with semantic
+off yields keyword alone; both on yields three modes. A deep link to a mode the deployment cannot
+serve falls back to keyword and rewrites the URL with `replaceState`, not `pushState`.
+
+**The route was never the entry point.** The header search form lives in the nav on every page, and
+being a `<form>` rather than an `a[data-route]` it is unreachable by `NAV_CAPABILITY_MAP` — so the
+first pass gated the mode selector and left a search box on a deployment with search switched off.
+Raised by the Qodo review of PR #155. The form now ships `hidden` in `index.html` and is revealed by
+`applySearchCapability` only on an explicit `search: true`, which is the opposite default from the
+nav links and deliberately so: there the cost of guessing wrong is hiding a link that works, here it
+is offering a control that cannot, and one that navigates.
+
+That also reversed this increment's own earlier decision to let keyword search start without waiting
+for the flags. Knowing whether a request is pointless requires having asked. The cost is one memoised
+round trip on the first search of a visit; the alternative is a guaranteed 503 shown to the visitor,
+and a 503 reads as broken when the deployment is merely configured.
+
+`SystemCapabilities` also gained `moveExplanation` and `mistakePrediction`. ADR-0131 recorded these as
+missing and "very likely deliberate". They were not: `capabilities-nav.ts` has had working predicates
+for both all along, reading through `capabilityFlags()`, which returns `Record<string, unknown>` and
+so never consulted the interface. The API has always emitted them. The interface was incomplete with
+no behavioural consequence, which is exactly why nothing caught it.
+
+**Tests:** 5 in `capability-parity.test.ts` (four type-level predicates asserted at runtime; the
+presenter called directly to pin that semantic search needs *both* dependencies; and two behavioural
+— keyword-on/semantic-off says so and means it, and the reverse direction) and 13 in `search-mount.test.ts` plus 5 in
+`capabilities-nav.test.ts` and a markup contract in `a11y.test.ts`, covering all three capability
+states, both deep-link directions, missing and malformed flags, a rejected request, a resolution
+landing after `dispose()`, and the header form at each end of its gate. Twenty-four mutations run,
+twenty-three caught on the first pass; the survivor was a real finding and is closed by a code
+change. Two more appeared to survive and had simply not been applied — the mutation script matched a
+line-feed anchor against a CRLF file, rewrote nothing, and the suite passed for the most boring
+possible reason — which is why it now throws on a missing anchor rather than passing quietly.
+
+**The survivor is the one to read.** `CapabilitySourceKey` reads the presenter's *parameter*, and
+TypeScript is content for a parameter to carry a key the body never reads — so a dependency declared,
+composed in `bootstrap.ts` and added to the `Pick`, with no flag and no line in the function, compiled
+clean and passed everything. That is this increment's own defect, one level up from where it was being
+fixed: the guard proved the key was in the parameter, not that the key produced a flag. It needed the
+same care as ADR-0131 §6a's survivor, too — the first attempt appeared caught, but by Increment 23's
+`OptionalDependencies` guard rather than by anything here, an accidental anchor. No type can express
+"this key is read", so the closing guard is behavioural: remove each source in turn and require the
+published document to change.
+
+The three others worth reading: fully reverting the `semanticSearch` flag no longer compiles, so the guard
+would have caught the original defect; building the flag from one dependency instead of both is
+caught only by the presenter test written for exactly that gap, because production composes the two
+together and no behavioural test can separate them; and collapsing `OptionalDependencyKey` to `never`
+leaves `packages/api/src` compiling **clean** while the classification covers zero keys — an
+assertion that cannot tell "everything is classified" from "there is nothing to classify" is not yet
+a guard, which is why the test pins the set as populated.
+
+**Breaking, deliberately:** `CapabilitiesFlags.semanticSearch` is required and the schema sets
+`additionalProperties: false`. Nothing outside `packages/api` constructs one. On the client, a server
+predating the flag now hides two modes it can serve — the codebase's stated convention applied
+consistently, degrading toward the mode that always works.
+
+**Not fixed here:** the e2e harness composes no semantic search, so the e2e environment renders one
+mode rather than three — correct, and this defect reproduced in our own test environment, but it
+means no spec exercises the semantic modes. `puzzleGeneration` reporting `false` while its route
+answers 422 rather than 503 was investigated and left: the flag is honest, only the status code a
+flag-ignoring client sees differs.
+
+Detailed in `docs/adr/0132-capability-parity.md`.
+
 
 ## M15 Increment 23 — Compile-time dependency parity (ADR-0131)
 
@@ -78,12 +178,16 @@ of the second: "you may omit this key" is the property being removed. `createApi
 narrowed no external contract, having checked who *imports* the type in-repo rather than whether it is
 *exported*; the CodeRabbit review of PR #154 caught it.
 
-**Not fixed here:** `capabilitiesView` still takes a hand-written `Pick`, so a new optional feature
-never added to it is invisible to `GET /v1/capabilities` — a narrower failure than a 503, and closing
-it means deciding which dependencies are user-facing capabilities rather than deriving it.
-`SystemCapabilities` in the web client omits `moveExplanation` and `mistakePrediction`, which the API
-does emit; both are gated on `analysis` in the sidebar, so this is likely deliberate and is recorded
-rather than changed.
+**Not fixed here — both RESOLVED in M15 Increment 24 (ADR-0132):** `capabilitiesView` still takes a
+hand-written `Pick`, so a new optional feature never added to it is invisible to
+`GET /v1/capabilities` — a narrower failure than a 503, and closing it means deciding which
+dependencies are user-facing capabilities rather than deriving it. *That reasoning was wrong twice
+over: the failure is narrower only when the client can still reach the feature, and semantic search
+was already a live instance where it could not; and the judgement, while genuinely underivable, can
+be made unskippable, which is the property actually wanted.* `SystemCapabilities` in the web client
+omits `moveExplanation` and `mistakePrediction`, which the API does emit; both are gated on
+`analysis` in the sidebar, so this is likely deliberate and is recorded rather than changed. *Also
+wrong — the predicates read through an untyped record, so the interface was simply incomplete.*
 
 Detailed in `docs/adr/0131-dependency-parity.md`.
 

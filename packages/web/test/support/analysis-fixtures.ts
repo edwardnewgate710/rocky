@@ -18,6 +18,8 @@ export class FakeElement {
   /** Mirrors the real property, so a view that groups nodes by class can be asserted on. */
   className = '';
   disabled = false;
+  /** Mirrors the real property, so a radio group's selected option can be asserted on. */
+  checked = false;
   hidden = false;
   dataset: Record<string, string> = {};
   type = 'button';
@@ -69,6 +71,11 @@ export class FakeElement {
   appendChild = (child: FakeElement) => {
     this.children.push(child);
     return child;
+  };
+
+  /** The variadic form. Views that build a control from several nodes at once use it. */
+  append = (...nodes: FakeElement[]) => {
+    this.children.push(...nodes);
   };
 
   removeChild = (child: FakeElement) => {

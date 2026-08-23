@@ -370,3 +370,25 @@ test('auth email field has associated label, proper type and autocomplete, and i
   assert.ok(inputTag.includes('autocomplete="email"'));
   assert.ok(!inputTag.includes(' required'), '#auth-email must not be required');
 });
+
+/**
+ * The header search form ships hidden (ADR-0132 §5).
+ *
+ * It is revealed by `applySearchCapability` once `GET /v1/capabilities` reports `search: true`.
+ * Shipping it visible would put a search box on every page of a deployment that has search switched
+ * off — an entry point into a disabled feature — and, even where search works, would show it for the
+ * length of one request before the answer could withdraw it.
+ *
+ * Asserted against the real markup because the gate depends on this attribute and nothing else in
+ * the suite reads the file. Delete the attribute and every unit test still passes; this is the one
+ * that does not.
+ */
+test('the header search form ships hidden, to be revealed by capability', () => {
+  const form = HTML_TEMPLATE.match(/<form id="search-form"[^>]*>/);
+  assert.ok(form, 'the header search form must exist');
+  assert.match(
+    form[0],
+    /\shidden\b/,
+    'the search form must ship hidden — it is revealed only when capabilities report search: true',
+  );
+});
