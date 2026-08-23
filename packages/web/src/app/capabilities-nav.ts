@@ -181,6 +181,19 @@ export function coachEnabled(payload: unknown): boolean {
   return capabilityFlags(payload)?.['coach'] === true;
 }
 
+/**
+ * Whether this deployment can write tournament commentary (ADR-0130).
+ *
+ * Its own flag rather than an inference from `analysis` or `coach`: the feature needs an engine
+ * *and* a provider, so it is false on a deployment that has only one of them, and a client that
+ * inferred it from either would offer a control that always answers 503.
+ *
+ * Fails closed on a missing or malformed payload, for the same reason the others do.
+ */
+export function tournamentCommentaryEnabled(payload: unknown): boolean {
+  return capabilityFlags(payload)?.['tournamentCommentary'] === true;
+}
+
 export function puzzleGenerationEnabled(payload: unknown): boolean {
   return capabilityFlags(payload)?.['puzzleGeneration'] === true;
 }

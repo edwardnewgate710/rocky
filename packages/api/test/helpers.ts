@@ -149,8 +149,28 @@ export interface HarnessOptions {
   readonly withoutCoach?: boolean;
   /** Inject an optional endgame training service. */
   readonly endgameTraining?: import('../src/endgames/endgame-training-service').EndgameTrainingService;
+  /**
+   * Inject tournament commentary (ADR-0130).
+   *
+   * Injected whole rather than composed from harness options, because its three reads — the
+   * tournament aggregate, the durable game log, the handle behind a player id — are exactly what
+   * its tests need to control. A harness that built it from a stub archive would be choosing the
+   * fixtures on the tests' behalf.
+   */
+  readonly tournamentCommentary?: import('../src/commentary/tournament-commentary-service').TournamentCommentaryService;
 }
 
+/**
+ * Start an API server over in-memory repositories and whatever doubles a test supplies.
+ *
+ * Optional feature services are injected whole rather than composed from the options, so a test
+ * controls exactly what its subject depends on; anything not supplied is simply absent, which is a
+ * real deployment shape rather than a test-only one.
+ *
+ * @param config - config overrides; the auth secrets and TTLs have working defaults.
+ * @param harnessOptions - repositories to omit, and feature services to inject.
+ * @returns the running harness: a JSON client, the repositories, the clock, and `close`.
+ */
 export async function startHarness(
   config: ApiConfigInput = {},
   harnessOptions: HarnessOptions = {},
@@ -281,6 +301,9 @@ export async function startHarness(
     ...(openingExploration ? { openingExploration } : {}),
     ...(endgameTraining ? { endgameTraining } : {}),
     ...(coach ? { coach } : {}),
+    ...(harnessOptions.tournamentCommentary
+      ? { tournamentCommentary: harnessOptions.tournamentCommentary }
+      : {}),
     ...(harnessOptions.readiness ? { readiness: harnessOptions.readiness } : {}),
     ...(harnessOptions.logger ? { logger: harnessOptions.logger } : {}),
     ...(harnessOptions.tracer ? { tracer: harnessOptions.tracer } : {}),

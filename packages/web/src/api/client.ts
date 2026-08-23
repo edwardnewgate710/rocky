@@ -59,6 +59,9 @@ import type {
   SessionView,
   TournamentDetail,
   TournamentLive,
+  TournamentRound,
+  TournamentGameCommentary,
+  TournamentRoundRecap,
   TournamentStanding,
   TournamentSummary,
   UserProfile,
@@ -510,11 +513,81 @@ export class TournamentsApi {
     });
   }
 
+  /**
+   * List the generated rounds of a tournament.
+   *
+   * GET /v1/tournaments/:id/rounds, auth: optional. Pairings only — the response carries no
+   * results, so completeness is not derivable from it.
+   *
+   * @param id - the tournament.
+   * @returns each generated round with its pairings.
+   */
+  rounds(id: string): Promise<TournamentRound[]> {
+    return this.execute<TournamentRound[]>({
+      method: 'GET',
+      path: `/v1/tournaments/${encodeURIComponent(id)}/rounds`,
+      auth: 'optional',
+    });
+  }
+
+  /**
+   * The active games of a tournament, plus its current standings.
+   *
+   * GET /v1/tournaments/:id/live, auth: optional. Finished games are deliberately absent.
+   *
+   * @param id - the tournament.
+   * @returns the live boards and the standings.
+   */
   live(id: string): Promise<TournamentLive> {
     return this.execute<TournamentLive>({
       method: 'GET',
       path: `/v1/tournaments/${encodeURIComponent(id)}/live`,
       auth: 'optional',
+    });
+  }
+
+  /**
+   * Commentate the decisive moment of a finished tournament game (M15 inc 22, ADR-0130).
+   *
+   * POST /v1/tournaments/:id/games/:gameId/commentary, auth: true.
+   *
+   * No body. Not "an empty object we happen to send" — no body at all: the server derives the
+   * position, the players, the result and the round for itself, and refuses a request carrying any
+   * of them rather than ignoring the field. `auth: true` and not `'optional'` like its neighbours
+   * above, because reading a broadcast costs a query while generating a commentary costs an engine
+   * search and a metered completion.
+   *
+   * No retry: one accepted call spends both.
+   */
+  gameCommentary(
+    tournamentId: string,
+    gameId: string,
+    signal?: AbortSignal,
+  ): Promise<TournamentGameCommentary> {
+    return this.execute<TournamentGameCommentary>({
+      method: 'POST',
+      path: `/v1/tournaments/${encodeURIComponent(tournamentId)}/games/${encodeURIComponent(gameId)}/commentary`,
+      auth: true,
+      ...(signal !== undefined ? { signal } : {}),
+    });
+  }
+
+  /**
+   * Narrate a round every pairing of which has a result (M15 inc 22, ADR-0130).
+   *
+   * POST /v1/tournaments/:id/rounds/:roundIndex/recap, auth: true. No body, for the same reason.
+   * A round still in progress is refused with 409 rather than described as though it were over.
+   */
+  roundRecap(
+    tournamentId: string,
+    roundIndex: number,
+    signal?: AbortSignal,
+  ): Promise<TournamentRoundRecap> {
+    return this.execute<TournamentRoundRecap>({
+      method: 'POST',
+      path: `/v1/tournaments/${encodeURIComponent(tournamentId)}/rounds/${encodeURIComponent(String(roundIndex))}/recap`,
+      auth: true,
+      ...(signal !== undefined ? { signal } : {}),
     });
   }
 }

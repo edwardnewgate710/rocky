@@ -352,6 +352,7 @@ test('bootstrap returns a fresh result with every public named field', () => {
     profile: true,
     leaderboard: true,
     tournament: true,
+    tournamentCommentary: true,
     search: true,
     messages: true,
     teams: true,

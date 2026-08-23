@@ -96,6 +96,8 @@ import {
   endgameNextView,
   endgameAttemptView,
   coachView,
+  tournamentGameCommentaryView,
+  tournamentRoundRecapView,
 } from './presenters';
 import { DEFAULT_ANALYSIS_LIMITS } from './analysis/limits';
 import { TournamentService } from './tournament/service';
@@ -174,6 +176,13 @@ export interface RouteDeps {
    * when at least one of them is.
    */
   readonly coach?: import('./coach/coach-service').CoachService;
+  /**
+   * Tournament commentary (ADR-0130). When absent, both commentary routes respond 503.
+   *
+   * Needs an engine to cite and a provider to write with, so it is composed only when the analysis
+   * subsystem and the AI subsystem are both configured.
+   */
+  readonly tournamentCommentary?: import('./commentary/tournament-commentary-service').TournamentCommentaryService;
 }
 
 /** Narrows without a cast, so the request array reaches the service as the type it was checked to be. */
@@ -2179,6 +2188,156 @@ export function buildRouter(deps: RouteDeps): Router {
     }),
     PUBLIC,
     createLiveTournamentHandler(deps),
+  );
+
+  // --- Tournament commentary (ADR-0130) --------------------------------------
+  //
+  // Both routes take path identifiers and an empty body. That is the feature's whole security
+  // posture in one sentence: the caller names a tournament, a game or a round, and every fact that
+  // reaches an engine, a prompt or the response is read by the server from the tournament aggregate
+  // and the durable game log. There is no field through which a caller could describe a game that
+  // was never played, name a player who did not play it, or decide how much of a metered provider
+  // and a shared engine their request spends.
+  //
+  // AUTHED for a reason worth stating: `GET /v1/tournaments/:id/live` is PUBLIC because reading a
+  // broadcast costs a database query, while generating a commentary costs a search and a completion
+  // with a bill attached. Public visibility of a tournament does not make anonymous callers
+  // entitled to spend money on it, and no route in this API that reaches an engine or a provider is
+  // reachable without an account.
+  /**
+   * @returns the commentary service, or 503 on a deployment that composed none.
+   */
+  const commentaryService = () => {
+    const service = deps.tournamentCommentary;
+    if (!service) throw HttpError.unavailable('tournament commentary is not configured');
+    return service;
+  };
+
+  /**
+   * Refuse any request body at all.
+   *
+   * `undefined` is the only body these routes accept, and that is stricter than it first looks:
+   * `strictObject(ctx.body, [])` refuses unknown *fields*, so it would have admitted `{}`, and an
+   * explicit JSON `null` is a body too. Both then produced a 200 from routes whose documented
+   * response for a request body is 422 — a contract that said one thing and did another. Raised in
+   * the CodeRabbit review of PR #153.
+   *
+   * A caller who sends nothing is fine: an empty POST body parses to `undefined`. Nothing is being
+   * taken away from a caller who has a fact to send, because there is no fact these routes accept.
+   *
+   * @param ctx - the request.
+   * @throws HttpError 422 when anything at all was sent.
+   */
+  const noBody = (ctx: RequestContext): void => {
+    if (ctx.body === undefined) return;
+    throw HttpError.validation('this endpoint takes no request body', {
+      body: 'must be absent; every fact in the response is derived by the server',
+    });
+  };
+
+  router.post(
+    '/v1/tournaments/:id/games/:gameId/commentary',
+    doc({
+      summary: 'Commentate the decisive moment of a finished tournament game',
+      tags: ['tournaments'],
+      security: 'bearer',
+      params: [pathParam('id', 'Tournament id'), pathParam('gameId', 'Game id, as linked by the tournament')],
+      responses: {
+        200: ['TournamentGameCommentaryResponse', 'Server-derived facts, an engine citation, and the narrative'],
+        401: ['Error', 'Authentication required'],
+        404: ['Error', 'Tournament not found, or the game is not part of it'],
+        409: ['Error', 'The tournament is an arena, or the game is unfinished or has no moves'],
+        422: ['Error', 'The request carried a body'],
+        429: ['Error', 'Rate limit exceeded'],
+        503: ['Error', 'Commentary is not configured, or the engine or provider is unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const identity = requireAuth(ctx);
+      const service = commentaryService();
+      noBody(ctx);
+
+      // Deferred until the service has established that the tournament, the game and its finished
+      // state are all real. Enumerating game ids costs nothing that way, and a caller cannot empty
+      // their own budget — or, through the shared per-IP bucket, their neighbours' — with requests
+      // that were never going to reach an engine.
+      /** @returns a promise that rejects with 429 when either bucket refuses. */
+      const charge = (): Promise<void> =>
+        admit([
+          {
+            key: `tournament-commentary:user:${identity.userId}`,
+            limit: config.rateLimit.tournamentCommentary.perUser,
+          },
+          {
+            key: `tournament-commentary:ip:${ctx.ip ?? 'unknown'}`,
+            limit: config.rateLimit.tournamentCommentary.perIp,
+          },
+        ]);
+
+      const outcome = await service.commentateGame(
+        {
+          tournamentId: ctx.params['id']!,
+          gameId: ctx.params['gameId']!,
+          signal: ctx.signal,
+        },
+        charge,
+      );
+      return json(200, tournamentGameCommentaryView(outcome));
+    },
+  );
+
+  router.post(
+    '/v1/tournaments/:id/rounds/:roundIndex/recap',
+    doc({
+      summary: 'Narrate a round every pairing of which has a result',
+      tags: ['tournaments'],
+      security: 'bearer',
+      params: [pathParam('id', 'Tournament id'), pathParam('roundIndex', 'Zero-based round index')],
+      responses: {
+        200: ['TournamentRoundRecapResponse', 'The round results, the standings after it, and the narrative'],
+        401: ['Error', 'Authentication required'],
+        404: ['Error', 'Tournament or round not found'],
+        409: ['Error', 'The tournament is an arena, or the round is not complete'],
+        422: ['Error', 'Invalid round index, or the request carried a body'],
+        429: ['Error', 'Rate limit exceeded'],
+        503: ['Error', 'Commentary is not configured, or the provider is unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const identity = requireAuth(ctx);
+      const service = commentaryService();
+      noBody(ctx);
+
+      // Matched before it is parsed, because `Number.parseInt` truncates: it reads "1.5" as 1 and
+      // "1abc" as 1, so a caller asking for a round that does not exist would silently be answered
+      // about one that does. Found by the route tests for this increment.
+      const rawRound = ctx.params['roundIndex']!;
+      if (!/^[0-9]{1,4}$/.test(rawRound)) {
+        throw HttpError.validation('Invalid roundIndex', { roundIndex: 'must be a non-negative integer' });
+      }
+      const roundIndex = Number.parseInt(rawRound, 10);
+
+      /** @returns a promise that rejects with 429 when either bucket refuses. */
+      const charge = (): Promise<void> =>
+        admit([
+          {
+            key: `tournament-commentary:user:${identity.userId}`,
+            limit: config.rateLimit.tournamentCommentary.perUser,
+          },
+          {
+            key: `tournament-commentary:ip:${ctx.ip ?? 'unknown'}`,
+            limit: config.rateLimit.tournamentCommentary.perIp,
+          },
+        ]);
+
+      const outcome = await service.recapRound(
+        { tournamentId: ctx.params['id']!, round: roundIndex, signal: ctx.signal },
+        charge,
+      );
+      return json(200, tournamentRoundRecapView(outcome));
+    },
   );
 
   // --- Social Graph --------------------------------------------------------

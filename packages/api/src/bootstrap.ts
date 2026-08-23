@@ -75,6 +75,13 @@ import type { GameLauncher } from './tournament/launcher';
 import type { TournamentLiveView } from './tournament/live-view';
 import { DurableGameLauncher } from './tournament/durable-launcher';
 import { DurableTournamentLiveView } from './tournament/durable-live-view';
+import { DurableFinishedGameArchive } from './tournament/durable-finished-game';
+import type { FinishedGameArchive } from './tournament/finished-game';
+import {
+  createTournamentCommentary,
+  RepositoryPlayerHandles,
+  RepositoryTournamentLookup,
+} from './commentary/composition';
 import type { AnalysisProvider } from '@chess-platform/engine';
 import { EngineBackedEvaluator } from '@chess-platform/anti-cheat/engine';
 import { AntiCheatAnalysisService } from './anti-cheat/analysis-service';
@@ -148,6 +155,8 @@ export interface PgBootstrapOptions {
   readonly tournamentRepo?: TournamentsRepository;
   readonly gameLauncher?: GameLauncher;
   readonly liveView?: TournamentLiveView;
+  /** Finished-game reader (ADR-0130). Defaults to the durable event-log adapter. */
+  readonly finishedGames?: FinishedGameArchive;
   readonly emailSender?: EmailSender;
   /** Backs anti-cheat evaluation. Distinct from {@link PgBootstrapOptions.analysis}. */
   readonly analysisProvider?: AnalysisProvider;
@@ -288,6 +297,17 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     features: coachFeatures,
   });
 
+  // Tournament commentary (ADR-0130) borrows the same analysis subsystem and the same AI
+  // orchestrator, and owns three reads of its own: the tournament aggregate, the durable game log,
+  // and the handle behind a player id. It adds no pool, no worker and no shutdown handle.
+  const tournamentCommentary = createTournamentCommentary({
+    ...(aiComposition ? { ai: aiComposition } : {}),
+    ...(analysisComposition ? { analysis: analysisComposition.service } : {}),
+    archive: options.finishedGames ?? new DurableFinishedGameArchive(eventStore),
+    tournaments: new RepositoryTournamentLookup(tournamentRepo),
+    players: new RepositoryPlayerHandles(repos.users),
+  });
+
   const searchEnabled = process.env['SEARCH_ENABLED'] !== '0';
   const searchRepository = searchEnabled
     ? (options.searchRepository ?? new PgSearchRepository(pool))
@@ -406,6 +426,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ...(openingExploration ? { openingExploration } : {}),
     ...(endgameTraining ? { endgameTraining } : {}),
     ...(coach ? { coach } : {}),
+    ...(tournamentCommentary ? { tournamentCommentary } : {}),
     botTimingSource: new EventStoreBotTimingSource(eventStore),
     // Production observability (M13): structured logs to stdout, a scrape
     // registry backing GET /v1/metrics, and tracer emitting spans to logs.

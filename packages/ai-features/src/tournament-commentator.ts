@@ -11,7 +11,7 @@
  */
 
 import type { AnalysisProvider, AnalysisRequest, EngineResult, AnalysisLimits } from '@chess-platform/engine';
-import type { AiProvider, CompletionRequest, EngineGrounding, TokenUsage } from '@chess-platform/ai-orchestrator';
+import type { CompletionPort, CompletionRequest, EngineGrounding, TokenUsage } from '@chess-platform/ai-orchestrator';
 import { engineResultsToGrounding, evalToString, buildGroundedMessages } from '@chess-platform/ai-orchestrator';
 
 import type { EngineCitation } from './types.js';
@@ -26,8 +26,16 @@ import type {
 export interface TournamentCommentatorOptions {
   /** The chess engine analysis provider (M5 port). */
   readonly engine: AnalysisProvider;
-  /** The AI completion provider (M7 port). */
-  readonly ai: AiProvider;
+  /**
+   * The AI completion port (M7).
+   *
+   * `CompletionPort` rather than `AiProvider`: this feature calls `complete` and nothing else, and
+   * the wider type additionally demands an id, capability discovery and a health check that no path
+   * through this class reaches. `MoveExplainer` in this package already depends on the narrow port,
+   * and asking for the wide one here meant the API's orchestrator — which routes, fails over,
+   * times out and caches — could not be handed to the feature it was built for.
+   */
+  readonly ai: CompletionPort;
   /** Default variant (defaults to `chess`). */
   readonly defaultVariant?: string;
   /** Default analysis limits (used when the request doesn't supply them). */
@@ -43,7 +51,7 @@ export interface TournamentCommentatorOptions {
  */
 export class TournamentCommentator {
   private readonly engine: AnalysisProvider;
-  private readonly ai: AiProvider;
+  private readonly ai: CompletionPort;
   private readonly defaultVariant: string;
   private readonly defaultLimits: AnalysisLimits;
   private readonly temperature: number;

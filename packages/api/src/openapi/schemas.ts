@@ -264,6 +264,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
           'openingExplorer',
           'endgameTrainer',
           'coach',
+          'tournamentCommentary',
         ],
         properties: {
           learning: { type: 'boolean' },
@@ -280,6 +281,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
           openingExplorer: { type: 'boolean' },
           endgameTrainer: { type: 'boolean' },
           coach: { type: 'boolean' },
+          tournamentCommentary: { type: 'boolean' },
         },
         additionalProperties: false,
       },
@@ -2309,6 +2311,152 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
         type: 'array',
         items: { type: 'string' },
       },
+    },
+    additionalProperties: false,
+  },
+
+  CommentaryCitation: {
+    type: 'object',
+    description:
+      'What the engine said about the position the final move was played from. Separate from the '
+      + 'prose beside it so a reader can tell a measurement from a sentence.',
+    required: ['fen', 'move', 'evalKind', 'evalValue', 'evalLabel', 'bestLine', 'depth'],
+    properties: {
+      fen: { type: 'string' },
+      move: { type: 'string' },
+      evalKind: { type: 'string', enum: ['cp', 'mate'] },
+      evalValue: { type: 'number' },
+      evalLabel: { type: 'string' },
+      bestLine: { type: 'array', items: { type: 'string' } },
+      depth: { type: 'integer' },
+    },
+    additionalProperties: false,
+  },
+
+  TournamentGameCommentaryResponse: {
+    type: 'object',
+    description:
+      'Commentary on a finished tournament game. Every field but "commentary" is server-derived '
+      + 'from the tournament aggregate and the durable game log; the request carries path '
+      + 'identifiers and an empty body, so no value here can be an assertion the caller made. "fen" is the '
+      + 'position the final move was played from, not the position it produced — the engine is '
+      + 'never pointed at a board a game has already been decided on, and never at a game still '
+      + 'being played.',
+    required: [
+      'tournamentId',
+      'gameId',
+      'round',
+      'white',
+      'black',
+      'result',
+      'tournamentResult',
+      'termination',
+      'ply',
+      'fen',
+      'variant',
+      'finalMove',
+      'citation',
+      'commentary',
+      'providerId',
+      'model',
+    ],
+    properties: {
+      tournamentId: { type: 'string' },
+      gameId: { type: 'string' },
+      round: { type: 'integer', description: 'Zero-based round index.' },
+      white: { type: 'string', description: 'Display handle, never an account id.' },
+      black: { type: 'string', description: 'Display handle, never an account id.' },
+      result: { type: 'string' },
+      tournamentResult: {
+        ...nullableString,
+        description:
+          'What the tournament recorded for this pairing, or null while it has not recorded '
+          + 'one. A different fact from "result": the log says how the game ended, the '
+          + 'aggregate says how the tournament scored it, and a director can make them disagree.',
+      },
+      termination: { type: 'string' },
+      ply: { type: 'integer' },
+      fen: { type: 'string' },
+      variant: { type: 'string' },
+      finalMove: {
+        type: 'object',
+        required: ['uci', 'san'],
+        properties: {
+          uci: { type: 'string' },
+          san: { type: 'string' },
+        },
+        additionalProperties: false,
+      },
+      citation: { $ref: '#/components/schemas/CommentaryCitation' },
+      commentary: { type: 'string', description: 'Model prose. Never the source of any fact above it.' },
+      providerId: { type: 'string' },
+      model: { type: 'string' },
+    },
+    additionalProperties: false,
+  },
+
+  RoundRecapPairing: {
+    type: 'object',
+    description:
+      'One pairing as the tournament recorded it. "result" uses the vocabulary of the aggregate, '
+      + 'which is wider than a game result: a bye and a void are how a round resolves a pairing '
+      + 'nobody played.',
+    required: ['white', 'black', 'result'],
+    properties: {
+      white: { type: 'string' },
+      black: { ...nullableString, description: 'Null for a bye, which has no opponent.' },
+      result: {
+        type: 'string',
+        enum: ['white_win', 'black_win', 'draw', 'double_forfeit', 'bye', 'void'],
+      },
+    },
+    additionalProperties: false,
+  },
+
+  RoundRecapStanding: {
+    type: 'object',
+    required: ['rank', 'player', 'points'],
+    properties: {
+      rank: { type: 'integer' },
+      player: { type: 'string', description: 'Display handle, never an account id.' },
+      points: { type: 'number' },
+    },
+    additionalProperties: false,
+  },
+
+  TournamentRoundRecapResponse: {
+    type: 'object',
+    description:
+      'A narrative recap of a round every pairing of which has a result. "results" and "standings" '
+      + 'are computed from the tournament aggregate — the standings as they stood at the end of '
+      + 'this round, not as they stand now — and the model is given them rather than asked for '
+      + 'them. A round still in progress is refused rather than described.',
+    required: [
+      'tournamentId',
+      'round',
+      'results',
+      'standings',
+      'pairingsNarrated',
+      'narrative',
+      'providerId',
+      'model',
+    ],
+    properties: {
+      tournamentId: { type: 'string' },
+      round: { type: 'integer', description: 'Zero-based round index.' },
+      results: { type: 'array', items: { $ref: '#/components/schemas/RoundRecapPairing' } },
+      standings: { type: 'array', items: { $ref: '#/components/schemas/RoundRecapStanding' } },
+      pairingsNarrated: {
+        type: 'integer',
+        description:
+          'How many of "results" the narrative was given. Byes, voids and double forfeits have no '
+          + 'spelling in the match vocabulary of the narrator, so they are published here and withheld '
+          + 'from the prompt; when this is below results.length, the prose covers fewer games than '
+          + 'the round contained.',
+      },
+      narrative: { type: 'string', description: 'Model prose. Never the source of any fact above it.' },
+      providerId: { type: 'string' },
+      model: { type: 'string' },
     },
     additionalProperties: false,
   },

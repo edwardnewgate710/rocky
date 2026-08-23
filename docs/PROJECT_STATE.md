@@ -4,7 +4,89 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-22 — M15 Increment 21: coaching orchestrates the production services._
+_Last updated: 2026-08-22 — M15 Increment 22: tournament commentary over finished games and complete rounds._
+
+## M15 Increment 22 — Tournament Commentary (ADR-0130)
+
+The M9 `TournamentCommentator` had no route, no capability and no UI. It now runs through
+`POST /v1/tournaments/:id/games/:gameId/commentary` and
+`POST /v1/tournaments/:id/rounds/:roundIndex/recap`, with a commentary panel on the existing
+tournament detail page.
+
+**The caller names a resource; the server supplies every fact.** Both routes take path identifiers
+and an *empty body* — a body carrying any field is a 422, not an ignored field. The library's
+interface accepts the FEN, the players, the results and the standings from its caller, because in M9
+its caller was a test; productionizing it is mostly the work of taking those parameters away. Without
+that, anyone could have a model narrate a tournament that never happened in this platform's voice.
+
+**A live game is never evaluated.** `GET /v1/tournaments/:id/live` is public and already publishes
+the FEN of every game in progress; attaching an engine evaluation would turn a spectator endpoint
+into a live engine for the players in it. An unfinished game is refused with 409 before an engine is
+acquired — a refusal, not a redaction, because prose grounded in an evaluation that does not exist is
+prose about nothing.
+
+Terminality is read from the **durable event log**, not from the tournament's recorded result:
+`TournamentResultReporter` records results asynchronously from a PubSub subscription, so a game can
+be over in the log for some time before the aggregate knows. Membership — is this game part of this
+tournament — still comes from the aggregate, whose game link is written at launch.
+`DurableFinishedGameArchive` is the counterpart to `DurableTournamentLiveView`: same log, opposite
+half.
+
+**The engine looks at the position the final move was played from**, never the one it produced. A
+move and the board it has already been played on do not belong together (the ADR-0129 §7 defect), and
+a game's final position may be checkmate, where an evaluation is not a fact (ADR-0116).
+
+**A round is recapped only when the aggregate says it is complete.** `isRoundComplete` is the
+condition `tryAdvance` uses to advance a round, exposed rather than restated, and `tryAdvance` now
+calls it — so "complete enough to recap" and "complete enough to pair the next round" cannot drift
+apart. There is no partial recap; a narrative about three of five games under a heading that says
+"after round 3" is a false account of a round. `standingsAfterRound` reports the table as it stood at
+the end of *that* round, because by recap time a later round may already have decided games.
+
+**Facts and prose never mix.** `results`, `standings` and `citation` are server-derived fields; the
+narrative sits beside them and nothing in the response is derived from it. Byes, voids and double
+forfeits have no spelling in the library's three-valued match vocabulary, so they are published in
+`results` and withheld from the prompt, and `pairingsNarrated` says how many pairings the model was
+actually given — the UI shows a note when it is fewer than the round contained.
+
+**The library cannot reach an engine.** It is constructed with an `AnalysisProvider` that throws, so
+a future edit that stopped supplying pre-computed analysis fails loudly rather than quietly running a
+search this API never sized. Its other trap is a citation of `+0.00` at depth 0 when it has no
+results — an authored number published as a measured one (ADR-0127) — and the service refuses with
+503 before it can be reached.
+
+**Cost:** one engine search and one provider call for a commentary, zero and one for a recap. That is
+move explanation's bill, so `tournamentCommentary` gets move explanation's budget (10/min user,
+30/min IP) and both routes share it. Charged after every free refusal and before the first expensive
+call, so enumerating game ids costs nothing. Repeat requests hit the orchestrator's response cache
+and the engine's LRU, both already composed; no store and no migration were added.
+
+**Privacy:** only handles reach the provider, projected from the account row before it goes anywhere
+else, and a handle that does not match the narratable shape is replaced by a label rather than
+sanitised — renaming a real player in an official-sounding narrative is worse than declining to name
+them. Both routes are authenticated: no route in this API that reaches an engine or a provider is
+open to anonymous callers.
+
+**Tests:** 19 service, 7 route, 7 controller, 13 view, 10 mount, 4 client — 60 in all.
+Fifty-seven mutations run across thirteen rounds, fifty-seven caught. Five survived a first pass, and each exposed a test that could
+not fail rather than a guard that was missing: an auth declaration flipped to `PUBLIC` still 401'd
+through `requireAuth` while silently dropping the router's `WWW-Authenticate` challenge; a terminal
+outcome was paired with empty lines, so the emptiness check did all the work; a fake declared the
+client's own signature and could not observe a request body; a fixture registered players in
+ascending id order, so encounter order already matched sorted order; and the body-rejection test
+posted to one of the two routes. The ledger is in `docs/adr/0130-tournament-commentary.md`.
+
+**Known gap, not fixed here:** `createApiServer` forwards optional dependencies to the router by
+hand, and the list is silently incomplete when one is added — this service was wired everywhere else
+and still answered 503 until that line was written, and it compiled the whole way. Same defect class
+as the `main.ts` disposal list resolved in Increment 25; the same type-level fix belongs here.
+
+Deferred: live-game commentary, a durable store of generated prose, arena commentary, Study Partner
+(needs a durable `StudySessionStore` and a `CoachPort` extraction — the library `Coach` is not what
+production runs), Voice Coach, Chess960, `studies.variant` CHECK → FK.
+
+Detailed in `docs/adr/0130-tournament-commentary.md`.
+
 
 ## M15 Increment 21 — Coach Productionization (ADR-0129)
 

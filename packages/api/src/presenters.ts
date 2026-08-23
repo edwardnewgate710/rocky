@@ -941,6 +941,15 @@ export interface CapabilitiesFlags {
    * which sections to expect reads the five flags, not this one.
    */
   readonly coach: boolean;
+  /**
+   * Engine-cited commentary on finished tournament games, and narrative round recaps (ADR-0130).
+   *
+   * Implies both `analysis` and `moveExplanation`, and for the same reason each of those implies
+   * what it does: the feature needs an engine to cite and a provider to write with, and composes to
+   * `undefined` when either is missing. There is no partial mode — a recap with no provider is not
+   * a shorter recap, it is silence — so one flag covers both routes.
+   */
+  readonly tournamentCommentary: boolean;
 }
 
 /**
@@ -993,6 +1002,7 @@ export function capabilitiesView(
     | 'openingExploration'
     | 'endgameTraining'
     | 'coach'
+    | 'tournamentCommentary'
   >,
 ): CapabilitiesView {
   const puzzleVariants = deps.puzzleGeneration
@@ -1014,6 +1024,7 @@ export function capabilitiesView(
       openingExplorer: deps.openingExploration !== undefined,
       endgameTrainer: deps.endgameTraining !== undefined,
       coach: deps.coach !== undefined,
+      tournamentCommentary: deps.tournamentCommentary !== undefined,
     },
     analysisVariants: deps.analysis
       ? VARIANTS.filter((variant) => deps.analysis?.supportsVariant(variant) === true)
@@ -1501,5 +1512,126 @@ export function coachView(
     puzzle,
     endgame,
     featuresFired: [...outcome.featuresFired],
+  };
+}
+
+/**
+ * Wire shape for commentary on a finished tournament game (ADR-0130).
+ *
+ * Field-by-field rather than a spread of the outcome, which is the rule ADR-0129 §3 set for the
+ * Coach's puzzle section and for the same reason: a spread publishes whatever the service type
+ * grows next, and the value of a projection is that adding a field to the service is not the same
+ * act as publishing it.
+ */
+export interface TournamentGameCommentaryView {
+  readonly tournamentId: string;
+  readonly gameId: string;
+  readonly round: number;
+  readonly white: string;
+  readonly black: string;
+  readonly result: string;
+  readonly tournamentResult: string | null;
+  readonly termination: string;
+  readonly ply: number;
+  readonly fen: string;
+  readonly variant: string;
+  readonly finalMove: { readonly uci: string; readonly san: string };
+  readonly citation: {
+    readonly fen: string;
+    readonly move: string;
+    readonly evalKind: 'cp' | 'mate';
+    readonly evalValue: number;
+    readonly evalLabel: string;
+    readonly bestLine: readonly string[];
+    readonly depth: number;
+  };
+  readonly commentary: string;
+  readonly providerId: string;
+  readonly model: string;
+}
+
+/**
+ * Project a game commentary onto the wire.
+ *
+ * @param outcome - what the commentary service produced.
+ * @returns the public view.
+ */
+export function tournamentGameCommentaryView(
+  outcome: import('./commentary/tournament-commentary-service.js').GameCommentaryOutcome,
+): TournamentGameCommentaryView {
+  return {
+    tournamentId: outcome.tournamentId,
+    gameId: outcome.gameId,
+    round: outcome.round,
+    white: outcome.white,
+    black: outcome.black,
+    result: outcome.result,
+    tournamentResult: outcome.tournamentResult,
+    termination: outcome.termination,
+    ply: outcome.ply,
+    fen: outcome.fen,
+    variant: outcome.variant,
+    finalMove: { uci: outcome.finalMove.uci, san: outcome.finalMove.san },
+    citation: {
+      fen: outcome.citation.fen,
+      move: outcome.citation.move,
+      evalKind: outcome.citation.evalKind,
+      evalValue: outcome.citation.evalValue,
+      evalLabel: outcome.citation.evalLabel,
+      bestLine: [...outcome.citation.bestLine],
+      depth: outcome.citation.depth,
+    },
+    commentary: outcome.commentary,
+    providerId: outcome.providerId,
+    model: outcome.model,
+  };
+}
+
+/** Wire shape for a narrative round recap (ADR-0130). */
+export interface TournamentRoundRecapView {
+  readonly tournamentId: string;
+  readonly round: number;
+  readonly results: readonly {
+    readonly white: string;
+    readonly black: string | null;
+    readonly result: string;
+  }[];
+  readonly standings: readonly {
+    readonly rank: number;
+    readonly player: string;
+    readonly points: number;
+  }[];
+  readonly pairingsNarrated: number;
+  readonly narrative: string;
+  readonly providerId: string;
+  readonly model: string;
+}
+
+/**
+ * Project a round recap onto the wire.
+ *
+ * @param outcome - what the commentary service produced.
+ * @returns the public view.
+ */
+export function tournamentRoundRecapView(
+  outcome: import('./commentary/tournament-commentary-service.js').RoundRecapOutcome,
+): TournamentRoundRecapView {
+  return {
+    tournamentId: outcome.tournamentId,
+    round: outcome.round,
+    results: outcome.results.map((entry) => ({
+      white: entry.white,
+      black: entry.black,
+      result: entry.result,
+    })),
+    standings: outcome.standings.map((row) => ({
+      rank: row.rank,
+      player: row.player,
+      points: row.points,
+    })),
+    pairingsNarrated: outcome.pairingsNarrated,
+    narrative: outcome.narrative,
+    providerId: outcome.providerId,
+    model: outcome.model,
   };
 }

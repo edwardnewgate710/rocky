@@ -235,6 +235,15 @@ export interface SystemCapabilities {
    * so it says the endpoint will answer — not that every section will.
    */
   readonly coach?: boolean;
+  /**
+   * Engine-cited commentary on finished tournament games, and narrative round recaps
+   * (M15 inc 22, ADR-0130).
+   *
+   * Optional because a server predating it omits the field, and a missing flag must read as off
+   * rather than as permission. Needs an engine and a provider, so it is false on a deployment that
+   * has only one of them — do not infer it from `analysis` or from `coach`.
+   */
+  readonly tournamentCommentary?: boolean;
 }
 
 export interface CapabilitiesResponse {
@@ -1184,4 +1193,133 @@ export interface CoachResponse {
   readonly puzzle: CoachSection<CoachPuzzle>;
   readonly endgame: CoachSection<EndgamePosition>;
   readonly featuresFired: readonly string[];
+}
+
+
+// --- Tournament commentary (M15 inc 22, ADR-0130) --------------------------
+
+/**
+ * What the engine said about the position the final move was played from.
+ *
+ * Kept separate from the prose it accompanies so a reader — and this client — can tell a
+ * measurement from a sentence. The server never publishes a citation it did not measure.
+ */
+export interface CommentaryCitation {
+  readonly fen: string;
+  readonly move: string;
+  readonly evalKind: 'cp' | 'mate';
+  readonly evalValue: number;
+  readonly evalLabel: string;
+  readonly bestLine: readonly string[];
+  readonly depth: number;
+}
+
+/**
+ * Commentary on a finished tournament game.
+ *
+ * Every field but `commentary` is derived by the server from the tournament and the game log; the
+ * request carries path ids and no body at all. `fen` is the position the final move was played
+ * *from*, not the position it produced.
+ */
+export interface TournamentGameCommentary {
+  readonly tournamentId: string;
+  readonly gameId: string;
+  /** Zero-based round index. */
+  readonly round: number;
+  /** Display handle, never an account id. */
+  readonly white: string;
+  /** Display handle, never an account id. */
+  readonly black: string;
+  readonly result: string;
+  /**
+   * What the tournament recorded for this pairing, or null while it has not recorded one.
+   *
+   * A different fact from `result`: the log says how the game ended, the aggregate says how the
+   * tournament scored it, and a director can make them disagree. Render both when they do.
+   */
+  readonly tournamentResult: string | null;
+  readonly termination: string;
+  readonly ply: number;
+  readonly fen: string;
+  readonly variant: string;
+  readonly finalMove: { readonly uci: string; readonly san: string };
+  readonly citation: CommentaryCitation;
+  /** Generated prose. Never the source of any fact above it. */
+  readonly commentary: string;
+  readonly providerId: string;
+  readonly model: string;
+}
+
+/** The tournament's own result vocabulary, which is wider than a game result. */
+export type RoundRecapResult =
+  | 'white_win'
+  | 'black_win'
+  | 'draw'
+  | 'double_forfeit'
+  | 'bye'
+  | 'void';
+
+/** One pairing of a round, as the tournament recorded it. */
+export interface RoundRecapPairing {
+  readonly white: string;
+  /** Null for a bye, which has no opponent. */
+  readonly black: string | null;
+  readonly result: RoundRecapResult;
+}
+
+/** One row of the standings as they stood at the end of the recapped round. */
+export interface RoundRecapStanding {
+  readonly rank: number;
+  readonly player: string;
+  readonly points: number;
+}
+
+/**
+ * A narrative recap of a round every pairing of which has a result.
+ *
+ * `standings` is the table as it stood at the end of *this* round, not the current one, so a recap
+ * of an earlier round stays true after later rounds are played.
+ */
+export interface TournamentRoundRecap {
+  readonly tournamentId: string;
+  /** Zero-based round index. */
+  readonly round: number;
+  readonly results: readonly RoundRecapPairing[];
+  readonly standings: readonly RoundRecapStanding[];
+  /**
+   * How many of `results` the narrative was given.
+   *
+   * Byes, voids and double forfeits have no spelling in the narrator's match vocabulary, so they
+   * are published but withheld from the prompt. When this is below `results.length` the prose
+   * covers fewer games than the round contained, and the UI has to say so.
+   */
+  readonly pairingsNarrated: number;
+  /** Generated prose. Never the source of any fact above it. */
+  readonly narrative: string;
+  readonly providerId: string;
+  readonly model: string;
+}
+
+
+/** One pairing of a generated round. A bye has a player and no opponent. */
+export type TournamentRoundPairing =
+  | {
+      readonly kind: 'game';
+      readonly white: string;
+      readonly black: string;
+      /** Null until the game has been launched for this pairing. */
+      readonly gameId: string | null;
+    }
+  | { readonly kind: 'bye'; readonly player: string };
+
+/**
+ * A generated round.
+ *
+ * Deliberately carries no results: `GET /v1/tournaments/:id/rounds` publishes pairings only, so a
+ * client cannot tell from this whether a round is complete or a game is finished. That is the
+ * server's question to answer, and it answers it with a 409.
+ */
+export interface TournamentRound {
+  readonly roundIndex: number;
+  readonly pairings: readonly TournamentRoundPairing[];
 }

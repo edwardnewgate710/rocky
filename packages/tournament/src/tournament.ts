@@ -216,6 +216,75 @@ export class Tournament {
     this.gameAttempts.set(matchId, (this.gameAttempts.get(matchId) ?? 0) + 1);
   }
 
+  /**
+   * The recorded result for one pairing, or `undefined` while it is still unresolved.
+   *
+   * `bye` and `void` are results in this map as much as a decided game is: a round is not waiting
+   * on them. Callers that need a *played* game must therefore check the value, not just presence.
+   */
+  resultFor(roundIndex: number, pairingIndex: number): GameResult | 'bye' | 'void' | undefined {
+    return this.results.get(`${roundIndex}-${pairingIndex}`);
+  }
+
+  /**
+   * Whether every pairing in a round has a recorded result.
+   *
+   * This is the condition {@link tryAdvance} uses to decide the round is over, exposed rather than
+   * restated so a caller asking "is this round complete?" gets the same answer the aggregate acts
+   * on. A second copy of the rule outside this class would be free to drift from the one that
+   * actually advances the tournament.
+   *
+   * An out-of-range index is `false`, not an error: a round that does not exist is certainly not
+   * complete, and callers reaching this with a user-supplied number should not have to pre-check.
+   */
+  isRoundComplete(roundIndex: number): boolean {
+    // Found by its own `roundIndex` rather than by array position. The two agree today —
+    // `buildContext` passes `roundNumber: this.rounds.length` and both strategies echo it back — but
+    // matchIds are keyed on `round.roundIndex`, so reading a round by position would silently answer
+    // about a different round the day a strategy numbers them any other way.
+    const round = this.rounds.find((candidate) => candidate.roundIndex === roundIndex);
+    if (!round) return false;
+    for (let p = 0; p < round.pairings.length; p += 1) {
+      if (!this.results.has(`${roundIndex}-${p}`)) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Standings as they stood at the end of a round, ignoring every later result.
+   *
+   * {@link standings} answers "how does the table look now", which is a different question and the
+   * wrong one for anything that reports on a particular round: by the time a round-3 recap is
+   * requested, round 4 may already have decided games, and presenting the current table beside
+   * round 3's results would label later facts with an earlier round's number.
+   *
+   * **The `withdrawn` flag on each row is current, not historical.** Results are filtered by round;
+   * withdrawals are not, because the aggregate records *that* a player withdrew and not *when*.
+   * A player who withdrew in round 4 is therefore flagged withdrawn in a round-3 table where they
+   * were still playing. Every other field — points, tiebreaks, ordering, the ranking itself — is
+   * computed from the filtered results and is correct as of the round.
+   *
+   * No caller publishes the flag today: `RecapStanding` in the commentary service carries rank,
+   * name and points only. Fixing it means recording a withdrawal round and migrating
+   * {@link TournamentSnapshot}, which is a change to the persisted format and belongs in its own
+   * increment. Raised in the CodeRabbit review of PR #153; recorded here so the next caller that
+   * wants the flag finds out before publishing it rather than after.
+   */
+  standingsAfterRound(roundIndex: number): PlayerStanding[] {
+    const upTo = new Map<string, GameResult | 'bye' | 'void'>();
+    for (const [matchId, result] of this.results.entries()) {
+      const round = Number.parseInt(matchId.slice(0, matchId.indexOf('-')), 10);
+      if (Number.isFinite(round) && round <= roundIndex) upTo.set(matchId, result);
+    }
+    return computeStandings(
+      this.getParticipants(),
+      upTo,
+      this.pairingsByMatchId,
+      this.config.tiebreakOrder,
+      this.withdrawn,
+    );
+  }
+
   standings(): PlayerStanding[] {
     return computeStandings(
       this.getParticipants(),
@@ -373,16 +442,7 @@ export class Tournament {
     if (this.state !== 'running' || this.rounds.length === 0) return;
 
     const currentRound = this.rounds[this.rounds.length - 1];
-    let allResolved = true;
-    for (let p = 0; p < currentRound.pairings.length; p++) {
-      const matchId = `${currentRound.roundIndex}-${p}`;
-      if (!this.results.has(matchId)) {
-        allResolved = false;
-        break;
-      }
-    }
-
-    if (allResolved) {
+    if (this.isRoundComplete(currentRound.roundIndex)) {
       this.advanceRound();
     }
   }

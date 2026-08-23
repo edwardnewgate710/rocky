@@ -139,6 +139,13 @@ export interface ApiDependencies {
    */
   readonly coach?: import('./coach/coach-service').CoachService;
   /**
+   * Tournament commentary (ADR-0130). When absent, both commentary routes respond 503.
+   *
+   * Needs an engine to cite and a provider to write with, so it is composed only when the analysis
+   * subsystem and the AI subsystem are both configured.
+   */
+  readonly tournamentCommentary?: import('./commentary/tournament-commentary-service').TournamentCommentaryService;
+  /**
    * Optional GraphQL read layer (M10 inc 8). When absent, `POST /v1/graphql` responds 503.
    *
    * The subsystem repositories it resolves against are the optional ones above — it adds no data

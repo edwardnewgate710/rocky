@@ -15,6 +15,8 @@ export class FakeElement {
   private _innerHTML = '';
   textContent = '';
   classList = new Set<string>();
+  /** Mirrors the real property, so a view that groups nodes by class can be asserted on. */
+  className = '';
   disabled = false;
   hidden = false;
   dataset: Record<string, string> = {};

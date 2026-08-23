@@ -36,6 +36,10 @@ test('GET /v1/capabilities returns capability flags for all subsystems when pres
         openingExplorer: true,
         endgameTrainer: true,
         coach: true,
+        // False beside `coach: true`, which is the pairing worth reading: coaching composes from
+        // whichever features exist, while commentary needs an engine *and* a provider, and this
+        // harness configures no provider (ADR-0130).
+        tournamentCommentary: false,
       },
       // The stub provider has no opinion about engine binaries, so the service permits every
       // variant — the documented default for a double. A real deployment narrows this to whatever

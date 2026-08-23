@@ -113,6 +113,10 @@ export interface RateLimitConfig {
     readonly perUser: RateLimitEndpointConfig;
     readonly perIp: RateLimitEndpointConfig;
   };
+  readonly tournamentCommentary: {
+    readonly perUser: RateLimitEndpointConfig;
+    readonly perIp: RateLimitEndpointConfig;
+  };
 }
 
 export const DEFAULT_ACCESS_TOKEN_TTL_SEC = 15 * 60;
@@ -213,6 +217,19 @@ export const DEFAULT_RATE_LIMIT: RateLimitConfig = {
   coach: {
     perUser: { maxRequests: 8, windowMs: 60 * 1000 }, // 8 / min
     perIp: { maxRequests: 16, windowMs: 60 * 1000 }, // 16 / min
+  },
+  // Tournament commentary costs at most one engine search and one provider call — exactly move
+  // explanation's bill — so it gets exactly move explanation's budget. The number is copied because
+  // the cost is the same, not because the feature feels similar: a round recap runs no search at
+  // all, and a game commentary runs one MultiPV 1 search of a position that a finished game has
+  // already settled.
+  //
+  // Both routes share the bucket. They are two questions about one tournament and a caller who has
+  // spent their minute on recaps has spent the provider budget the commentaries would have used;
+  // splitting them would publish two ceilings for one bill.
+  tournamentCommentary: {
+    perUser: { maxRequests: 10, windowMs: 60 * 1000 }, // 10 / min
+    perIp: { maxRequests: 30, windowMs: 60 * 1000 }, // 30 / min
   },
 };
 

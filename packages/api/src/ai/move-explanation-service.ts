@@ -11,7 +11,7 @@
 import { Position } from '@chess-platform/core';
 import type { Variant } from '@chess-platform/core';
 import type { MoveExplainer } from '@chess-platform/ai-features';
-import { AiError } from '@chess-platform/ai-orchestrator';
+import { aiErrorToHttp } from './provider-errors.js';
 import { HttpError } from '../http/errors.js';
 import type { AnalysisPort } from '../analysis/service.js';
 import { coreFenValidator } from '../analysis/fen-validator.js';
@@ -284,47 +284,13 @@ export class MoveExplanationService {
 /**
  * Translate an AI failure into the API's error vocabulary.
  *
- * Every branch returns a fixed string. `AiError.message` is built from the provider's own response
- * body — `openai-adapter.ts` reads `error.message` straight out of it — so interpolating it here
- * would forward a third party's error text, and with it whatever that vendor chose to say about our
- * account, our key prefix, our organisation or our quota. The client learns that the feature is
- * unavailable and nothing about who was supposed to serve it.
+ * Delegates to the shared {@link aiErrorToHttp}, which this function was until tournament commentary
+ * needed the same mapping under a different name (ADR-0130). Kept as a named export because it is
+ * this service's contract and its tests name it.
  *
- * Everything is a 503 rather than a 500 because none of these is the caller's fault and all of them
- * are worth retrying later; `auth_failed` in particular is a deployment misconfiguration, and
- * telling the caller "unauthorized" would be a lie about *their* credentials.
- *
- * Anything that is not an `AiError` is rethrown untouched so a genuine bug surfaces as a 500 instead
- * of being disguised as a temporary provider problem — the same rule `analysis/service.ts` follows.
+ * @param err - the thrown value.
+ * @returns an `HttpError` for a provider failure, or `err` unchanged for anything else.
  */
 export function toHttpError(err: unknown): unknown {
-  if (err instanceof HttpError) return err;
-  if (!(err instanceof AiError)) return err;
-
-  switch (err.code) {
-    case 'provider_timeout':
-      return new HttpError(503, 'service_unavailable', 'move explanation timed out', undefined, {
-        'Retry-After': '5',
-      });
-    case 'rate_limited':
-      // The *provider* rate-limited us, not the user. A 429 here would tell the caller to slow down
-      // about a ceiling they have no way to see and did not exceed.
-      return new HttpError(503, 'service_unavailable', 'move explanation is temporarily unavailable', undefined, {
-        'Retry-After': '30',
-      });
-    case 'no_provider':
-    case 'provider_unavailable':
-    case 'circuit_open':
-      return new HttpError(503, 'service_unavailable', 'move explanation is temporarily unavailable', undefined, {
-        'Retry-After': '30',
-      });
-    case 'cancelled':
-      return HttpError.unavailable('move explanation was cancelled');
-    default:
-      // Including `auth_failed`, `provider_error`, `invalid_response`, `context_too_long`,
-      // `content_filtered`, `budget_exceeded` and `config_error` — all deployment- or vendor-side,
-      // none of them the caller's business, and every one of them carrying a message worth not
-      // forwarding.
-      return HttpError.unavailable('move explanation is unavailable');
-  }
+  return aiErrorToHttp(err, 'move explanation');
 }

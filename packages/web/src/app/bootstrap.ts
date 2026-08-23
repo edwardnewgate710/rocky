@@ -23,9 +23,11 @@ import { mountLobby } from './lobby-mount.js';
 import type { ProfileController } from './profile-controller.js';
 import { mountProfile } from './profile-mount.js';
 import type { TournamentController } from './tournament-controller.js';
+import type { MountedTournamentCommentary } from './competition-mounts.js';
 import {
   mountLeaderboard,
   mountTournamentDetail,
+  mountTournamentCommentary,
   mountTournamentList,
 } from './competition-mounts.js';
 import {
@@ -69,6 +71,7 @@ export interface BootstrappedDisposables {
   readonly profile: ProfileController | null;
   readonly leaderboard: { dispose: () => void } | null;
   readonly tournament: TournamentController | null;
+  readonly tournamentCommentary: MountedTournamentCommentary | null;
   readonly search: SearchController | null;
   readonly messages: MessagesController | null;
   readonly teams: TeamsController | null;
@@ -108,6 +111,7 @@ function createBootstrapped(
     profile: null,
     leaderboard: null,
     tournament: null,
+    tournamentCommentary: null,
     search: null,
     messages: null,
     teams: null,
@@ -244,6 +248,7 @@ export function bootstrap(
   let setPlayBotAuthenticated: ((authenticated: boolean) => void) | null = null;
   let gameSessionHandler: ((session: AuthSession | null) => void) | null = null;
   let endgameSessionHandler: (() => void) | null = null;
+  let commentarySessionHandler: ((signedIn: boolean) => void) | null = null;
   const auth = new AuthController({
     client: app.api,
     ...(deps?.webauthnAdapter !== undefined ? { webauthnAdapter: deps.webauthnAdapter } : {}),
@@ -271,6 +276,7 @@ export function bootstrap(
         selfProfileSessionHandler?.(session);
         gameSessionHandler?.(session);
         endgameSessionHandler?.();
+        commentarySessionHandler?.(session !== null);
       },
       onPending: (pending) => {
         if (authSubmitEl instanceof HTMLButtonElement) {
@@ -425,6 +431,13 @@ export function bootstrap(
   if (tournamentEl && route.name === 'tournament') {
     return createBootstrapped(app, auth, theme, {
       tournament: mountTournamentDetail(doc, app.api, route.id),
+      tournamentCommentary: (() => {
+        const commentary = mountTournamentCommentary(doc, app.api, route.id);
+        // Registered here rather than inside the mount, because the session callback is owned by
+        // the AuthController above and this is the only place that holds both.
+        commentarySessionHandler = (signedIn) => commentary.sessionChanged(signedIn);
+        return commentary;
+      })(),
     });
   }
 

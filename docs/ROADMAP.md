@@ -631,6 +631,32 @@ live broadcast multiplexing + `GET /v1/tournaments/:id/live`; and the
 Tournament Commentator AI feature deferred from M8. Full FIDE Dutch pairing
 remains deferred (ADR-0015).
 
+**Tournament Commentator productionized in M15 Increment 22 (ADR-0130).**
+`POST /v1/tournaments/:id/games/:gameId/commentary` and
+`POST /v1/tournaments/:id/rounds/:roundIndex/recap`, both authenticated, both taking path
+identifiers and an empty body. The library takes every fact from its caller — FEN, players, results,
+standings — because in M9 its caller was a test, so productionizing it is mostly the work of taking
+those parameters away: the server reads the position and the move from the durable game log and the
+results and standings from the tournament aggregate, and a request body carrying any of them is
+refused rather than ignored.
+
+Two refusals define the feature. A game still being played gets **no** commentary, because
+`GET /v1/tournaments/:id/live` is public and already publishes live FENs — attaching an engine
+evaluation to that would hand a player in the game a live engine. And a round with an unresolved
+pairing is refused rather than recapped, because a narrative about three of five games under a
+heading that says "after round 3" is a false account of a round.
+
+Terminality is read from the event log rather than the tournament's recorded result:
+`TournamentResultReporter` records results asynchronously from a PubSub subscription, so a game can
+be over in the log before the tournament knows. The engine is pointed at the position the final move
+was played *from*, never the one it produced — a decided position has an outcome, not an evaluation
+(ADR-0116).
+
+Cost: one engine search and one provider call for a game commentary, zero and one for a recap — move
+explanation's bill, so it shares move explanation's budget in a bucket of its own. Deferred:
+live-game commentary (it needs a spectator/participant distinction that deserves its own decision), a
+durable store of generated prose, and arena tournaments, which have no rounds.
+
 ## 🚧 Milestone 10 — Social & learning
 
 Teams/communities, forums, messaging, friends/followers, achievements; lessons,
