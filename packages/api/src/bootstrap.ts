@@ -61,7 +61,7 @@ import type { PasswordHasher } from './auth/password';
 import { AccessTokenService } from './auth/tokens';
 import { resolveConfig } from './config';
 import type { ApiConfigInput } from './config';
-import type { ApiDependencies, Repositories } from './deps';
+import type { ApiDependencies, OptionalDependencies, Repositories } from './deps';
 import type { AuditEntry, AuditRepository } from './ports/audit';
 import { systemClock } from './ports/clock';
 import type { Clock } from './ports/clock';
@@ -396,6 +396,46 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
       sampler,
     });
 
+  // Every optional dependency, named in one place. `OptionalDependencies` makes each key
+  // mandatory here, so composing a feature above and forgetting it below is a build failure rather
+  // than a deployment that configured the feature and still answers 503. That is the production
+  // half of the defect ADR-0131 closes; the forwarding half lives in `server.ts`.
+  //
+  // The conditional spreads this replaces (`...(coach ? { coach } : {})`) left a key absent rather
+  // than `undefined`. Nothing distinguishes the two: the package does not set
+  // `exactOptionalPropertyTypes`, and every consumer asks `!== undefined` rather than probing with
+  // `in` or `Object.keys`.
+  const optional: OptionalDependencies = {
+    antiCheatAnalysis,
+    botTimingSource: new EventStoreBotTimingSource(eventStore),
+    searchRepository,
+    semanticSearchRepository,
+    embeddingProvider,
+    socialGraphRepository,
+    messagingRepository,
+    communityRepository,
+    achievementsRepository,
+    studiesRepository,
+    learningRepository,
+    graphql,
+    analysis: analysisComposition?.service,
+    moveExplanation,
+    mistakePrediction,
+    puzzleGeneration,
+    openingExploration,
+    endgameTraining,
+    coach,
+    tournamentCommentary,
+    // Production observability (M13): structured logs to stdout, a scrape
+    // registry backing GET /v1/metrics, and tracer emitting spans to logs.
+    logger,
+    metrics,
+    tracer,
+    readiness: async () => {
+      await pool.query('SELECT 1');
+    },
+  };
+
   const deps: ApiDependencies = {
     repos,
     hasher,
@@ -408,34 +448,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     gameLauncher,
     liveView: options.liveView ?? new DurableTournamentLiveView(tournamentRepo, eventStore),
     emailSender: options.emailSender ?? createEmailSenderFromEnv(process.env, metrics),
-    ...(antiCheatAnalysis ? { antiCheatAnalysis } : {}),
-    ...(searchRepository ? { searchRepository } : {}),
-    ...(semanticSearchRepository ? { semanticSearchRepository } : {}),
-    ...(embeddingProvider ? { embeddingProvider } : {}),
-    ...(socialGraphRepository ? { socialGraphRepository } : {}),
-    ...(messagingRepository ? { messagingRepository } : {}),
-    ...(communityRepository ? { communityRepository } : {}),
-    ...(achievementsRepository ? { achievementsRepository } : {}),
-    ...(studiesRepository ? { studiesRepository } : {}),
-    ...(learningRepository ? { learningRepository } : {}),
-    ...(graphql ? { graphql } : {}),
-    ...(analysisComposition ? { analysis: analysisComposition.service } : {}),
-    ...(moveExplanation ? { moveExplanation } : {}),
-    ...(mistakePrediction ? { mistakePrediction } : {}),
-    ...(puzzleGeneration ? { puzzleGeneration } : {}),
-    ...(openingExploration ? { openingExploration } : {}),
-    ...(endgameTraining ? { endgameTraining } : {}),
-    ...(coach ? { coach } : {}),
-    ...(tournamentCommentary ? { tournamentCommentary } : {}),
-    botTimingSource: new EventStoreBotTimingSource(eventStore),
-    // Production observability (M13): structured logs to stdout, a scrape
-    // registry backing GET /v1/metrics, and tracer emitting spans to logs.
-    logger,
-    metrics,
-    tracer,
-    readiness: async () => {
-      await pool.query('SELECT 1');
-    },
+    ...optional,
   };
   return {
     deps,

@@ -32,7 +32,6 @@ import {
 import { strictObject, oneOf, optBoolean, optInt, optString, parseLimit, reqBoolean, reqString } from './http/validate';
 import type { RateLimiter, RateLimitRequest } from './ports/rate-limiter';
 import type { Metrics } from './ports/metrics';
-import type { Tracer } from './ports/tracer';
 import type { ApiConfig } from './config';
 import type { Clock } from './ports/clock';
 import type { IdGenerator } from './ports/ids';
@@ -121,7 +120,18 @@ import {
   type SemanticSearchRepository,
 } from '@chess-platform/search';
 
-/** Collaborators the route handlers need. */
+/**
+ * Collaborators the route handlers need.
+ *
+ * Every optional feature below is declared `key: T | undefined` rather than `key?: T`. The value is
+ * exactly as optional either way — a deployment that composed nothing passes `undefined` — but the
+ * *key* is mandatory, so a `buildRouter({ ... })` call that forgets one cannot compile.
+ *
+ * That is deliberate and it is the whole guard (ADR-0131). Writing them `?:` put the requirement in
+ * a type annotation at the call site instead, which someone can delete without a word from the
+ * compiler; putting it in this signature means the only way to drop a feature is to drop its
+ * declaration here, which is the one edit nobody makes by accident.
+ */
 export interface RouteDeps {
   readonly auth: AuthService;
   readonly repos: Repositories;
@@ -134,55 +144,54 @@ export interface RouteDeps {
   readonly gameLauncher: GameLauncher;
   readonly liveView: TournamentLiveView;
   readonly metrics: Metrics;
-  readonly tracer?: Tracer;
   readonly readiness: () => Promise<void>;
-  readonly antiCheatAnalysis?: AntiCheatAnalysisService;
-  readonly botTimingSource?: BotGameTimingSource;
-  readonly searchRepository?: SearchRepository;
-  readonly semanticSearchRepository?: SemanticSearchRepository;
-  readonly embeddingProvider?: EmbeddingProvider;
-  readonly socialGraphRepository?: import('@chess-platform/social').SocialGraphRepository;
-  readonly messagingRepository?: import('@chess-platform/messaging').MessagingRepository;
-  readonly communityRepository?: import('@chess-platform/community').CommunityRepository;
-  readonly achievementsRepository?: import('@chess-platform/achievements').AchievementsRepository;
-  readonly studiesRepository?: import('@chess-platform/studies').StudiesRepository;
-  readonly learningRepository?: import('@chess-platform/learning').LearningRepository;
-  readonly graphql?: import('./graphql').GraphQLOptions;
+  readonly antiCheatAnalysis: AntiCheatAnalysisService | undefined;
+  readonly botTimingSource: BotGameTimingSource | undefined;
+  readonly searchRepository: SearchRepository | undefined;
+  readonly semanticSearchRepository: SemanticSearchRepository | undefined;
+  readonly embeddingProvider: EmbeddingProvider | undefined;
+  readonly socialGraphRepository: import('@chess-platform/social').SocialGraphRepository | undefined;
+  readonly messagingRepository: import('@chess-platform/messaging').MessagingRepository | undefined;
+  readonly communityRepository: import('@chess-platform/community').CommunityRepository | undefined;
+  readonly achievementsRepository: import('@chess-platform/achievements').AchievementsRepository | undefined;
+  readonly studiesRepository: import('@chess-platform/studies').StudiesRepository | undefined;
+  readonly learningRepository: import('@chess-platform/learning').LearningRepository | undefined;
+  readonly graphql: import('./graphql').GraphQLOptions | undefined;
   /** Optional engine analysis (ADR-0113). When absent, `POST /v1/analysis` responds 503. */
-  readonly analysis?: import('./analysis/service').AnalysisService;
+  readonly analysis: import('./analysis/service').AnalysisService | undefined;
   /** Optional Move Explanation (ADR-0115). When absent, `POST /v1/ai/move-explanation` responds 503. */
-  readonly moveExplanation?: import('./ai/move-explanation-service').MoveExplanationService;
+  readonly moveExplanation: import('./ai/move-explanation-service').MoveExplanationService | undefined;
   /**
    * Optional Mistake Prediction (ADR-0118). When absent, `POST /v1/analysis/mistake-prediction`
    * responds 503. Tracks the analysis subsystem alone — no AI provider is involved.
    */
-  readonly mistakePrediction?: import('./analysis/mistake-prediction-service').MistakePredictionService;
+  readonly mistakePrediction: import('./analysis/mistake-prediction-service').MistakePredictionService | undefined;
   /** Optional puzzle generation (ADR-0125). When absent, `POST /v1/analysis/puzzle` responds 503. */
-  readonly puzzleGeneration?: import('./analysis/puzzle-generation-service').PuzzleGenerationService;
+  readonly puzzleGeneration: import('./analysis/puzzle-generation-service').PuzzleGenerationService | undefined;
   /**
    * Optional opening identification (ADR-0127). When absent, `POST /v1/openings/explore` responds
    * 503. Independent of the analysis subsystem — it borrows no engine and no provider.
    */
-  readonly openingExploration?: import('./openings/opening-exploration-service').OpeningExplorationService;
+  readonly openingExploration: import('./openings/opening-exploration-service').OpeningExplorationService | undefined;
   /**
    * Optional endgame training (ADR-0128). When absent, `POST /v1/endgames/*` responds 503.
    * Borrows the analysis subsystem; composes no AI provider.
    */
-  readonly endgameTraining?: import('./endgames/endgame-training-service').EndgameTrainingService;
+  readonly endgameTraining: import('./endgames/endgame-training-service').EndgameTrainingService | undefined;
   /**
    * Optional Coach orchestrator (ADR-0129). Absent means `POST /v1/coach` answers 503.
    *
    * Composed from the five feature services above rather than beside them, so it is present exactly
    * when at least one of them is.
    */
-  readonly coach?: import('./coach/coach-service').CoachService;
+  readonly coach: import('./coach/coach-service').CoachService | undefined;
   /**
    * Tournament commentary (ADR-0130). When absent, both commentary routes respond 503.
    *
    * Needs an engine to cite and a provider to write with, so it is composed only when the analysis
    * subsystem and the AI subsystem are both configured.
    */
-  readonly tournamentCommentary?: import('./commentary/tournament-commentary-service').TournamentCommentaryService;
+  readonly tournamentCommentary: import('./commentary/tournament-commentary-service').TournamentCommentaryService | undefined;
 }
 
 /** Narrows without a cast, so the request array reaches the service as the type it was checked to be. */

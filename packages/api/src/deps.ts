@@ -162,5 +162,34 @@ export interface ApiDependencies {
   /** Production dependency check used by the readiness endpoint. */
   readonly readiness?: () => Promise<void>;
 }
+/**
+ * The keys of {@link ApiDependencies} a caller may leave out: every optional feature, plus the four
+ * observability defaults.
+ *
+ * Derived, never written out. A new optional dependency joins this union the moment it is declared
+ * above, which is what lets {@link OptionalDependencies} refuse an assembly that forgets it.
+ *
+ * `{} extends Pick<T, K>` is the test for "K is optional on T" — an empty object satisfies a
+ * one-property type only when that property may be absent. It is used in preference to
+ * `undefined extends T[K]`, which would also catch a *required* property whose type happens to
+ * include `undefined`; there is no such property here today, and this way there need never be a
+ * reason to check.
+ */
+export type OptionalDependencyKey = {
+  [K in keyof ApiDependencies]-?: {} extends Pick<ApiDependencies, K> ? K : never;
+}[keyof ApiDependencies];
 
-
+/**
+ * Every optional dependency, named — the shape a composition root assembles before spreading it
+ * into an {@link ApiDependencies}.
+ *
+ * The mapped type runs over a union alias rather than `keyof ApiDependencies`, so it is
+ * non-homomorphic and TypeScript does not carry `?` across it: each key becomes required while its
+ * value type still admits `undefined`. Writing `analysis: undefined` is therefore fine and
+ * omitting the key is `TS2741`.
+ *
+ * This exists because composing a feature and forgetting to put it in the bundle is invisible
+ * otherwise: the build passes, every test passes, and the feature answers 503 in production from a
+ * deployment that configured it correctly. See ADR-0131.
+ */
+export type OptionalDependencies = { [K in OptionalDependencyKey]: ApiDependencies[K] };

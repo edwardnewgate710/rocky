@@ -4,7 +4,89 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-22 — M15 Increment 22: tournament commentary over finished games and complete rounds._
+_Last updated: 2026-08-23 — M15 Increment 23: compile-time dependency parity in the API composition root._
+
+## M15 Increment 23 — Compile-time dependency parity (ADR-0131)
+
+The known gap Increment 22 recorded, closed. `ApiDependencies` carries twenty-four optional keys, and
+they passed through two hand-written literals — the bundle `createPgDependencies` assembles and the
+copy `createApiServer` hands the router. Because every key was optional in both types, **omitting one
+compiled cleanly**: the build passed, the linter passed, the whole suite passed, and the feature
+answered 503 from a deployment that had configured it correctly. Increment 22 shipped exactly that,
+for `tournamentCommentary`, and it was found by calling the endpoint rather than by any gate.
+
+**Both literals are now exhaustive at compile time.** `ForwardedKey = Extract<keyof ApiDependencies,
+keyof RouteDeps>` yields a *union alias*, so the mapped type over it is non-homomorphic and TypeScript
+does not carry `?` across: every key becomes required while its value type still admits `undefined`.
+`analysis: deps.analysis` still typechecks with no engine composed; dropping the line is `TS2741`.
+The same derivation gives `OptionalDependencies` for the production bundle. Both sets derive from the
+declarations, so a new feature joins them the moment it is declared and there is no list to forget.
+
+This is the defect class ADR-0092 closed for `main.ts`'s disposal list, in a second file. The remedy
+differs — `Record<DisposableKey, true>` is right there because teardown *iterates* the keys at
+runtime, and nothing here does — but the principle is the same: derive the list from the authoritative
+type so omission cannot compile.
+
+The twenty conditional spreads in `bootstrap.ts` (`...(coach ? { coach } : {})`) became plain
+assignments. That changes absent keys to present-and-`undefined`, which was verified to be
+unobservable rather than assumed: `packages/api` does not set `exactOptionalPropertyTypes` (`packages/web`
+does), nothing in the package probes these bundles with `in` or `Object.keys`, every consumer asks
+`!== undefined`, and `server.ts` had always handed the router exactly this shape.
+
+**The guard is in `buildRouter`'s signature, not in an annotation.** The first version put it in
+`const forwarded: ForwardedDeps = { ... }`, and the adversarial review of PR #154 pointed out that an
+annotation is deletable — reverting `server.ts` while leaving the aliases defined passed every test,
+because the tests asserted properties of the aliases rather than of the code using them. Every optional
+feature on `RouteDeps` is now `key: T | undefined` instead of `key?: T`: the value is exactly as
+optional, the key is mandatory, and no call site can opt out. A second assertion covers what an
+intersection cannot see — a key added to `RouteDeps` alone, which would never be forwarded.
+
+**Tests:** 5 in `dependency-parity.test.ts` — three of type-level predicates asserted at runtime (the
+router type rejects a missing feature key; an assembly omitting an optional dependency does not
+typecheck; `undefined` stays legal for a feature and illegal for a core key) and two behavioural (a
+composed dependency reaches its route; an uncomposed one still answers 503). Twenty-one
+mutations run, nineteen caught on the first pass. Six replay the real omission in each literal and fail
+`npm run build` with `TS2741`; the rest attack the guard itself rather than its behaviour — loosening
+either mapped type back to optional keys, over-tightening one to forbid `undefined`, replacing a
+derived key set with a hand-written union, reordering the spread, deleting the forwarding annotation,
+adding a `RouteDeps` key nothing can supply, and reverting a `RouteDeps` key to `?:`. The numbered
+table is in ADR-0131 and is not restated here.
+
+**Both survivors were real findings.** The second: the parity predicates asserted on `RouteDeps` by
+name while the guard lives in `buildRouter`'s signature, so widening that parameter — leaving
+`RouteDeps` untouched — removed the guard with every test still passing. Verified by running it. They
+now read `Parameters<typeof buildRouter>[0]`, which cannot drift from the function because it is the
+function's parameter. Raised by CodeRabbit; it is the third assertion in this increment found sitting
+one level away from what it guarded.
+
+**The first survivor was also a real finding.** Dropping the resolved `tracer` override and forwarding the
+raw one compiled and passed everything — correctly, because `RouteDeps` declared `tracer?: Tracer`
+and **no route handler ever read it**. Tracing reaches the router through `router.toListener`, whose
+runtime `tracer` is required. A declared-but-unread optional dependency is a fourth thing that can
+silently drift, so it is deleted rather than kept with a corrected comment; the first build after
+deleting it failed with `TS2353` on the now-unknown key in the forwarding literal, which is the
+derivation working in the direction nobody usually tests.
+
+No runtime behaviour changed; 757 API tests and the full monorepo suite pass unchanged.
+
+**Breaking, deliberately:** `RouteDeps` is exported from the package root
+(`index.ts:13` re-exports `./routes` wholesale), so both changes narrow public type surface — `tracer`
+is gone, and twenty keys moved from `key?: T` to `key: T | undefined`. There is no non-breaking version
+of the second: "you may omit this key" is the property being removed. `createApiServer` and
+`ApiDependencies` — the supported entry points — are unchanged, nothing outside `packages/api` calls
+`buildRouter`, and the package is 0.1.0 with no published consumers. An earlier draft claimed this
+narrowed no external contract, having checked who *imports* the type in-repo rather than whether it is
+*exported*; the CodeRabbit review of PR #154 caught it.
+
+**Not fixed here:** `capabilitiesView` still takes a hand-written `Pick`, so a new optional feature
+never added to it is invisible to `GET /v1/capabilities` — a narrower failure than a 503, and closing
+it means deciding which dependencies are user-facing capabilities rather than deriving it.
+`SystemCapabilities` in the web client omits `moveExplanation` and `mistakePrediction`, which the API
+does emit; both are gated on `analysis` in the sidebar, so this is likely deliberate and is recorded
+rather than changed.
+
+Detailed in `docs/adr/0131-dependency-parity.md`.
+
 
 ## M15 Increment 22 — Tournament Commentary (ADR-0130)
 
@@ -76,10 +158,12 @@ client's own signature and could not observe a request body; a fixture registere
 ascending id order, so encounter order already matched sorted order; and the body-rejection test
 posted to one of the two routes. The ledger is in `docs/adr/0130-tournament-commentary.md`.
 
-**Known gap, not fixed here:** `createApiServer` forwards optional dependencies to the router by
-hand, and the list is silently incomplete when one is added — this service was wired everywhere else
-and still answered 503 until that line was written, and it compiled the whole way. Same defect class
-as the `main.ts` disposal list resolved in Increment 25; the same type-level fix belongs here.
+**Known gap, RESOLVED in M15 Increment 23 (ADR-0131):** `createApiServer` forwarded optional
+dependencies to the router by hand, and the list was silently incomplete when one was added — this
+service was wired everywhere else and still answered 503 until that line was written, and it compiled
+the whole way. Same defect class as the `main.ts` disposal list resolved in Increment 25. **Closed in
+Increment 23:** both that literal and the bundle `createPgDependencies` assembles are now typed by key
+sets derived from the declarations, so omitting one is `TS2741` rather than a 503.
 
 Deferred: live-game commentary, a durable store of generated prose, arena commentary, Study Partner
 (needs a durable `StudySessionStore` and a `CoachPort` extraction — the library `Coach` is not what
