@@ -3137,6 +3137,16 @@
               }
             }
           },
+          "409": {
+            "description": "A turn is active or inside the one-hour accepted-work protection window",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Malformed session ID",
             "content": {

@@ -37,55 +37,50 @@ export interface StudyPartnerCoachingV1 {
   readonly endgame: StudyPartnerSection<EndgameNextView>;
 }
 
-function omitted<T>(section: CoachSection<T>): StudyPartnerSection<never> {
-  if (section.kind === 'present') throw new Error('present section passed to omitted()');
-  return { kind: 'omitted', reason: section.reason };
+function projectSection<Input, Output>(
+  section: CoachSection<Input> | StudyPartnerSection<Input>,
+  present: (value: Input) => Output,
+): StudyPartnerSection<Output> {
+  return section.kind === 'present'
+    ? { kind: 'present', value: present(section.value) }
+    : { kind: 'omitted', reason: section.reason };
+}
+
+function explanationView(value: StudyPartnerExplanationView): StudyPartnerExplanationView {
+  return {
+    fen: value.fen,
+    variant: value.variant,
+    move: value.move,
+    explanation: value.explanation,
+    citation: {
+      moveOutcome: value.citation.moveOutcome,
+      evalKind: value.citation.evalKind,
+      evalValue: value.citation.evalValue,
+      evalLabel: value.citation.evalLabel,
+      bestMove: value.citation.bestMove,
+      bestLine: [...value.citation.bestLine],
+      depth: value.citation.depth,
+    },
+  };
+}
+
+function puzzleView(value: CoachPuzzleView): CoachPuzzleView {
+  return {
+    kind: 'puzzle',
+    fen: value.fen,
+    variant: value.variant,
+    difficulty: value.difficulty,
+  };
 }
 
 /** Project the production Coach result without provider metadata or withheld answers. */
 export function studyPartnerCoaching(outcome: CoachOutcome): StudyPartnerCoachingV1 {
   if (outcome.move === null) throw new Error('Study Partner coaching requires a move');
-  const mistake: StudyPartnerSection<MistakePredictionView> = outcome.mistake.kind === 'present'
-    ? { kind: 'present', value: mistakePredictionView(outcome.mistake.value) }
-    : omitted(outcome.mistake);
-  const explanation: StudyPartnerSection<StudyPartnerExplanationView> =
-    outcome.explanation.kind === 'present'
-      ? {
-          kind: 'present',
-          value: {
-            fen: outcome.explanation.value.fen,
-            variant: outcome.explanation.value.variant,
-            move: outcome.explanation.value.move,
-            explanation: outcome.explanation.value.explanation,
-            citation: {
-              moveOutcome: outcome.explanation.value.citation.moveOutcome,
-              evalKind: outcome.explanation.value.citation.evalKind,
-              evalValue: outcome.explanation.value.citation.evalValue,
-              evalLabel: outcome.explanation.value.citation.evalLabel,
-              bestMove: outcome.explanation.value.citation.bestMove,
-              bestLine: [...outcome.explanation.value.citation.bestLine],
-              depth: outcome.explanation.value.citation.depth,
-            },
-          },
-        }
-      : omitted(outcome.explanation);
-  const opening: StudyPartnerSection<OpeningExplorationView> = outcome.opening.kind === 'present'
-    ? { kind: 'present', value: openingExplorationView(outcome.opening.value) }
-    : omitted(outcome.opening);
-  const puzzle: StudyPartnerSection<CoachPuzzleView> = outcome.puzzle.kind === 'present'
-    ? {
-        kind: 'present',
-        value: {
-          kind: 'puzzle',
-          fen: outcome.puzzle.value.fen,
-          variant: outcome.puzzle.value.variant,
-          difficulty: outcome.puzzle.value.difficulty,
-        },
-      }
-    : omitted(outcome.puzzle);
-  const endgame: StudyPartnerSection<EndgameNextView> = outcome.endgame.kind === 'present'
-    ? { kind: 'present', value: endgameNextView(outcome.endgame.value) }
-    : omitted(outcome.endgame);
+  const mistake = projectSection(outcome.mistake, mistakePredictionView);
+  const explanation = projectSection(outcome.explanation, explanationView);
+  const opening = projectSection(outcome.opening, openingExplorationView);
+  const puzzle = projectSection(outcome.puzzle, puzzleView);
+  const endgame = projectSection(outcome.endgame, endgameNextView);
   return {
     version: STUDY_PARTNER_COACHING_VERSION,
     fen: outcome.fen,
@@ -121,47 +116,11 @@ export function storedStudyPartnerCoaching(value: unknown): StudyPartnerCoaching
     throw new Error('invalid stored Study Partner coaching variant');
   }
   const stored = value as unknown as StudyPartnerCoachingV1;
-  const mistake: StudyPartnerSection<MistakePredictionView> = stored.mistake.kind === 'present'
-    ? { kind: 'present', value: mistakePredictionView(stored.mistake.value) }
-    : { kind: 'omitted', reason: stored.mistake.reason };
-  const explanation: StudyPartnerSection<StudyPartnerExplanationView> =
-    stored.explanation.kind === 'present'
-      ? {
-          kind: 'present',
-          value: {
-            fen: stored.explanation.value.fen,
-            variant: stored.explanation.value.variant,
-            move: stored.explanation.value.move,
-            explanation: stored.explanation.value.explanation,
-            citation: {
-              moveOutcome: stored.explanation.value.citation.moveOutcome,
-              evalKind: stored.explanation.value.citation.evalKind,
-              evalValue: stored.explanation.value.citation.evalValue,
-              evalLabel: stored.explanation.value.citation.evalLabel,
-              bestMove: stored.explanation.value.citation.bestMove,
-              bestLine: [...stored.explanation.value.citation.bestLine],
-              depth: stored.explanation.value.citation.depth,
-            },
-          },
-        }
-      : { kind: 'omitted', reason: stored.explanation.reason };
-  const opening: StudyPartnerSection<OpeningExplorationView> = stored.opening.kind === 'present'
-    ? { kind: 'present', value: openingExplorationView(stored.opening.value) }
-    : { kind: 'omitted', reason: stored.opening.reason };
-  const puzzle: StudyPartnerSection<CoachPuzzleView> = stored.puzzle.kind === 'present'
-    ? {
-        kind: 'present',
-        value: {
-          kind: 'puzzle',
-          fen: stored.puzzle.value.fen,
-          variant: stored.puzzle.value.variant,
-          difficulty: stored.puzzle.value.difficulty,
-        },
-      }
-    : { kind: 'omitted', reason: stored.puzzle.reason };
-  const endgame: StudyPartnerSection<EndgameNextView> = stored.endgame.kind === 'present'
-    ? { kind: 'present', value: endgameNextView(stored.endgame.value) }
-    : { kind: 'omitted', reason: stored.endgame.reason };
+  const mistake = projectSection(stored.mistake, mistakePredictionView);
+  const explanation = projectSection(stored.explanation, explanationView);
+  const opening = projectSection(stored.opening, openingExplorationView);
+  const puzzle = projectSection(stored.puzzle, puzzleView);
+  const endgame = projectSection(stored.endgame, endgameNextView);
   return {
     version: STUDY_PARTNER_COACHING_VERSION,
     fen: stored.fen,

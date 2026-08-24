@@ -3,6 +3,10 @@ import type { Variant } from '@chess-platform/core';
 
 export type StudyPartnerSessionStatus = 'active' | 'completed';
 export type StudyPartnerTurnRequestStatus = 'claimed' | 'accepted' | 'succeeded' | 'failed';
+/** Claimed requests have not charged yet and may be failed transactionally after this interval. */
+export const STUDY_PARTNER_CLAIM_TIMEOUT_MS = 5 * 60 * 1000;
+/** Keep recently accepted work safe from a racing hard delete; this never replays or reclaims it. */
+export const STUDY_PARTNER_ACCEPTED_DELETE_PROTECTION_MS = 60 * 60 * 1000;
 
 export interface StudyPartnerSessionRow {
   readonly id: string;
@@ -103,6 +107,11 @@ export type EndStudyPartnerSessionResult =
   | { readonly kind: 'version_conflict'; readonly currentVersion: number }
   | { readonly kind: 'turn_in_progress' };
 
+export type DeleteStudyPartnerSessionResult =
+  | { readonly kind: 'deleted' }
+  | { readonly kind: 'not_found' }
+  | { readonly kind: 'turn_in_progress' };
+
 export interface StudyPartnerRepository {
   createSession(input: NewStudyPartnerSession): Promise<StudyPartnerSessionRow>;
   findOwnedSession(sessionId: string, ownerId: string): Promise<StudyPartnerSessionDetail | null>;
@@ -111,5 +120,9 @@ export interface StudyPartnerRepository {
   failTurn(ref: StudyPartnerTurnRequestRef): Promise<void>;
   commitTurn(input: CommitStudyPartnerTurn): Promise<CommitStudyPartnerTurnResult>;
   endSession(input: EndStudyPartnerSession): Promise<EndStudyPartnerSessionResult>;
-  deleteOwnedSession(sessionId: string, ownerId: string): Promise<boolean>;
+  deleteOwnedSession(
+    sessionId: string,
+    ownerId: string,
+    now: Date,
+  ): Promise<DeleteStudyPartnerSessionResult>;
 }

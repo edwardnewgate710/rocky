@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Position } from '@chess-platform/core';
-import { InMemoryStudyPartnerRepository } from '@chess-platform/persistence';
+import {
+  InMemoryStudyPartnerRepository,
+  type StudyPartnerTurnRequestRef,
+} from '@chess-platform/persistence';
 import type { CoachInput, CoachOutcome } from '../src/coach/coach-service.js';
 import { HttpError } from '../src/http/errors.js';
 import { storedStudyPartnerCoaching, studyPartnerCoaching } from '../src/study-partner/coaching.js';
@@ -23,7 +26,7 @@ const quietOutcome = (input: CoachInput): CoachOutcome => ({
 
 function fixture(coach?: {
   coach(input: CoachInput, onAccepted?: () => Promise<void>): Promise<CoachOutcome>;
-}) {
+}, repository = new InMemoryStudyPartnerRepository()) {
   let id = 0;
   let now = Date.parse('2026-08-24T12:00:00.000Z');
   const calls: CoachInput[] = [];
@@ -34,7 +37,6 @@ function fixture(coach?: {
       return quietOutcome(input);
     },
   };
-  const repository = new InMemoryStudyPartnerRepository();
   const service = new StudyPartnerService({
     repository,
     coach: productionCoach,
@@ -42,6 +44,12 @@ function fixture(coach?: {
     ids: { next: () => `00000000-0000-7000-8000-${String(++id).padStart(12, '0')}` },
   });
   return { service, calls, advance: (milliseconds: number) => { now += milliseconds; } };
+}
+
+class CleanupFailingStudyPartnerRepository extends InMemoryStudyPartnerRepository {
+  override async failTurn(_ref: StudyPartnerTurnRequestRef): Promise<void> {
+    throw new Error('cleanup unavailable');
+  }
 }
 
 test('the server applies a turn to its authoritative FEN and replays it without coaching twice', async () => {
@@ -104,6 +112,40 @@ test('a concurrent retry sees the durable claim and cannot buy a second coaching
   await first;
   assert.equal(coachCalls, 1);
   assert.equal(charges, 1);
+});
+
+test('deletion cannot erase a turn after production coaching has accepted it', async () => {
+  let release: (() => void) | undefined;
+  let accepted: (() => void) | undefined;
+  const acceptedSignal = new Promise<void>((resolve) => { accepted = resolve; });
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const { service } = fixture({
+    async coach(input, onAccepted) {
+      if (onAccepted) await onAccepted();
+      accepted?.();
+      await gate;
+      return quietOutcome(input);
+    },
+  });
+  const created = await service.create('owner', 'standard', START);
+  const submitted = service.submitTurn({
+    ownerId: 'owner', sessionId: created.id, move: 'e2e4', expectedVersion: 0,
+    idempotencyKey: 'delete-race', signal: new AbortController().signal,
+    charge: async () => undefined,
+  });
+  await acceptedSignal;
+
+  await assert.rejects(
+    () => service.delete('owner', created.id),
+    (error: unknown) => error instanceof HttpError && error.status === 409,
+  );
+  release?.();
+  await submitted;
+  await service.delete('owner', created.id);
+  await assert.rejects(
+    () => service.get('owner', created.id),
+    (error: unknown) => error instanceof HttpError && error.status === 404,
+  );
 });
 
 test('two different intents for one version cannot both enter production coaching', async () => {
@@ -248,6 +290,19 @@ test('a fabricated Coach result for another move is discarded before commit', as
   const unchanged = await service.get('owner', created.id);
   assert.equal(unchanged.version, 0);
   assert.equal(unchanged.turnCount, 0);
+});
+
+test('a cleanup failure does not replace the original mapped turn error', async () => {
+  const { service } = fixture(undefined, new CleanupFailingStudyPartnerRepository());
+  const created = await service.create('owner', 'standard', START);
+  await assert.rejects(
+    () => service.submitTurn({
+      ownerId: 'owner', sessionId: created.id, move: 'e2e5', expectedVersion: 0,
+      idempotencyKey: 'cleanup-failure', signal: new AbortController().signal,
+      charge: async () => undefined,
+    }),
+    (error: unknown) => error instanceof HttpError && error.status === 422,
+  );
 });
 
 test('ending is idempotent and does not rewrite completedAt', async () => {

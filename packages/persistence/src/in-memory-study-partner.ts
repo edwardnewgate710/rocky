@@ -3,6 +3,7 @@ import type {
   ClaimStudyPartnerTurnResult,
   CommitStudyPartnerTurn,
   CommitStudyPartnerTurnResult,
+  DeleteStudyPartnerSessionResult,
   EndStudyPartnerSession,
   EndStudyPartnerSessionResult,
   NewStudyPartnerSession,
@@ -12,6 +13,10 @@ import type {
   StudyPartnerTurnRequestRef,
   StudyPartnerTurnRequestStatus,
   StudyPartnerTurnRow,
+} from './study-partner.js';
+import {
+  STUDY_PARTNER_ACCEPTED_DELETE_PROTECTION_MS,
+  STUDY_PARTNER_CLAIM_TIMEOUT_MS,
 } from './study-partner.js';
 
 interface TurnRequest {
@@ -62,6 +67,16 @@ export class InMemoryStudyPartnerRepository implements StudyPartnerRepository {
   async claimTurn(input: ClaimStudyPartnerTurn): Promise<ClaimStudyPartnerTurnResult> {
     const session = this.sessions.get(input.sessionId);
     if (!session || session.ownerId !== input.ownerId) return { kind: 'not_found' };
+
+    for (const [key, request] of this.requests) {
+      if (
+        request.sessionId === input.sessionId
+        && request.status === 'claimed'
+        && input.now.getTime() - request.updatedAt.getTime() >= STUDY_PARTNER_CLAIM_TIMEOUT_MS
+      ) {
+        this.requests.set(key, { ...request, status: 'failed', updatedAt: input.now });
+      }
+    }
 
     const mapKey = requestMapKey(input.sessionId, input.idempotencyKey);
     const existing = this.requests.get(mapKey);
@@ -182,14 +197,27 @@ export class InMemoryStudyPartnerRepository implements StudyPartnerRepository {
     return { kind: 'ended', session: ended };
   }
 
-  async deleteOwnedSession(sessionId: string, ownerId: string): Promise<boolean> {
+  async deleteOwnedSession(
+    sessionId: string,
+    ownerId: string,
+    now: Date,
+  ): Promise<DeleteStudyPartnerSessionResult> {
     const session = this.sessions.get(sessionId);
-    if (!session || session.ownerId !== ownerId) return false;
+    if (!session || session.ownerId !== ownerId) return { kind: 'not_found' };
+    const active = [...this.requests.values()].some(
+      (request) => {
+        if (request.sessionId !== sessionId) return false;
+        const age = now.getTime() - request.updatedAt.getTime();
+        return (request.status === 'claimed' && age < STUDY_PARTNER_CLAIM_TIMEOUT_MS)
+          || (request.status === 'accepted' && age < STUDY_PARTNER_ACCEPTED_DELETE_PROTECTION_MS);
+      },
+    );
+    if (active) return { kind: 'turn_in_progress' };
     this.sessions.delete(sessionId);
     this.turns.delete(sessionId);
     for (const [key, request] of this.requests) {
       if (request.sessionId === sessionId) this.requests.delete(key);
     }
-    return true;
+    return { kind: 'deleted' };
   }
 }

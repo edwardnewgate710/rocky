@@ -18,9 +18,10 @@ CREATE TABLE study_partner_sessions (
 CREATE INDEX study_partner_sessions_owner_id_idx
     ON study_partner_sessions (owner_id);
 
--- A durable claim exists before CoachService can charge or begin expensive work. A claimed or
--- accepted request is intentionally never auto-reclaimed: after an ambiguous process failure,
--- refusing a duplicate is safer than purchasing the same coaching operation twice.
+-- A durable claim exists before CoachService can charge or begin expensive work. An accepted
+-- request is intentionally never reclaimed: after an ambiguous process failure, refusing a
+-- duplicate is safer than purchasing the same coaching operation twice. A stale claimed request is
+-- failed transactionally by claimTurn because claimed is provably before charge acceptance.
 CREATE TABLE study_partner_turn_requests (
     session_id UUID NOT NULL REFERENCES study_partner_sessions(id) ON DELETE CASCADE,
     idempotency_key VARCHAR(128) NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 128),

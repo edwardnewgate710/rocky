@@ -249,7 +249,11 @@ export class StudyPartnerService {
       if (committed.kind === 'conflict') throw HttpError.conflict('study partner session changed before commit');
       return { turn: turnView(committed.turn), replayed: false };
     } catch (error: unknown) {
-      await this.options.repository.failTurn({ ...ref, now: new Date(this.options.clock.now()) });
+      try {
+        await this.options.repository.failTurn({ ...ref, now: new Date(this.options.clock.now()) });
+      } catch {
+        // Cleanup is best effort; preserve the original mapped failure for the caller.
+      }
       throw error;
     }
   }
@@ -275,8 +279,12 @@ export class StudyPartnerService {
   }
 
   async delete(ownerId: string, sessionId: string): Promise<void> {
-    if (!await this.options.repository.deleteOwnedSession(sessionId, ownerId)) {
-      throw HttpError.notFound('study partner session not found');
-    }
+    const result = await this.options.repository.deleteOwnedSession(
+      sessionId,
+      ownerId,
+      new Date(this.options.clock.now()),
+    );
+    if (result.kind === 'not_found') throw HttpError.notFound('study partner session not found');
+    if (result.kind === 'turn_in_progress') throw HttpError.conflict('a study partner turn is in progress');
   }
 }

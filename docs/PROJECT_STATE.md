@@ -19,6 +19,8 @@ ledger. The ledger claims a bounded required `Idempotency-Key` before charging o
 so concurrent retries cannot purchase coaching twice; completed retries replay the stored turn.
 Owner-scoped repositories make missing and foreign IDs the same 404, account/owner deletion
 cascades, cancellation persists no partial turn, and completion never rewrites `completedAt`.
+Deletion refuses a fresh claim and protects accepted work for one hour from a concurrent cascade;
+after that window privacy deletion is allowed without replaying or reclaiming the accepted request.
 Sessions are bounded to 20 turns and standard chess in v1; the latter avoids claiming FEN authority
 for variants whose complete rule state does not round-trip through the current FEN codec.
 
@@ -26,7 +28,8 @@ Only versioned, tagged production coaching sections persist. Puzzle/endgame answ
 and explanation provider/model metadata, prompts, raw provider responses, usage, and library
 narrative are absent. OpenAPI and the typed web client expose exactly the five-route lifecycle; a
 visual UI, listing, retention jobs, branching/undo/collaboration, Study integration, Voice Coach,
-and abandoned-claim recovery remain deferred.
+and recovery after ambiguous accepted requests remain deferred. Pre-charge claims are safely failed
+after five minutes by the next turn claim, without a background job.
 
 Detailed in `docs/adr/0134-study-partner-v1.md`.
 

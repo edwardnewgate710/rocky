@@ -2001,6 +2001,7 @@ export function buildRouter(deps: RouteDeps): Router {
         204: [undefined, 'Session and turns deleted'],
         401: ['Error', 'Authentication required'],
         404: ['Error', 'Session missing or not owned by the caller'],
+        409: ['Error', 'A turn is active or inside the one-hour accepted-work protection window'],
         422: ['Error', 'Malformed session ID'],
         503: ['Error', 'Study Partner is not configured'],
       },

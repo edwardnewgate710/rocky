@@ -5,6 +5,7 @@ import type {
   ClaimStudyPartnerTurnResult,
   CommitStudyPartnerTurn,
   CommitStudyPartnerTurnResult,
+  DeleteStudyPartnerSessionResult,
   EndStudyPartnerSession,
   EndStudyPartnerSessionResult,
   NewStudyPartnerSession,
@@ -13,6 +14,10 @@ import type {
   StudyPartnerSessionRow,
   StudyPartnerTurnRequestRef,
   StudyPartnerTurnRow,
+} from '../study-partner.js';
+import {
+  STUDY_PARTNER_ACCEPTED_DELETE_PROTECTION_MS,
+  STUDY_PARTNER_CLAIM_TIMEOUT_MS,
 } from '../study-partner.js';
 
 interface SessionDbRow {
@@ -106,18 +111,28 @@ export class PgStudyPartnerRepository implements StudyPartnerRepository {
   }
 
   async findOwnedSession(sessionId: string, ownerId: string): Promise<StudyPartnerSessionDetail | null> {
-    const sessionResult = await this.pool.query<SessionDbRow>(
-      `SELECT ${SESSION_COLUMNS} FROM study_partner_sessions WHERE id = $1 AND owner_id = $2`,
-      [sessionId, ownerId],
-    );
-    const session = sessionResult.rows[0];
-    if (!session) return null;
-    const turns = await this.pool.query<TurnDbRow>(
-      `SELECT ${TURN_COLUMNS} FROM study_partner_turns
-       WHERE session_id = $1 ORDER BY turn_number ASC`,
-      [sessionId],
-    );
-    return { session: sessionRow(session), turns: turns.rows.map(turnRow) };
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      const sessionResult = await client.query<SessionDbRow>(
+        `SELECT ${SESSION_COLUMNS} FROM study_partner_sessions WHERE id = $1 AND owner_id = $2`,
+        [sessionId, ownerId],
+      );
+      const session = sessionResult.rows[0];
+      if (!session) { await client.query('ROLLBACK'); return null; }
+      const turns = await client.query<TurnDbRow>(
+        `SELECT ${TURN_COLUMNS} FROM study_partner_turns
+         WHERE session_id = $1 ORDER BY turn_number ASC`,
+        [sessionId],
+      );
+      await client.query('COMMIT');
+      return { session: sessionRow(session), turns: turns.rows.map(turnRow) };
+    } catch (error: unknown) {
+      await rollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async claimTurn(input: ClaimStudyPartnerTurn): Promise<ClaimStudyPartnerTurnResult> {
@@ -131,6 +146,14 @@ export class PgStudyPartnerRepository implements StudyPartnerRepository {
       );
       const session = sessions.rows[0];
       if (!session) { await client.query('ROLLBACK'); return { kind: 'not_found' }; }
+
+      await client.query(
+        `UPDATE study_partner_turn_requests
+            SET status = 'failed', updated_at = $2
+          WHERE session_id = $1 AND status = 'claimed'
+            AND updated_at <= $2 - ($3 * INTERVAL '1 millisecond')`,
+        [input.sessionId, input.now, STUDY_PARTNER_CLAIM_TIMEOUT_MS],
+      );
 
       const requests = await client.query<RequestDbRow>(
         `SELECT request_hash, status, turn_id FROM study_partner_turn_requests
@@ -321,11 +344,55 @@ export class PgStudyPartnerRepository implements StudyPartnerRepository {
     }
   }
 
-  async deleteOwnedSession(sessionId: string, ownerId: string): Promise<boolean> {
-    const result = await this.pool.query(
-      `DELETE FROM study_partner_sessions WHERE id = $1 AND owner_id = $2 RETURNING 1`,
-      [sessionId, ownerId],
-    );
-    return (result.rowCount ?? 0) === 1;
+  async deleteOwnedSession(
+    sessionId: string,
+    ownerId: string,
+    now: Date,
+  ): Promise<DeleteStudyPartnerSessionResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const session = await client.query(
+        `SELECT 1 FROM study_partner_sessions WHERE id = $1 AND owner_id = $2 FOR UPDATE`,
+        [sessionId, ownerId],
+      );
+      if ((session.rowCount ?? 0) === 0) {
+        await client.query('ROLLBACK');
+        return { kind: 'not_found' };
+      }
+      // Serialize a stale pre-charge claim against acceptTurn. If acceptance won first, its fresh
+      // accepted timestamp is protected below; if this update wins, acceptTurn can no longer charge.
+      await client.query(
+        `UPDATE study_partner_turn_requests
+            SET status = 'failed', updated_at = $2
+          WHERE session_id = $1 AND status = 'claimed'
+            AND updated_at <= $2 - ($3 * INTERVAL '1 millisecond')`,
+        [sessionId, now, STUDY_PARTNER_CLAIM_TIMEOUT_MS],
+      );
+      const active = await client.query(
+        `SELECT 1 FROM study_partner_turn_requests
+         WHERE session_id = $1
+           AND (status = 'claimed'
+             OR (status = 'accepted'
+                 AND updated_at > $2 - ($3 * INTERVAL '1 millisecond')))
+         LIMIT 1`,
+        [sessionId, now, STUDY_PARTNER_ACCEPTED_DELETE_PROTECTION_MS],
+      );
+      if ((active.rowCount ?? 0) > 0) {
+        await client.query('ROLLBACK');
+        return { kind: 'turn_in_progress' };
+      }
+      await client.query(
+        `DELETE FROM study_partner_sessions WHERE id = $1 AND owner_id = $2`,
+        [sessionId, ownerId],
+      );
+      await client.query('COMMIT');
+      return { kind: 'deleted' };
+    } catch (error: unknown) {
+      await rollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }

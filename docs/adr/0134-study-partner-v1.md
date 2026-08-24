@@ -53,19 +53,24 @@ successful final transaction inserts the turn, advances FEN/version/count, and m
 `succeeded`. A completed same-payload replay returns the stored turn without Coach or quota work.
 The same key with another payload is 422; pending/accepted/failed keys are 409.
 
-A process crash can leave a claim pending or accepted. V1 deliberately does not time it out or
-reclaim it: after an ambiguous charge/provider boundary, automatic recovery could buy the same work
-twice. The session then refuses turns until its owner hard-deletes it. Durable workflow recovery or
-downstream idempotency is deferred.
+A process crash can leave a request claimed or accepted. `claimed` is provably before the charge
+callback, so `claimTurn` transactionally fails it after five minutes and allows a new key; this is
+request-path recovery, not a background retention job. `accepted` is beyond an ambiguous
+charge/provider boundary and is never reclaimed because automatic recovery could buy the same work
+twice. The session then refuses turns, but its owner may hard-delete it after the accepted-work
+protection window. Durable accepted-request recovery or downstream idempotency is deferred.
 
 ### 3. Private ownership and lifecycle
 
 All five routes require authentication. Every repository read/write scopes by owner; foreign and
 missing IDs both return 404. `end` checks optimistic version while active, refuses an in-flight turn,
 and changes the session once. Re-ending returns the stored completion and never rewrites
-`completedAt`. Owner deletion is a hard delete; session, turns, and request claims cascade in the
-same database operation. Account deletion cascades through the owner FK. There is no TTL or list
-endpoint; data remains until deletion.
+`completedAt`. Owner deletion locks the session and returns 409 for a fresh `claimed` request or for
+one hour after a request becomes `accepted`, so it cannot erase ordinary in-flight work after
+production coaching accepts its charge. After that conservative safety window, privacy deletion is
+allowed but the accepted request is never replayed or reclaimed. Otherwise deletion is a hard
+delete; session, turns, and request claims cascade in the same database operation. Account deletion
+cascades through the owner FK. There is no TTL or list endpoint; data remains until deletion.
 
 Turn history is bounded at 20. This bounds the single-session GET response, coaching move ledger,
 storage exposure, and cost of a session without introducing pagination or listing into v1.
@@ -115,4 +120,4 @@ best-effort behavior.
 - Anonymous sessions, listing/discovery, TTL retention, analytics, and background cleanup.
 - Library Study Partner narrative, Voice Coach, speech providers, curriculum generation.
 - Visual Study Partner UI.
-- Crash recovery for abandoned turn claims and additional variants.
+- Recovery for ambiguous accepted turn requests and additional variants.
