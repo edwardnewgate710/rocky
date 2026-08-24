@@ -4,7 +4,17 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-26 — M15 Increment 31: durable refusal confirmation._
+_Last updated: 2026-08-27 — M15 Increment 32: completed-game review recovery._
+
+## M15 Increment 32 — Completed-game review recovery
+
+The completed-game review work removed from Study Partner PR #1 is restored independently from the
+preserved `8a57548`, `2286a09`, and `5410b1e` commits. Authenticated participants can request a
+server-authoritative review of a finished game; the API reconstructs the durable event stream,
+bounds analysis work, enforces ownership and rate limits, and advertises the capability through
+OpenAPI. The web route restores the capability-gated review, board coordinates and review marks,
+and the richer server-owned move classifications. The unrelated sign-in presentation commit remains
+excluded, and the merged Study Partner implementation is unchanged.
 
 ## M15 Increment 31 — Durable refusal confirmation (ADR-0134)
 

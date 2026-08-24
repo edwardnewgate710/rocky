@@ -361,8 +361,17 @@ export class BoardView {
         const inner = piece
           ? `<span class="cb-piece ${pieceClass(piece.color, piece.role)}${dragged}" aria-hidden="true"></span>`
           : '';
+        // Algebraic coordinates belong to the board, so they move with its orientation. Rank labels
+        // live on the visible left edge and file labels on the visible bottom edge: exactly once per
+        // rank/file, never a second gutter that can desynchronise when the board flips.
+        const rankCoordinate = file === files[0]
+          ? `<span class="cb-coordinate cb-rank" aria-hidden="true">${rank + 1}</span>`
+          : '';
+        const fileCoordinate = rank === ranks[7]
+          ? `<span class="cb-coordinate cb-file" aria-hidden="true">${String.fromCharCode(97 + file)}</span>`
+          : '';
         cells.push(
-          `<div class="${classes.join(' ')}" role="gridcell" data-square="${sq}" aria-label="${label}" aria-selected="${sq === hl.selected}" tabindex="${sq === this.focusedSquare ? '0' : '-1'}">${inner}</div>`,
+          `<div class="${classes.join(' ')}" role="gridcell" data-square="${sq}" aria-label="${label}" aria-selected="${sq === hl.selected}" tabindex="${sq === this.focusedSquare ? '0' : '-1'}">${rankCoordinate}${fileCoordinate}${inner}</div>`,
         );
       }
     }

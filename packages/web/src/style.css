@@ -514,6 +514,18 @@ button:disabled {
   border-radius: 6px;
   background: var(--panel);
 }
+.cb-coordinate {
+  position: absolute;
+  z-index: calc(var(--z-board-cue) + 1);
+  font-size: clamp(0.6rem, 1.8vw, 0.78rem);
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+}
+.cb-rank { top: 4%; left: 6%; }
+.cb-file { right: 6%; bottom: 4%; text-transform: lowercase; }
+.cb-light .cb-coordinate { color: color-mix(in srgb, var(--dark) 80%, black); }
+.cb-dark .cb-coordinate { color: color-mix(in srgb, var(--light) 86%, white); }
 .auth-form {
   display: flex;
   flex-direction: column;
@@ -1081,6 +1093,43 @@ button:disabled {
 .analysis-panel {
   margin-top: 16px;
 }
+.game-review-move {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+}
+.game-review-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+  gap: 8px;
+}
+.game-review-stat {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+}
+.game-review-stat strong { font-feature-settings: 'tnum'; }
+.game-review-move strong {
+  white-space: nowrap;
+}
+.game-review-best strong { color: var(--sel); }
+.game-review-brilliant strong { color: #8564d6; }
+.game-review-great strong { color: #2d82bf; }
+.game-review-excellent strong { color: #3b9d6d; }
+.game-review-good strong { color: var(--text); }
+.game-review-book strong { color: #976436; }
+.game-review-inaccuracy strong { color: #bf8b24; }
+.game-review-mistake strong { color: #d76b32; }
+.game-review-miss strong,
+.game-review-missed_win strong { color: #d44b86; }
+.game-review-blunder strong { color: var(--ember); }
 /* The system's Label voice, unmodified. An earlier version added uppercase and letter-spacing,
    which would have been the only `text-transform` in the stylesheet — a new typographic treatment
    in a system that deliberately has one label voice and no display scale. Size and the muted colour

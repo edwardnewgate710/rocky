@@ -2333,6 +2333,104 @@
         ]
       }
     },
+    "/v1/games/{id}/review": {
+      "post": {
+        "summary": "Review a player's completed game with fixed-policy engine assessments",
+        "tags": [
+          "games",
+          "analysis"
+        ],
+        "operationId": "post_v1_games_by_id_review",
+        "responses": {
+          "200": {
+            "description": "The authenticated player's completed-game review",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameReviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No completed game belonging to the player",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The game has no moves or exceeds the instant-review limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Game review is not configured, cancelled, or the engine is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Game id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/v1/analysis": {
       "post": {
         "summary": "Analyze a position with the engine",
@@ -13476,7 +13574,8 @@
               "endgameTrainer",
               "coach",
               "studyPartner",
-              "tournamentCommentary"
+              "tournamentCommentary",
+              "gameReview"
             ],
             "properties": {
               "learning": {
@@ -13528,6 +13627,9 @@
                 "type": "boolean"
               },
               "tournamentCommentary": {
+                "type": "boolean"
+              },
+              "gameReview": {
                 "type": "boolean"
               }
             },
@@ -17988,6 +18090,168 @@
           },
           "depth": {
             "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "GameReviewResponse": {
+        "type": "object",
+        "required": [
+          "gameId",
+          "variant",
+          "playerColor",
+          "result",
+          "termination",
+          "moves",
+          "summary"
+        ],
+        "properties": {
+          "gameId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "variant": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "chess960",
+              "kingofthehill",
+              "atomic",
+              "crazyhouse",
+              "threecheck",
+              "horde",
+              "racingkings"
+            ]
+          },
+          "playerColor": {
+            "type": "string",
+            "enum": [
+              "white",
+              "black"
+            ]
+          },
+          "result": {
+            "type": "string",
+            "enum": [
+              "1-0",
+              "0-1",
+              "1/2-1/2"
+            ]
+          },
+          "termination": {
+            "type": "string"
+          },
+          "moves": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "ply",
+                "san",
+                "move",
+                "fenBefore",
+                "assessment",
+                "classification"
+              ],
+              "properties": {
+                "ply": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "san": {
+                  "type": "string"
+                },
+                "move": {
+                  "type": "string"
+                },
+                "fenBefore": {
+                  "type": "string"
+                },
+                "assessment": {
+                  "$ref": "#/components/schemas/MistakePredictionResponse"
+                },
+                "classification": {
+                  "type": "string",
+                  "enum": [
+                    "brilliant",
+                    "great",
+                    "best",
+                    "excellent",
+                    "good",
+                    "book",
+                    "inaccuracy",
+                    "mistake",
+                    "miss",
+                    "blunder",
+                    "missed_win"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "summary": {
+            "type": "object",
+            "required": [
+              "brilliant",
+              "great",
+              "best",
+              "excellent",
+              "good",
+              "book",
+              "inaccuracy",
+              "mistake",
+              "miss",
+              "blunder",
+              "missed_win"
+            ],
+            "properties": {
+              "brilliant": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "great": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "best": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "excellent": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "good": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "book": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "inaccuracy": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "mistake": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "miss": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "blunder": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "missed_win": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
           }
         },
         "additionalProperties": false

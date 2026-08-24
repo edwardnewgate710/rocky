@@ -175,6 +175,7 @@ export function createApiServer(deps: ApiDependencies, options: ApiServerOptions
     coach: deps.coach,
     studyPartner: deps.studyPartner,
     tournamentCommentary: deps.tournamentCommentary,
+    gameReview: deps.gameReview,
   };
 
   const router = buildRouter({
