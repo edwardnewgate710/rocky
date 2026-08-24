@@ -3,6 +3,7 @@ import test from 'node:test';
 import { Position } from '@chess-platform/core';
 import {
   InMemoryStudyPartnerRepository,
+  STUDY_PARTNER_ACCEPTED_DELETE_PROTECTION_MS,
   type StudyPartnerTurnRequestRef,
 } from '@chess-platform/persistence';
 import type { CoachInput, CoachOutcome } from '../src/coach/coach-service.js';
@@ -49,6 +50,15 @@ function fixture(coach?: {
 class CleanupFailingStudyPartnerRepository extends InMemoryStudyPartnerRepository {
   override async failTurn(_ref: StudyPartnerTurnRequestRef): Promise<void> {
     throw new Error('cleanup unavailable');
+  }
+}
+
+class AcceptanceRecordingStudyPartnerRepository extends InMemoryStudyPartnerRepository {
+  acceptedAt: Date | undefined;
+
+  override async acceptTurn(ref: StudyPartnerTurnRequestRef): Promise<boolean> {
+    this.acceptedAt = ref.now;
+    return super.acceptTurn(ref);
   }
 }
 
@@ -201,6 +211,42 @@ test('a repeated Coach acceptance callback cannot charge the same turn twice', a
   );
   assert.equal(charges, 1);
   assert.equal((await service.get('owner', created.id)).turnCount, 0);
+});
+
+test('accepted-work protection starts when Coach accepts, not when the claim was created', async () => {
+  const repository = new AcceptanceRecordingStudyPartnerRepository();
+  let advanceClock: ((milliseconds: number) => void) | undefined;
+  let accepted: (() => void) | undefined;
+  let release: (() => void) | undefined;
+  const acceptedSignal = new Promise<void>((resolve) => { accepted = resolve; });
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const { service, advance } = fixture({
+    async coach(input, onAccepted) {
+      advanceClock?.(60_000);
+      if (onAccepted) await onAccepted();
+      accepted?.();
+      await gate;
+      return quietOutcome(input);
+    },
+  }, repository);
+  advanceClock = advance;
+  const created = await service.create('owner', 'standard', START);
+
+  const submitted = service.submitTurn({
+    ownerId: 'owner', sessionId: created.id, move: 'e2e4', expectedVersion: 0,
+    idempotencyKey: 'acceptance-time', signal: new AbortController().signal,
+    charge: async () => undefined,
+  });
+  await acceptedSignal;
+
+  assert.equal(repository.acceptedAt?.toISOString(), '2026-08-24T12:01:00.000Z');
+  advance(STUDY_PARTNER_ACCEPTED_DELETE_PROTECTION_MS - 60_000);
+  await assert.rejects(
+    () => service.delete('owner', created.id),
+    (error: unknown) => error instanceof HttpError && error.status === 409,
+  );
+  release?.();
+  await submitted;
 });
 
 test('foreign ownership is indistinguishable from a missing session', async () => {
@@ -358,7 +404,10 @@ test('reading stored coaching strips forbidden fields instead of reflecting raw 
         move: 'e2e4',
         explanation: 'Grounded prose.',
         citation: {
-          moveOutcome: { kind: 'evaluation', evalKind: 'cp', evalValue: 0, evalLabel: '+0.00' },
+          moveOutcome: {
+            kind: 'evaluation', evalKind: 'cp', evalValue: 0, evalLabel: '+0.00',
+            providerSecret: 'forbidden-nested-explanation',
+          },
           evalKind: 'cp', evalValue: 10, evalLabel: '+0.10', bestMove: 'e2e4', bestLine: [], depth: 12,
         },
         providerId: 'forbidden-provider',
@@ -372,9 +421,96 @@ test('reading stored coaching strips forbidden fields instead of reflecting raw 
         solutionMove: 'e2e4', solutionLine: ['e2e4'],
       },
     },
+    mistake: {
+      kind: 'present',
+      value: {
+        fen: START,
+        variant: 'standard',
+        move: 'e2e4',
+        classification: 'ok',
+        before: { evalKind: 'cp', evalValue: 10, evalLabel: '+0.10' },
+        after: {
+          kind: 'evaluation', evalKind: 'cp', evalValue: 5, evalLabel: '+0.05',
+          providerSecret: 'forbidden-nested-mistake',
+        },
+        centipawnLoss: 5,
+        bestMove: 'e2e4',
+        bestLine: ['e2e4'],
+        depth: 12,
+      },
+    },
   });
   const serialized = JSON.stringify(projected);
-  for (const forbidden of ['providerId', 'model', 'solutionMove', 'solutionLine', 'forbidden-']) {
+  for (const forbidden of [
+    'providerId', 'providerSecret', 'model', 'solutionMove', 'solutionLine', 'forbidden-',
+  ]) {
     assert.equal(serialized.includes(forbidden), false);
   }
+});
+
+test('reading stored coaching rejects malformed present values and omission reasons', () => {
+  const safe = studyPartnerCoaching(quietOutcome({ fen: START, variant: 'standard', move: 'e2e4' }));
+  for (const section of ['mistake', 'explanation', 'opening', 'puzzle', 'endgame'] as const) {
+    assert.throws(
+      () => storedStudyPartnerCoaching({
+        ...safe,
+        [section]: { kind: 'present', value: {} },
+      }),
+      /invalid stored Study Partner coaching section/,
+      section,
+    );
+    assert.throws(
+      () => storedStudyPartnerCoaching({
+        ...safe,
+        [section]: { kind: 'omitted', reason: 'provider_secret' },
+      }),
+      /invalid stored Study Partner coaching section/,
+      section,
+    );
+  }
+});
+
+test('reading stored coaching rejects malformed nested explanation citation data', () => {
+  const safe = studyPartnerCoaching(quietOutcome({ fen: START, variant: 'standard', move: 'e2e4' }));
+  assert.throws(
+    () => storedStudyPartnerCoaching({
+      ...safe,
+      explanation: {
+        kind: 'present',
+        value: {
+          fen: START,
+          variant: 'standard',
+          move: 'e2e4',
+          explanation: 'Grounded prose.',
+          citation: { bestLine: null },
+        },
+      },
+    }),
+    /invalid stored Study Partner coaching section/,
+  );
+});
+
+test('reading stored coaching requires the terminal mistake label', () => {
+  const safe = studyPartnerCoaching(quietOutcome({ fen: START, variant: 'standard', move: 'e2e4' }));
+  assert.throws(
+    () => storedStudyPartnerCoaching({
+      ...safe,
+      mistake: {
+        kind: 'present',
+        value: {
+          fen: START,
+          variant: 'standard',
+          move: 'e2e4',
+          classification: 'ok',
+          before: { evalKind: 'mate', evalValue: 1, evalLabel: '#1' },
+          after: { kind: 'terminal', reason: 'checkmate', result: '1-0' },
+          centipawnLoss: null,
+          bestMove: 'e2e4',
+          bestLine: ['e2e4'],
+          depth: 12,
+        },
+      },
+    }),
+    /invalid stored Study Partner coaching section/,
+  );
 });

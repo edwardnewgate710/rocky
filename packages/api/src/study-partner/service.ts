@@ -221,7 +221,10 @@ export class StudyPartnerService {
       };
       const outcome: CoachOutcome = await this.options.coach.coach(coachInput, async () => {
         if (input.signal.aborted) throw cancelled();
-        const accepted = await this.options.repository.acceptTurn(ref);
+        const accepted = await this.options.repository.acceptTurn({
+          ...ref,
+          now: new Date(this.options.clock.now()),
+        });
         if (!accepted) throw HttpError.conflict('study partner turn is no longer claimable');
         await input.charge();
       });
