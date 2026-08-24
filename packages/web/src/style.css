@@ -515,6 +515,18 @@ button:disabled {
   border-radius: 8px;
   background: var(--panel);
 }
+.cb-coordinate {
+  position: absolute;
+  z-index: calc(var(--z-board-cue) + 1);
+  font-size: clamp(0.6rem, 1.8vw, 0.78rem);
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+}
+.cb-rank { top: 4%; left: 6%; }
+.cb-file { right: 6%; bottom: 4%; text-transform: lowercase; }
+.cb-light .cb-coordinate { color: color-mix(in srgb, var(--dark) 80%, black); }
+.cb-dark .cb-coordinate { color: color-mix(in srgb, var(--light) 86%, white); }
 .auth-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1113,8 +1125,13 @@ button:disabled {
   text-align: left;
 }
 .game-review-move strong {
-  text-transform: capitalize;
+  white-space: nowrap;
 }
+.game-review-best strong { color: var(--sel); }
+.game-review-good strong { color: var(--text); }
+.game-review-inaccuracy strong { color: #bf8b24; }
+.game-review-mistake strong { color: #d76b32; }
+.game-review-blunder strong { color: var(--ember); }
 /* The system's Label voice, unmodified. An earlier version added uppercase and letter-spacing,
    which would have been the only `text-transform` in the stylesheet — a new typographic treatment
    in a system that deliberately has one label voice and no display scale. Size and the muted colour

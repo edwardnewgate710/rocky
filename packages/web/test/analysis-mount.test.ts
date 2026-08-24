@@ -12,7 +12,7 @@ import type { AnalysisResponse } from '../src/api/models.js';
 import {
   AsyncTransport,
   createGameDocument,
-  makeState,
+  makeFinishedState,
   sampleAnalysisResponse,
 } from './support/analysis-fixtures.js';
 
@@ -108,7 +108,7 @@ test('the request contract: analysing sends POST /v1/analysis with board fen, va
     t: 'joined',
     gameId: 'g-test-1',
     role: 'white',
-    state: makeState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
+    state: makeFinishedState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
   });
 
   const runBtn = elements.get('analysis-run')!;
@@ -155,7 +155,7 @@ test('API failure -> the error element shows the failed copy', async () => {
     t: 'joined',
     gameId: 'g-test-1',
     role: 'white',
-    state: makeState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
+    state: makeFinishedState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
   });
 
   const runBtn = elements.get('analysis-run')!;
@@ -192,7 +192,7 @@ test('rate limit (429) -> the muted note, NOT the error element', async () => {
     t: 'joined',
     gameId: 'g-test-1',
     role: 'white',
-    state: makeState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
+    state: makeFinishedState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
   });
 
   const runBtn = elements.get('analysis-run')!;
@@ -229,7 +229,7 @@ test('service unavailable (503) -> the muted note, NOT the error element', async
     t: 'joined',
     gameId: 'g-test-1',
     role: 'white',
-    state: makeState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
+    state: makeFinishedState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
   });
 
   const runBtn = elements.get('analysis-run')!;
@@ -270,7 +270,7 @@ test('a new request supersedes an old one: a slow first response that resolves A
     t: 'joined',
     gameId: 'g-test-1',
     role: 'white',
-    state: makeState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', 0, 'w'),
+    state: makeFinishedState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', 0, 'w'),
   });
 
   const runBtn = elements.get('analysis-run')!;
@@ -285,7 +285,7 @@ test('a new request supersedes an old one: a slow first response that resolves A
   sockets.last.emit({
     t: 'state',
     gameId: 'g-test-1',
-    state: makeState('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1', 1, 'b'),
+    state: makeFinishedState('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1', 1, 'b'),
   });
 
   assert.equal(noteEl.textContent, 'Position changed. Analyse again.');
@@ -326,7 +326,7 @@ test('disposal during a pending request: no callback fires and nothing is writte
     t: 'joined',
     gameId: 'g-test-1',
     role: 'white',
-    state: makeState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
+    state: makeFinishedState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
   });
 
   const runBtn = elements.get('analysis-run')!;
@@ -420,7 +420,7 @@ test('SPA remount does not stack handlers: mounting twice and clicking once issu
     t: 'joined',
     gameId: 'g-test-1',
     role: 'white',
-    state: makeState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
+    state: makeFinishedState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
   });
 
   const runBtn = elements.get('analysis-run')!;
@@ -456,7 +456,7 @@ test('the run control is disabled while a request is pending, and re-enabled aft
     t: 'joined',
     gameId: 'g-test-1',
     role: 'white',
-    state: makeState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
+    state: makeFinishedState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
   });
 
   const runBtn = elements.get('analysis-run')!;
@@ -489,7 +489,7 @@ test('the run control is disabled while a request is pending, and re-enabled aft
  * with deliberately no reset seam, so no second test in this process can vary the flag. Splitting
  * the pure decision out is the same shape `routesToRemove` already has for the nav.
  */
-test('auth gating: the panel is shown but its control is disabled with a sign-in note when signed out', async () => {
+test('auth gating: the completed-game panel is disabled with a sign-in note when signed out', async () => {
   const signedOut = setupMountedGame({ authenticated: false, analysisEnabled: true });
   await new Promise((r) => setTimeout(r, 0));
 
@@ -497,7 +497,17 @@ test('auth gating: the panel is shown but its control is disabled with a sign-in
   const runBtn = signedOut.elements.get('analysis-run')!;
   const noteEl = signedOut.elements.get('analysis-note')!;
 
-  assert.equal(sectionEl.hidden, false, 'analysis section should be revealed when capabilities.analysis is true');
+  assert.equal(sectionEl.hidden, true, 'analysis should not be offered while a game is still live');
+
+  signedOut.sockets.last.open();
+  signedOut.sockets.last.emit({
+    t: 'joined',
+    gameId: 'g-test-1',
+    role: 'white',
+    state: makeFinishedState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
+  });
+
+  assert.equal(sectionEl.hidden, false, 'analysis section should be revealed after a completed game');
   assert.equal(runBtn.disabled, true, 'run button must be disabled for signed-out visitor');
   assert.equal(noteEl.textContent, 'Sign in to analyse positions.');
 
@@ -571,7 +581,7 @@ test('a remount clears the previous game analysis rather than presenting it besi
     t: 'joined',
     gameId: 'g-test-1',
     role: 'white',
-    state: makeState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
+    state: makeFinishedState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
   });
 
   elements.get('analysis-run')!.click();
@@ -635,7 +645,7 @@ test('a 422 naming the variant disables the control permanently and explains why
     t: 'joined',
     gameId: 'g-test-1',
     role: 'white',
-    state: makeState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
+    state: makeFinishedState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
   });
 
   const runBtn = elements.get('analysis-run')!;
@@ -657,7 +667,7 @@ test('a 422 naming the variant disables the control permanently and explains why
     t: 'joined',
     gameId: 'g-test-1',
     role: 'white',
-    state: makeState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 2', 1, 'b'),
+    state: makeFinishedState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 2', 1, 'b'),
   });
   assert.equal(runBtn.disabled, true, 'a later position must not re-offer an impossible control');
 
@@ -680,7 +690,7 @@ test('signing in while a game is open enables the control and clears the sign-in
     t: 'joined',
     gameId: 'g-test-1',
     role: 'white',
-    state: makeState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
+    state: makeFinishedState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
   });
 
   const runBtn = elements.get('analysis-run')!;

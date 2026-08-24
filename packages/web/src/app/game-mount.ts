@@ -88,6 +88,7 @@ import {
 } from './explain-view.js';
 import { formatClock, formatTimeControl } from './render-helpers.js';
 import type { AuthSession } from './auth-controller.js';
+import { gameReviewAnnotation } from './game-review-annotation.js';
 
 /**
  * The line counts the panel offers. Every one is at or below the server's published MultiPV
@@ -1287,14 +1288,15 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
       gameReviewMovesEl.replaceChildren(...review.moves.map((move) => {
         const row = doc.createElement('button');
         row.type = 'button';
-        row.className = 'panel-row game-review-move';
+        const annotation = gameReviewAnnotation(move.assessment);
+        row.className = `panel-row game-review-move game-review-${annotation.tone}`;
         const loss = move.assessment.centipawnLoss === null
           ? ''
           : ` · ${move.assessment.centipawnLoss} cp`;
         const moveLabel = doc.createElement('span');
         moveLabel.textContent = `${move.ply}. ${move.san}`;
         const verdict = doc.createElement('strong');
-        verdict.textContent = `${move.assessment.classification}${loss}`;
+        verdict.textContent = `${annotation.symbol} ${annotation.label}${loss}`;
         row.replaceChildren(moveLabel, verdict);
         row.addEventListener('click', () => {
           board.setPosition(move.fenBefore);
