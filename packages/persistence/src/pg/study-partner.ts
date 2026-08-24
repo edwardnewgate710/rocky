@@ -149,9 +149,9 @@ export class PgStudyPartnerRepository implements StudyPartnerRepository {
 
       await client.query(
         `UPDATE study_partner_turn_requests
-            SET status = 'failed', updated_at = $2
+            SET status = 'failed', updated_at = $2::timestamptz
           WHERE session_id = $1 AND status = 'claimed'
-            AND updated_at <= $2 - ($3 * INTERVAL '1 millisecond')`,
+            AND updated_at <= $2::timestamptz - ($3::bigint * INTERVAL '1 millisecond')`,
         [input.sessionId, input.now, STUDY_PARTNER_CLAIM_TIMEOUT_MS],
       );
 
@@ -364,9 +364,9 @@ export class PgStudyPartnerRepository implements StudyPartnerRepository {
       // accepted timestamp is protected below; if this update wins, acceptTurn can no longer charge.
       await client.query(
         `UPDATE study_partner_turn_requests
-            SET status = 'failed', updated_at = $2
+            SET status = 'failed', updated_at = $2::timestamptz
           WHERE session_id = $1 AND status = 'claimed'
-            AND updated_at <= $2 - ($3 * INTERVAL '1 millisecond')`,
+            AND updated_at <= $2::timestamptz - ($3::bigint * INTERVAL '1 millisecond')`,
         [sessionId, now, STUDY_PARTNER_CLAIM_TIMEOUT_MS],
       );
       const active = await client.query(
@@ -374,7 +374,7 @@ export class PgStudyPartnerRepository implements StudyPartnerRepository {
          WHERE session_id = $1
            AND (status = 'claimed'
              OR (status = 'accepted'
-                 AND updated_at > $2 - ($3 * INTERVAL '1 millisecond')))
+                 AND updated_at > $2::timestamptz - ($3::bigint * INTERVAL '1 millisecond')))
          LIMIT 1`,
         [sessionId, now, STUDY_PARTNER_ACCEPTED_DELETE_PROTECTION_MS],
       );
