@@ -131,8 +131,11 @@ test('Study Partner publishes only the private five-route lifecycle and its safe
     assert.equal(request?.additionalProperties, false);
     const explanation = doc.components.schemas['StudyPartnerExplanation'];
     assert.ok(explanation, 'StudyPartnerExplanation must stay published');
-    assert.equal('providerId' in (explanation.properties ?? {}), false);
-    assert.equal('model' in (explanation.properties ?? {}), false);
+    assert.deepEqual(
+      Object.keys(explanation.properties ?? {}).sort(),
+      ['citation', 'explanation', 'fen', 'move', 'variant'],
+    );
+    assert.equal(explanation.additionalProperties, false);
     const puzzle = doc.components.schemas['CoachPuzzleView'];
     assert.ok(puzzle, 'CoachPuzzleView must stay published');
     assert.deepEqual(Object.keys(puzzle.properties ?? {}).sort(), ['difficulty', 'fen', 'kind', 'variant']);
