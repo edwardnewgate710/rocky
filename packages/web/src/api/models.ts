@@ -1225,12 +1225,17 @@ export interface CoachResponse {
   readonly featuresFired: readonly string[];
 }
 
+export type GameReviewClassification =
+  | 'brilliant' | 'great' | 'best' | 'excellent' | 'good' | 'book'
+  | 'inaccuracy' | 'mistake' | 'miss' | 'blunder' | 'missed_win';
+
 export interface GameReviewMove {
   readonly ply: number;
   readonly san: string;
   readonly move: string;
   readonly fenBefore: string;
   readonly assessment: MistakePredictionResponse;
+  readonly classification: GameReviewClassification;
 }
 
 export interface GameReviewResponse {
@@ -1241,10 +1246,17 @@ export interface GameReviewResponse {
   readonly termination: string;
   readonly moves: readonly GameReviewMove[];
   readonly summary: {
-    readonly ok: number;
-    readonly inaccuracies: number;
-    readonly mistakes: number;
-    readonly blunders: number;
+    readonly brilliant: number;
+    readonly great: number;
+    readonly best: number;
+    readonly excellent: number;
+    readonly good: number;
+    readonly book: number;
+    readonly inaccuracy: number;
+    readonly mistake: number;
+    readonly miss: number;
+    readonly blunder: number;
+    readonly missed_win: number;
   };
 }
 

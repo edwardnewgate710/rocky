@@ -28,6 +28,7 @@ import type {
 
 import { classifySpeed } from '@chess-platform/game';
 import { VARIANTS } from './domain.js';
+import type { GameReviewClassification, GameReviewSummary } from './game-review/classification.js';
 
 /** Public user view (safe for any caller). */
 export interface PublicUser {
@@ -1488,8 +1489,9 @@ export interface GameReviewView {
     readonly move: string;
     readonly fenBefore: string;
     readonly assessment: MistakePredictionView;
+    readonly classification: GameReviewClassification;
   }[];
-  readonly summary: { readonly ok: number; readonly inaccuracies: number; readonly mistakes: number; readonly blunders: number };
+  readonly summary: GameReviewSummary;
 }
 
 export function gameReviewView(
@@ -1507,6 +1509,7 @@ export function gameReviewView(
       move: move.move,
       fenBefore: move.fenBefore,
       assessment: mistakePredictionView(move.assessment),
+      classification: move.classification,
     })),
     summary: { ...outcome.summary },
   };

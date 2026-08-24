@@ -17,6 +17,7 @@ import type { Variant } from '@chess-platform/core';
 import type { MistakePredictor, MistakeClassification } from '@chess-platform/ai-features';
 import { HttpError } from '../http/errors.js';
 import type { AnalysisPort } from './service.js';
+import type { EngineResult } from '@chess-platform/engine';
 import { coreFenValidator } from './fen-validator.js';
 import { isUciShape } from './uci.js';
 import type { TerminalReason } from './terminal.js';
@@ -26,6 +27,13 @@ export interface MistakePredictionInput {
   readonly fen: string;
   readonly variant: Variant;
   readonly move: string;
+  /**
+   * Server-computed pre-move lines a higher-level fixed-policy feature already obtained.
+   *
+   * This is deliberately absent from the HTTP body. It lets completed-game review reuse its
+   * MultiPV evidence instead of paying for the same pre-move engine search twice.
+   */
+  readonly analysisBefore?: readonly EngineResult[];
 }
 
 /**
@@ -207,7 +215,9 @@ export class MistakePredictionService {
     // one when it ends the game. Both go through `AnalysisService`, so the server's limits policy,
     // FEN validation, deterministic timeout and the one dedicated pool of ADR-0113 apply to each.
     const [before, afterAnalysis] = await Promise.all([
-      this.analysis.analyze({ fen: input.fen, variant: input.variant, multiPv: 1 }),
+      input.analysisBefore === undefined
+        ? this.analysis.analyze({ fen: input.fen, variant: input.variant, multiPv: 1 })
+        : Promise.resolve({ lines: input.analysisBefore }),
       moveTerminal
         ? Promise.resolve(undefined)
         : this.analysis.analyze({ fen: afterMove.fen(), variant: input.variant, multiPv: 1 }),

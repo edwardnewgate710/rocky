@@ -1,5 +1,6 @@
 import { createMistakePrediction } from '../analysis/composition.js';
 import type { AnalysisPort } from '../analysis/service.js';
+import { BundledOpeningDatabase } from '@chess-platform/ai-features';
 import type { FinishedGameReviewArchive } from './finished-game-review.js';
 import { GameReviewService } from './service.js';
 
@@ -12,5 +13,6 @@ export function createGameReview(
     analysis,
     archive,
     createMoveAssessment: createMistakePrediction,
+    openingDatabase: new BundledOpeningDatabase(),
   });
 }

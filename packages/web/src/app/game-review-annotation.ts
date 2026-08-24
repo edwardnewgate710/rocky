@@ -1,30 +1,27 @@
-import type { MistakeClassification } from '../api/models.js';
+import type { GameReviewClassification } from '../api/models.js';
 
 export interface GameReviewAnnotation {
-  readonly label: 'Best move' | 'Good move' | 'Inaccuracy' | 'Mistake' | 'Blunder';
-  readonly symbol: '★' | '✓' | '?!' | '?' | '??';
-  readonly tone: 'best' | 'good' | 'inaccuracy' | 'mistake' | 'blunder';
+  readonly label: 'Brilliant' | 'Great' | 'Best move' | 'Excellent' | 'Good move' | 'Book' | 'Inaccuracy' | 'Mistake' | 'Miss' | 'Blunder' | 'Missed win';
+  readonly symbol: '!!' | '!' | '★' | '✓' | '📖' | '?!' | '?' | '×' | '??';
+  readonly tone: GameReviewClassification;
 }
 
 /**
- * Translate only evidence the current engine policy actually produces into familiar review marks.
- *
- * A "brilliant" label needs additional tactical and sacrifice analysis that the current fixed
- * two-search assessment does not establish. Calling a move brilliant without that evidence would
- * be a cosmetic claim, so this deliberately stops at best/good and the measured error ladder.
+ * The server owns the post-game policy. The browser only translates its closed classification into
+ * a readable label and symbol, so one UI release cannot quietly redefine a brilliant move.
  */
-export function gameReviewAnnotation(input: {
-  readonly move: string;
-  readonly bestMove: string | null;
-  readonly classification: MistakeClassification;
-}): GameReviewAnnotation {
-  switch (input.classification) {
-    case 'blunder': return { label: 'Blunder', symbol: '??', tone: 'blunder' };
-    case 'mistake': return { label: 'Mistake', symbol: '?', tone: 'mistake' };
+export function gameReviewAnnotation(classification: GameReviewClassification): GameReviewAnnotation {
+  switch (classification) {
+    case 'brilliant': return { label: 'Brilliant', symbol: '!!', tone: 'brilliant' };
+    case 'great': return { label: 'Great', symbol: '!', tone: 'great' };
+    case 'best': return { label: 'Best move', symbol: '★', tone: 'best' };
+    case 'excellent': return { label: 'Excellent', symbol: '✓', tone: 'excellent' };
+    case 'good': return { label: 'Good move', symbol: '✓', tone: 'good' };
+    case 'book': return { label: 'Book', symbol: '📖', tone: 'book' };
     case 'inaccuracy': return { label: 'Inaccuracy', symbol: '?!', tone: 'inaccuracy' };
-    case 'ok':
-      return input.bestMove === input.move
-        ? { label: 'Best move', symbol: '★', tone: 'best' }
-        : { label: 'Good move', symbol: '✓', tone: 'good' };
+    case 'mistake': return { label: 'Mistake', symbol: '?', tone: 'mistake' };
+    case 'miss': return { label: 'Miss', symbol: '×', tone: 'miss' };
+    case 'blunder': return { label: 'Blunder', symbol: '??', tone: 'blunder' };
+    case 'missed_win': return { label: 'Missed win', symbol: '×', tone: 'missed_win' };
   }
 }

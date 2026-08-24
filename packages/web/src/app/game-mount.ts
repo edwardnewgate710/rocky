@@ -1275,20 +1275,36 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
 
   const renderGameReview = (review: Awaited<ReturnType<GambitClient['games']['review']>>): void => {
     if (gameReviewSummaryEl) {
-      const summary = doc.createElement('p');
-      summary.textContent = [
-        `${review.summary.blunders} blunders`,
-        `${review.summary.mistakes} mistakes`,
-        `${review.summary.inaccuracies} inaccuracies`,
-      ].join(' · ');
-      gameReviewSummaryEl.replaceChildren(summary);
+      const summary = [
+        ['Brilliant', '!!', review.summary.brilliant, 'brilliant'],
+        ['Great', '!', review.summary.great, 'great'],
+        ['Best', '★', review.summary.best, 'best'],
+        ['Excellent', '✓', review.summary.excellent, 'excellent'],
+        ['Good', '✓', review.summary.good, 'good'],
+        ['Book', '📖', review.summary.book, 'book'],
+        ['Inaccuracy', '?!', review.summary.inaccuracy, 'inaccuracy'],
+        ['Mistake', '?', review.summary.mistake, 'mistake'],
+        ['Miss', '×', review.summary.miss, 'miss'],
+        ['Blunder', '??', review.summary.blunder, 'blunder'],
+        ['Missed win', '×', review.summary.missed_win, 'missed_win'],
+      ] as const;
+      gameReviewSummaryEl.replaceChildren(...summary.map(([label, symbol, count, tone]) => {
+        const stat = doc.createElement('div');
+        stat.className = `game-review-stat game-review-${tone}`;
+        const name = doc.createElement('span');
+        name.textContent = `${symbol} ${label}`;
+        const value = doc.createElement('strong');
+        value.textContent = String(count);
+        stat.replaceChildren(name, value);
+        return stat;
+      }));
       gameReviewSummaryEl.hidden = false;
     }
     if (gameReviewMovesEl) {
       gameReviewMovesEl.replaceChildren(...review.moves.map((move) => {
         const row = doc.createElement('button');
         row.type = 'button';
-        const annotation = gameReviewAnnotation(move.assessment);
+        const annotation = gameReviewAnnotation(move.classification);
         row.className = `panel-row game-review-move game-review-${annotation.tone}`;
         const loss = move.assessment.centipawnLoss === null
           ? ''

@@ -36,8 +36,16 @@ const outcome = (input: MistakePredictionInput, classification: MistakePredictio
   depth: 16,
 });
 
-const impossibleAnalysis: AnalysisPort = {
-  analyze: async () => { throw new Error('the injected assessor must be used'); },
+const reviewAnalysis: AnalysisPort = {
+  analyze: async (input) => ({
+    fen: input.fen,
+    variant: input.variant,
+    applied: { depth: 16, movetimeMs: 1_000, multiPv: 2 },
+    lines: [
+      { multipv: 1, evaluation: { type: 'cp', value: 20 }, principalVariation: ['e2e4'], depth: 16, nodes: 1, nps: 1, timeMs: 1 },
+      { multipv: 2, evaluation: { type: 'cp', value: -150 }, principalVariation: ['d2d4'], depth: 16, nodes: 1, nps: 1, timeMs: 1 },
+    ],
+  }),
   supportsVariant: () => true,
   supportsMultiPv: () => true,
   canSatisfyLimits: () => true,
@@ -47,7 +55,7 @@ function build(source: FinishedGameForReview | undefined) {
   const assessed: MistakePredictionInput[] = [];
   const service = new GameReviewService({
     archive: { async finishedGameForReview() { return source; } },
-    analysis: impossibleAnalysis,
+    analysis: reviewAnalysis,
     createMoveAssessment: () => ({
       async predict(input) {
         assessed.push(input);
@@ -70,7 +78,10 @@ test('completed-game review assesses only the authenticated player moves and ret
   assert.equal(charged, 1);
   assert.deepEqual(assessed.map((entry) => entry.move), ['e2e4', 'g1f3']);
   assert.equal(result.playerColor, 'white');
-  assert.deepEqual(result.summary, { ok: 1, inaccuracies: 0, mistakes: 1, blunders: 0 });
+  assert.deepEqual(result.summary, {
+    brilliant: 0, great: 1, best: 0, excellent: 0, good: 0, book: 0,
+    inaccuracy: 0, mistake: 1, miss: 0, blunder: 0, missed_win: 0,
+  });
   assert.deepEqual(result.moves.map((move) => [move.ply, move.san, move.fenBefore]), [
     [1, 'e4', FEN],
     [3, 'Nf3', FEN],
@@ -118,7 +129,7 @@ test('POST /v1/games/:id/review requires a player token and presents only that p
   let source: FinishedGameForReview | undefined;
   const service = new GameReviewService({
     archive: { async finishedGameForReview() { return source; } },
-    analysis: impossibleAnalysis,
+    analysis: reviewAnalysis,
     createMoveAssessment: () => ({ async predict(input) { return outcome(input, 'blunder'); } }),
   });
   const h = await startHarness({}, { gameReview: service });
@@ -139,7 +150,8 @@ test('POST /v1/games/:id/review requires a player token and presents only that p
     assert.equal(response.body.moves.length, 2);
     assert.equal(response.body.moves[0].san, 'e4');
     assert.equal(response.body.moves[0].assessment.classification, 'blunder');
-    assert.equal(response.body.summary.blunders, 2);
+    assert.equal(response.body.moves[0].classification, 'blunder');
+    assert.equal(response.body.summary.blunder, 2);
   } finally {
     await h.close();
   }

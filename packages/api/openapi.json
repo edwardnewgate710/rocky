@@ -18150,7 +18150,8 @@
                 "san",
                 "move",
                 "fenBefore",
-                "assessment"
+                "assessment",
+                "classification"
               ],
               "properties": {
                 "ply": {
@@ -18168,6 +18169,22 @@
                 },
                 "assessment": {
                   "$ref": "#/components/schemas/MistakePredictionResponse"
+                },
+                "classification": {
+                  "type": "string",
+                  "enum": [
+                    "brilliant",
+                    "great",
+                    "best",
+                    "excellent",
+                    "good",
+                    "book",
+                    "inaccuracy",
+                    "mistake",
+                    "miss",
+                    "blunder",
+                    "missed_win"
+                  ]
                 }
               },
               "additionalProperties": false
@@ -18176,25 +18193,60 @@
           "summary": {
             "type": "object",
             "required": [
-              "ok",
-              "inaccuracies",
-              "mistakes",
-              "blunders"
+              "brilliant",
+              "great",
+              "best",
+              "excellent",
+              "good",
+              "book",
+              "inaccuracy",
+              "mistake",
+              "miss",
+              "blunder",
+              "missed_win"
             ],
             "properties": {
-              "ok": {
+              "brilliant": {
                 "type": "integer",
                 "minimum": 0
               },
-              "inaccuracies": {
+              "great": {
                 "type": "integer",
                 "minimum": 0
               },
-              "mistakes": {
+              "best": {
                 "type": "integer",
                 "minimum": 0
               },
-              "blunders": {
+              "excellent": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "good": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "book": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "inaccuracy": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "mistake": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "miss": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "blunder": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "missed_win": {
                 "type": "integer",
                 "minimum": 0
               }
