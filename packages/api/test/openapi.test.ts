@@ -130,11 +130,13 @@ test('Study Partner publishes only the private five-route lifecycle and its safe
     assert.deepEqual(Object.keys(request?.properties ?? {}).sort(), ['expectedVersion', 'move']);
     assert.equal(request?.additionalProperties, false);
     const explanation = doc.components.schemas['StudyPartnerExplanation'];
-    assert.equal('providerId' in (explanation?.properties ?? {}), false);
-    assert.equal('model' in (explanation?.properties ?? {}), false);
+    assert.ok(explanation, 'StudyPartnerExplanation must stay published');
+    assert.equal('providerId' in (explanation.properties ?? {}), false);
+    assert.equal('model' in (explanation.properties ?? {}), false);
     const puzzle = doc.components.schemas['CoachPuzzleView'];
-    assert.deepEqual(Object.keys(puzzle?.properties ?? {}).sort(), ['difficulty', 'fen', 'kind', 'variant']);
-    assert.equal(puzzle?.additionalProperties, false);
+    assert.ok(puzzle, 'CoachPuzzleView must stay published');
+    assert.deepEqual(Object.keys(puzzle.properties ?? {}).sort(), ['difficulty', 'fen', 'kind', 'variant']);
+    assert.equal(puzzle.additionalProperties, false);
     const session = doc.components.schemas['StudyPartnerSession'];
     const turns = session?.properties?.['turns'];
     assert.equal(turns?.maxItems, 20);

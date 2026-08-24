@@ -41,4 +41,5 @@ test('StudyPartnerApi exposes exactly the five authorized routes', async () => {
     'POST /v1/study-partner/sessions/id/end',
     'DELETE /v1/study-partner/sessions/id',
   ]);
+  assert.deepEqual(specs.map((spec) => spec.auth), [true, true, true, true, true]);
 });

@@ -181,6 +181,15 @@ export class InMemoryStudyPartnerRepository implements StudyPartnerRepository {
     if (session.version !== input.expectedVersion) {
       return { kind: 'version_conflict', currentVersion: session.version };
     }
+    for (const [key, request] of this.requests) {
+      if (
+        request.sessionId === input.sessionId
+        && request.status === 'claimed'
+        && input.now.getTime() - request.updatedAt.getTime() >= STUDY_PARTNER_CLAIM_TIMEOUT_MS
+      ) {
+        this.requests.set(key, { ...request, status: 'failed', updatedAt: input.now });
+      }
+    }
     const active = [...this.requests.values()].some(
       (request) => request.sessionId === input.sessionId
         && (request.status === 'claimed' || request.status === 'accepted'),

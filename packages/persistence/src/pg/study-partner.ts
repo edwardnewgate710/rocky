@@ -316,6 +316,13 @@ export class PgStudyPartnerRepository implements StudyPartnerRepository {
         await client.query('ROLLBACK');
         return { kind: 'version_conflict', currentVersion: session.version };
       }
+      await client.query(
+        `UPDATE study_partner_turn_requests
+            SET status = 'failed', updated_at = $2::timestamptz
+          WHERE session_id = $1 AND status = 'claimed'
+            AND updated_at <= $2::timestamptz - ($3::bigint * INTERVAL '1 millisecond')`,
+        [input.sessionId, input.now, STUDY_PARTNER_CLAIM_TIMEOUT_MS],
+      );
       const active = await client.query(
         `SELECT 1 FROM study_partner_turn_requests
          WHERE session_id = $1 AND status IN ('claimed', 'accepted') LIMIT 1`,

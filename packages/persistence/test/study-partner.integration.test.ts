@@ -67,6 +67,13 @@ test('stale pre-charge claims expire while accepted claims remain terminal', asy
   });
   assert.equal(afterAcceptedTimeout.kind, 'in_progress');
   assert.deepEqual(
+    await repository.endSession({
+      sessionId: 'session', ownerId: 'owner', expectedVersion: 0,
+      now: new Date(replacementNow.getTime() + STUDY_PARTNER_ACCEPTED_DELETE_PROTECTION_MS),
+    }),
+    { kind: 'turn_in_progress' },
+  );
+  assert.deepEqual(
     await repository.deleteOwnedSession(
       'session',
       'owner',
@@ -104,6 +111,29 @@ test('deletion protects a fresh claim but does not leave an abandoned pre-charge
   );
 });
 
+test('ending expires an abandoned pre-charge claim at the same boundary as claim and delete', async () => {
+  const repository = new InMemoryStudyPartnerRepository();
+  const now = new Date('2026-08-24T12:00:00.000Z');
+  await repository.createSession({
+    id: 'ending', ownerId: 'owner', variant: 'standard', initialFen: Position.initial().fen(), now,
+  });
+  assert.equal((await repository.claimTurn({
+    sessionId: 'ending', ownerId: 'owner', idempotencyKey: 'claim', requestHash: 'f'.repeat(64),
+    expectedVersion: 0, maxTurns: 20, now,
+  })).kind, 'claimed');
+  assert.deepEqual(
+    await repository.endSession({
+      sessionId: 'ending', ownerId: 'owner', expectedVersion: 0,
+      now: new Date(now.getTime() + STUDY_PARTNER_CLAIM_TIMEOUT_MS - 1),
+    }),
+    { kind: 'turn_in_progress' },
+  );
+  assert.equal((await repository.endSession({
+    sessionId: 'ending', ownerId: 'owner', expectedVersion: 0,
+    now: new Date(now.getTime() + STUDY_PARTNER_CLAIM_TIMEOUT_MS),
+  })).kind, 'ended');
+});
+
 test('Postgres Study Partner repository commits a turn and session advancement atomically', { skip }, async () => {
   const pool = createPool();
   await migrate(pool, migrationsDir);
@@ -121,6 +151,47 @@ test('Postgres Study Partner repository commits a turn and session advancement a
       [ownerId, `sp-${ownerId.slice(0, 8)}`, Buffer.from(ownerId), now],
     );
     await repository.createSession({ id: sessionId, ownerId, variant: 'standard', initialFen: start, now });
+    const staleEndSessionId = uuidv7();
+    await repository.createSession({
+      id: staleEndSessionId, ownerId, variant: 'standard', initialFen: start, now,
+    });
+    assert.equal((await repository.claimTurn({
+      sessionId: staleEndSessionId, ownerId, idempotencyKey: 'stale-end', requestHash: 'c'.repeat(64),
+      expectedVersion: 0, maxTurns: 20, now,
+    })).kind, 'claimed');
+    assert.deepEqual(await repository.endSession({
+      sessionId: staleEndSessionId,
+      ownerId,
+      expectedVersion: 0,
+      now: new Date(now.getTime() + STUDY_PARTNER_CLAIM_TIMEOUT_MS - 1),
+    }), { kind: 'turn_in_progress' });
+    assert.equal((await repository.endSession({
+      sessionId: staleEndSessionId,
+      ownerId,
+      expectedVersion: 0,
+      now: new Date(now.getTime() + STUDY_PARTNER_CLAIM_TIMEOUT_MS),
+    })).kind, 'ended');
+    const acceptedEndSessionId = uuidv7();
+    await repository.createSession({
+      id: acceptedEndSessionId, ownerId, variant: 'standard', initialFen: start, now,
+    });
+    assert.equal((await repository.claimTurn({
+      sessionId: acceptedEndSessionId, ownerId, idempotencyKey: 'accepted-end', requestHash: 'd'.repeat(64),
+      expectedVersion: 0, maxTurns: 20, now,
+    })).kind, 'claimed');
+    assert.equal(await repository.acceptTurn({
+      sessionId: acceptedEndSessionId,
+      ownerId,
+      idempotencyKey: 'accepted-end',
+      requestHash: 'd'.repeat(64),
+      now,
+    }), true);
+    assert.deepEqual(await repository.endSession({
+      sessionId: acceptedEndSessionId,
+      ownerId,
+      expectedVersion: 0,
+      now: new Date(now.getTime() + STUDY_PARTNER_ACCEPTED_DELETE_PROTECTION_MS),
+    }), { kind: 'turn_in_progress' });
     assert.equal((await repository.claimTurn({
       sessionId, ownerId, idempotencyKey: 'abandoned', requestHash: 'b'.repeat(64),
       expectedVersion: 0, maxTurns: 20, now,

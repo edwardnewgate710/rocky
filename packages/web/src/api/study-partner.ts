@@ -30,6 +30,11 @@ export class StudyPartnerApi {
     });
   }
 
+  /**
+   * Append one authoritative move. Reuse the key for a transport retry whose outcome is unknown.
+   * Once the server returns a post-acceptance failure such as 429, that key is terminally failed;
+   * retry manually with a new key after the stated delay. Mint a new key for every later turn too.
+   */
   submitTurn(
     id: string,
     body: { readonly move: string; readonly expectedVersion: number },
@@ -59,6 +64,10 @@ export class StudyPartnerApi {
     });
   }
 
+  /**
+   * Permanently delete a session. This is not retried automatically: after an unacknowledged
+   * successful delete, the replay receives the endpoint's intentional 404 response.
+   */
   delete(id: string): Promise<void> {
     return this.execute<void>({
       method: 'DELETE',
