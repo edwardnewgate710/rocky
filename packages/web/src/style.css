@@ -508,22 +508,25 @@ button:disabled {
    thing in the product. It gets the lobby's centred column at a form measure, and its controls join
    the treatments that already exist rather than growing their own. */
 .auth {
-  max-width: 360px;
-  margin: 32px auto;
-  padding: 20px;
-  border-radius: 6px;
+  max-width: 480px;
+  margin: clamp(24px, 8vh, 72px) auto;
+  padding: 28px;
+  border: 1px solid var(--panel-strong);
+  border-radius: 8px;
   background: var(--panel);
 }
 .auth-form {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
 }
 .auth-field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
+  min-width: 0;
 }
+.auth-field:nth-child(3) { grid-column: 1 / -1; }
 /* Label typography: the same 0.75rem muted voice the clock's White/Black labels use. */
 .auth-field label {
   font-size: 0.75rem;
@@ -535,10 +538,22 @@ button:disabled {
    scale separates the actions from the fields than separates the fields from each other. The row
    wraps before shrinking a label at narrow widths. */
 .auth-actions {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-top: 4px;
+}
+.auth-actions #auth-submit {
+  grid-column: 1 / -1;
+  background: var(--sel);
+  border-color: var(--sel-deep);
+  color: var(--bg);
+  font-weight: 600;
+}
+.auth-actions #auth-submit:not(:disabled):hover {
+  background: var(--sel-deep);
+  color: var(--light-bg);
 }
 .auth .error {
   margin: 12px 0 0;
@@ -546,6 +561,15 @@ button:disabled {
 .auth-meta {
   margin: 12px 0 0;
   font-size: 0.875rem;
+}
+
+@media (max-width: 520px) {
+  .auth { padding: 20px; }
+  .auth-form { grid-template-columns: 1fr; }
+  .auth-field:nth-child(3),
+  .auth-actions,
+  .auth-actions #auth-submit { grid-column: auto; }
+  .auth-actions { grid-template-columns: 1fr; }
 }
 
 #password-reset .auth-field input {
