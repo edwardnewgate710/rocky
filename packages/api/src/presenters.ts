@@ -953,6 +953,8 @@ export interface CapabilitiesFlags {
    * which sections to expect reads the five flags, not this one.
    */
   readonly coach: boolean;
+  /** Private durable Study Partner sessions over the production coaching policy. */
+  readonly studyPartner: boolean;
   /**
    * Engine-cited commentary on finished tournament games, and narrative round recaps (ADR-0130).
    *
@@ -1016,6 +1018,7 @@ export function capabilitiesView(
     | 'openingExploration'
     | 'endgameTraining'
     | 'coach'
+    | 'studyPartner'
     | 'tournamentCommentary'
   >,
 ): CapabilitiesView {
@@ -1043,6 +1046,7 @@ export function capabilitiesView(
       openingExplorer: deps.openingExploration !== undefined,
       endgameTrainer: deps.endgameTraining !== undefined,
       coach: deps.coach !== undefined,
+      studyPartner: deps.studyPartner !== undefined,
       tournamentCommentary: deps.tournamentCommentary !== undefined,
     },
     analysisVariants: deps.analysis

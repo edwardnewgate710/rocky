@@ -4,7 +4,31 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-24 — M15 Increment 25: Study Partner and Voice Coach depend on a narrow coaching capability._
+_Last updated: 2026-08-24 — M15 Increment 26: server-authoritative Study Partner v1 production slice._
+
+## M15 Increment 26 — Study Partner v1 productionization (ADR-0134)
+
+Study Partner now has a private, durable, server-authoritative linear lifecycle. Five authenticated
+routes create, read/resume, append a move, end idempotently, and hard-delete a session. The client
+never supplies successive FENs or coaching policy: the service applies each move to the stored
+position, derives the next FEN, invokes the hardened production `CoachService` exactly once, and
+atomically stores the safe coaching projection with the position advance.
+
+Migration `0024_study_partner.sql` adds normalized sessions and turns plus a durable turn-request
+ledger. The ledger claims a bounded required `Idempotency-Key` before charging or expensive work,
+so concurrent retries cannot purchase coaching twice; completed retries replay the stored turn.
+Owner-scoped repositories make missing and foreign IDs the same 404, account/owner deletion
+cascades, cancellation persists no partial turn, and completion never rewrites `completedAt`.
+Sessions are bounded to 20 turns and standard chess in v1; the latter avoids claiming FEN authority
+for variants whose complete rule state does not round-trip through the current FEN codec.
+
+Only versioned, tagged production coaching sections persist. Puzzle/endgame answers remain withheld,
+and explanation provider/model metadata, prompts, raw provider responses, usage, and library
+narrative are absent. OpenAPI and the typed web client expose exactly the five-route lifecycle; a
+visual UI, listing, retention jobs, branching/undo/collaboration, Study integration, Voice Coach,
+and abandoned-claim recovery remain deferred.
+
+Detailed in `docs/adr/0134-study-partner-v1.md`.
 
 ## M15 Increment 25 — CoachPort extraction (ADR-0133)
 

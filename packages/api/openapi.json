@@ -2935,6 +2935,483 @@
         }
       }
     },
+    "/v1/study-partner/sessions": {
+      "post": {
+        "summary": "Create a private server-authoritative Study Partner session",
+        "tags": [
+          "study-partner"
+        ],
+        "operationId": "post_v1_study_partner_sessions",
+        "responses": {
+          "201": {
+            "description": "Session created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyPartnerSession"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid variant, FEN, or body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Study Partner is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateStudyPartnerSessionRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/study-partner/sessions/{id}": {
+      "get": {
+        "summary": "Read or resume an owned Study Partner session",
+        "tags": [
+          "study-partner"
+        ],
+        "operationId": "get_v1_study_partner_sessions_by_id",
+        "responses": {
+          "200": {
+            "description": "Owned session and its bounded turn history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyPartnerSession"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session missing or not owned by the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Malformed session ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Study Partner is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Study Partner session ID (UUID)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "delete": {
+        "summary": "Permanently delete an owned Study Partner session and its turns",
+        "tags": [
+          "study-partner"
+        ],
+        "operationId": "delete_v1_study_partner_sessions_by_id",
+        "responses": {
+          "204": {
+            "description": "Session and turns deleted"
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session missing or not owned by the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Malformed session ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Study Partner is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Study Partner session ID (UUID)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/study-partner/sessions/{id}/turns": {
+      "post": {
+        "summary": "Append one authoritative move and its production coaching result",
+        "tags": [
+          "study-partner"
+        ],
+        "operationId": "post_v1_study_partner_sessions_by_id_turns",
+        "responses": {
+          "200": {
+            "description": "Turn committed or a completed request replayed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmitStudyPartnerTurnResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session missing or not owned by the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Version conflict, completed session, failed key, or turn in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid move, key, body, or turn limit reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Coach rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Study Partner or coaching dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Study Partner session ID (UUID)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "description": "Unique turn intent key retained for the life of the session",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitStudyPartnerTurnRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/study-partner/sessions/{id}/end": {
+      "post": {
+        "summary": "Idempotently complete an owned Study Partner session",
+        "tags": [
+          "study-partner"
+        ],
+        "operationId": "post_v1_study_partner_sessions_by_id_end",
+        "responses": {
+          "200": {
+            "description": "Session completed, or its existing completion returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyPartnerSession"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session missing or not owned by the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Version conflict or a turn is in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Malformed session ID or body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Study Partner is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Study Partner session ID (UUID)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EndStudyPartnerSessionRequest"
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/ai/move-explanation": {
       "post": {
         "summary": "Explain a move in a position with engine grounding",
@@ -12988,6 +13465,7 @@
               "openingExplorer",
               "endgameTrainer",
               "coach",
+              "studyPartner",
               "tournamentCommentary"
             ],
             "properties": {
@@ -13034,6 +13512,9 @@
                 "type": "boolean"
               },
               "coach": {
+                "type": "boolean"
+              },
+              "studyPartner": {
                 "type": "boolean"
               },
               "tournamentCommentary": {
@@ -17799,6 +18280,414 @@
             "items": {
               "type": "string"
             }
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateStudyPartnerSessionRequest": {
+        "type": "object",
+        "required": [
+          "variant",
+          "initialFen"
+        ],
+        "properties": {
+          "variant": {
+            "type": "string",
+            "enum": [
+              "standard"
+            ]
+          },
+          "initialFen": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "additionalProperties": false
+      },
+      "SubmitStudyPartnerTurnRequest": {
+        "type": "object",
+        "description": "The intended move and the session version observed by the client. Current and next FEN, coaching policy, provider settings, and progress are server-owned and cannot be supplied.",
+        "required": [
+          "move",
+          "expectedVersion"
+        ],
+        "properties": {
+          "move": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 6
+          },
+          "expectedVersion": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "EndStudyPartnerSessionRequest": {
+        "type": "object",
+        "required": [
+          "expectedVersion"
+        ],
+        "properties": {
+          "expectedVersion": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "StudyPartnerExplanation": {
+        "type": "object",
+        "description": "Grounded explanation with citation, without provider or model metadata.",
+        "required": [
+          "fen",
+          "variant",
+          "move",
+          "explanation",
+          "citation"
+        ],
+        "properties": {
+          "fen": {
+            "type": "string"
+          },
+          "variant": {
+            "type": "string",
+            "enum": [
+              "standard"
+            ]
+          },
+          "move": {
+            "type": "string"
+          },
+          "explanation": {
+            "type": "string"
+          },
+          "citation": {
+            "type": "object",
+            "required": [
+              "moveOutcome",
+              "evalKind",
+              "evalValue",
+              "evalLabel",
+              "bestMove",
+              "bestLine",
+              "depth"
+            ],
+            "properties": {
+              "moveOutcome": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "evalKind",
+                      "evalValue",
+                      "evalLabel"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "evaluation"
+                        ]
+                      },
+                      "evalKind": {
+                        "type": "string",
+                        "enum": [
+                          "cp",
+                          "mate"
+                        ]
+                      },
+                      "evalValue": {
+                        "type": "number"
+                      },
+                      "evalLabel": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "reason",
+                      "result"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "terminal"
+                        ]
+                      },
+                      "reason": {
+                        "type": "string",
+                        "enum": [
+                          "checkmate",
+                          "stalemate",
+                          "insufficient_material",
+                          "fifty_move",
+                          "threefold",
+                          "variant_win",
+                          "variant_draw"
+                        ]
+                      },
+                      "result": {
+                        "type": "string",
+                        "enum": [
+                          "1-0",
+                          "0-1",
+                          "1/2-1/2"
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "evalKind": {
+                "type": "string",
+                "enum": [
+                  "cp",
+                  "mate"
+                ]
+              },
+              "evalValue": {
+                "type": "number"
+              },
+              "evalLabel": {
+                "type": "string"
+              },
+              "bestMove": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "bestLine": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "depth": {
+                "type": "integer"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "StudyPartnerExplanationSection": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "value"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "present"
+                ]
+              },
+              "value": {
+                "$ref": "#/components/schemas/StudyPartnerExplanation"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "$ref": "#/components/schemas/CoachOmittedSection"
+          }
+        ]
+      },
+      "StudyPartnerCoaching": {
+        "type": "object",
+        "required": [
+          "version",
+          "fen",
+          "variant",
+          "move",
+          "mistake",
+          "explanation",
+          "opening",
+          "puzzle",
+          "endgame"
+        ],
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "fen": {
+            "type": "string"
+          },
+          "variant": {
+            "type": "string",
+            "enum": [
+              "standard"
+            ]
+          },
+          "move": {
+            "type": "string"
+          },
+          "mistake": {
+            "$ref": "#/components/schemas/CoachMistakeSection"
+          },
+          "explanation": {
+            "$ref": "#/components/schemas/StudyPartnerExplanationSection"
+          },
+          "opening": {
+            "$ref": "#/components/schemas/CoachOpeningSection"
+          },
+          "puzzle": {
+            "$ref": "#/components/schemas/CoachPuzzleSection"
+          },
+          "endgame": {
+            "$ref": "#/components/schemas/CoachEndgameSection"
+          }
+        },
+        "additionalProperties": false
+      },
+      "StudyPartnerTurn": {
+        "type": "object",
+        "required": [
+          "id",
+          "turnNumber",
+          "move",
+          "fenBefore",
+          "fenAfter",
+          "coaching",
+          "sessionVersion",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "turnNumber": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20
+          },
+          "move": {
+            "type": "string"
+          },
+          "fenBefore": {
+            "type": "string"
+          },
+          "fenAfter": {
+            "type": "string"
+          },
+          "coaching": {
+            "$ref": "#/components/schemas/StudyPartnerCoaching"
+          },
+          "sessionVersion": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "StudyPartnerSession": {
+        "type": "object",
+        "required": [
+          "id",
+          "variant",
+          "initialFen",
+          "currentFen",
+          "status",
+          "version",
+          "turnCount",
+          "createdAt",
+          "updatedAt",
+          "completedAt",
+          "turns"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "variant": {
+            "type": "string",
+            "enum": [
+              "standard"
+            ]
+          },
+          "initialFen": {
+            "type": "string"
+          },
+          "currentFen": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "completed"
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "turnCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 20
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "turns": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "$ref": "#/components/schemas/StudyPartnerTurn"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "SubmitStudyPartnerTurnResponse": {
+        "type": "object",
+        "required": [
+          "turn",
+          "replayed"
+        ],
+        "properties": {
+          "turn": {
+            "$ref": "#/components/schemas/StudyPartnerTurn"
+          },
+          "replayed": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false

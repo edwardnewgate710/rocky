@@ -13,6 +13,7 @@ import { resolveConfig } from '../src/config';
 import type { ApiConfigInput } from '../src/config';
 import { createInMemoryRepositories, InMemoryTournamentsRepository } from '../src/fakes';
 import type { InMemoryRepositories } from '../src/fakes';
+import { StudyPartnerService } from '../src/study-partner/service';
 import { ManualClock } from '../src/ports/clock';
 import { uuidv7Generator } from '../src/ports/ids';
 import { InMemoryRateLimiter } from '../src/ports/in-memory-rate-limiter';
@@ -278,6 +279,9 @@ export async function startHarness(
           ...(endgameTraining ? { endgameTraining } : {}),
         }),
       });
+  const studyPartner = coach
+    ? new StudyPartnerService({ repository: repos.studyPartner, coach, clock, ids })
+    : undefined;
   const server = createApiServer({
     repos, hasher, tokens, clock, ids, rateLimiter, tournamentRepo, gameLauncher, liveView,
     emailSender: harnessOptions.emailSender ?? emailSender,
@@ -301,6 +305,7 @@ export async function startHarness(
     ...(openingExploration ? { openingExploration } : {}),
     ...(endgameTraining ? { endgameTraining } : {}),
     ...(coach ? { coach } : {}),
+    ...(studyPartner ? { studyPartner } : {}),
     ...(harnessOptions.tournamentCommentary
       ? { tournamentCommentary: harnessOptions.tournamentCommentary }
       : {}),

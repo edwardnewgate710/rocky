@@ -13,5 +13,7 @@ export * from './ids';
 export * from './glicko2';
 export * from './event-store';
 export * from './repositories';
+export * from './study-partner';
+export * from './in-memory-study-partner';
 export * from './search-backfill';
 

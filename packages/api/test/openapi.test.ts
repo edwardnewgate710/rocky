@@ -72,6 +72,77 @@ test('protected operations declare bearer security', async () => {
   }
 });
 
+test('Study Partner publishes only the private five-route lifecycle and its safe turn contract', async () => {
+  const h = await startHarness();
+  try {
+    type Operation = {
+      readonly security?: readonly Readonly<Record<string, readonly string[]>>[];
+      readonly parameters?: readonly {
+        readonly name?: string;
+        readonly in?: string;
+        readonly required?: boolean;
+        readonly schema?: Readonly<Record<string, unknown>>;
+      }[];
+      readonly requestBody?: {
+        readonly content?: Readonly<Record<string, { readonly schema?: { readonly $ref?: string } }>>;
+      };
+    };
+    type StudyPartnerDocument = {
+      readonly paths: Readonly<Record<string, Readonly<Record<string, Operation>>>>;
+      readonly components: {
+        readonly schemas: Readonly<Record<string, JsonSchema>>;
+      };
+    };
+    const doc = h.server.openapiDocument() as unknown as StudyPartnerDocument;
+    const routes = Object.entries(doc.paths)
+      .filter(([path]) => path.startsWith('/v1/study-partner/'))
+      .flatMap(([path, operations]) => Object.keys(operations).map((method) => `${method.toUpperCase()} ${path}`))
+      .sort();
+    assert.deepEqual(routes, [
+      'DELETE /v1/study-partner/sessions/{id}',
+      'GET /v1/study-partner/sessions/{id}',
+      'POST /v1/study-partner/sessions',
+      'POST /v1/study-partner/sessions/{id}/end',
+      'POST /v1/study-partner/sessions/{id}/turns',
+    ]);
+    for (const [path, operations] of Object.entries(doc.paths)) {
+      if (!path.startsWith('/v1/study-partner/')) continue;
+      for (const operation of Object.values(operations)) {
+        assert.deepEqual(operation.security, [{ bearerAuth: [] }]);
+      }
+    }
+
+    const turn = doc.paths['/v1/study-partner/sessions/{id}']?.['post'];
+    assert.equal(turn, undefined, 'the session resource itself must not gain an undocumented POST');
+    const submit = doc.paths['/v1/study-partner/sessions/{id}/turns']?.['post'];
+    assert.ok(submit);
+    const key = submit.parameters?.find((parameter) => parameter.name === 'Idempotency-Key');
+    assert.deepEqual(
+      { in: key?.in, required: key?.required, pattern: key?.schema?.['pattern'], maxLength: key?.schema?.['maxLength'] },
+      { in: 'header', required: true, pattern: '^[A-Za-z0-9._:-]{1,128}$', maxLength: 128 },
+    );
+    assert.equal(
+      submit.requestBody?.content?.['application/json']?.schema?.$ref,
+      '#/components/schemas/SubmitStudyPartnerTurnRequest',
+    );
+
+    const request = doc.components.schemas['SubmitStudyPartnerTurnRequest'];
+    assert.deepEqual(Object.keys(request?.properties ?? {}).sort(), ['expectedVersion', 'move']);
+    assert.equal(request?.additionalProperties, false);
+    const explanation = doc.components.schemas['StudyPartnerExplanation'];
+    assert.equal('providerId' in (explanation?.properties ?? {}), false);
+    assert.equal('model' in (explanation?.properties ?? {}), false);
+    const puzzle = doc.components.schemas['CoachPuzzleView'];
+    assert.deepEqual(Object.keys(puzzle?.properties ?? {}).sort(), ['difficulty', 'fen', 'kind', 'variant']);
+    assert.equal(puzzle?.additionalProperties, false);
+    const session = doc.components.schemas['StudyPartnerSession'];
+    const turns = session?.properties?.['turns'];
+    assert.equal(turns?.maxItems, 20);
+  } finally {
+    await h.close();
+  }
+});
+
 test('email verification resend documents authentication and rate limiting', async () => {
   const h = await startHarness();
   try {

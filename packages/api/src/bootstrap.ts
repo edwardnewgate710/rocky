@@ -34,6 +34,7 @@ import {
   PgAchievementsRepository,
   PgStudiesRepository,
   PgLearningRepository,
+  PgStudyPartnerRepository,
 } from '@chess-platform/persistence/pg';
 import { HashingEmbeddingProvider, SEARCH_EMBEDDING_DIMENSIONS } from '@chess-platform/search';
 import type { EmbeddingProvider, SearchRepository, SemanticSearchRepository } from '@chess-platform/search';
@@ -91,6 +92,7 @@ import { createAiFromEnv, createMoveExplanation } from './ai/composition';
 import { createEndgameTraining } from './endgames/composition';
 import { createCoach } from './coach/composition';
 import type { CoachFeatureFactory } from './coach/coach-service';
+import { StudyPartnerService } from './study-partner/service';
 import { EventStoreGameSource } from './anti-cheat/source';
 import { EventStoreBotTimingSource } from './bot-detection/source';
 
@@ -138,6 +140,7 @@ export function createPgRepositories(pool: Pool, ids: IdGenerator = uuidv7Genera
     gameStarter: new PgGameStarter(pool),
     antiCheat: new PgAntiCheatReportRepository(pool),
     botReports: new PgBotBehaviorReportRepository(pool),
+    studyPartner: new PgStudyPartnerRepository(pool),
   };
 }
 
@@ -296,6 +299,9 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ...(analysisComposition ? { analysis: analysisComposition.service } : {}),
     features: coachFeatures,
   });
+  const studyPartner = coach
+    ? new StudyPartnerService({ repository: repos.studyPartner, coach, clock, ids })
+    : undefined;
 
   // Tournament commentary (ADR-0130) borrows the same analysis subsystem and the same AI
   // orchestrator, and owns three reads of its own: the tournament aggregate, the durable game log,
@@ -425,6 +431,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     openingExploration,
     endgameTraining,
     coach,
+    studyPartner,
     tournamentCommentary,
     // Production observability (M13): structured logs to stdout, a scrape
     // registry backing GET /v1/metrics, and tracer emitting spans to logs.

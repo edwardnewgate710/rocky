@@ -18,7 +18,8 @@ import type {
   TournamentsRepository,
   IdentityTokensRepository,
   WebAuthnCredentialsRepository,
-  WebAuthnLoginChallengesRepository
+  WebAuthnLoginChallengesRepository,
+  StudyPartnerRepository,
 } from '@chess-platform/persistence';
 import type { PasswordHasher } from './auth/password';
 import type { AccessTokenService } from './auth/tokens';
@@ -57,6 +58,7 @@ export interface Repositories {
   readonly gameStarter: GameStarter;
   readonly antiCheat: AntiCheatReportRepository;
   readonly botReports: BotBehaviorReportRepository;
+  readonly studyPartner: StudyPartnerRepository;
 }
 
 /** Everything `createApiServer` needs to construct the service. */
@@ -138,6 +140,8 @@ export interface ApiDependencies {
    * services this deployment already built, sequenced.
    */
   readonly coach?: import('./coach/coach-service').CoachService;
+  /** Private, durable Study Partner sessions composed only over the production CoachService. */
+  readonly studyPartner?: import('./study-partner/service').StudyPartnerService;
   /**
    * Tournament commentary (ADR-0130). When absent, both commentary routes respond 503.
    *
