@@ -149,6 +149,8 @@ export interface ApiDependencies {
    * subsystem and the AI subsystem are both configured.
    */
   readonly tournamentCommentary?: import('./commentary/tournament-commentary-service').TournamentCommentaryService;
+  /** Optional completed-game review. Absent means `POST /v1/games/:id/review` responds 503. */
+  readonly gameReview?: import('./game-review/service').GameReviewService;
   /**
    * Optional GraphQL read layer (M10 inc 8). When absent, `POST /v1/graphql` responds 503.
    *

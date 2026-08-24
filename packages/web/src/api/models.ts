@@ -272,6 +272,8 @@ export interface SystemCapabilities {
    * has only one of them — do not infer it from `analysis` or from `coach`.
    */
   readonly tournamentCommentary?: boolean;
+  /** Completed-game review for a participating player. */
+  readonly gameReview?: boolean;
 }
 
 export interface CapabilitiesResponse {
@@ -1221,6 +1223,29 @@ export interface CoachResponse {
   readonly puzzle: CoachSection<CoachPuzzle>;
   readonly endgame: CoachSection<EndgamePosition>;
   readonly featuresFired: readonly string[];
+}
+
+export interface GameReviewMove {
+  readonly ply: number;
+  readonly san: string;
+  readonly move: string;
+  readonly fenBefore: string;
+  readonly assessment: MistakePredictionResponse;
+}
+
+export interface GameReviewResponse {
+  readonly gameId: string;
+  readonly variant: string;
+  readonly playerColor: 'white' | 'black';
+  readonly result: '1-0' | '0-1' | '1/2-1/2';
+  readonly termination: string;
+  readonly moves: readonly GameReviewMove[];
+  readonly summary: {
+    readonly ok: number;
+    readonly inaccuracies: number;
+    readonly mistakes: number;
+    readonly blunders: number;
+  };
 }
 
 // --- Study Partner v1 -------------------------------------------------------

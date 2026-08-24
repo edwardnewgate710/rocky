@@ -114,6 +114,14 @@
             <button id="action-decline-draw" type="button" class="button">Decline</button>
           </div>
         </div>
+        <section id="game-review" class="analysis-panel game-review" aria-labelledby="game-review-heading" hidden>
+          <h2 id="game-review-heading" class="analysis-title">Game review</h2>
+          <p id="game-review-note" class="count" role="status" aria-live="polite">Available when the game ends.</p>
+          <button id="game-review-run" type="button" class="button primary">Review my game</button>
+          <div id="game-review-error" class="error" role="alert" hidden></div>
+          <div id="game-review-summary" class="panel-list" hidden></div>
+          <div id="game-review-moves" class="panel-list" aria-busy="false"></div>
+        </section>
         <section id="analysis" class="analysis-panel" aria-labelledby="analysis-heading" hidden>
           <h2 id="analysis-heading" class="analysis-title">Engine</h2>
           <div class="analysis-controls">

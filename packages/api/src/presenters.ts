@@ -964,6 +964,8 @@ export interface CapabilitiesFlags {
    * a shorter recap, it is silence — so one flag covers both routes.
    */
   readonly tournamentCommentary: boolean;
+  /** Private, fixed-policy review of a completed game for one of its players. */
+  readonly gameReview: boolean;
 }
 
 /**
@@ -1020,6 +1022,7 @@ export function capabilitiesView(
     | 'coach'
     | 'studyPartner'
     | 'tournamentCommentary'
+    | 'gameReview'
   >,
 ): CapabilitiesView {
   const puzzleVariants = deps.puzzleGeneration
@@ -1048,6 +1051,7 @@ export function capabilitiesView(
       coach: deps.coach !== undefined,
       studyPartner: deps.studyPartner !== undefined,
       tournamentCommentary: deps.tournamentCommentary !== undefined,
+      gameReview: deps.gameReview !== undefined,
     },
     analysisVariants: deps.analysis
       ? VARIANTS.filter((variant) => deps.analysis?.supportsVariant(variant) === true)
@@ -1469,6 +1473,42 @@ export function mistakePredictionView(
     bestMove: outcome.bestMove,
     bestLine: [...outcome.bestLine],
     depth: outcome.depth,
+  };
+}
+
+export interface GameReviewView {
+  readonly gameId: string;
+  readonly variant: string;
+  readonly playerColor: 'white' | 'black';
+  readonly result: '1-0' | '0-1' | '1/2-1/2';
+  readonly termination: string;
+  readonly moves: readonly {
+    readonly ply: number;
+    readonly san: string;
+    readonly move: string;
+    readonly fenBefore: string;
+    readonly assessment: MistakePredictionView;
+  }[];
+  readonly summary: { readonly ok: number; readonly inaccuracies: number; readonly mistakes: number; readonly blunders: number };
+}
+
+export function gameReviewView(
+  outcome: import('./game-review/service.js').GameReviewOutcome,
+): GameReviewView {
+  return {
+    gameId: outcome.gameId,
+    variant: outcome.variant,
+    playerColor: outcome.playerColor,
+    result: outcome.result,
+    termination: outcome.termination,
+    moves: outcome.moves.map((move) => ({
+      ply: move.ply,
+      san: move.san,
+      move: move.move,
+      fenBefore: move.fenBefore,
+      assessment: mistakePredictionView(move.assessment),
+    })),
+    summary: { ...outcome.summary },
   };
 }
 

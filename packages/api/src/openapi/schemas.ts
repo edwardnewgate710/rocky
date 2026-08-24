@@ -268,6 +268,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
           'coach',
           'studyPartner',
           'tournamentCommentary',
+          'gameReview',
         ],
         properties: {
           learning: { type: 'boolean' },
@@ -287,6 +288,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
           coach: { type: 'boolean' },
           studyPartner: { type: 'boolean' },
           tournamentCommentary: { type: 'boolean' },
+          gameReview: { type: 'boolean' },
         },
         additionalProperties: false,
       },
@@ -2148,6 +2150,45 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
         items: { type: 'string' },
       },
       depth: { type: 'integer' },
+    },
+    additionalProperties: false,
+  },
+
+  GameReviewResponse: {
+    type: 'object',
+    required: ['gameId', 'variant', 'playerColor', 'result', 'termination', 'moves', 'summary'],
+    properties: {
+      gameId: { type: 'string', format: 'uuid' },
+      variant: { type: 'string', enum: [...VARIANTS] },
+      playerColor: { type: 'string', enum: ['white', 'black'] },
+      result: { type: 'string', enum: [...RESULT_STRINGS] },
+      termination: { type: 'string' },
+      moves: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['ply', 'san', 'move', 'fenBefore', 'assessment'],
+          properties: {
+            ply: { type: 'integer', minimum: 1 },
+            san: { type: 'string' },
+            move: { type: 'string' },
+            fenBefore: { type: 'string' },
+            assessment: { $ref: '#/components/schemas/MistakePredictionResponse' },
+          },
+          additionalProperties: false,
+        },
+      },
+      summary: {
+        type: 'object',
+        required: ['ok', 'inaccuracies', 'mistakes', 'blunders'],
+        properties: {
+          ok: { type: 'integer', minimum: 0 },
+          inaccuracies: { type: 'integer', minimum: 0 },
+          mistakes: { type: 'integer', minimum: 0 },
+          blunders: { type: 'integer', minimum: 0 },
+        },
+        additionalProperties: false,
+      },
     },
     additionalProperties: false,
   },

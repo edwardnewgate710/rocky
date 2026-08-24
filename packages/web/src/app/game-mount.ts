@@ -33,6 +33,7 @@ import {
   coachEnabled,
   puzzleGenerationEnabled,
   puzzleGenerationSupportsVariant,
+  gameReviewEnabled,
 } from './capabilities-nav.js';
 import { PuzzleController } from './puzzle-controller.js';
 import { MAX_OPENING_PLIES, OpeningController } from './opening-controller.js';
@@ -175,6 +176,42 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
   const btnAcceptDraw = doc.getElementById('action-accept-draw');
   const btnDeclineDraw = doc.getElementById('action-decline-draw');
 
+  // Post-game review is deliberately separate from the live engine tools. It is not constructed
+  // from browser history: the server owns the finished event stream and verifies player ownership.
+  const gameReviewSectionEl = doc.getElementById('game-review');
+  const gameReviewRunBtn = doc.getElementById('game-review-run') as HTMLButtonElement | null;
+  const gameReviewNoteEl = doc.getElementById('game-review-note');
+  const gameReviewErrorEl = doc.getElementById('game-review-error');
+  const gameReviewSummaryEl = doc.getElementById('game-review-summary');
+  const gameReviewMovesEl = doc.getElementById('game-review-moves');
+  let gameReviewAvailable = false;
+  let gameOver = false;
+  let isGamePlayer = false;
+  let gameReviewPending = false;
+
+  const refreshGameReview = (): void => {
+    if (gameReviewSectionEl) gameReviewSectionEl.hidden = !gameOver || !isGamePlayer || !gameReviewAvailable;
+    if (gameReviewRunBtn) gameReviewRunBtn.disabled = !isUserAuthenticated() || gameReviewPending;
+    if (gameReviewNoteEl && !gameReviewPending && gameReviewMovesEl?.childElementCount === 0) {
+      gameReviewNoteEl.textContent = isUserAuthenticated()
+        ? 'Review your moves after the game.'
+        : 'Sign in to review your game.';
+    }
+  };
+
+  const clearGameReview = (): void => {
+    if (gameReviewErrorEl) {
+      gameReviewErrorEl.hidden = true;
+      gameReviewErrorEl.textContent = '';
+    }
+    if (gameReviewSummaryEl) {
+      gameReviewSummaryEl.hidden = true;
+      gameReviewSummaryEl.replaceChildren();
+    }
+    gameReviewMovesEl?.replaceChildren();
+  };
+  clearGameReview();
+
   // Engine analysis panel (M15 inc 2)
   const analysisSectionEl = doc.getElementById('analysis');
   const analysisRunBtn = doc.getElementById('analysis-run') as HTMLButtonElement | null;
@@ -246,6 +283,8 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
    */
   const refreshAnalysisControls = (): void => {
     if (analysisDisposed || !analysisAvailable) return;
+    if (analysisSectionEl) analysisSectionEl.hidden = !gameOver;
+    if (!gameOver) return;
 
     // The variant arrives on a game snapshot, which can land either side of the capability answer,
     // so the gate is evaluated here rather than at either arrival point.
@@ -296,6 +335,10 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
 
   const refreshPuzzleControls = (): void => {
     if (analysisDisposed || !puzzleAvailable) return;
+    if (!gameOver) {
+      if (puzzleBlockEl) puzzleBlockEl.hidden = true;
+      return;
+    }
     if (
       !puzzleUnsupported &&
       currentVariant !== null &&
@@ -396,7 +439,8 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
    */
   const refreshCoachControls = (): void => {
     if (analysisDisposed || !coachAvailable) return;
-    if (coachBlockEl) coachBlockEl.hidden = false;
+    if (coachBlockEl) coachBlockEl.hidden = !gameOver;
+    if (!gameOver) return;
     const authed = isUserAuthenticated();
     if (coachRunBtn) {
       coachRunBtn.disabled = !authed || coachTarget() === null || coachController.isPending;
@@ -462,7 +506,8 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
   /** Bring the button state and the note back into agreement with the game and the session. */
   const refreshOpeningControls = (): void => {
     if (analysisDisposed || !openingAvailable) return;
-    if (openingBlockEl) openingBlockEl.hidden = false;
+    if (openingBlockEl) openingBlockEl.hidden = !gameOver;
+    if (!gameOver) return;
     const authed = isUserAuthenticated();
     const availability = openingAvailability();
     if (openingRunBtn) {
@@ -1152,6 +1197,16 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
         }
       },
       onActionState: (state) => {
+        isGamePlayer = state.isPlayer;
+        if (gameOver !== state.isOver) {
+          gameOver = state.isOver;
+          refreshGameReview();
+          refreshAnalysisControls();
+          refreshPuzzleControls();
+          refreshOpeningControls();
+          refreshCoachControls();
+        }
+        refreshGameReview();
         if (actionsPanelEl) actionsPanelEl.hidden = !state.isPlayer;
         if (!state.isPlayer) return;
 
@@ -1216,6 +1271,64 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     el.addEventListener('click', listener);
     unbinds.push(() => el.removeEventListener('click', listener));
   };
+
+  const renderGameReview = (review: Awaited<ReturnType<GambitClient['games']['review']>>): void => {
+    if (gameReviewSummaryEl) {
+      const summary = doc.createElement('p');
+      summary.textContent = [
+        `${review.summary.blunders} blunders`,
+        `${review.summary.mistakes} mistakes`,
+        `${review.summary.inaccuracies} inaccuracies`,
+      ].join(' · ');
+      gameReviewSummaryEl.replaceChildren(summary);
+      gameReviewSummaryEl.hidden = false;
+    }
+    if (gameReviewMovesEl) {
+      gameReviewMovesEl.replaceChildren(...review.moves.map((move) => {
+        const row = doc.createElement('button');
+        row.type = 'button';
+        row.className = 'panel-row game-review-move';
+        const loss = move.assessment.centipawnLoss === null
+          ? ''
+          : ` · ${move.assessment.centipawnLoss} cp`;
+        const moveLabel = doc.createElement('span');
+        moveLabel.textContent = `${move.ply}. ${move.san}`;
+        const verdict = doc.createElement('strong');
+        verdict.textContent = `${move.assessment.classification}${loss}`;
+        row.replaceChildren(moveLabel, verdict);
+        row.addEventListener('click', () => {
+          board.setPosition(move.fenBefore);
+          board.setTurn(false);
+          if (move.move.length >= 4) board.setLastMove(move.move.slice(0, 2), move.move.slice(2, 4));
+          if (statusEl) statusEl.textContent = `Reviewing ${move.san}. Best move: ${move.assessment.bestMove ?? 'not available'}.`;
+        });
+        return row;
+      }));
+    }
+    if (gameReviewNoteEl) gameReviewNoteEl.textContent = 'Select a move to see the position before it was played.';
+  };
+
+  bindClick(gameReviewRunBtn, () => {
+    if (gameReviewPending || !gameOver || !isUserAuthenticated()) return;
+    gameReviewPending = true;
+    clearGameReview();
+    if (gameReviewMovesEl) gameReviewMovesEl.setAttribute('aria-busy', 'true');
+    if (gameReviewNoteEl) gameReviewNoteEl.textContent = 'Reviewing your moves…';
+    refreshGameReview();
+    void deps.client.games.review(gameId)
+      .then(renderGameReview)
+      .catch(() => {
+        if (gameReviewErrorEl) {
+          gameReviewErrorEl.hidden = false;
+          gameReviewErrorEl.textContent = 'The review is not available right now. Please try again.';
+        }
+      })
+      .finally(() => {
+        gameReviewPending = false;
+        if (gameReviewMovesEl) gameReviewMovesEl.setAttribute('aria-busy', 'false');
+        refreshGameReview();
+      });
+  });
 
   // Route-scoped, like every other control here. A bare `addEventListener` on this element stacked a
   // new listener — each holding a disposed controller — on every SPA navigation to a game, because
@@ -1319,6 +1432,8 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
       // is inside that early return (ADR-0127).
       openingAvailable = openingExplorerEnabled(flags);
       coachAvailable = coachEnabled(flags);
+      gameReviewAvailable = gameReviewEnabled(flags);
+      refreshGameReview();
       refreshCoachControls();
       refreshOpeningControls();
       if (!analysisEnabled(flags)) return;
@@ -1437,6 +1552,7 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
       // social region. Raised in the Qodo review of PR #152.
       if (!isUserAuthenticated()) coachController.targetLost();
       refreshCoachControls();
+      refreshGameReview();
     },
   };
 }

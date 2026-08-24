@@ -78,6 +78,8 @@ import { DurableGameLauncher } from './tournament/durable-launcher';
 import { DurableTournamentLiveView } from './tournament/durable-live-view';
 import { DurableFinishedGameArchive } from './tournament/durable-finished-game';
 import type { FinishedGameArchive } from './tournament/finished-game';
+import { DurableFinishedGameReviewArchive } from './game-review/finished-game-review';
+import { createGameReview } from './game-review/composition';
 import {
   createTournamentCommentary,
   RepositoryPlayerHandles,
@@ -313,6 +315,9 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     tournaments: new RepositoryTournamentLookup(tournamentRepo),
     players: new RepositoryPlayerHandles(repos.users),
   });
+  const gameReview = analysisComposition
+    ? createGameReview(analysisComposition.service, new DurableFinishedGameReviewArchive(eventStore))
+    : undefined;
 
   const searchEnabled = process.env['SEARCH_ENABLED'] !== '0';
   const searchRepository = searchEnabled
@@ -433,6 +438,7 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     coach,
     studyPartner,
     tournamentCommentary,
+    gameReview,
     // Production observability (M13): structured logs to stdout, a scrape
     // registry backing GET /v1/metrics, and tracer emitting spans to logs.
     logger,
