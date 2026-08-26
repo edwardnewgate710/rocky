@@ -4,7 +4,19 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-26 — M15 Increment 29: accepted-turn session quarantine._
+_Last updated: 2026-08-26 — M15 Increment 30: retryable rate-limit refusal._
+
+## M15 Increment 30 — Retryable rate-limit refusal (ADR-0134)
+
+Study Partner now distinguishes a definitive atomic rate-limit refusal from ambiguous accepted-work
+failure. A known HTTP 429 occurs before Coach feature/provider work and consumes no quota, so the new
+`refuseTurn` repository transition moves that accepted request to `failed` and permits a new-key
+retry. Every unknown charge exception, successful admission followed by failure, and orphaned live
+worker remains `exhausted` and quarantines the session.
+
+The acceptance record still precedes quota admission; moving it later would reopen the crash window
+for double purchase. Service regressions prove 429-then-retry success and unknown charge-failure
+quarantine, while in-memory and PostgreSQL integration assertions pin the same refusal transition.
 
 ## M15 Increment 29 — Accepted-turn session quarantine (ADR-0134)
 

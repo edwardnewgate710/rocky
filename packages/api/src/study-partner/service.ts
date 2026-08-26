@@ -197,6 +197,7 @@ export class StudyPartnerService {
       requestHash,
       now,
     };
+    let rateLimitRefused = false;
     try {
       const detail = await this.options.repository.findOwnedSession(input.sessionId, input.ownerId);
       if (!detail) throw HttpError.notFound('study partner session not found');
@@ -229,7 +230,12 @@ export class StudyPartnerService {
           now: new Date(this.options.clock.now()),
         });
         if (!accepted) throw HttpError.conflict('study partner turn is no longer claimable');
-        await input.charge();
+        try {
+          await input.charge();
+        } catch (error: unknown) {
+          rateLimitRefused = error instanceof HttpError && error.status === 429;
+          throw error;
+        }
       });
       if (input.signal.aborted) throw cancelled();
       if (
@@ -256,7 +262,9 @@ export class StudyPartnerService {
       return { turn: turnView(committed.turn), replayed: false };
     } catch (error: unknown) {
       try {
-        await this.options.repository.failTurn({ ...ref, now: new Date(this.options.clock.now()) });
+        const failedRef = { ...ref, now: new Date(this.options.clock.now()) };
+        if (rateLimitRefused) await this.options.repository.refuseTurn(failedRef);
+        else await this.options.repository.failTurn(failedRef);
       } catch {
         // Cleanup is best effort; preserve the original mapped failure for the caller.
       }

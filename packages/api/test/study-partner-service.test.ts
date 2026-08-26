@@ -304,6 +304,73 @@ test('cancellation after charging does not persist or advance and exhausts that 
   assert.equal(charges, 1);
 });
 
+test('a definitive rate-limit refusal leaves the session retryable', async () => {
+  let workCalls = 0;
+  const { service } = fixture({
+    async coach(input, onAccepted) {
+      if (onAccepted) await onAccepted();
+      workCalls += 1;
+      return quietOutcome(input);
+    },
+  });
+  const created = await service.create('owner', 'standard', START);
+  let chargeAttempts = 0;
+  const command = {
+    ownerId: 'owner', sessionId: created.id, move: 'e2e4', expectedVersion: 0,
+    idempotencyKey: 'rate-limited', signal: new AbortController().signal,
+    charge: async () => {
+      chargeAttempts += 1;
+      if (chargeAttempts === 1) throw HttpError.rateLimited(60);
+    },
+  };
+
+  await assert.rejects(
+    () => service.submitTurn(command),
+    (error: unknown) => error instanceof HttpError && error.status === 429,
+  );
+  const retry = await service.submitTurn({ ...command, idempotencyKey: 'rate-limit-retry' });
+
+  assert.equal(retry.turn.move, 'e2e4');
+  assert.equal(chargeAttempts, 2);
+  assert.equal(workCalls, 1);
+});
+
+test('an unknown charge failure remains ambiguous and quarantines the session', async () => {
+  let workCalls = 0;
+  const { service } = fixture({
+    async coach(input, onAccepted) {
+      if (onAccepted) await onAccepted();
+      workCalls += 1;
+      return quietOutcome(input);
+    },
+  });
+  const created = await service.create('owner', 'standard', START);
+  let chargeAttempts = 0;
+  const command = {
+    ownerId: 'owner', sessionId: created.id, move: 'e2e4', expectedVersion: 0,
+    idempotencyKey: 'ambiguous-charge', signal: new AbortController().signal,
+    charge: async () => {
+      chargeAttempts += 1;
+      throw new Error('rate limiter outcome unknown');
+    },
+  };
+
+  await assert.rejects(() => service.submitTurn(command), /rate limiter outcome unknown/);
+  await assert.rejects(
+    () => service.submitTurn({
+      ...command,
+      move: 'd2d4',
+      idempotencyKey: 'ambiguous-charge-retry',
+      charge: async () => { chargeAttempts += 1; },
+    }),
+    (error: unknown) => error instanceof HttpError
+      && error.status === 409
+      && error.message.includes('cannot accept new turns'),
+  );
+  assert.equal(chargeAttempts, 1);
+  assert.equal(workCalls, 0);
+});
+
 test('a post-acceptance failure quarantines the session from every later turn purchase', async () => {
   let coachCalls = 0;
   const { service } = fixture({

@@ -56,6 +56,13 @@ that cannot commit becomes `exhausted`. Any exhausted request quarantines its se
 later turn claim, regardless of idempotency key or move, so no second purchase can overlap work that
 may still be live beyond this process.
 
+A definitive HTTP 429 from the atomic rate-limit admission is the one accepted-state failure known
+to precede both quota consumption and Coach feature/provider work. The repository records that
+refusal as `failed`, allowing a retry with a new key after the limit window. Any other charge error
+is ambiguous and follows normal failure cleanup to `exhausted`. Acceptance remains before admission:
+moving it after a successful charge would let a crash leave a merely `claimed` row that later retries
+and purchases the same turn twice.
+
 A process crash can leave a request claimed or accepted. `claimed` is provably before the charge
 callback, so `claimTurn` transactionally fails it after five minutes and allows a new key; this is
 request-path recovery, not a background retention job. `accepted` is beyond an ambiguous

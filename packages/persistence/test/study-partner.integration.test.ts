@@ -108,6 +108,31 @@ test('an exhausted accepted request quarantines the session from every later tur
   }), { kind: 'conflict' });
 });
 
+test('a definitive pre-work refusal releases an accepted request without quarantining the session', async () => {
+  const repository = new InMemoryStudyPartnerRepository();
+  const now = new Date('2026-08-24T12:00:00.000Z');
+  await repository.createSession({
+    id: 'refused-claim', ownerId: 'owner', variant: 'standard', initialFen: Position.initial().fen(), now,
+  });
+  assert.equal((await repository.claimTurn({
+    sessionId: 'refused-claim', ownerId: 'owner', idempotencyKey: 'refused', requestHash: 'a'.repeat(64),
+    expectedVersion: 0, maxTurns: 20, now,
+  })).kind, 'claimed');
+  assert.equal(await repository.acceptTurn({
+    sessionId: 'refused-claim', ownerId: 'owner', idempotencyKey: 'refused',
+    requestHash: 'a'.repeat(64), now,
+  }), true);
+  await repository.refuseTurn({
+    sessionId: 'refused-claim', ownerId: 'owner', idempotencyKey: 'refused',
+    requestHash: 'a'.repeat(64), now,
+  });
+
+  assert.deepEqual(await repository.claimTurn({
+    sessionId: 'refused-claim', ownerId: 'owner', idempotencyKey: 'retry', requestHash: 'a'.repeat(64),
+    expectedVersion: 0, maxTurns: 20, now,
+  }), { kind: 'claimed' });
+});
+
 test('ending recovers an orphaned accepted request at the accepted-work boundary', async () => {
   const repository = new InMemoryStudyPartnerRepository();
   const now = new Date('2026-08-24T12:00:00.000Z');
@@ -316,6 +341,27 @@ test('Postgres Study Partner repository commits a turn and session advancement a
       sessionId: acceptedFailureSessionId, ownerId, idempotencyKey: 'accepted-failure-retry',
       requestHash: '1'.repeat(64), expectedVersion: 0, maxTurns: 20, now,
     }), { kind: 'exhausted' });
+
+    const refusedSessionId = uuidv7();
+    await repository.createSession({
+      id: refusedSessionId, ownerId, variant: 'standard', initialFen: start, now,
+    });
+    assert.equal((await repository.claimTurn({
+      sessionId: refusedSessionId, ownerId, idempotencyKey: 'refused',
+      requestHash: '2'.repeat(64), expectedVersion: 0, maxTurns: 20, now,
+    })).kind, 'claimed');
+    assert.equal(await repository.acceptTurn({
+      sessionId: refusedSessionId, ownerId, idempotencyKey: 'refused',
+      requestHash: '2'.repeat(64), now,
+    }), true);
+    await repository.refuseTurn({
+      sessionId: refusedSessionId, ownerId, idempotencyKey: 'refused',
+      requestHash: '2'.repeat(64), now,
+    });
+    assert.deepEqual(await repository.claimTurn({
+      sessionId: refusedSessionId, ownerId, idempotencyKey: 'refused-retry',
+      requestHash: '2'.repeat(64), expectedVersion: 0, maxTurns: 20, now,
+    }), { kind: 'claimed' });
     assert.equal((await repository.claimTurn({
       sessionId, ownerId, idempotencyKey: 'abandoned', requestHash: 'b'.repeat(64),
       expectedVersion: 0, maxTurns: 20, now,
