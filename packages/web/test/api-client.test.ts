@@ -193,28 +193,6 @@ test('games.createVsBot posts to /v1/games/bot with auth and returns summary', a
   assert.deepEqual(JSON.parse(t.calls[1]!.body as string), req);
 });
 
-test('games.review posts to the completed-game review endpoint with authentication', async () => {
-  const review = {
-    gameId: 'game 1', variant: 'standard', playerColor: 'white', result: '1-0', termination: 'resignation',
-    moves: [], summary: {
-      brilliant: 0, great: 0, best: 1, excellent: 1, good: 0, book: 0,
-      inaccuracy: 1, mistake: 0, miss: 0, blunder: 0, missed_win: 0,
-    },
-  };
-  const t = new FakeTransport(
-    () => json(200, auth('tok-A')),
-    () => json(200, review),
-  );
-  const c = make(t);
-  await c.auth.login({ handle: 'alice', password: 'pw' });
-
-  const result = await c.games.review('game 1');
-  assert.equal(result.summary.inaccuracy, 1);
-  assert.equal(t.calls[1]!.url, 'https://api.test/v1/games/game%201/review');
-  assert.equal(t.calls[1]!.method, 'POST');
-  assert.equal(t.calls[1]!.headers['authorization'], 'Bearer tok-A');
-});
-
 test('tournaments.list fetches /v1/tournaments with auth:optional', async () => {
   const summary = { id: 't1', name: 'Weekly Arena', format: 'arena', state: 'running', participantCount: 10 };
   const t = new FakeTransport(() => json(200, [summary]));

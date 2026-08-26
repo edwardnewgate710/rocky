@@ -10,7 +10,6 @@ import { DEFAULT_ANALYSIS_LIMITS } from '../analysis/limits';
 import { MAX_EXPLORED_PLIES } from '../openings/opening-exploration-service';
 import { MAX_COACH_PLIES } from '../coach/coach-service';
 import { MAX_STUDY_PARTNER_TURNS } from '../study-partner/service';
-import { GAME_REVIEW_CLASSIFICATIONS } from '../game-review/classification';
 import type { ComponentSchemas, JsonSchema } from './types';
 import { nullable } from './types';
 
@@ -269,7 +268,6 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
           'coach',
           'studyPartner',
           'tournamentCommentary',
-          'gameReview',
         ],
         properties: {
           learning: { type: 'boolean' },
@@ -289,7 +287,6 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
           coach: { type: 'boolean' },
           studyPartner: { type: 'boolean' },
           tournamentCommentary: { type: 'boolean' },
-          gameReview: { type: 'boolean' },
         },
         additionalProperties: false,
       },
@@ -2151,53 +2148,6 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
         items: { type: 'string' },
       },
       depth: { type: 'integer' },
-    },
-    additionalProperties: false,
-  },
-
-  GameReviewResponse: {
-    type: 'object',
-    required: ['gameId', 'variant', 'playerColor', 'result', 'termination', 'moves', 'summary'],
-    properties: {
-      gameId: { type: 'string', format: 'uuid' },
-      variant: { type: 'string', enum: [...VARIANTS] },
-      playerColor: { type: 'string', enum: ['white', 'black'] },
-      result: { type: 'string', enum: [...RESULT_STRINGS] },
-      termination: { type: 'string' },
-      moves: {
-        type: 'array',
-        items: {
-          type: 'object',
-          required: ['ply', 'san', 'move', 'fenBefore', 'assessment', 'classification'],
-          properties: {
-            ply: { type: 'integer', minimum: 1 },
-            san: { type: 'string' },
-            move: { type: 'string' },
-            fenBefore: { type: 'string' },
-            assessment: { $ref: '#/components/schemas/MistakePredictionResponse' },
-            classification: { type: 'string', enum: [...GAME_REVIEW_CLASSIFICATIONS] },
-          },
-          additionalProperties: false,
-        },
-      },
-      summary: {
-        type: 'object',
-        required: [...GAME_REVIEW_CLASSIFICATIONS],
-        properties: {
-          brilliant: { type: 'integer', minimum: 0 },
-          great: { type: 'integer', minimum: 0 },
-          best: { type: 'integer', minimum: 0 },
-          excellent: { type: 'integer', minimum: 0 },
-          good: { type: 'integer', minimum: 0 },
-          book: { type: 'integer', minimum: 0 },
-          inaccuracy: { type: 'integer', minimum: 0 },
-          mistake: { type: 'integer', minimum: 0 },
-          miss: { type: 'integer', minimum: 0 },
-          blunder: { type: 'integer', minimum: 0 },
-          missed_win: { type: 'integer', minimum: 0 },
-        },
-        additionalProperties: false,
-      },
     },
     additionalProperties: false,
   },

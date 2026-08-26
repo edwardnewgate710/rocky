@@ -171,11 +171,10 @@ test('every class the auth surface carries is matched by a rule', () => {
   }
 });
 
-test('auth actions use a responsive grid instead of squeezing button labels', () => {
+test('auth actions wrap instead of squeezing button labels on narrow screens', () => {
   const authActions = rules().find((rule) => rule.selectors.includes('.auth-actions'));
   assert.ok(authActions, 'could not find the auth actions rule');
-  assert.match(authActions.body, /display\s*:\s*grid/);
-  assert.match(authActions.body, /grid-template-columns\s*:/);
+  assert.match(authActions.body, /flex-wrap\s*:\s*wrap/);
 });
 
 /**

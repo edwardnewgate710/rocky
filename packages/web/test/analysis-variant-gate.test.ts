@@ -20,7 +20,7 @@ import { mountGame } from '../src/app/game-mount.js';
 import { FakeSocketFactory } from './support/fake-socket.js';
 import { FakeTransport, json } from './support/fake-transport.js';
 import type { HttpRequest } from '../src/ports/http.js';
-import { createGameDocument, makeFinishedState, sampleAnalysisResponse } from './support/analysis-fixtures.js';
+import { createGameDocument, makeState, sampleAnalysisResponse } from './support/analysis-fixtures.js';
 
 /** Stockfish-only, which is what the production image actually is. */
 function stockfishOnlyTransport() {
@@ -73,7 +73,7 @@ async function mountWithVariant(variant: string) {
     t: 'joined',
     gameId: 'g-gate-1',
     role: 'white',
-    state: { ...makeFinishedState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'), variant },
+    state: { ...makeState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'), variant },
   });
   await new Promise((r) => setTimeout(r, 0));
 

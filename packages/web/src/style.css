@@ -508,37 +508,22 @@ button:disabled {
    thing in the product. It gets the lobby's centred column at a form measure, and its controls join
    the treatments that already exist rather than growing their own. */
 .auth {
-  max-width: 480px;
-  margin: clamp(24px, 8vh, 72px) auto;
-  padding: 28px;
-  border: 1px solid var(--panel-strong);
-  border-radius: 8px;
+  max-width: 360px;
+  margin: 32px auto;
+  padding: 20px;
+  border-radius: 6px;
   background: var(--panel);
 }
-.cb-coordinate {
-  position: absolute;
-  z-index: calc(var(--z-board-cue) + 1);
-  font-size: clamp(0.6rem, 1.8vw, 0.78rem);
-  font-weight: 700;
-  line-height: 1;
-  pointer-events: none;
-}
-.cb-rank { top: 4%; left: 6%; }
-.cb-file { right: 6%; bottom: 4%; text-transform: lowercase; }
-.cb-light .cb-coordinate { color: color-mix(in srgb, var(--dark) 80%, black); }
-.cb-dark .cb-coordinate { color: color-mix(in srgb, var(--light) 86%, white); }
 .auth-form {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 .auth-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  min-width: 0;
+  gap: 4px;
 }
-.auth-field:nth-child(3) { grid-column: 1 / -1; }
 /* Label typography: the same 0.75rem muted voice the clock's White/Black labels use. */
 .auth-field label {
   font-size: 0.75rem;
@@ -550,22 +535,10 @@ button:disabled {
    scale separates the actions from the fields than separates the fields from each other. The row
    wraps before shrinking a label at narrow widths. */
 .auth-actions {
-  display: grid;
-  grid-column: 1 / -1;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 4px;
-}
-.auth-actions #auth-submit {
-  grid-column: 1 / -1;
-  background: var(--sel);
-  border-color: var(--sel-deep);
-  color: var(--bg);
-  font-weight: 600;
-}
-.auth-actions #auth-submit:not(:disabled):hover {
-  background: var(--sel-deep);
-  color: var(--light-bg);
 }
 .auth .error {
   margin: 12px 0 0;
@@ -573,15 +546,6 @@ button:disabled {
 .auth-meta {
   margin: 12px 0 0;
   font-size: 0.875rem;
-}
-
-@media (max-width: 520px) {
-  .auth { padding: 20px; }
-  .auth-form { grid-template-columns: 1fr; }
-  .auth-field:nth-child(3),
-  .auth-actions,
-  .auth-actions #auth-submit { grid-column: auto; }
-  .auth-actions { grid-template-columns: 1fr; }
 }
 
 #password-reset .auth-field input {
@@ -1117,43 +1081,6 @@ button:disabled {
 .analysis-panel {
   margin-top: 16px;
 }
-.game-review-move {
-  width: 100%;
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  text-align: left;
-}
-.game-review-summary {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
-  gap: 8px;
-}
-.game-review-stat {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--panel);
-}
-.game-review-stat strong { font-feature-settings: 'tnum'; }
-.game-review-move strong {
-  white-space: nowrap;
-}
-.game-review-best strong { color: var(--sel); }
-.game-review-brilliant strong { color: #8564d6; }
-.game-review-great strong { color: #2d82bf; }
-.game-review-excellent strong { color: #3b9d6d; }
-.game-review-good strong { color: var(--text); }
-.game-review-book strong { color: #976436; }
-.game-review-inaccuracy strong { color: #bf8b24; }
-.game-review-mistake strong { color: #d76b32; }
-.game-review-miss strong,
-.game-review-missed_win strong { color: #d44b86; }
-.game-review-blunder strong { color: var(--ember); }
 /* The system's Label voice, unmodified. An earlier version added uppercase and letter-spacing,
    which would have been the only `text-transform` in the stylesheet — a new typographic treatment
    in a system that deliberately has one label voice and no display scale. Size and the muted colour

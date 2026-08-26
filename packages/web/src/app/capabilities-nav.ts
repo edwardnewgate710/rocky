@@ -210,11 +210,6 @@ export function mistakePredictionEnabled(payload: unknown): boolean {
   return capabilityFlags(payload)?.['mistakePrediction'] === true;
 }
 
-/** Whether this deployment can review a participant's completed game. */
-export function gameReviewEnabled(payload: unknown): boolean {
-  return capabilityFlags(payload)?.['gameReview'] === true;
-}
-
 /**
  * Whether this deployment can assess a move in a specific variant.
  *

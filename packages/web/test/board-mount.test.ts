@@ -13,13 +13,13 @@ import { mountBoard } from '../src/app/board.js';
 function fakeElement() {
   const live = new Map<string, Set<unknown>>();
   let adds = 0;
-  let html = '';
   return {
     el: {
       classList: { add: (): void => undefined },
       setAttribute: (): void => undefined,
-      set innerHTML(value: string) { html = value; },
-      get innerHTML() { return html; },
+      set innerHTML(_v: string) {
+        /* render output is not under test here */
+      },
       getBoundingClientRect: () => ({ width: 512, height: 512, left: 0, top: 0 }),
       addEventListener(type: string, fn: unknown): void {
         adds += 1;
@@ -59,17 +59,4 @@ test('remounting a board does not stack listeners on the same element', () => {
   assert.equal(board.liveCount('click'), 0, 'destroy detaches the last view too');
   assert.equal(board.liveCount('keydown'), 0, 'destroy detaches keyboard input too');
   assert.equal(flip.liveCount('click'), 0);
-});
-
-test('board renders algebraic rank and file coordinates', () => {
-  const board = fakeElement();
-  const mounted = mountBoard({ boardEl: board.el });
-
-  assert.match(board.el.innerHTML, /cb-coordinate cb-rank[^>]*>8</);
-  assert.match(board.el.innerHTML, /cb-coordinate cb-file[^>]*>a</);
-
-  mounted.view.flip();
-  assert.match(board.el.innerHTML, /cb-coordinate cb-rank[^>]*>1</);
-  assert.match(board.el.innerHTML, /cb-coordinate cb-file[^>]*>h</);
-  mounted.destroy();
 });

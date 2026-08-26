@@ -117,10 +117,6 @@ export interface RateLimitConfig {
     readonly perUser: RateLimitEndpointConfig;
     readonly perIp: RateLimitEndpointConfig;
   };
-  readonly gameReview: {
-    readonly perUser: RateLimitEndpointConfig;
-    readonly perIp: RateLimitEndpointConfig;
-  };
 }
 
 export const DEFAULT_ACCESS_TOKEN_TTL_SEC = 15 * 60;
@@ -234,12 +230,6 @@ export const DEFAULT_RATE_LIMIT: RateLimitConfig = {
   tournamentCommentary: {
     perUser: { maxRequests: 10, windowMs: 60 * 1000 }, // 10 / min
     perIp: { maxRequests: 30, windowMs: 60 * 1000 }, // 30 / min
-  },
-  // A review can run up to eighty fixed-policy searches (two for each of forty player moves), so
-  // its own low-volume bucket prevents one account from monopolising the shared engine pool.
-  gameReview: {
-    perUser: { maxRequests: 2, windowMs: 10 * 60 * 1000 }, // 2 / 10 min
-    perIp: { maxRequests: 6, windowMs: 10 * 60 * 1000 }, // 6 / 10 min
   },
 };
 

@@ -4,7 +4,19 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-24 — M15 Increment 26: server-authoritative Study Partner v1 production slice._
+_Last updated: 2026-08-26 — M15 Increment 27: Study Partner pull-request scope recovery._
+
+## M15 Increment 27 — Study Partner pull-request scope recovery
+
+PR #1 is again limited to the server-authoritative Study Partner v1 slice. Four later commits that
+mixed in completed-game review, board-review decoration, classification, and sign-in presentation
+were removed from the active tree with additive revert history. Their exact pre-remediation tree is
+preserved locally on `preserve/game-review-signin-ui-5410b1e` for separate follow-up; no preservation
+branch was published and no repository history was rewritten.
+
+The removal restored the existing capability-gated web contract: all 912 web tests pass, including
+the 11 cases that failed while the unrelated review feature was present. The Study Partner files and
+behavior are unchanged by this increment.
 
 ## M15 Increment 26 — Study Partner v1 productionization (ADR-0134)
 

@@ -11,7 +11,6 @@ import {
   applySearchCapability,
   searchEnabled,
   semanticSearchEnabled,
-  gameReviewEnabled,
 } from '../src/app/capabilities-nav.js';
 
 class FakeElement {
@@ -184,19 +183,6 @@ test('analysisEnabled requires an explicit true', () => {
       false,
       `${JSON.stringify(payload)} is not an explicit true and must not enable the panel`,
     );
-  }
-});
-
-test('gameReviewEnabled requires an explicit true', () => {
-  assert.equal(gameReviewEnabled({ capabilities: { gameReview: true } }), true);
-  for (const payload of [
-    { capabilities: { gameReview: false } },
-    { capabilities: { gameReview: 'true' } },
-    { capabilities: {} },
-    {},
-    null,
-  ]) {
-    assert.equal(gameReviewEnabled(payload), false);
   }
 });
 

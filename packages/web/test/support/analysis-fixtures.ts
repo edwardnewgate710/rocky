@@ -277,20 +277,6 @@ export function makeState(
   };
 }
 
-/** A completed game snapshot for controls that are intentionally post-game only. */
-export function makeFinishedState(
-  fen: string,
-  ply = 0,
-  turn: WsColor = 'w',
-  moves: readonly { readonly ply: number; readonly uci: string; readonly san: string; readonly by: WsColor }[] = [],
-): StateView {
-  return {
-    ...makeState(fen, ply, turn, moves),
-    status: { over: true, result: '1-0', termination: 'checkmate', winner: 'w' },
-    legalMoves: {},
-  };
-}
-
 export function sampleAnalysisResponse(): AnalysisResponse {
   return {
     fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
