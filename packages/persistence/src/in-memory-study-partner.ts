@@ -98,12 +98,11 @@ export class InMemoryStudyPartnerRepository implements StudyPartnerRepository {
       if (existing.status === 'claimed' || existing.status === 'accepted') return { kind: 'in_progress' };
     }
 
-    const exhaustedIntent = [...this.requests.values()].some(
+    const quarantined = [...this.requests.values()].some(
       (request) => request.sessionId === input.sessionId
-        && request.requestHash === input.requestHash
         && request.status === 'exhausted',
     );
-    if (exhaustedIntent) return { kind: 'exhausted' };
+    if (quarantined) return { kind: 'exhausted' };
     if (existing?.status === 'failed') return { kind: 'failed' };
 
     if (session.status !== 'active') return { kind: 'inactive' };

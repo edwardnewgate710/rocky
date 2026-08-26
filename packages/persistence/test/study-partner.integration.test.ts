@@ -64,7 +64,7 @@ test('stale pre-charge claims expire while fresh claims stay active', async () =
   assert.equal(replacement.kind, 'claimed');
 });
 
-test('stale accepted intent is exhausted while a different move can claim the unchanged version', async () => {
+test('an exhausted accepted request quarantines the session from every later turn claim', async () => {
   const repository = new InMemoryStudyPartnerRepository();
   const now = new Date('2026-08-24T12:00:00.000Z');
   await repository.createSession({
@@ -98,8 +98,14 @@ test('stale accepted intent is exhausted while a different move can claim the un
       sessionId: 'accepted-claim', ownerId: 'owner', idempotencyKey: 'different-intent', requestHash: 'd'.repeat(64),
       expectedVersion: 0, maxTurns: 20, now: recoveryNow,
     }),
-    { kind: 'claimed' },
+    { kind: 'exhausted' },
   );
+  assert.deepEqual(await repository.commitTurn({
+    sessionId: 'accepted-claim', ownerId: 'owner', idempotencyKey: 'accepted',
+    requestHash: 'c'.repeat(64), turnId: 'turn-after-recovery', expectedVersion: 0,
+    move: 'e2e4', fenBefore: Position.initial().fen(), fenAfter: Position.initial().play('e2e4').fen(),
+    coaching: { version: 1 }, coachingVersion: 1, now: recoveryNow,
+  }), { kind: 'conflict' });
 });
 
 test('ending recovers an orphaned accepted request at the accepted-work boundary', async () => {
@@ -288,7 +294,7 @@ test('Postgres Study Partner repository commits a turn and session advancement a
     assert.deepEqual(await repository.claimTurn({
       sessionId: acceptedClaimSessionId, ownerId, idempotencyKey: 'different-intent',
       requestHash: 'f'.repeat(64), expectedVersion: 0, maxTurns: 20, now: acceptedRecoveryAt,
-    }), { kind: 'claimed' });
+    }), { kind: 'exhausted' });
 
     const acceptedFailureSessionId = uuidv7();
     await repository.createSession({

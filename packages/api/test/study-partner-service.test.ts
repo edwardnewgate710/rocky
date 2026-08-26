@@ -304,7 +304,7 @@ test('cancellation after charging does not persist or advance and exhausts that 
   assert.equal(charges, 1);
 });
 
-test('a post-acceptance failure blocks the same intent across keys but allows another move', async () => {
+test('a post-acceptance failure quarantines the session from every later turn purchase', async () => {
   let coachCalls = 0;
   const { service } = fixture({
     async coach(input, onAccepted) {
@@ -330,16 +330,66 @@ test('a post-acceptance failure blocks the same intent across keys but allows an
     }),
     (error: unknown) => error instanceof HttpError
       && error.status === 409
-      && error.message.includes('already accepted'),
+      && error.message.includes('cannot accept new turns'),
   );
-  const alternative = await service.submitTurn({
-    ...command,
-    move: 'd2d4',
-    idempotencyKey: 'alternative-intent',
+  await assert.rejects(
+    () => service.submitTurn({
+      ...command,
+      move: 'd2d4',
+      idempotencyKey: 'alternative-intent',
+    }),
+    (error: unknown) => error instanceof HttpError
+      && error.status === 409
+      && error.message.includes('cannot accept new turns'),
+  );
+  const ended = await service.end('owner', created.id, 0);
+  assert.equal(ended.status, 'completed');
+  assert.equal(coachCalls, 1);
+  assert.equal(charges, 1);
+});
+
+test('a slow accepted worker crossing recovery cannot race a second purchase', async () => {
+  let accepted: (() => void) | undefined;
+  let release: (() => void) | undefined;
+  const acceptedSignal = new Promise<void>((resolve) => { accepted = resolve; });
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let coachCalls = 0;
+  const { service, advance } = fixture({
+    async coach(input, onAccepted) {
+      coachCalls += 1;
+      if (onAccepted) await onAccepted();
+      if (input.move === 'e2e4') {
+        accepted?.();
+        await gate;
+      }
+      return quietOutcome(input);
+    },
   });
-  assert.equal(alternative.turn.move, 'd2d4');
-  assert.equal(coachCalls, 2);
-  assert.equal(charges, 2);
+  const created = await service.create('owner', 'standard', START);
+  let charges = 0;
+  const first = service.submitTurn({
+    ownerId: 'owner', sessionId: created.id, move: 'e2e4', expectedVersion: 0,
+    idempotencyKey: 'slow-accepted', signal: new AbortController().signal,
+    charge: async () => { charges += 1; },
+  });
+  await acceptedSignal;
+  advance(STUDY_PARTNER_ACCEPTED_RECOVERY_MS);
+
+  const secondResult = await service.submitTurn({
+    ownerId: 'owner', sessionId: created.id, move: 'd2d4', expectedVersion: 0,
+    idempotencyKey: 'different-after-recovery', signal: new AbortController().signal,
+    charge: async () => { charges += 1; },
+  }).then((result) => result, (error: unknown) => error);
+  release?.();
+  const firstResult = await first.then((result) => result, (error: unknown) => error);
+
+  assert.ok(secondResult instanceof HttpError);
+  assert.equal(secondResult.status, 409);
+  assert.match(secondResult.message, /cannot accept new turns/);
+  assert.ok(firstResult instanceof HttpError);
+  assert.equal(firstResult.status, 409);
+  assert.equal(coachCalls, 1);
+  assert.equal(charges, 1);
 });
 
 test('a lost acceptance response cannot make the accepted intent purchasable again', async () => {
@@ -358,7 +408,7 @@ test('a lost acceptance response cannot make the accepted intent purchasable aga
     () => service.submitTurn({ ...command, idempotencyKey: 'lost-acceptance-retry' }),
     (error: unknown) => error instanceof HttpError
       && error.status === 409
-      && error.message.includes('already accepted'),
+      && error.message.includes('cannot accept new turns'),
   );
   assert.equal(charges, 0);
 });

@@ -4,7 +4,20 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-26 — M15 Increment 28: durable accepted-turn recovery._
+_Last updated: 2026-08-26 — M15 Increment 29: accepted-turn session quarantine._
+
+## M15 Increment 29 — Accepted-turn session quarantine (ADR-0134)
+
+Accepted-turn recovery now preserves the stronger safety invariant that a merely slow worker cannot
+overlap a second quota or provider purchase. Any request that becomes `exhausted` quarantines its
+entire session from later turn claims, regardless of idempotency key, move, or request hash. The
+owner may still read, end, or delete the session after the one-hour recovery boundary.
+
+This deliberately trades continued play in an ambiguous session for provable at-most-one purchased
+turn. Renewable leases and database fencing cannot revoke an external charge or provider call that
+has already escaped the process. In-memory, PostgreSQL, and service regressions cover different-move
+retries and a live accepted worker crossing the recovery boundary; the latter proves the old worker
+cannot commit and no second worker reaches Coach or quota.
 
 ## M15 Increment 28 — Durable accepted-turn recovery (ADR-0134)
 

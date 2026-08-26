@@ -193,12 +193,12 @@ export class PgStudyPartnerRepository implements StudyPartnerRepository {
           return { kind: 'replayed', turn: turnRow(turn) };
         }
       }
-      const exhausted = await client.query(
+      const quarantined = await client.query(
         `SELECT 1 FROM study_partner_turn_requests
-         WHERE session_id = $1 AND request_hash = $2 AND status = 'exhausted' LIMIT 1`,
-        [input.sessionId, input.requestHash],
+         WHERE session_id = $1 AND status = 'exhausted' LIMIT 1`,
+        [input.sessionId],
       );
-      if ((exhausted.rowCount ?? 0) > 0) {
+      if ((quarantined.rowCount ?? 0) > 0) {
         await client.query('ROLLBACK');
         return { kind: 'exhausted' };
       }

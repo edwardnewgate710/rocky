@@ -51,18 +51,19 @@ allows at most one `claimed | accepted` request for a session at a time. `CoachS
 changes the claim to `accepted` before the existing two-bucket `coach` rate-limit admission. A
 successful final transaction inserts the turn, advances FEN/version/count, and marks the request
 `succeeded`. A completed same-payload replay returns the stored turn without Coach or quota work.
-The same key with another payload is 422; pending/accepted/failed keys are 409. An accepted intent
-that cannot commit becomes `exhausted`. The same `(session, move, expectedVersion)` request hash is
-then 409 across every idempotency key, so changing the key cannot purchase the same intent again.
+The same key with another payload is 422; pending/accepted/failed keys are 409. An accepted request
+that cannot commit becomes `exhausted`. Any exhausted request quarantines its session from every
+later turn claim, regardless of idempotency key or move, so no second purchase can overlap work that
+may still be live beyond this process.
 
 A process crash can leave a request claimed or accepted. `claimed` is provably before the charge
 callback, so `claimTurn` transactionally fails it after five minutes and allows a new key; this is
 request-path recovery, not a background retention job. `accepted` is beyond an ambiguous
 charge/provider boundary. A caught failure immediately exhausts it; an orphaned accepted row becomes
 exhausted after the one-hour accepted-work window when claim, end, or delete next locks the session.
-Exhausted rows are terminal and never replayed or reclaimed. They release the session, but their
-request hash remains a durable purchase barrier. A genuinely different move has another hash and may
-continue from the unchanged version; the owner may also end or delete the session.
+Exhausted rows are terminal and never replayed or reclaimed. They release the session for lifecycle
+operations, but permanently prevent it from purchasing another turn. The owner may read, end, or
+delete the session after recovery.
 
 ### 3. Private ownership and lifecycle
 
@@ -90,7 +91,7 @@ ledger is stored or returned.
 Request cancellation is passed to `CoachService`. If the signal is aborted before final commit, the
 result is discarded and neither a partial turn nor a position advance is persisted. A pre-acceptance
 request becomes `failed` and may be retried with a new key. An accepted request becomes `exhausted`,
-so the same intent remains blocked across new keys because admitted work may already have cost money.
+so the session accepts no further turns because admitted work may already have cost money.
 
 ### 5. Surface and composition
 
@@ -114,10 +115,12 @@ letting callers manufacture a position transition. Successful retries are cheap 
 concurrent turns cannot both run coaching, completion is stable, and privacy is enforced below the
 route layer.
 
-Accepted-work recovery favors no duplicate purchase without permanently blocking the session: the
-same intent cannot be bought again, while another legal move, end, and delete remain available after
-the protection window. Standard is the only v1 variant. Both are explicit constraints clients can
-build against rather than silent best-effort behavior.
+Accepted-work recovery favors no duplicate purchase without permanently blocking lifecycle: the
+session accepts no more turns, while read, end, and delete remain available after the protection
+window. A renewable database lease or fencing token would not revoke an external charge or provider
+call already in flight, so neither can prove the required safety invariant. Standard is the only v1
+variant. Both are explicit constraints clients can build against rather than silent best-effort
+behavior.
 
 ## Explicitly deferred
 
