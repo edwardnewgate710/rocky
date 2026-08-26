@@ -16,7 +16,7 @@ import type {
   StudyPartnerTurnRow,
 } from '../study-partner.js';
 import {
-  STUDY_PARTNER_ACCEPTED_DELETE_PROTECTION_MS,
+  STUDY_PARTNER_ACCEPTED_RECOVERY_MS,
   STUDY_PARTNER_CLAIM_TIMEOUT_MS,
 } from '../study-partner.js';
 
@@ -49,7 +49,7 @@ interface TurnDbRow {
 
 interface RequestDbRow {
   request_hash: string;
-  status: 'claimed' | 'accepted' | 'succeeded' | 'failed';
+  status: 'claimed' | 'accepted' | 'succeeded' | 'failed' | 'exhausted';
   turn_id: string | null;
 }
 
@@ -95,6 +95,20 @@ const TURN_COLUMNS = `id, session_id, turn_number, move, fen_before, fen_after, 
 
 export class PgStudyPartnerRepository implements StudyPartnerRepository {
   constructor(private readonly pool: Pool) {}
+
+  private async expireStaleRequests(client: PoolClient, sessionId: string, now: Date): Promise<void> {
+    await client.query(
+      `UPDATE study_partner_turn_requests
+          SET status = CASE status WHEN 'claimed' THEN 'failed' ELSE 'exhausted' END,
+              updated_at = $2::timestamptz
+        WHERE session_id = $1
+          AND ((status = 'claimed'
+                AND updated_at <= $2::timestamptz - ($3::bigint * INTERVAL '1 millisecond'))
+            OR (status = 'accepted'
+                AND updated_at <= $2::timestamptz - ($4::bigint * INTERVAL '1 millisecond')))`,
+      [sessionId, now, STUDY_PARTNER_CLAIM_TIMEOUT_MS, STUDY_PARTNER_ACCEPTED_RECOVERY_MS],
+    );
+  }
 
   async createSession(input: NewStudyPartnerSession): Promise<StudyPartnerSessionRow> {
     const result = await this.pool.query<SessionDbRow>(
@@ -147,13 +161,7 @@ export class PgStudyPartnerRepository implements StudyPartnerRepository {
       const session = sessions.rows[0];
       if (!session) { await client.query('ROLLBACK'); return { kind: 'not_found' }; }
 
-      await client.query(
-        `UPDATE study_partner_turn_requests
-            SET status = 'failed', updated_at = $2::timestamptz
-          WHERE session_id = $1 AND status = 'claimed'
-            AND updated_at <= $2::timestamptz - ($3::bigint * INTERVAL '1 millisecond')`,
-        [input.sessionId, input.now, STUDY_PARTNER_CLAIM_TIMEOUT_MS],
-      );
+      await this.expireStaleRequests(client, input.sessionId, input.now);
 
       const requests = await client.query<RequestDbRow>(
         `SELECT request_hash, status, turn_id FROM study_partner_turn_requests
@@ -166,22 +174,37 @@ export class PgStudyPartnerRepository implements StudyPartnerRepository {
           await client.query('ROLLBACK');
           return { kind: 'idempotency_conflict' };
         }
-        if (existing.status === 'failed') {
+        if (existing.status === 'exhausted') {
           await client.query('ROLLBACK');
-          return { kind: 'failed' };
+          return { kind: 'exhausted' };
         }
-        if (existing.status !== 'succeeded' || !existing.turn_id) {
+        if (existing.status !== 'failed' && (existing.status !== 'succeeded' || !existing.turn_id)) {
           await client.query('ROLLBACK');
           return { kind: 'in_progress' };
         }
-        const replay = await client.query<TurnDbRow>(
-          `SELECT ${TURN_COLUMNS} FROM study_partner_turns WHERE id = $1`,
-          [existing.turn_id],
-        );
-        const turn = replay.rows[0];
-        if (!turn) throw new Error('succeeded Study Partner request has no turn');
+        if (existing.status === 'succeeded') {
+          const replay = await client.query<TurnDbRow>(
+            `SELECT ${TURN_COLUMNS} FROM study_partner_turns WHERE id = $1`,
+            [existing.turn_id],
+          );
+          const turn = replay.rows[0];
+          if (!turn) throw new Error('succeeded Study Partner request has no turn');
+          await client.query('ROLLBACK');
+          return { kind: 'replayed', turn: turnRow(turn) };
+        }
+      }
+      const exhausted = await client.query(
+        `SELECT 1 FROM study_partner_turn_requests
+         WHERE session_id = $1 AND request_hash = $2 AND status = 'exhausted' LIMIT 1`,
+        [input.sessionId, input.requestHash],
+      );
+      if ((exhausted.rowCount ?? 0) > 0) {
         await client.query('ROLLBACK');
-        return { kind: 'replayed', turn: turnRow(turn) };
+        return { kind: 'exhausted' };
+      }
+      if (existing?.status === 'failed') {
+        await client.query('ROLLBACK');
+        return { kind: 'failed' };
       }
       if (session.status !== 'active') { await client.query('ROLLBACK'); return { kind: 'inactive' }; }
       if (session.version !== input.expectedVersion) {
@@ -232,7 +255,8 @@ export class PgStudyPartnerRepository implements StudyPartnerRepository {
   async failTurn(ref: StudyPartnerTurnRequestRef): Promise<void> {
     await this.pool.query(
       `UPDATE study_partner_turn_requests r
-          SET status = 'failed', updated_at = $5
+          SET status = CASE r.status WHEN 'claimed' THEN 'failed' ELSE 'exhausted' END,
+              updated_at = $5
         WHERE r.session_id = $1 AND r.idempotency_key = $2 AND r.request_hash = $3
           AND r.status IN ('claimed', 'accepted')
           AND EXISTS (SELECT 1 FROM study_partner_sessions s
@@ -316,13 +340,7 @@ export class PgStudyPartnerRepository implements StudyPartnerRepository {
         await client.query('ROLLBACK');
         return { kind: 'version_conflict', currentVersion: session.version };
       }
-      await client.query(
-        `UPDATE study_partner_turn_requests
-            SET status = 'failed', updated_at = $2::timestamptz
-          WHERE session_id = $1 AND status = 'claimed'
-            AND updated_at <= $2::timestamptz - ($3::bigint * INTERVAL '1 millisecond')`,
-        [input.sessionId, input.now, STUDY_PARTNER_CLAIM_TIMEOUT_MS],
-      );
+      await this.expireStaleRequests(client, input.sessionId, input.now);
       const active = await client.query(
         `SELECT 1 FROM study_partner_turn_requests
          WHERE session_id = $1 AND status IN ('claimed', 'accepted') LIMIT 1`,
@@ -367,23 +385,11 @@ export class PgStudyPartnerRepository implements StudyPartnerRepository {
         await client.query('ROLLBACK');
         return { kind: 'not_found' };
       }
-      // Serialize a stale pre-charge claim against acceptTurn. If acceptance won first, its fresh
-      // accepted timestamp is protected below; if this update wins, acceptTurn can no longer charge.
-      await client.query(
-        `UPDATE study_partner_turn_requests
-            SET status = 'failed', updated_at = $2::timestamptz
-          WHERE session_id = $1 AND status = 'claimed'
-            AND updated_at <= $2::timestamptz - ($3::bigint * INTERVAL '1 millisecond')`,
-        [sessionId, now, STUDY_PARTNER_CLAIM_TIMEOUT_MS],
-      );
+      await this.expireStaleRequests(client, sessionId, now);
       const active = await client.query(
         `SELECT 1 FROM study_partner_turn_requests
-         WHERE session_id = $1
-           AND (status = 'claimed'
-             OR (status = 'accepted'
-                 AND updated_at > $2::timestamptz - ($3::bigint * INTERVAL '1 millisecond')))
-         LIMIT 1`,
-        [sessionId, now, STUDY_PARTNER_ACCEPTED_DELETE_PROTECTION_MS],
+         WHERE session_id = $1 AND status IN ('claimed', 'accepted') LIMIT 1`,
+        [sessionId],
       );
       if ((active.rowCount ?? 0) > 0) {
         await client.query('ROLLBACK');

@@ -185,6 +185,9 @@ export class StudyPartnerService {
     if (claim.kind === 'failed') {
       throw HttpError.conflict('this Idempotency-Key belongs to a failed turn; use a new key to retry');
     }
+    if (claim.kind === 'exhausted') {
+      throw HttpError.conflict('this turn intent was already accepted and cannot be purchased again');
+    }
     if (claim.kind === 'in_progress') throw HttpError.conflict('a study partner turn is already in progress');
 
     const ref = {

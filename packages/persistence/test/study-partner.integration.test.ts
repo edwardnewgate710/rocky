@@ -8,7 +8,7 @@ import { migrate } from '../src/pg/migrate.js';
 import { createPool } from '../src/pg/pool.js';
 import { PgStudyPartnerRepository } from '../src/pg/study-partner.js';
 import {
-  STUDY_PARTNER_ACCEPTED_DELETE_PROTECTION_MS,
+  STUDY_PARTNER_ACCEPTED_RECOVERY_MS,
   STUDY_PARTNER_CLAIM_TIMEOUT_MS,
 } from '../src/study-partner.js';
 
@@ -32,9 +32,15 @@ test('Study Partner migration declares durable authority and idempotency constra
   assert.match(sql, /PRIMARY KEY \(session_id, idempotency_key\)/);
   assert.match(sql, /ON study_partner_turn_requests \(session_id\)\s+WHERE status/);
   assert.match(sql, /WHERE status IN \('claimed', 'accepted'\)/);
+
+  const recoverySql = await import('node:fs/promises').then((fs) => fs.readFile(
+    join(migrationsDir, '0025_study_partner_accepted_recovery.sql'),
+    'utf8',
+  ));
+  assert.match(recoverySql, /status IN \('claimed', 'accepted', 'succeeded', 'failed', 'exhausted'\)/);
 });
 
-test('stale pre-charge claims expire while accepted claims remain terminal', async () => {
+test('stale pre-charge claims expire while fresh claims stay active', async () => {
   const repository = new InMemoryStudyPartnerRepository();
   const now = new Date('2026-08-24T12:00:00.000Z');
   await repository.createSession({
@@ -56,31 +62,94 @@ test('stale pre-charge claims expire while accepted claims remain terminal', asy
     expectedVersion: 0, maxTurns: 20, now: replacementNow,
   });
   assert.equal(replacement.kind, 'claimed');
+});
+
+test('stale accepted intent is exhausted while a different move can claim the unchanged version', async () => {
+  const repository = new InMemoryStudyPartnerRepository();
+  const now = new Date('2026-08-24T12:00:00.000Z');
+  await repository.createSession({
+    id: 'accepted-claim', ownerId: 'owner', variant: 'standard', initialFen: Position.initial().fen(), now,
+  });
+  assert.equal((await repository.claimTurn({
+    sessionId: 'accepted-claim', ownerId: 'owner', idempotencyKey: 'accepted', requestHash: 'c'.repeat(64),
+    expectedVersion: 0, maxTurns: 20, now,
+  })).kind, 'claimed');
   assert.equal(await repository.acceptTurn({
-    sessionId: 'session', ownerId: 'owner', idempotencyKey: 'replacement',
-    requestHash: 'c'.repeat(64), now: replacementNow,
+    sessionId: 'accepted-claim', ownerId: 'owner', idempotencyKey: 'accepted',
+    requestHash: 'c'.repeat(64), now,
   }), true);
   const afterAcceptedTimeout = await repository.claimTurn({
-    sessionId: 'session', ownerId: 'owner', idempotencyKey: 'must-wait', requestHash: 'd'.repeat(64),
+    sessionId: 'accepted-claim', ownerId: 'owner', idempotencyKey: 'must-wait', requestHash: 'd'.repeat(64),
     expectedVersion: 0, maxTurns: 20,
-    now: new Date(replacementNow.getTime() + STUDY_PARTNER_CLAIM_TIMEOUT_MS),
+    now: new Date(now.getTime() + STUDY_PARTNER_ACCEPTED_RECOVERY_MS - 1),
   });
   assert.equal(afterAcceptedTimeout.kind, 'in_progress');
+
+  const recoveryNow = new Date(now.getTime() + STUDY_PARTNER_ACCEPTED_RECOVERY_MS);
   assert.deepEqual(
-    await repository.endSession({
-      sessionId: 'session', ownerId: 'owner', expectedVersion: 0,
-      now: new Date(replacementNow.getTime() + STUDY_PARTNER_ACCEPTED_DELETE_PROTECTION_MS),
+    await repository.claimTurn({
+      sessionId: 'accepted-claim', ownerId: 'owner', idempotencyKey: 'same-intent', requestHash: 'c'.repeat(64),
+      expectedVersion: 0, maxTurns: 20, now: recoveryNow,
     }),
-    { kind: 'turn_in_progress' },
+    { kind: 'exhausted' },
   );
   assert.deepEqual(
-    await repository.deleteOwnedSession(
-      'session',
-      'owner',
-      new Date(replacementNow.getTime() + STUDY_PARTNER_ACCEPTED_DELETE_PROTECTION_MS),
-    ),
-    { kind: 'deleted' },
+    await repository.claimTurn({
+      sessionId: 'accepted-claim', ownerId: 'owner', idempotencyKey: 'different-intent', requestHash: 'd'.repeat(64),
+      expectedVersion: 0, maxTurns: 20, now: recoveryNow,
+    }),
+    { kind: 'claimed' },
   );
+});
+
+test('ending recovers an orphaned accepted request at the accepted-work boundary', async () => {
+  const repository = new InMemoryStudyPartnerRepository();
+  const now = new Date('2026-08-24T12:00:00.000Z');
+  await repository.createSession({
+    id: 'accepted-ending', ownerId: 'owner', variant: 'standard', initialFen: Position.initial().fen(), now,
+  });
+  assert.equal((await repository.claimTurn({
+    sessionId: 'accepted-ending', ownerId: 'owner', idempotencyKey: 'accepted', requestHash: 'e'.repeat(64),
+    expectedVersion: 0, maxTurns: 20, now,
+  })).kind, 'claimed');
+  assert.equal(await repository.acceptTurn({
+    sessionId: 'accepted-ending', ownerId: 'owner', idempotencyKey: 'accepted',
+    requestHash: 'e'.repeat(64), now,
+  }), true);
+  assert.deepEqual(await repository.endSession({
+    sessionId: 'accepted-ending', ownerId: 'owner', expectedVersion: 0,
+    now: new Date(now.getTime() + STUDY_PARTNER_ACCEPTED_RECOVERY_MS - 1),
+  }), { kind: 'turn_in_progress' });
+  assert.equal((await repository.endSession({
+    sessionId: 'accepted-ending', ownerId: 'owner', expectedVersion: 0,
+    now: new Date(now.getTime() + STUDY_PARTNER_ACCEPTED_RECOVERY_MS),
+  })).kind, 'ended');
+});
+
+test('deletion recovers an orphaned accepted request at the accepted-work boundary', async () => {
+  const repository = new InMemoryStudyPartnerRepository();
+  const now = new Date('2026-08-24T12:00:00.000Z');
+  await repository.createSession({
+    id: 'accepted-deletion', ownerId: 'owner', variant: 'standard', initialFen: Position.initial().fen(), now,
+  });
+  assert.equal((await repository.claimTurn({
+    sessionId: 'accepted-deletion', ownerId: 'owner', idempotencyKey: 'accepted', requestHash: '2'.repeat(64),
+    expectedVersion: 0, maxTurns: 20, now,
+  })).kind, 'claimed');
+  assert.equal(await repository.acceptTurn({
+    sessionId: 'accepted-deletion', ownerId: 'owner', idempotencyKey: 'accepted',
+    requestHash: '2'.repeat(64), now,
+  }), true);
+  assert.deepEqual(await repository.deleteOwnedSession(
+    'accepted-deletion',
+    'owner',
+    new Date(now.getTime() + STUDY_PARTNER_ACCEPTED_RECOVERY_MS - 1),
+  ), { kind: 'turn_in_progress' });
+  assert.deepEqual(await repository.deleteOwnedSession(
+    'accepted-deletion',
+    'owner',
+    new Date(now.getTime() + STUDY_PARTNER_ACCEPTED_RECOVERY_MS),
+  ), { kind: 'deleted' });
 });
 
 test('deletion protects a fresh claim but does not leave an abandoned pre-charge claim undeletable', async () => {
@@ -190,8 +259,57 @@ test('Postgres Study Partner repository commits a turn and session advancement a
       sessionId: acceptedEndSessionId,
       ownerId,
       expectedVersion: 0,
-      now: new Date(now.getTime() + STUDY_PARTNER_ACCEPTED_DELETE_PROTECTION_MS),
+      now: new Date(now.getTime() + STUDY_PARTNER_ACCEPTED_RECOVERY_MS - 1),
     }), { kind: 'turn_in_progress' });
+    assert.equal((await repository.endSession({
+      sessionId: acceptedEndSessionId,
+      ownerId,
+      expectedVersion: 0,
+      now: new Date(now.getTime() + STUDY_PARTNER_ACCEPTED_RECOVERY_MS),
+    })).kind, 'ended');
+
+    const acceptedClaimSessionId = uuidv7();
+    await repository.createSession({
+      id: acceptedClaimSessionId, ownerId, variant: 'standard', initialFen: start, now,
+    });
+    assert.equal((await repository.claimTurn({
+      sessionId: acceptedClaimSessionId, ownerId, idempotencyKey: 'accepted-claim',
+      requestHash: 'e'.repeat(64), expectedVersion: 0, maxTurns: 20, now,
+    })).kind, 'claimed');
+    assert.equal(await repository.acceptTurn({
+      sessionId: acceptedClaimSessionId, ownerId, idempotencyKey: 'accepted-claim',
+      requestHash: 'e'.repeat(64), now,
+    }), true);
+    const acceptedRecoveryAt = new Date(now.getTime() + STUDY_PARTNER_ACCEPTED_RECOVERY_MS);
+    assert.deepEqual(await repository.claimTurn({
+      sessionId: acceptedClaimSessionId, ownerId, idempotencyKey: 'same-intent',
+      requestHash: 'e'.repeat(64), expectedVersion: 0, maxTurns: 20, now: acceptedRecoveryAt,
+    }), { kind: 'exhausted' });
+    assert.deepEqual(await repository.claimTurn({
+      sessionId: acceptedClaimSessionId, ownerId, idempotencyKey: 'different-intent',
+      requestHash: 'f'.repeat(64), expectedVersion: 0, maxTurns: 20, now: acceptedRecoveryAt,
+    }), { kind: 'claimed' });
+
+    const acceptedFailureSessionId = uuidv7();
+    await repository.createSession({
+      id: acceptedFailureSessionId, ownerId, variant: 'standard', initialFen: start, now,
+    });
+    assert.equal((await repository.claimTurn({
+      sessionId: acceptedFailureSessionId, ownerId, idempotencyKey: 'accepted-failure',
+      requestHash: '1'.repeat(64), expectedVersion: 0, maxTurns: 20, now,
+    })).kind, 'claimed');
+    assert.equal(await repository.acceptTurn({
+      sessionId: acceptedFailureSessionId, ownerId, idempotencyKey: 'accepted-failure',
+      requestHash: '1'.repeat(64), now,
+    }), true);
+    await repository.failTurn({
+      sessionId: acceptedFailureSessionId, ownerId, idempotencyKey: 'accepted-failure',
+      requestHash: '1'.repeat(64), now,
+    });
+    assert.deepEqual(await repository.claimTurn({
+      sessionId: acceptedFailureSessionId, ownerId, idempotencyKey: 'accepted-failure-retry',
+      requestHash: '1'.repeat(64), expectedVersion: 0, maxTurns: 20, now,
+    }), { kind: 'exhausted' });
     assert.equal((await repository.claimTurn({
       sessionId, ownerId, idempotencyKey: 'abandoned', requestHash: 'b'.repeat(64),
       expectedVersion: 0, maxTurns: 20, now,

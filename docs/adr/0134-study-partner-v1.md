@@ -51,14 +51,18 @@ allows at most one `claimed | accepted` request for a session at a time. `CoachS
 changes the claim to `accepted` before the existing two-bucket `coach` rate-limit admission. A
 successful final transaction inserts the turn, advances FEN/version/count, and marks the request
 `succeeded`. A completed same-payload replay returns the stored turn without Coach or quota work.
-The same key with another payload is 422; pending/accepted/failed keys are 409.
+The same key with another payload is 422; pending/accepted/failed keys are 409. An accepted intent
+that cannot commit becomes `exhausted`. The same `(session, move, expectedVersion)` request hash is
+then 409 across every idempotency key, so changing the key cannot purchase the same intent again.
 
 A process crash can leave a request claimed or accepted. `claimed` is provably before the charge
 callback, so `claimTurn` transactionally fails it after five minutes and allows a new key; this is
 request-path recovery, not a background retention job. `accepted` is beyond an ambiguous
-charge/provider boundary and is never reclaimed because automatic recovery could buy the same work
-twice. The session then refuses turns, but its owner may hard-delete it after the accepted-work
-protection window. Durable accepted-request recovery or downstream idempotency is deferred.
+charge/provider boundary. A caught failure immediately exhausts it; an orphaned accepted row becomes
+exhausted after the one-hour accepted-work window when claim, end, or delete next locks the session.
+Exhausted rows are terminal and never replayed or reclaimed. They release the session, but their
+request hash remains a durable purchase barrier. A genuinely different move has another hash and may
+continue from the unchanged version; the owner may also end or delete the session.
 
 ### 3. Private ownership and lifecycle
 
@@ -67,8 +71,8 @@ missing IDs both return 404. `end` checks optimistic version while active, refus
 and changes the session once. Re-ending returns the stored completion and never rewrites
 `completedAt`. Owner deletion locks the session and returns 409 for a fresh `claimed` request or for
 one hour after a request becomes `accepted`, so it cannot erase ordinary in-flight work after
-production coaching accepts its charge. After that conservative safety window, privacy deletion is
-allowed but the accepted request is never replayed or reclaimed. Otherwise deletion is a hard
+production coaching accepts its charge. After that conservative safety window, accepted work is
+exhausted and privacy deletion or normal session completion is allowed. Otherwise deletion is a hard
 delete; session, turns, and request claims cascade in the same database operation. Account deletion
 cascades through the owner FK. There is no TTL or list endpoint; data remains until deletion.
 
@@ -84,9 +88,9 @@ solution or evaluation answer. Move explanation is copied field by field and dro
 ledger is stored or returned.
 
 Request cancellation is passed to `CoachService`. If the signal is aborted before final commit, the
-result is discarded, the request key becomes failed, and neither a partial turn nor a position
-advance is persisted. Work already admitted may still have cost money; the terminal key prevents a
-network retry from purchasing it again.
+result is discarded and neither a partial turn nor a position advance is persisted. A pre-acceptance
+request becomes `failed` and may be retried with a new key. An accepted request becomes `exhausted`,
+so the same intent remains blocked across new keys because admitted work may already have cost money.
 
 ### 5. Surface and composition
 
@@ -110,9 +114,10 @@ letting callers manufacture a position transition. Successful retries are cheap 
 concurrent turns cannot both run coaching, completion is stable, and privacy is enforced below the
 route layer.
 
-The conservative crash behavior favors no duplicate purchase over automatic availability. Standard
-is the only v1 variant. Both are explicit constraints clients can build against rather than silent
-best-effort behavior.
+Accepted-work recovery favors no duplicate purchase without permanently blocking the session: the
+same intent cannot be bought again, while another legal move, end, and delete remain available after
+the protection window. Standard is the only v1 variant. Both are explicit constraints clients can
+build against rather than silent best-effort behavior.
 
 ## Explicitly deferred
 
@@ -120,4 +125,4 @@ best-effort behavior.
 - Anonymous sessions, listing/discovery, TTL retention, analytics, and background cleanup.
 - Library Study Partner narrative, Voice Coach, speech providers, curriculum generation.
 - Visual Study Partner UI.
-- Recovery for ambiguous accepted turn requests and additional variants.
+- Downstream replay of an accepted-but-uncommitted coaching result, and additional variants.

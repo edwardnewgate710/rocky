@@ -15,7 +15,7 @@ import type {
   StudyPartnerTurnRow,
 } from './study-partner.js';
 import {
-  STUDY_PARTNER_ACCEPTED_DELETE_PROTECTION_MS,
+  STUDY_PARTNER_ACCEPTED_RECOVERY_MS,
   STUDY_PARTNER_CLAIM_TIMEOUT_MS,
 } from './study-partner.js';
 
@@ -37,6 +37,19 @@ export class InMemoryStudyPartnerRepository implements StudyPartnerRepository {
   private readonly sessions = new Map<string, StudyPartnerSessionRow>();
   private readonly turns = new Map<string, StudyPartnerTurnRow[]>();
   private readonly requests = new Map<string, TurnRequest>();
+
+  private expireStaleRequests(sessionId: string, now: Date): void {
+    for (const [key, request] of this.requests) {
+      if (request.sessionId !== sessionId) continue;
+      const age = now.getTime() - request.updatedAt.getTime();
+      const status = request.status === 'claimed' && age >= STUDY_PARTNER_CLAIM_TIMEOUT_MS
+        ? 'failed'
+        : request.status === 'accepted' && age >= STUDY_PARTNER_ACCEPTED_RECOVERY_MS
+          ? 'exhausted'
+          : null;
+      if (status) this.requests.set(key, { ...request, status, updatedAt: now });
+    }
+  }
 
   async createSession(input: NewStudyPartnerSession): Promise<StudyPartnerSessionRow> {
     const row: StudyPartnerSessionRow = {
@@ -68,15 +81,7 @@ export class InMemoryStudyPartnerRepository implements StudyPartnerRepository {
     const session = this.sessions.get(input.sessionId);
     if (!session || session.ownerId !== input.ownerId) return { kind: 'not_found' };
 
-    for (const [key, request] of this.requests) {
-      if (
-        request.sessionId === input.sessionId
-        && request.status === 'claimed'
-        && input.now.getTime() - request.updatedAt.getTime() >= STUDY_PARTNER_CLAIM_TIMEOUT_MS
-      ) {
-        this.requests.set(key, { ...request, status: 'failed', updatedAt: input.now });
-      }
-    }
+    this.expireStaleRequests(input.sessionId, input.now);
 
     const mapKey = requestMapKey(input.sessionId, input.idempotencyKey);
     const existing = this.requests.get(mapKey);
@@ -89,9 +94,17 @@ export class InMemoryStudyPartnerRepository implements StudyPartnerRepository {
         if (!turn) throw new Error('succeeded study partner request has no turn');
         return { kind: 'replayed', turn };
       }
-      if (existing.status === 'failed') return { kind: 'failed' };
-      return { kind: 'in_progress' };
+      if (existing.status === 'exhausted') return { kind: 'exhausted' };
+      if (existing.status === 'claimed' || existing.status === 'accepted') return { kind: 'in_progress' };
     }
+
+    const exhaustedIntent = [...this.requests.values()].some(
+      (request) => request.sessionId === input.sessionId
+        && request.requestHash === input.requestHash
+        && request.status === 'exhausted',
+    );
+    if (exhaustedIntent) return { kind: 'exhausted' };
+    if (existing?.status === 'failed') return { kind: 'failed' };
 
     if (session.status !== 'active') return { kind: 'inactive' };
     if (session.version !== input.expectedVersion) {
@@ -131,7 +144,8 @@ export class InMemoryStudyPartnerRepository implements StudyPartnerRepository {
     const request = this.requests.get(mapKey);
     if (!request || request.ownerId !== ref.ownerId || request.requestHash !== ref.requestHash) return;
     if (request.status !== 'claimed' && request.status !== 'accepted') return;
-    this.requests.set(mapKey, { ...request, status: 'failed', updatedAt: ref.now });
+    const status = request.status === 'accepted' ? 'exhausted' : 'failed';
+    this.requests.set(mapKey, { ...request, status, updatedAt: ref.now });
   }
 
   async commitTurn(input: CommitStudyPartnerTurn): Promise<CommitStudyPartnerTurnResult> {
@@ -181,15 +195,7 @@ export class InMemoryStudyPartnerRepository implements StudyPartnerRepository {
     if (session.version !== input.expectedVersion) {
       return { kind: 'version_conflict', currentVersion: session.version };
     }
-    for (const [key, request] of this.requests) {
-      if (
-        request.sessionId === input.sessionId
-        && request.status === 'claimed'
-        && input.now.getTime() - request.updatedAt.getTime() >= STUDY_PARTNER_CLAIM_TIMEOUT_MS
-      ) {
-        this.requests.set(key, { ...request, status: 'failed', updatedAt: input.now });
-      }
-    }
+    this.expireStaleRequests(input.sessionId, input.now);
     const active = [...this.requests.values()].some(
       (request) => request.sessionId === input.sessionId
         && (request.status === 'claimed' || request.status === 'accepted'),
@@ -213,13 +219,10 @@ export class InMemoryStudyPartnerRepository implements StudyPartnerRepository {
   ): Promise<DeleteStudyPartnerSessionResult> {
     const session = this.sessions.get(sessionId);
     if (!session || session.ownerId !== ownerId) return { kind: 'not_found' };
+    this.expireStaleRequests(sessionId, now);
     const active = [...this.requests.values()].some(
-      (request) => {
-        if (request.sessionId !== sessionId) return false;
-        const age = now.getTime() - request.updatedAt.getTime();
-        return (request.status === 'claimed' && age < STUDY_PARTNER_CLAIM_TIMEOUT_MS)
-          || (request.status === 'accepted' && age < STUDY_PARTNER_ACCEPTED_DELETE_PROTECTION_MS);
-      },
+      (request) => request.sessionId === sessionId
+        && (request.status === 'claimed' || request.status === 'accepted'),
     );
     if (active) return { kind: 'turn_in_progress' };
     this.sessions.delete(sessionId);

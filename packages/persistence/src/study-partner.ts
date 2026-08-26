@@ -2,11 +2,11 @@
 import type { Variant } from '@chess-platform/core';
 
 export type StudyPartnerSessionStatus = 'active' | 'completed';
-export type StudyPartnerTurnRequestStatus = 'claimed' | 'accepted' | 'succeeded' | 'failed';
+export type StudyPartnerTurnRequestStatus = 'claimed' | 'accepted' | 'succeeded' | 'failed' | 'exhausted';
 /** Claimed requests have not charged yet and may be failed transactionally after this interval. */
 export const STUDY_PARTNER_CLAIM_TIMEOUT_MS = 5 * 60 * 1000;
-/** Keep recently accepted work safe from a racing hard delete; this never replays or reclaims it. */
-export const STUDY_PARTNER_ACCEPTED_DELETE_PROTECTION_MS = 60 * 60 * 1000;
+/** Protect live accepted work before an orphaned intent becomes terminal and releases the session. */
+export const STUDY_PARTNER_ACCEPTED_RECOVERY_MS = 60 * 60 * 1000;
 
 export interface StudyPartnerSessionRow {
   readonly id: string;
@@ -68,7 +68,8 @@ export type ClaimStudyPartnerTurnResult =
   | { readonly kind: 'turn_limit_reached' }
   | { readonly kind: 'idempotency_conflict' }
   | { readonly kind: 'in_progress' }
-  | { readonly kind: 'failed' };
+  | { readonly kind: 'failed' }
+  | { readonly kind: 'exhausted' };
 
 export interface StudyPartnerTurnRequestRef {
   readonly sessionId: string;

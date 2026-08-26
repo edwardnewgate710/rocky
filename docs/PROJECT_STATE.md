@@ -4,7 +4,22 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-26 — M15 Increment 27: Study Partner pull-request scope recovery._
+_Last updated: 2026-08-26 — M15 Increment 28: durable accepted-turn recovery._
+
+## M15 Increment 28 — Durable accepted-turn recovery (ADR-0134)
+
+Study Partner accepted work can no longer leave a session permanently in progress after a process
+crash. Forward-only migration `0025_study_partner_accepted_recovery.sql` adds the terminal
+`exhausted` request state. A caught post-acceptance failure exhausts immediately; an orphaned
+accepted row exhausts transactionally after the existing one-hour protection window when claim,
+end, or delete next locks the session.
+
+The durable request hash now blocks the same `(session, move, expectedVersion)` intent across every
+idempotency key, so an ambiguous failure cannot be repurchased by changing the key. A different move
+has a different hash and may continue from the unchanged session version after recovery. Pre-charge
+claims retain their five-minute failure path and remain safely retryable with a new key. In-memory,
+PostgreSQL, API, migration, cancellation, lost-acceptance-response, and crash-boundary regression
+tests pin the same state machine.
 
 ## M15 Increment 27 — Study Partner pull-request scope recovery
 

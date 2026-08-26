@@ -3,7 +3,7 @@ import test from 'node:test';
 import { Position } from '@chess-platform/core';
 import {
   InMemoryStudyPartnerRepository,
-  STUDY_PARTNER_ACCEPTED_DELETE_PROTECTION_MS,
+  STUDY_PARTNER_ACCEPTED_RECOVERY_MS,
   type StudyPartnerTurnRequestRef,
 } from '@chess-platform/persistence';
 import type { CoachInput, CoachOutcome } from '../src/coach/coach-service.js';
@@ -59,6 +59,19 @@ class AcceptanceRecordingStudyPartnerRepository extends InMemoryStudyPartnerRepo
   override async acceptTurn(ref: StudyPartnerTurnRequestRef): Promise<boolean> {
     this.acceptedAt = ref.now;
     return super.acceptTurn(ref);
+  }
+}
+
+class AcceptanceResponseLosingStudyPartnerRepository extends InMemoryStudyPartnerRepository {
+  private loseNextResponse = true;
+
+  override async acceptTurn(ref: StudyPartnerTurnRequestRef): Promise<boolean> {
+    const accepted = await super.acceptTurn(ref);
+    if (accepted && this.loseNextResponse) {
+      this.loseNextResponse = false;
+      throw new Error('accept response lost');
+    }
+    return accepted;
   }
 }
 
@@ -240,7 +253,7 @@ test('accepted-work protection starts when Coach accepts, not when the claim was
   await acceptedSignal;
 
   assert.equal(repository.acceptedAt?.toISOString(), '2026-08-24T12:01:00.000Z');
-  advance(STUDY_PARTNER_ACCEPTED_DELETE_PROTECTION_MS - 60_000);
+  advance(STUDY_PARTNER_ACCEPTED_RECOVERY_MS - 60_000);
   await assert.rejects(
     () => service.delete('owner', created.id),
     (error: unknown) => error instanceof HttpError && error.status === 409,
@@ -289,6 +302,65 @@ test('cancellation after charging does not persist or advance and exhausts that 
   );
   assert.equal(coachCalls, 1);
   assert.equal(charges, 1);
+});
+
+test('a post-acceptance failure blocks the same intent across keys but allows another move', async () => {
+  let coachCalls = 0;
+  const { service } = fixture({
+    async coach(input, onAccepted) {
+      coachCalls += 1;
+      if (onAccepted) await onAccepted();
+      if (input.move === 'e2e4') throw new Error('provider failed after acceptance');
+      return quietOutcome(input);
+    },
+  });
+  const created = await service.create('owner', 'standard', START);
+  let charges = 0;
+  const command = {
+    ownerId: 'owner', sessionId: created.id, move: 'e2e4', expectedVersion: 0,
+    idempotencyKey: 'failed-after-acceptance', signal: new AbortController().signal,
+    charge: async () => { charges += 1; },
+  };
+
+  await assert.rejects(() => service.submitTurn(command), /provider failed after acceptance/);
+  await assert.rejects(
+    () => service.submitTurn({
+      ...command,
+      idempotencyKey: 'failed-after-acceptance-retry',
+    }),
+    (error: unknown) => error instanceof HttpError
+      && error.status === 409
+      && error.message.includes('already accepted'),
+  );
+  const alternative = await service.submitTurn({
+    ...command,
+    move: 'd2d4',
+    idempotencyKey: 'alternative-intent',
+  });
+  assert.equal(alternative.turn.move, 'd2d4');
+  assert.equal(coachCalls, 2);
+  assert.equal(charges, 2);
+});
+
+test('a lost acceptance response cannot make the accepted intent purchasable again', async () => {
+  const repository = new AcceptanceResponseLosingStudyPartnerRepository();
+  const { service } = fixture(undefined, repository);
+  const created = await service.create('owner', 'standard', START);
+  let charges = 0;
+  const command = {
+    ownerId: 'owner', sessionId: created.id, move: 'e2e4', expectedVersion: 0,
+    idempotencyKey: 'lost-acceptance', signal: new AbortController().signal,
+    charge: async () => { charges += 1; },
+  };
+
+  await assert.rejects(() => service.submitTurn(command), /accept response lost/);
+  await assert.rejects(
+    () => service.submitTurn({ ...command, idempotencyKey: 'lost-acceptance-retry' }),
+    (error: unknown) => error instanceof HttpError
+      && error.status === 409
+      && error.message.includes('already accepted'),
+  );
+  assert.equal(charges, 0);
 });
 
 test('a request already cancelled never reaches Coach or quota and persists no turn', async () => {
