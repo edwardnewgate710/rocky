@@ -252,8 +252,8 @@ export class PgStudyPartnerRepository implements StudyPartnerRepository {
     return (result.rowCount ?? 0) === 1;
   }
 
-  async refuseTurn(ref: StudyPartnerTurnRequestRef): Promise<void> {
-    await this.pool.query(
+  async refuseTurn(ref: StudyPartnerTurnRequestRef): Promise<boolean> {
+    const result = await this.pool.query(
       `UPDATE study_partner_turn_requests r
           SET status = 'failed', updated_at = $5
         WHERE r.session_id = $1 AND r.idempotency_key = $2 AND r.request_hash = $3
@@ -262,6 +262,7 @@ export class PgStudyPartnerRepository implements StudyPartnerRepository {
                        WHERE s.id = r.session_id AND s.owner_id = $4)`,
       [ref.sessionId, ref.idempotencyKey, ref.requestHash, ref.ownerId, ref.now],
     );
+    return (result.rowCount ?? 0) === 1;
   }
 
   async failTurn(ref: StudyPartnerTurnRequestRef): Promise<void> {

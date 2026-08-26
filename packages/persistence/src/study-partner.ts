@@ -119,7 +119,7 @@ export interface StudyPartnerRepository {
   claimTurn(input: ClaimStudyPartnerTurn): Promise<ClaimStudyPartnerTurnResult>;
   acceptTurn(ref: StudyPartnerTurnRequestRef): Promise<boolean>;
   /** Release a definitively refused pre-work admission without quarantining the session. */
-  refuseTurn(ref: StudyPartnerTurnRequestRef): Promise<void>;
+  refuseTurn(ref: StudyPartnerTurnRequestRef): Promise<boolean>;
   failTurn(ref: StudyPartnerTurnRequestRef): Promise<void>;
   commitTurn(input: CommitStudyPartnerTurn): Promise<CommitStudyPartnerTurnResult>;
   endSession(input: EndStudyPartnerSession): Promise<EndStudyPartnerSessionResult>;

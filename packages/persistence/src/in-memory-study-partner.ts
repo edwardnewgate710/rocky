@@ -138,12 +138,13 @@ export class InMemoryStudyPartnerRepository implements StudyPartnerRepository {
     return true;
   }
 
-  async refuseTurn(ref: StudyPartnerTurnRequestRef): Promise<void> {
+  async refuseTurn(ref: StudyPartnerTurnRequestRef): Promise<boolean> {
     const mapKey = requestMapKey(ref.sessionId, ref.idempotencyKey);
     const request = this.requests.get(mapKey);
-    if (!request || request.ownerId !== ref.ownerId || request.requestHash !== ref.requestHash) return;
-    if (request.status !== 'claimed' && request.status !== 'accepted') return;
+    if (!request || request.ownerId !== ref.ownerId || request.requestHash !== ref.requestHash) return false;
+    if (request.status !== 'claimed' && request.status !== 'accepted') return false;
     this.requests.set(mapKey, { ...request, status: 'failed', updatedAt: ref.now });
+    return true;
   }
 
   async failTurn(ref: StudyPartnerTurnRequestRef): Promise<void> {

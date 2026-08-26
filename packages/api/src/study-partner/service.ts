@@ -261,12 +261,16 @@ export class StudyPartnerService {
       if (committed.kind === 'conflict') throw HttpError.conflict('study partner session changed before commit');
       return { turn: turnView(committed.turn), replayed: false };
     } catch (error: unknown) {
-      try {
-        const failedRef = { ...ref, now: new Date(this.options.clock.now()) };
-        if (rateLimitRefused) await this.options.repository.refuseTurn(failedRef);
-        else await this.options.repository.failTurn(failedRef);
-      } catch {
-        // Cleanup is best effort; preserve the original mapped failure for the caller.
+      const failedRef = { ...ref, now: new Date(this.options.clock.now()) };
+      if (rateLimitRefused) {
+        const persisted = await this.options.repository.refuseTurn(failedRef);
+        if (!persisted) throw new Error('Study Partner rate-limit refusal was not persisted');
+      } else {
+        try {
+          await this.options.repository.failTurn(failedRef);
+        } catch {
+          // Ambiguous-work cleanup is best effort; preserve the original mapped failure.
+        }
       }
       throw error;
     }

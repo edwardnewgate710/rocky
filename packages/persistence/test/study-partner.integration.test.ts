@@ -122,10 +122,10 @@ test('a definitive pre-work refusal releases an accepted request without quarant
     sessionId: 'refused-claim', ownerId: 'owner', idempotencyKey: 'refused',
     requestHash: 'a'.repeat(64), now,
   }), true);
-  await repository.refuseTurn({
+  assert.equal(await repository.refuseTurn({
     sessionId: 'refused-claim', ownerId: 'owner', idempotencyKey: 'refused',
     requestHash: 'a'.repeat(64), now,
-  });
+  }), true);
 
   assert.deepEqual(await repository.claimTurn({
     sessionId: 'refused-claim', ownerId: 'owner', idempotencyKey: 'retry', requestHash: 'a'.repeat(64),
@@ -354,10 +354,10 @@ test('Postgres Study Partner repository commits a turn and session advancement a
       sessionId: refusedSessionId, ownerId, idempotencyKey: 'refused',
       requestHash: '2'.repeat(64), now,
     }), true);
-    await repository.refuseTurn({
+    assert.equal(await repository.refuseTurn({
       sessionId: refusedSessionId, ownerId, idempotencyKey: 'refused',
       requestHash: '2'.repeat(64), now,
-    });
+    }), true);
     assert.deepEqual(await repository.claimTurn({
       sessionId: refusedSessionId, ownerId, idempotencyKey: 'refused-retry',
       requestHash: '2'.repeat(64), expectedVersion: 0, maxTurns: 20, now,

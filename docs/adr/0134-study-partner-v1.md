@@ -63,6 +63,12 @@ is ambiguous and follows normal failure cleanup to `exhausted`. Acceptance remai
 moving it after a successful charge would let a crash leave a merely `claimed` row that later retries
 and purchases the same turn twice.
 
+The service returns that original 429 only after the repository confirms one durable refusal
+transition. A persistence exception or zero-row update is surfaced as an internal failure, because
+reporting a retryable response while the request may remain `accepted` would strand the session and
+misrepresent the durable state. Cleanup for ambiguous accepted work remains best-effort so its
+original mapped failure is preserved while recovery continues to fail closed.
+
 A process crash can leave a request claimed or accepted. `claimed` is provably before the charge
 callback, so `claimTurn` transactionally fails it after five minutes and allows a new key; this is
 request-path recovery, not a background retention job. `accepted` is beyond an ambiguous

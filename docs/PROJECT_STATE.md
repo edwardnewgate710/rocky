@@ -4,7 +4,18 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-26 — M15 Increment 30: retryable rate-limit refusal._
+_Last updated: 2026-08-26 — M15 Increment 31: durable refusal confirmation._
+
+## M15 Increment 31 — Durable refusal confirmation (ADR-0134)
+
+A definitive 429 is returned as retryable only after `refuseTurn` confirms that exactly one request
+made the durable transition to `failed`. A database error or zero-row update now replaces the 429
+with an internal failure instead of falsely promising a safe retry while an `accepted` row remains.
+Cleanup for ambiguous accepted work remains best-effort and fail-closed.
+
+The service regression forces refusal persistence to throw and proves that the cleanup failure is
+surfaced. In-memory and PostgreSQL parity assertions also require a confirmed transition rather than
+accepting a silent no-op.
 
 ## M15 Increment 30 — Retryable rate-limit refusal (ADR-0134)
 

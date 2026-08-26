@@ -53,6 +53,18 @@ class CleanupFailingStudyPartnerRepository extends InMemoryStudyPartnerRepositor
   }
 }
 
+class RefusalCleanupFailingStudyPartnerRepository extends InMemoryStudyPartnerRepository {
+  override async refuseTurn(_ref: StudyPartnerTurnRequestRef): Promise<boolean> {
+    throw new Error('refusal cleanup unavailable');
+  }
+}
+
+class RefusalNoOpStudyPartnerRepository extends InMemoryStudyPartnerRepository {
+  override async refuseTurn(_ref: StudyPartnerTurnRequestRef): Promise<boolean> {
+    return false;
+  }
+}
+
 class AcceptanceRecordingStudyPartnerRepository extends InMemoryStudyPartnerRepository {
   acceptedAt: Date | undefined;
 
@@ -333,6 +345,34 @@ test('a definitive rate-limit refusal leaves the session retryable', async () =>
   assert.equal(retry.turn.move, 'e2e4');
   assert.equal(chargeAttempts, 2);
   assert.equal(workCalls, 1);
+});
+
+test('a rate-limit refusal is not reported as retryable when its durable cleanup fails', async () => {
+  const { service } = fixture(undefined, new RefusalCleanupFailingStudyPartnerRepository());
+  const created = await service.create('owner', 'standard', START);
+
+  await assert.rejects(
+    () => service.submitTurn({
+      ownerId: 'owner', sessionId: created.id, move: 'e2e4', expectedVersion: 0,
+      idempotencyKey: 'refusal-cleanup-failure', signal: new AbortController().signal,
+      charge: async () => { throw HttpError.rateLimited(60); },
+    }),
+    /refusal cleanup unavailable/,
+  );
+});
+
+test('a rate-limit refusal is not reported as retryable after a zero-row cleanup', async () => {
+  const { service } = fixture(undefined, new RefusalNoOpStudyPartnerRepository());
+  const created = await service.create('owner', 'standard', START);
+
+  await assert.rejects(
+    () => service.submitTurn({
+      ownerId: 'owner', sessionId: created.id, move: 'e2e4', expectedVersion: 0,
+      idempotencyKey: 'refusal-cleanup-no-op', signal: new AbortController().signal,
+      charge: async () => { throw HttpError.rateLimited(60); },
+    }),
+    /rate-limit refusal was not persisted/,
+  );
 });
 
 test('an unknown charge failure remains ambiguous and quarantines the session', async () => {
