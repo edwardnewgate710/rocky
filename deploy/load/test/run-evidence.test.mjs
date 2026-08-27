@@ -14,10 +14,11 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   EVIDENCE_DIR,
@@ -67,6 +68,42 @@ test('a credential-shaped value is refused even under an innocent field name', (
     () => envelope({ scenarios: [{ name: 'A', detail: { header: 'bearer abc123' } }] }),
     /Authorization header/,
     'a harness that copied a request header into a scenario detail would leak one this way',
+  );
+});
+
+test('a credential carried inside a URL is refused, however innocent the field name', () => {
+  // Every URL in an envelope comes from an environment variable and lands under a harmless key.
+  assert.throws(
+    () => envelope({ topology: { baseUrl: 'https://ops:hunter2@api.example.com' } }),
+    /URL user-info credentials/,
+    'topology.baseUrl is exactly the sort of name the key rule waves through',
+  );
+  assert.throws(
+    () => envelope({ topology: { wsUrl: 'wss://gw.example.com/live?access_token=abc123' } }),
+    /credential-bearing "access_token" query parameter/,
+  );
+  assert.throws(
+    () => envelope({ configuration: { endpoint: 'https://x.example.com/?sessionId=s3cr3t' } }),
+    /query parameter/,
+  );
+});
+
+test('ordinary URLs and non-URL strings are not mistaken for credentials', () => {
+  const evidence = envelope({
+    topology: {
+      compose: 'docker compose -f docker-compose.yml -f docker-compose.chaos.yml',
+      apiUrl: 'http://localhost:8080',
+      wsUrl: 'ws://localhost:4175',
+      healthUrl: 'http://host.docker.internal:4176/health',
+      query: 'https://search.example.com/?q=defense&limit=20',
+    },
+    scenarios: [{ name: 'A: cross-node correctness', status: 'passed' }],
+  });
+  assert.equal(evidence.topology.apiUrl, 'http://localhost:8080');
+  assert.equal(
+    evidence.topology.query,
+    'https://search.example.com/?q=defense&limit=20',
+    'a benign query parameter must not trip the URL rule, or the harnesses cannot record targets',
   );
 });
 
@@ -162,10 +199,79 @@ test('evidence lands beside the k6 summaries, in the directory git is told to ig
   );
 });
 
-test('every harness writes an evidence file, and clears it before the run', () => {
+test('every harness clears, arms a fallback, and writes evidence', () => {
   for (const harness of ['scripts/chaos-test.mjs', 'scripts/load-test.mjs', 'scripts/ws-load-test.mjs']) {
     const source = read(harness);
     assert.match(source, /clearEvidence\(EVIDENCE_DIR, EVIDENCE_FILE\)/, `${harness} clears first`);
     assert.match(source, /writeEvidence\(\s*EVIDENCE_DIR,/, `${harness} writes evidence`);
+    assert.match(
+      source,
+      /armFailureEvidence\(EVIDENCE_DIR, EVIDENCE_FILE,/,
+      `${harness} must arm a fallback: it has already deleted the previous run's artifact by the ` +
+        'time anything can fail, and several of its failure paths call process.exit directly',
+    );
+    assert.match(source, /fallback\.markWritten\(\)/, `${harness} marks the real write`);
   }
+});
+
+/**
+ * The fallback is behaviour, not a source-text claim, so it is exercised in a real process.
+ *
+ * `armFailureEvidence` hangs off `process.on('exit')` precisely because the paths that need it call
+ * `process.exit` rather than throwing, and neither a `try/catch` nor an assertion about the source
+ * would notice if it stopped firing.
+ */
+function runInChild(script, dir) {
+  const file = join(dir, 'child.mjs');
+  writeFileSync(file, script, 'utf8');
+  return spawnSync(process.execPath, [file], { cwd: REPO_ROOT, encoding: 'utf8' });
+}
+
+const armScript = (dir, body) => `
+import { armFailureEvidence, buildEvidence, clearEvidence, writeEvidence } from ${JSON.stringify(
+  pathToFileURL(join(REPO_ROOT, 'scripts/lib/run-evidence.mjs')).href,
+)};
+const DIR = ${JSON.stringify(dir)};
+const FILE = 'evidence.json';
+const build = (exitCode) => buildEvidence({
+  harness: 'test', outcome: 'aborted', exitCode,
+  startedAt: '2026-08-27T10:00:00.000Z', finishedAt: '2026-08-27T10:00:01.000Z',
+});
+clearEvidence(DIR, FILE);
+const fallback = armFailureEvidence(DIR, FILE, build);
+${body}
+`;
+
+test('a run that dies after clearing still leaves a failure artifact', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gambit-evidence-'));
+  writeFileSync(join(dir, 'evidence.json'), '{"runId":"yesterday"}', 'utf8');
+
+  const result = runInChild(armScript(dir, 'process.exit(1);'), dir);
+  assert.equal(result.status, 1, 'the fallback must not change how the run ended');
+
+  const written = JSON.parse(readFileSync(join(dir, 'evidence.json'), 'utf8'));
+  assert.equal(written.outcome, 'aborted');
+  assert.equal(written.exitCode, 1);
+  assert.notEqual(
+    written.runId,
+    'yesterday',
+    'the previous run’s artifact was cleared, so leaving it in place would be worse than nothing',
+  );
+});
+
+test('a run that wrote its own evidence is not overwritten by the fallback', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gambit-evidence-'));
+  const result = runInChild(
+    armScript(
+      dir,
+      `writeEvidence(DIR, FILE, buildEvidence({
+         harness: 'test', outcome: 'passed', exitCode: 0,
+         startedAt: '2026-08-27T10:00:00.000Z', finishedAt: '2026-08-27T10:00:02.000Z',
+       }));
+       fallback.markWritten();`,
+    ),
+    dir,
+  );
+  assert.equal(result.status, 0);
+  assert.equal(JSON.parse(readFileSync(join(dir, 'evidence.json'), 'utf8')).outcome, 'passed');
 });

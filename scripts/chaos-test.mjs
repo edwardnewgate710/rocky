@@ -50,19 +50,29 @@ import WebSocket from 'ws';
 
 import { readPrometheusCounter } from './lib/prometheus-text.mjs';
 import {
+  CHAOS_SERVICES,
   FORWARD_TIMEOUT_MS,
   KNOWN_OPEN_DEFECTS,
+  SCENARIO_PLAN,
   classifyExit,
   classifyInducedOutcome,
   inducedFailureBudgetMs,
   inducedFailureVerdict,
   leaseTiming,
+  mergeOwnedCounts,
   ownershipFromCounts,
   ownershipHeldProblem,
   ownershipTakeoverProblem,
+  restorationRequired,
   topologyProblems,
 } from './lib/chaos-plan.mjs';
-import { EVIDENCE_DIR, buildEvidence, clearEvidence, writeEvidence } from './lib/run-evidence.mjs';
+import {
+  EVIDENCE_DIR,
+  armFailureEvidence,
+  buildEvidence,
+  clearEvidence,
+  writeEvidence,
+} from './lib/run-evidence.mjs';
 
 const apiUrl = process.env['API_URL'] ?? 'http://localhost:8080';
 
@@ -77,7 +87,7 @@ const nodes = [
   {
     index: 1,
     name: 'node1',
-    service: 'gateway',
+    service: CHAOS_SERVICES.node1,
     wsUrl: process.env['NODE1_WS_URL'] ?? 'ws://localhost:4175',
     healthUrl: process.env['NODE1_HEALTH_URL'] ?? 'http://localhost:4176/health',
     metricsUrl: process.env['NODE1_METRICS_URL'] ?? 'http://localhost:4176/metrics',
@@ -85,7 +95,7 @@ const nodes = [
   {
     index: 2,
     name: 'node2',
-    service: 'gateway-node2',
+    service: CHAOS_SERVICES.node2,
     wsUrl: process.env['NODE2_WS_URL'] ?? 'ws://localhost:4177',
     healthUrl: process.env['NODE2_HEALTH_URL'] ?? 'http://localhost:4178/health',
     metricsUrl: process.env['NODE2_METRICS_URL'] ?? 'http://localhost:4178/metrics',
@@ -96,7 +106,7 @@ const [node1, node2] = nodes;
 const nodeByIndex = (index) => (index === 1 ? node1 : node2);
 
 const COMPOSE_CMD = 'docker compose -f docker-compose.yml -f docker-compose.chaos.yml';
-const REDIS_SERVICE = 'redis';
+const REDIS_SERVICE = CHAOS_SERVICES.redis;
 
 /**
  * The lease numbers the chaos stack runs with, and every deadline derived from them.
@@ -126,12 +136,20 @@ const MOVE_TIMEOUT_MS = 5_000;
 
 const EVIDENCE_FILE = 'chaos-evidence.json';
 
+/** One prefixed progress line. Everything this suite prints is safe to paste into a ticket. */
 function log(msg) {
   console.log(`[chaos] ${msg}`);
 }
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Run one compose command against the two-gateway stack, or throw with what docker said.
+ *
+ * Every service this suite stops is stopped through here, so a compose invocation that silently
+ * did nothing would be an induced outage that never happened — which is why the failure carries
+ * the full command and stderr rather than an exit code.
+ */
 function execDocker(cmd) {
   try {
     return execSync(`${COMPOSE_CMD} ${cmd}`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
@@ -161,6 +179,7 @@ async function probe(url) {
   }
 }
 
+/** A bounded JSON read that throws; use `probe` for an endpoint that is allowed to be down. */
 async function fetchJson(url) {
   const res = await fetch(url, { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`Fetch failed (${res.status}) for ${url}`);
@@ -487,6 +506,7 @@ class WsClient {
   }
 }
 
+/** Close every socket this run opened, in any order, without letting one failure stop the rest. */
 function closeAllClients() {
   for (const client of [...openClients]) client.close();
 }
@@ -503,10 +523,28 @@ function assertSamePosition(ply, ...frames) {
 // Ownership
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Owned-game counts on both nodes, sampled before a scenario claims anything. */
-async function captureOwnedCounts() {
-  const [h1, h2] = await Promise.all([fetchJson(node1.healthUrl), fetchJson(node2.healthUrl)]);
-  return { n1: h1.ownedGames, n2: h2.ownedGames };
+/** The owned-game count one node reports, or `null` when that node cannot be reached. */
+async function readOwnedGames(node) {
+  try {
+    return (await fetchJson(node.healthUrl)).ownedGames;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Owned-game counts on both nodes, tolerating a node that is part of an induced outage.
+ *
+ * Reading both through one `Promise.all` that rejects is what every post-outage ownership check
+ * used to do, and a killed gateway refuses the connection — so the three destructive scenarios
+ * failed with a connection error before they could evaluate the delta they exist to evaluate.
+ * `previous` supplies the last known value for a node that is currently down, and the merged
+ * reading records which halves were actually observed so an assertion about an unread node
+ * refuses rather than holding vacuously.
+ */
+async function captureOwnedCounts(previous = { n1: 0, n2: 0 }) {
+  const [n1, n2] = await Promise.all([readOwnedGames(node1), readOwnedGames(node2)]);
+  return mergeOwnedCounts(previous, { n1, n2 });
 }
 
 /**
@@ -540,7 +578,7 @@ async function awaitOwnershipTakeover(baseline, expectedNode, timeoutMs = 10_000
   const deadline = Date.now() + timeoutMs;
   let current = baseline;
   for (;;) {
-    current = await captureOwnedCounts();
+    current = await captureOwnedCounts(baseline);
     if (!ownershipTakeoverProblem(baseline, current, expectedNode)) return current;
     if (Date.now() >= deadline) return current;
     await delay(500);
@@ -635,6 +673,13 @@ async function openCrossNodeGame(label) {
   return { gameId, clientW, clientB, baseline: await captureOwnedCounts() };
 }
 
+/**
+ * The baseline every other scenario stands on: the cluster works when nothing is broken.
+ *
+ * Two players on different nodes, six alternating plies, and the non-owner's forwarding counter
+ * asserted to have grown — that counter is the only thing separating a real two-node run from two
+ * isolated gateways that would answer every health check and pass every other assertion here.
+ */
 async function scenarioA_CrossNodeCorrectness() {
   log('Asserting two players on DIFFERENT gateway nodes play with zero rejections and converge.');
 
@@ -690,6 +735,13 @@ async function scenarioA_CrossNodeCorrectness() {
   };
 }
 
+/**
+ * A SIGKILLed owner releases nothing, so the successor has to wait the lease out.
+ *
+ * This is the slow failover path, and the wait is derived from the lease rather than guessed. The
+ * takeover is read as growth in the survivor's owned-game count against a baseline taken while the
+ * original owner still held the game.
+ */
 async function scenarioB_UngracefulOwnerLoss() {
   log('Asserting the surviving node takes the game over after the owner is SIGKILLed.');
 
@@ -723,6 +775,12 @@ async function scenarioB_UngracefulOwnerLoss() {
   return { ownedBefore: beforeKill, ownedAfter: after, waitedMs: TIMING.ungracefulFailoverWaitMs };
 }
 
+/**
+ * A SIGTERMed owner runs its release path, so the successor must not have to wait the lease out.
+ *
+ * The whole claim is comparative: "faster than expiry". A budget at or above the TTL would be met
+ * by the ungraceful path too, and would assert nothing about the release having run at all.
+ */
 async function scenarioC_GracefulDrain() {
   log('Asserting a SIGTERM release lets the successor claim the game faster than lease expiry.');
 
@@ -820,7 +878,7 @@ async function scenarioE_NonOwnerLoss() {
   assertSamePosition(3, third, await clientB.awaitBroadcast(3));
   log('✓ play continued on the owner across two further plies');
 
-  const after = await captureOwnedCounts();
+  const after = await captureOwnedCounts(beforeKill);
   const problem = ownershipHeldProblem(beforeKill, after, 1);
   if (problem) throw new Error(`The owner's lease moved when its peer was removed: ${problem}`);
   log(`✓ node1 owned games unchanged at ${after.n1}`);
@@ -927,6 +985,7 @@ async function scenarioD_RedisLoss() {
   };
 }
 
+/** An induced-outage outcome as one readable token, with the reject code when there was one. */
 function describeOutcome(outcome) {
   return outcome.code ? `${outcome.kind}: ${outcome.code}` : outcome.kind;
 }
@@ -935,13 +994,26 @@ function describeOutcome(outcome) {
 // Main
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SCENARIOS = [
-  { name: 'A: cross-node correctness', run: scenarioA_CrossNodeCorrectness },
-  { name: 'B: ungraceful owner loss (SIGKILL)', run: scenarioB_UngracefulOwnerLoss },
-  { name: 'C: graceful drain (SIGTERM)', run: scenarioC_GracefulDrain },
-  { name: 'E: non-owner loss (SIGKILL)', run: scenarioE_NonOwnerLoss },
-  { name: 'D: Redis loss and fail-closed lease expiry', run: scenarioD_RedisLoss },
-];
+const RUNNERS = {
+  A: scenarioA_CrossNodeCorrectness,
+  B: scenarioB_UngracefulOwnerLoss,
+  C: scenarioC_GracefulDrain,
+  E: scenarioE_NonOwnerLoss,
+  D: scenarioD_RedisLoss,
+};
+
+/**
+ * The scenarios to run, each carrying the declaration of what it breaks.
+ *
+ * The order and the `disturbs` declarations live in `chaos-plan.mjs` so a test can hold them
+ * against what the scenario bodies actually stop; this only supplies the function per key, and
+ * refuses to start if a declared scenario has none.
+ */
+const SCENARIOS = SCENARIO_PLAN.map((scenario) => {
+  const run = RUNNERS[scenario.key];
+  if (!run) throw new Error(`SCENARIO_PLAN declares "${scenario.key}" with no runner in this file`);
+  return { ...scenario, run };
+});
 
 /**
  * Exit contract:
@@ -949,11 +1021,32 @@ const SCENARIOS = [
  *   1 — a REGRESSION, or the environment could not be restored afterwards.
  *   2 — only defects listed in `KNOWN_OPEN_DEFECTS` were observed.
  */
+/**
+ * Run every scenario in order, restore what each one broke, and leave an artifact behind.
+ *
+ * Stops at the first failure: the scenarios share one stack, and continuing past a failure would
+ * report results measured against a system already known to be in an unexpected state.
+ */
 async function main() {
   const startedAt = new Date();
   // Cleared at the START, not just before the write: a run that dies mid-scenario must leave no
-  // artifact rather than the previous run's, which a reader would take for this one's.
+  // artifact rather than the previous run's, which a reader would take for this one's. The
+  // fallback below is the other half of that bargain — clearing must not mean a failed run has
+  // nothing to show, and `process.exit` from the signal handler bypasses every `catch` here.
   clearEvidence(EVIDENCE_DIR, EVIDENCE_FILE);
+  const fallback = armFailureEvidence(EVIDENCE_DIR, EVIDENCE_FILE, (exitCode) =>
+    buildEvidence({
+      harness: 'chaos',
+      outcome: 'aborted',
+      exitCode,
+      startedAt,
+      finishedAt: new Date(),
+      topology: { compose: COMPOSE_CMD, apiUrl },
+      configuration: { leaseTtlSec: LEASE_TTL_SEC, renewalIntervalSec: RENEWAL_INTERVAL_SEC },
+      observed: { scenariosPlanned: SCENARIOS.length },
+      notes: ['The run was interrupted or died before any scenario could be recorded.'],
+    }),
+  );
 
   const results = [];
   const notes = [];
@@ -980,6 +1073,23 @@ async function main() {
         failedScenario = scenario.name;
         failure = err;
         break;
+      }
+
+      // Put back whatever this scenario stopped, before the next one connects to it. The suite
+      // used to do this at the end of each destructive scenario's own body; centralising
+      // restoration into the `finally` below removed those calls and left the following scenario
+      // opening a socket on a gateway its predecessor had killed.
+      if (restorationRequired(scenario)) {
+        try {
+          await restoreStack();
+        } catch (err) {
+          failedScenario = scenario.name;
+          failure = new Error(
+            `${scenario.name} passed, but the services it stopped ` +
+              `(${scenario.disturbs.join(', ')}) could not be restored: ${err?.message ?? err}`,
+          );
+          break;
+        }
       }
     }
   } catch (err) {
@@ -1037,6 +1147,7 @@ async function main() {
       notes,
     }),
   );
+  fallback.markWritten();
 
   console.error('');
   if (failure) {

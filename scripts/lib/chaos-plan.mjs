@@ -153,6 +153,92 @@ export function inducedFailureVerdict(outcome, what) {
 }
 
 /**
+ * The compose services this suite is allowed to stop, by the node name the scenarios use.
+ *
+ * Named here so `SCENARIO_PLAN` below can declare what each scenario breaks, and so a test can
+ * check that declaration against what the scenario bodies actually do.
+ */
+export const CHAOS_SERVICES = Object.freeze({
+  node1: 'gateway',
+  node2: 'gateway-node2',
+  redis: 'redis',
+});
+
+/**
+ * The scenarios, in order, each declaring which services it leaves stopped.
+ *
+ * `disturbs` is the fix for a whole class of bug rather than one instance of it. Each destructive
+ * scenario used to restore the stack itself, at the end of its own body; centralising restoration
+ * into a single `finally` removed those calls and left the *next* scenario connecting to a gateway
+ * the previous one had killed. Both are avoidable: the runner restores after any scenario that
+ * declares it broke something, so a scenario cannot forget, and a scenario that starts breaking
+ * something without declaring it is caught by `deploy/load/test/chaos-plan.test.mjs` rather than by
+ * the run after it failing somewhere unrelated.
+ */
+export const SCENARIO_PLAN = Object.freeze([
+  Object.freeze({ key: 'A', name: 'A: cross-node correctness', disturbs: Object.freeze([]) }),
+  Object.freeze({
+    key: 'B',
+    name: 'B: ungraceful owner loss (SIGKILL)',
+    disturbs: Object.freeze(['node1']),
+  }),
+  Object.freeze({
+    key: 'C',
+    name: 'C: graceful drain (SIGTERM)',
+    disturbs: Object.freeze(['node1']),
+  }),
+  Object.freeze({
+    key: 'E',
+    name: 'E: non-owner loss (SIGKILL)',
+    disturbs: Object.freeze(['node2']),
+  }),
+  Object.freeze({
+    key: 'D',
+    name: 'D: Redis loss and fail-closed lease expiry',
+    disturbs: Object.freeze(['redis']),
+  }),
+]);
+
+/** Whether the runner must put services back before the next scenario starts. */
+export function restorationRequired(scenario) {
+  return scenario.disturbs.length > 0;
+}
+
+/**
+ * Merge a health reading in which a node may be unreachable into a usable pair of counts.
+ *
+ * A killed gateway refuses the connection, and reading both nodes' `/health` through one
+ * `Promise.all` therefore threw on every post-outage check — the ownership assertions in the three
+ * destructive scenarios could not be reached at all. An unreachable node's last known count is
+ * carried forward rather than read as a drop to zero, and `reachable` records which halves of the
+ * answer were actually observed, so an assertion about a node nobody could read refuses instead of
+ * quietly holding.
+ */
+export function mergeOwnedCounts(previous, reading) {
+  return Object.freeze({
+    n1: reading.n1 ?? previous.n1,
+    n2: reading.n2 ?? previous.n2,
+    reachable: Object.freeze({ n1: reading.n1 !== null, n2: reading.n2 !== null }),
+  });
+}
+
+/**
+ * Why a reading cannot support a claim about this node, or `null` when it can.
+ *
+ * Fails closed on a missing `reachable`: carrying an unreachable node's baseline forward is what
+ * makes the post-outage checks runnable, and it is also what would let "the owner still owns its
+ * game" pass for an owner that had itself gone down. A caller that has not said whether the node
+ * was read gets a refusal, not the benefit of the doubt.
+ */
+export function unreadableNodeProblem(counts, expectedNode) {
+  const key = expectedNode === 1 ? 'n1' : 'n2';
+  return counts.reachable?.[key] === true
+    ? null
+    : `node${expectedNode} could not be read, so its owned-game count is the last one observed ` +
+        'rather than a current fact, and nothing here can be concluded from it';
+}
+
+/**
  * Which node claimed a game, read as growth against a baseline rather than as a raw count.
  *
  * `ownedGames` is a per-node count over every game that node owns, and ownership outlives the
@@ -178,6 +264,8 @@ export function ownershipFromCounts(baseline, current) {
  * verified.
  */
 export function ownershipTakeoverProblem(baseline, current, expectedNode) {
+  const unreadable = unreadableNodeProblem(current, expectedNode);
+  if (unreadable) return unreadable;
   const key = expectedNode === 1 ? 'n1' : 'n2';
   const otherKey = expectedNode === 1 ? 'n2' : 'n1';
   const otherNode = expectedNode === 1 ? 2 : 1;
@@ -198,6 +286,8 @@ export function ownershipTakeoverProblem(baseline, current, expectedNode) {
  * it dropped), and a drop would mean it lost one it should have kept.
  */
 export function ownershipHeldProblem(baseline, current, expectedNode) {
+  const unreadable = unreadableNodeProblem(current, expectedNode);
+  if (unreadable) return unreadable;
   const key = expectedNode === 1 ? 'n1' : 'n2';
   if (current[key] === baseline[key]) return null;
   return (

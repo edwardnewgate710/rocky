@@ -217,11 +217,19 @@ success without having tested anything are what the suite defends against first:
 
 ## Cleanup
 
-Restoration runs from a `finally`, and on `SIGINT`/`SIGTERM`, not at the end of each scenario — a run
-interrupted between `docker kill` and its assertion would otherwise leave a dead gateway or a stopped
-Redis behind, and the next run fails somewhere unrelated. A restoration that does not work is
-reported and **fails the run even when every scenario passed**: a half-restored stack is a worse
-outcome than a red build, because the next person does not know about it.
+Restoration happens at three levels, because each covers a case the others do not:
+
+1. **After every scenario that declares it broke something.** Each entry in `SCENARIO_PLAN` names the
+   services it leaves stopped, and the runner puts them back before the next scenario starts. The
+   declaration is what makes this hard to get wrong: a scenario that stops a service without saying
+   so fails a contract test rather than handing the *next* scenario a dead gateway.
+2. **From a `finally`,** so a scenario that throws partway through is still followed by restoration.
+3. **On `SIGINT`/`SIGTERM`,** because Ctrl-C between `docker kill` and the assertion after it is the
+   most common way to end up with a gateway that is down and no memory of having stopped it.
+
+A restoration that does not work is reported and **fails the run even when every scenario passed**: a
+half-restored stack is a worse outcome than a red build, because the next person does not know
+about it.
 
 ## Exit codes
 
@@ -255,13 +263,23 @@ measured against* and *is this from the run I just did* — and the chaos suite 
 artifact at all.
 
 **No evidence file ever carries a credential.** `scripts/lib/run-evidence.mjs` walks the envelope and
-*refuses to write it* if any field is named like a token, password, secret, cookie, authorization or
-session, or if any value looks like a JWT or an `Authorization` header. It fails closed rather than
-trusting its callers, which is what makes the chaos evidence safe to upload as a CI artifact.
+*refuses to write it* when any field is named like a token, password, secret, cookie, authorization
+or session; when any value looks like a JWT or an `Authorization` header; or when any value is a URL
+carrying credentials in its user-info (`https://user:pass@host`) or in a secret-bearing query
+parameter (`wss://host/live?access_token=…`). That last one matters because every URL in an envelope
+comes from an environment variable and lands under a perfectly innocent key like `topology.baseUrl`.
+It fails closed rather than trusting its callers, which is what makes the chaos evidence safe to
+upload as a CI artifact.
 
 Stale artifacts cannot be mistaken for a current run: each harness clears its evidence file at the
-*start* of a run, so a run that dies partway leaves nothing rather than the previous run's file.
+*start* of a run, so a run that dies partway can never leave the previous run's file behind.
 `runK6` already did the same for the k6 summaries.
+
+Clearing first would be a poor trade if it meant a failed run had nothing to show, so each harness
+also **arms a fallback envelope on process exit**. A stack that will not come up, a k6 image that
+will not pull, a summary that will not parse, or a Ctrl-C all leave an `aborted` envelope recording
+the exit code and the configuration, instead of an empty directory. Several of those paths call
+`process.exit` directly, which is why the fallback hangs off the exit event rather than a `catch`.
 
 ---
 

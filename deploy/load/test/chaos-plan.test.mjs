@@ -21,16 +21,20 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  CHAOS_SERVICES,
   FORWARD_TIMEOUT_MS,
   KNOWN_OPEN_DEFECTS,
+  SCENARIO_PLAN,
   classifyExit,
   classifyInducedOutcome,
   inducedFailureBudgetMs,
   inducedFailureVerdict,
   leaseTiming,
+  mergeOwnedCounts,
   ownershipFromCounts,
   ownershipHeldProblem,
   ownershipTakeoverProblem,
+  restorationRequired,
   topologyProblems,
 } from '../../../scripts/lib/chaos-plan.mjs';
 
@@ -205,6 +209,112 @@ test('the node that claimed this game is the one whose count grew', () => {
   );
 });
 
+/** A reading in which both nodes answered, which is the case outside an induced outage. */
+const bothRead = (counts) => mergeOwnedCounts({ n1: 0, n2: 0 }, counts);
+
+test('a node that is part of the induced outage reads as unknown, not as a drop to zero', () => {
+  const baseline = { n1: 1, n2: 0 };
+  const afterKillingNode1 = mergeOwnedCounts(baseline, { n1: null, n2: 1 });
+
+  assert.equal(
+    afterKillingNode1.n1,
+    1,
+    'a killed gateway refuses the connection; reading that as "it now owns 0 games" would be a ' +
+      'fact nobody observed',
+  );
+  assert.equal(afterKillingNode1.n2, 1);
+  assert.deepEqual(afterKillingNode1.reachable, { n1: false, n2: true });
+  assert.equal(
+    ownershipTakeoverProblem(baseline, afterKillingNode1, 2),
+    null,
+    'the survivor is the node under assertion, and it was read, so the check can be made',
+  );
+});
+
+test('an assertion about a node nobody could read refuses instead of holding vacuously', () => {
+  const baseline = { n1: 1, n2: 0 };
+  // Node1 is the owner AND the node that went away: carrying its baseline forward would make
+  // "the owner still holds its lease" pass for an owner that is itself down.
+  assert.match(
+    ownershipHeldProblem(baseline, mergeOwnedCounts(baseline, { n1: null, n2: 0 }), 1),
+    /could not be read/,
+    'carrying a baseline forward is what makes the post-outage checks runnable; it must not also ' +
+      'make them true',
+  );
+  assert.match(
+    ownershipTakeoverProblem(baseline, mergeOwnedCounts(baseline, { n1: 0, n2: null }), 2),
+    /could not be read/,
+  );
+  assert.match(
+    ownershipHeldProblem(baseline, { n1: 1, n2: 0 }, 1),
+    /could not be read/,
+    'a caller that never said whether the node was read gets a refusal, not the benefit of the doubt',
+  );
+});
+
+test('every scenario that stops a service declares it, so the runner puts it back', () => {
+  const source = read('scripts/chaos-test.mjs');
+  const bodies = source.split(/\nasync function scenario/).slice(1);
+  const byKey = new Map(SCENARIO_PLAN.map((s) => [s.key, s]));
+
+  assert.equal(bodies.length, SCENARIO_PLAN.length, 'a scenario function exists for each plan entry');
+
+  for (const body of bodies) {
+    const key = /^([A-Z])_/.exec(body)?.[1];
+    assert.ok(key && byKey.has(key), `scenario body "${body.slice(0, 24)}" is not in SCENARIO_PLAN`);
+    const stops = [...body.matchAll(/execDocker\(`(kill|stop) \$\{([^}]+)\}`\)/g)].map((m) => m[2]);
+    const declared = byKey.get(key).disturbs;
+
+    if (stops.length === 0) {
+      assert.deepEqual([...declared], [], `scenario ${key} stops nothing but declares ${declared}`);
+      continue;
+    }
+    assert.ok(
+      declared.length > 0,
+      `scenario ${key} stops ${stops.join(', ')} but declares nothing, so the runner would not ` +
+        'restore it and the next scenario would open a socket on a service it had killed — the ' +
+        'exact regression this declaration exists to prevent',
+    );
+    const expected = new Set(
+      stops.map((token) =>
+        token === 'REDIS_SERVICE' ? 'redis' : token === 'node1.service' ? 'node1' : 'node2',
+      ),
+    );
+    assert.deepEqual(
+      [...declared].sort(),
+      [...expected].sort(),
+      `scenario ${key} stops ${stops.join(', ')} but declares ${declared.join(', ')}`,
+    );
+  }
+});
+
+test('the runner restores after any scenario that declared it broke something', () => {
+  assert.equal(restorationRequired({ disturbs: [] }), false);
+  assert.equal(restorationRequired({ disturbs: ['node1'] }), true);
+  assert.match(
+    read('scripts/chaos-test.mjs'),
+    /if \(restorationRequired\(scenario\)\) \{\s*try \{\s*await restoreStack\(\);/,
+    'restoration must happen inside the scenario loop, not only in the final `finally` — a ' +
+      'destructive scenario that passes otherwise hands the next one a dead gateway',
+  );
+});
+
+test('every declared service is one docker compose actually defines', () => {
+  const compose = `${read('docker-compose.yml')}\n${read('docker-compose.chaos.yml')}`;
+  for (const service of Object.values(CHAOS_SERVICES)) {
+    assert.match(
+      compose,
+      new RegExp(`^  ${service}:`, 'm'),
+      `the suite stops "${service}", which no compose file defines`,
+    );
+  }
+  for (const scenario of SCENARIO_PLAN) {
+    for (const node of scenario.disturbs) {
+      assert.ok(node in CHAOS_SERVICES, `scenario ${scenario.key} declares unknown target ${node}`);
+    }
+  }
+});
+
 test('a survivor that merely already owned a game has not been shown to take one over', () => {
   // What the failover scenarios used to assert, in the state the previous scenario leaves behind:
   // node2 owns the game the SIGKILL scenario handed it, so `ownedGames >= 1` on node2 is already
@@ -215,26 +325,26 @@ test('a survivor that merely already owned a game has not been shown to take one
     'the raw check the suite used to make is satisfied before the scenario does anything',
   );
   assert.match(
-    ownershipTakeoverProblem(beforeDrain, { n1: 1, n2: 1 }, 2),
+    ownershipTakeoverProblem(beforeDrain, bothRead({ n1: 1, n2: 1 }), 2),
     /no more than the 1 it owned before this scenario began/,
     'the delta check must refuse the same state the raw check accepted',
   );
   assert.equal(
-    ownershipTakeoverProblem(beforeDrain, { n1: 0, n2: 2 }, 2),
+    ownershipTakeoverProblem(beforeDrain, bothRead({ n1: 0, n2: 2 }), 2),
     null,
     'a genuine takeover shows up as growth against the baseline',
   );
 });
 
 test('a peer’s departure must move the owner’s lease in neither direction', () => {
-  assert.equal(ownershipHeldProblem({ n1: 1, n2: 0 }, { n1: 1, n2: 0 }, 1), null);
+  assert.equal(ownershipHeldProblem({ n1: 1, n2: 0 }, bothRead({ n1: 1, n2: 0 }), 1), null);
   assert.match(
-    ownershipHeldProblem({ n1: 1, n2: 0 }, { n1: 0, n2: 0 }, 1),
+    ownershipHeldProblem({ n1: 1, n2: 0 }, bothRead({ n1: 0, n2: 0 }), 1),
     /must not move the owner's lease/,
     'the owner dropping a game when an unrelated node dies is the failure this scenario adds',
   );
   assert.match(
-    ownershipHeldProblem({ n1: 1, n2: 1 }, { n1: 2, n2: 0 }, 1),
+    ownershipHeldProblem({ n1: 1, n2: 1 }, bothRead({ n1: 2, n2: 0 }), 1),
     /must not move the owner's lease/,
     'a re-claim is a lease that was released first, which is equally wrong',
   );

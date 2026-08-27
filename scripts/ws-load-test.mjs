@@ -31,7 +31,13 @@
 
 import { K6_IMAGE, fail, readSummaryMetrics, runK6 } from './lib/k6-docker.mjs';
 import { readPrometheusCounter } from './lib/prometheus-text.mjs';
-import { EVIDENCE_DIR, buildEvidence, clearEvidence, writeEvidence } from './lib/run-evidence.mjs';
+import {
+  EVIDENCE_DIR,
+  armFailureEvidence,
+  buildEvidence,
+  clearEvidence,
+  writeEvidence,
+} from './lib/run-evidence.mjs';
 import {
   DEFAULTS,
   expectedForwardedCommands,
@@ -227,6 +233,37 @@ async function main() {
   const startedAt = new Date();
   clearEvidence(EVIDENCE_DIR, EVIDENCE_FILE);
 
+  const configuration = {
+    spectatorsPerNode: Number(process.env['SPECTATORS_PER_NODE'] || DEFAULTS.spectatorsPerNode),
+    plies,
+    moveIntervalMs: Number(process.env['MOVE_INTERVAL_MS'] || DEFAULTS.moveIntervalMs),
+    k6Image: K6_IMAGE,
+  };
+
+  // Armed before the first thing that can exit. A node that is not routing through Redis, an
+  // unreadable metric surface, or a summary that will not parse all end the process without
+  // reaching the write below — and the previous run's artifact has already been cleared by then.
+  const fallback = armFailureEvidence(EVIDENCE_DIR, EVIDENCE_FILE, (exitCode) =>
+    buildEvidence({
+      harness: 'ws-load',
+      outcome: 'aborted',
+      exitCode,
+      startedAt,
+      finishedAt: new Date(),
+      topology: {
+        apiUrl,
+        nodes: nodes.map((node) => ({
+          name: node.name,
+          wsUrl: node.wsUrl,
+          healthUrl: node.healthUrl,
+        })),
+      },
+      configuration,
+      observed: {},
+      notes: ['The run ended before it produced a summary, so nothing was measured.'],
+    }),
+  );
+
   const routing = [];
   for (const node of nodes) routing.push(await assertRoutingThroughRedis(node));
 
@@ -269,12 +306,7 @@ async function main() {
             commandRouting: routing[index]?.commandRouting ?? null,
           })),
         },
-        configuration: {
-          spectatorsPerNode: Number(process.env['SPECTATORS_PER_NODE'] || DEFAULTS.spectatorsPerNode),
-          plies,
-          moveIntervalMs: Number(process.env['MOVE_INTERVAL_MS'] || DEFAULTS.moveIntervalMs),
-          k6Image: K6_IMAGE,
-        },
+        configuration,
         expected: {
           joins: 'ws_joins_observed count == planned sockets',
           broadcasts: 'ws_broadcasts_observed count == sockets x plies',
@@ -290,6 +322,7 @@ async function main() {
         ],
       }),
     );
+    fallback.markWritten();
     console.log(`Evidence written to ${path}`);
   };
 

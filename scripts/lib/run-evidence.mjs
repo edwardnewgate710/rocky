@@ -47,13 +47,38 @@ const CREDENTIAL_KEY = /token|password|passwd|secret|credential|cookie|authoriza
 /**
  * Value shapes that are a credential regardless of what the key is called.
  *
- * A JWT is the one the harnesses actually hold; `Bearer ` catches a whole header copied in as a
- * label, and a long unbroken URL-safe blob catches an opaque token stored under an innocent name.
+ * A JWT is the one the harnesses actually hold, and `Bearer ` catches a whole header copied in as a
+ * label.
  */
 const CREDENTIAL_VALUE = [
   { name: 'a JWT', test: /^ey[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\./ },
   { name: 'an Authorization header', test: /^\s*bearer\s+\S/i },
 ];
+
+/**
+ * A credential carried inside a URL, which the key-name rule cannot see.
+ *
+ * Every URL in an envelope comes from an environment variable — `BASE_URL`, `API_URL`,
+ * `NODE1_WS_URL`, the health and metrics endpoints — and lands under an entirely innocent key like
+ * `topology.baseUrl`. `https://user:password@host` and `wss://host/live?access_token=…` are both
+ * ordinary ways to write one, and both would otherwise be copied verbatim into a CI artifact.
+ *
+ * Only strings that actually parse as a URL are inspected, so a compose command line or a scenario
+ * name is left alone.
+ */
+function urlCredential(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (url.username !== '' || url.password !== '') return 'URL user-info credentials';
+  for (const name of url.searchParams.keys()) {
+    if (CREDENTIAL_KEY.test(name)) return `a credential-bearing "${name}" query parameter`;
+  }
+  return null;
+}
 
 function describe(path) {
   return path.length === 0 ? 'the envelope root' : path.join('.');
@@ -90,6 +115,13 @@ export function assertNoCredentials(value, path = []) {
           `run evidence would persist ${name} at "${describe(path)}"; evidence carries no secrets.`,
         );
       }
+    }
+    const inUrl = urlCredential(value);
+    if (inUrl) {
+      throw new Error(
+        `run evidence would persist ${inUrl} at "${describe(path)}"; evidence carries no secrets. ` +
+          'Point the harness at a URL without embedded credentials, or supply them out of band.',
+      );
     }
   }
   return value;
@@ -167,6 +199,41 @@ function defaultRunner() {
  */
 export function clearEvidence(directory, file) {
   rmSync(join(directory, file), { force: true });
+}
+
+/**
+ * Guarantee this run leaves an artifact behind, however it ends.
+ *
+ * `clearEvidence` removes the previous run's file before the harness touches anything external, so
+ * that a reader can never mistake an old artifact for this run. The cost is that a failure between
+ * that point and the harness's own `writeEvidence` — a stack that will not come up, a k6 image that
+ * will not pull, a summary that will not parse — leaves no artifact at all, and several of those
+ * paths call `process.exit` directly rather than throwing somewhere a `catch` could see.
+ *
+ * So the fallback is armed on process exit instead: whatever ends the run, the last thing it does
+ * is write a failure envelope, unless a real one has already been written. Building the envelope is
+ * deferred to `buildFallback` so it can record the exit code it is explaining. A failure to write
+ * one is reported and never masks the original exit.
+ *
+ * @param {(exitCode: number) => object} buildFallback
+ * @returns {{ markWritten: () => void }} call `markWritten` once the real envelope is on disk
+ */
+export function armFailureEvidence(directory, file, buildFallback) {
+  let written = false;
+  process.on('exit', (code) => {
+    if (written) return;
+    try {
+      writeEvidence(directory, file, buildFallback(code));
+      console.error(`[evidence] run ended without a result; wrote a failure envelope to ${file}`);
+    } catch (err) {
+      console.error(`[evidence] could not write a failure envelope: ${err?.message ?? err}`);
+    }
+  });
+  return {
+    markWritten: () => {
+      written = true;
+    },
+  };
 }
 
 /** Write the envelope, refusing anything that carries a credential. Returns the path written. */
