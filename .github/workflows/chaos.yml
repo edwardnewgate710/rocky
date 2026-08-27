@@ -1,12 +1,33 @@
 name: Chaos & Failover Validation
 
+# On-demand only, and staying that way.
+#
+# The suite brings up a two-gateway stack with Postgres and Redis, builds the gateway image, and
+# then spends real wall-clock time waiting out ownership leases — it costs Actions minutes on the
+# order of a full CI run, and proves nothing that changes between two arbitrary pushes. What DOES
+# run on every PR is the hermetic half: `npm run test:load-harness` in `ci.yml` exercises this
+# suite's timing, topology, ownership, verdict and evidence logic as pure functions, with no
+# containers at all. Adding a push or schedule trigger here needs a reason the cheap tests cannot
+# cover.
 on:
   workflow_dispatch:
+
+# A second dispatch supersedes the first rather than running a second two-node stack beside it.
+concurrency:
+  group: chaos-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only: this workflow builds and tears down containers and publishes nothing.
+permissions:
+  contents: read
 
 jobs:
   chaos-test:
     name: Chaos & Failover Test (Two-Node Stack)
     runs-on: ubuntu-latest
+    # The suite's own waits are all derived and bounded; a wedged container or an image pull that
+    # never finishes is not. Without this a hung run bills the GitHub default of six hours.
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -29,6 +50,26 @@ jobs:
 
       - name: Run chaos test suite
         run: node scripts/chaos-test.mjs
+
+      # The evidence envelope names the scenario, the topology it ran against, the thresholds it was
+      # held to, what was measured, and how the run ended. `scripts/lib/run-evidence.mjs` refuses to
+      # write anything that is — or is merely named like — a credential, which is what makes this
+      # safe to upload. `if: always()` because a failed run is the one whose evidence is worth
+      # reading.
+      - name: Upload run evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-evidence-${{ github.run_id }}
+          path: deploy/load/results/chaos-evidence.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      # A chaos failure is rarely legible from the assertion alone; the surviving node's log is
+      # where the reason is. Tail-bounded, so a wedged service cannot produce a gigabyte of it.
+      - name: Gateway and Redis logs
+        if: failure()
+        run: docker compose -f docker-compose.yml -f docker-compose.chaos.yml logs --tail 200 gateway gateway-node2 redis
 
       - name: Teardown Docker stack
         if: always()
