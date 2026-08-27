@@ -25,6 +25,7 @@ import {
   EVIDENCE_DIR,
   EVIDENCE_SCHEMA,
   assertNoCredentials,
+  beginEvidence,
   buildEvidence,
   clearEvidence,
   writeEvidence,
@@ -200,19 +201,121 @@ test('evidence lands beside the k6 summaries, in the directory git is told to ig
   );
 });
 
-test('every harness clears, arms a fallback, and writes evidence', () => {
-  for (const harness of ['scripts/chaos-test.mjs', 'scripts/load-test.mjs', 'scripts/ws-load-test.mjs']) {
+const HARNESSES = ['scripts/chaos-test.mjs', 'scripts/load-test.mjs', 'scripts/ws-load-test.mjs'];
+
+test('every harness opens its evidence lifecycle through the one helper that orders it', () => {
+  for (const harness of HARNESSES) {
     const source = read(harness);
-    assert.match(source, /clearEvidence\(EVIDENCE_DIR, EVIDENCE_FILE\)/, `${harness} clears first`);
-    assert.match(source, /writeEvidence\(\s*EVIDENCE_DIR,/, `${harness} writes evidence`);
     assert.match(
       source,
-      /armFailureEvidence\(EVIDENCE_DIR, EVIDENCE_FILE,/,
-      `${harness} must arm a fallback: it has already deleted the previous run's artifact by the ` +
-        'time anything can fail, and several of its failure paths call process.exit directly',
+      /beginEvidence\(\s*EVIDENCE_DIR,\s*EVIDENCE_FILE,/,
+      `${harness} must arm a fallback before clearing: it deletes the previous run's artifact ` +
+        'before anything else can fail, and several of its failure paths call process.exit directly',
     );
+    assert.doesNotMatch(
+      source,
+      /clearEvidence\(/,
+      `${harness} must not clear on its own — clearing before arming leaves a window where an ` +
+        'interrupt destroys the old artifact and writes no new one, which is the exact guarantee ' +
+        'the fallback exists to make',
+    );
+    assert.match(source, /writeEvidence\(\s*EVIDENCE_DIR,/, `${harness} writes evidence`);
     assert.match(source, /fallback\.markWritten\(\)/, `${harness} marks the real write`);
   }
+});
+
+test('no harness installs a competing signal listener of its own', () => {
+  for (const harness of HARNESSES) {
+    assert.doesNotMatch(
+      read(harness),
+      /process\.(on|once)\(\s*(signal|'SIG|"SIG)/,
+      `${harness} must route interrupt cleanup through beginEvidence's onSignal hook. Two ` +
+        'listeners on one signal is two termination policies: the chaos suite used to exit 130 ' +
+        'for SIGTERM as well as SIGINT, so an interrupted run reported the wrong signal and ' +
+        'turned a signal death into an ordinary exit',
+    );
+  }
+});
+
+/**
+ * The ordering, observed while it happens rather than after it has finished.
+ *
+ * Both orderings leave the same end state — handlers armed, stale file gone — so asserting on the
+ * return value cannot tell them apart, and a test that only did that passed happily against a
+ * `beginEvidence` that cleared first. The difference is only visible *during* the call: if the
+ * handlers go on first, the stale artifact is still on disk at the moment the SIGINT listener is
+ * registered. That instant is exactly the window an interrupt would land in.
+ */
+test('beginEvidence arms before it clears, not merely by the time it returns', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gambit-evidence-'));
+  const file = 'evidence.json';
+  const target = join(dir, file);
+  writeFileSync(target, '{"runId":"yesterday"}', 'utf8');
+
+  let staleFileWasStillThereWhenArmed = null;
+  const realOn = process.on;
+  process.on = function (event, listener) {
+    if (event === 'SIGINT' && staleFileWasStillThereWhenArmed === null) {
+      staleFileWasStillThereWhenArmed = existsSync(target);
+    }
+    return realOn.call(this, event, listener);
+  };
+
+  let armed;
+  try {
+    armed = beginEvidence(dir, file, () => envelope());
+  } finally {
+    process.on = realOn;
+    // These handlers were armed in the test process itself; leaving them would make a later
+    // interrupt of the suite write an envelope into a temp directory.
+    for (const signal of ['SIGINT', 'SIGTERM']) {
+      for (const listener of process.listeners(signal)) process.removeListener(signal, listener);
+    }
+  }
+
+  assert.equal(
+    staleFileWasStillThereWhenArmed,
+    true,
+    'clearing first opens a window — a dozen lines wide in the load harnesses — where the old ' +
+      'artifact is gone and no handler is installed, and an interrupt there leaves neither run’s ' +
+      'evidence',
+  );
+  assert.equal(existsSync(target), false, 'and the stale artifact is still gone by the time it returns');
+  assert.equal(typeof armed.markWritten, 'function');
+});
+
+test('harness cleanup runs on the interrupt path, after the artifact is safe', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gambit-evidence-'));
+  const marker = join(dir, 'cleanup-ran.txt').replace(/\\/g, '/');
+  runInChild(
+    armScript(
+      dir,
+      "process.emit('SIGINT');",
+      `{ onSignal: (signal) => {
+         writeFileSync(${JSON.stringify(marker)}, signal + ' | evidence already written: ' +
+           existsSync(${JSON.stringify(join(dir, 'evidence.json').replace(/\\/g, '/'))}));
+       } }`,
+    ),
+    dir,
+  );
+
+  assert.ok(existsSync(marker), 'the chaos suite restores the stack through this hook');
+  assert.equal(
+    readFileSync(marker, 'utf8'),
+    'SIGINT | evidence already written: true',
+    'evidence is one synchronous write while cleanup shells out and can throw or block, so the ' +
+      'artifact must already be on disk before cleanup is attempted',
+  );
+});
+
+test('cleanup that throws does not cost the run its artifact', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gambit-evidence-'));
+  runInChild(
+    armScript(dir, "process.emit('SIGINT');", "{ onSignal: () => { throw new Error('boom'); } }"),
+    dir,
+  );
+
+  assert.equal(JSON.parse(readFileSync(join(dir, 'evidence.json'), 'utf8')).exitCode, 130);
 });
 
 /**
@@ -228,7 +331,8 @@ function runInChild(script, dir) {
   return spawnSync(process.execPath, [file], { cwd: REPO_ROOT, encoding: 'utf8' });
 }
 
-const armScript = (dir, body) => `
+const armScript = (dir, body, options = 'undefined') => `
+import { existsSync, writeFileSync } from 'node:fs';
 import { armFailureEvidence, buildEvidence, clearEvidence, writeEvidence } from ${JSON.stringify(
   pathToFileURL(join(REPO_ROOT, 'scripts/lib/run-evidence.mjs')).href,
 )};
@@ -239,7 +343,7 @@ const build = (exitCode) => buildEvidence({
   startedAt: '2026-08-27T10:00:00.000Z', finishedAt: '2026-08-27T10:00:01.000Z',
 });
 clearEvidence(DIR, FILE);
-const fallback = armFailureEvidence(DIR, FILE, build);
+const fallback = armFailureEvidence(DIR, FILE, build, ${options});
 ${body}
 `;
 

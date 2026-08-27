@@ -276,15 +276,24 @@ Stale artifacts cannot be mistaken for a current run: each harness clears its ev
 `runK6` already did the same for the k6 summaries.
 
 Clearing first would be a poor trade if it meant a failed run had nothing to show, so each harness
-also **arms a fallback envelope**. A stack that will not come up, a k6 image that will not pull, a
-summary that will not parse, or a Ctrl-C all leave an `aborted` envelope recording the exit code and
-the configuration, instead of an empty directory.
+also **arms a fallback envelope** — and arms it *before* clearing. A stack that will not come up, a
+k6 image that will not pull, a summary that will not parse, or a Ctrl-C all leave an `aborted`
+envelope recording the exit code and the configuration, instead of an empty directory. The two steps
+are one call, `beginEvidence`, because the order is the whole point: clearing first opens a window
+where the old artifact is gone and no handler is installed yet, and an interrupt landing there
+leaves neither run's evidence.
 
 It hangs off `process.on('exit')` rather than a `catch`, because several of those paths call
 `process.exit` directly. `exit` alone is not enough either: under the default disposition for
-`SIGINT` and `SIGTERM`, Node terminates *without* running exit handlers, so the harnesses install
-signal listeners as well — they write the envelope, then re-raise so the process still dies by the
-signal rather than turning an interrupt into an ordinary exit.
+`SIGINT` and `SIGTERM`, Node terminates *without* running exit handlers, so signal listeners are
+installed as well. They write the envelope, run whatever cleanup the harness passed as `onSignal`,
+then re-raise, so the process still dies by the signal rather than turning an interrupt into an
+ordinary exit.
+
+There is exactly **one listener per signal**, owned by the evidence lifecycle. Harness-specific
+interrupt cleanup — the chaos suite's stack restoration — goes through `onSignal` rather than a
+second listener of its own: two listeners on one signal is two termination policies, which is how
+the chaos suite came to exit with `SIGINT`'s code on a `SIGTERM`.
 
 ---
 

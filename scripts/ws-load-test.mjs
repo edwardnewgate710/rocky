@@ -33,9 +33,8 @@ import { K6_IMAGE, fail, readSummaryMetrics, runK6 } from './lib/k6-docker.mjs';
 import { readPrometheusCounter } from './lib/prometheus-text.mjs';
 import {
   EVIDENCE_DIR,
-  armFailureEvidence,
+  beginEvidence,
   buildEvidence,
-  clearEvidence,
   writeEvidence,
 } from './lib/run-evidence.mjs';
 import {
@@ -231,8 +230,6 @@ function observedFrom(metrics, forwarded) {
  */
 async function main() {
   const startedAt = new Date();
-  clearEvidence(EVIDENCE_DIR, EVIDENCE_FILE);
-
   const configuration = {
     spectatorsPerNode: Number(process.env['SPECTATORS_PER_NODE'] || DEFAULTS.spectatorsPerNode),
     plies,
@@ -243,7 +240,7 @@ async function main() {
   // Armed before the first thing that can exit. A node that is not routing through Redis, an
   // unreadable metric surface, or a summary that will not parse all end the process without
   // reaching the write below — and the previous run's artifact has already been cleared by then.
-  const fallback = armFailureEvidence(EVIDENCE_DIR, EVIDENCE_FILE, (exitCode) =>
+  const fallback = beginEvidence(EVIDENCE_DIR, EVIDENCE_FILE, (exitCode) =>
     buildEvidence({
       harness: 'ws-load',
       outcome: 'aborted',

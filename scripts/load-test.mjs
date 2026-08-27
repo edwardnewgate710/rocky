@@ -22,9 +22,8 @@
 import { K6_IMAGE, fail, readSummaryMetrics, runK6 } from './lib/k6-docker.mjs';
 import {
   EVIDENCE_DIR,
-  armFailureEvidence,
+  beginEvidence,
   buildEvidence,
-  clearEvidence,
   writeEvidence,
 } from './lib/run-evidence.mjs';
 
@@ -159,8 +158,6 @@ function report(summaryPath, k6ExitCode) {
  */
 async function main() {
   const startedAt = new Date();
-  clearEvidence(EVIDENCE_DIR, EVIDENCE_FILE);
-
   const topology = { scenario: SCENARIO, baseUrl, healthUrl };
   const configuration = {
     readVus: Number(process.env['READ_VUS'] ?? 20),
@@ -172,7 +169,7 @@ async function main() {
   // Armed before the first thing that can exit: an unreachable stack, a k6 image that will not
   // pull, or a summary that will not parse all end the process without reaching the write below,
   // and the previous run's artifact has already been cleared by then.
-  const fallback = armFailureEvidence(EVIDENCE_DIR, EVIDENCE_FILE, (exitCode) =>
+  const fallback = beginEvidence(EVIDENCE_DIR, EVIDENCE_FILE, (exitCode) =>
     buildEvidence({
       harness: 'http-load',
       outcome: 'aborted',

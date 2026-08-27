@@ -221,7 +221,7 @@ export function clearEvidence(directory, file) {
  * @param {(exitCode: number) => object} buildFallback
  * @returns {{ markWritten: () => void }} call `markWritten` once the real envelope is on disk
  */
-export function armFailureEvidence(directory, file, buildFallback) {
+export function armFailureEvidence(directory, file, buildFallback, { onSignal } = {}) {
   let written = false;
 
   /** Write the fallback at most once. Synchronous throughout: an exit handler cannot await. */
@@ -242,9 +242,21 @@ export function armFailureEvidence(directory, file, buildFallback) {
   // Node terminates without running exit handlers at all — so Ctrl-C on a harness that has already
   // cleared the previous artifact would leave nothing behind, which is the case this whole
   // mechanism exists for. Installing a listener is what moves those signals off the default path.
+  // One listener per signal, owning the whole interrupt path. A harness that installed its own
+  // alongside this one would give the signal two termination policies: the chaos suite's did
+  // exactly that, exiting 130 for SIGTERM as well as SIGINT, so an interrupted run reported
+  // SIGINT's status, disagreed with its own artifact, and turned a signal death into an ordinary
+  // exit. Harness-specific cleanup belongs in `onSignal`, not in a competing listener.
   for (const [signal, exitCode] of Object.entries(SIGNAL_EXIT_CODE)) {
     const handler = () => {
+      // Evidence first: it is one synchronous write, while cleanup shells out and can throw or
+      // block. The artifact is the thing that must survive an interrupt.
       persist(exitCode);
+      try {
+        onSignal?.(signal);
+      } catch (err) {
+        console.error(`[evidence] cleanup on ${signal} failed: ${err?.message ?? err}`);
+      }
       // Then die the way the signal asked. Removing this listener restores the default
       // disposition, so re-raising terminates the process *by the signal* rather than turning an
       // interrupt into an ordinary exit — a caller waiting on this process still sees what
@@ -260,6 +272,25 @@ export function armFailureEvidence(directory, file, buildFallback) {
       written = true;
     },
   };
+}
+
+/**
+ * Open a run's evidence lifecycle: arm the fallback FIRST, then clear the previous artifact.
+ *
+ * The ordering is the whole point, and it is the reason this is one function rather than two calls
+ * at each of three call sites. Clearing first opens a window — a dozen lines wide in the load
+ * harnesses, which build their configuration in between — where the old artifact is already gone
+ * and no handler is installed yet. An interrupt landing there leaves *neither* the previous run's
+ * evidence nor this one's, which is precisely the guarantee the fallback exists to make. Arming
+ * first closes it: an interrupt in the gap now writes this run's aborted envelope over the old one.
+ *
+ * @param {(exitCode: number) => object} buildFallback
+ * @param {{ onSignal?: (signal: string) => void }} [options] synchronous cleanup for the signal path
+ */
+export function beginEvidence(directory, file, buildFallback, options) {
+  const armed = armFailureEvidence(directory, file, buildFallback, options);
+  clearEvidence(directory, file);
+  return armed;
 }
 
 /** Write the envelope, refusing anything that carries a credential. Returns the path written. */

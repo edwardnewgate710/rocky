@@ -68,9 +68,8 @@ import {
 } from './lib/chaos-plan.mjs';
 import {
   EVIDENCE_DIR,
-  armFailureEvidence,
+  beginEvidence,
   buildEvidence,
-  clearEvidence,
   writeEvidence,
 } from './lib/run-evidence.mjs';
 
@@ -659,6 +658,31 @@ async function restoreStack() {
   log('✓ Stack restored and every node reports ready');
 }
 
+/**
+ * The interrupt path's version of the above: synchronous, and it does not wait for readiness.
+ *
+ * Ctrl-C between `docker kill` and the assertion that follows it is the most common way a developer
+ * ends up with a gateway that is down and no memory of having stopped it. A signal handler cannot
+ * await, so this restarts the services and says so rather than confirming they came back — the
+ * process is about to die by the signal either way, and a handler that blocked on readiness would
+ * make Ctrl-C feel broken.
+ *
+ * Passed to `beginEvidence` as `onSignal` rather than installed as this file's own listener: two
+ * listeners on one signal means two termination policies, which is how SIGTERM here used to exit
+ * with SIGINT's code.
+ */
+function restoreStackOnInterrupt(signal) {
+  console.error(`\n[chaos] ${signal} received — restoring the stack before exiting.`);
+  closeAllClients();
+  try {
+    execDocker(`start ${node1.service} ${node2.service} ${REDIS_SERVICE}`);
+    console.error('[chaos] Stack services restarted; they may need a moment to become ready.');
+  } catch (err) {
+    console.error(`[chaos] ✗ could not restore the stack: ${err.message}`);
+    console.error(`[chaos]   Restore it by hand: ${COMPOSE_CMD} up -d`);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Scenarios
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1029,23 +1053,28 @@ const SCENARIOS = SCENARIO_PLAN.map((scenario) => {
  */
 async function main() {
   const startedAt = new Date();
-  // Cleared at the START, not just before the write: a run that dies mid-scenario must leave no
-  // artifact rather than the previous run's, which a reader would take for this one's. The
-  // fallback below is the other half of that bargain — clearing must not mean a failed run has
-  // nothing to show, and `process.exit` from the signal handler bypasses every `catch` here.
-  clearEvidence(EVIDENCE_DIR, EVIDENCE_FILE);
-  const fallback = armFailureEvidence(EVIDENCE_DIR, EVIDENCE_FILE, (exitCode) =>
-    buildEvidence({
-      harness: 'chaos',
-      outcome: 'aborted',
-      exitCode,
-      startedAt,
-      finishedAt: new Date(),
-      topology: { compose: COMPOSE_CMD, apiUrl },
-      configuration: { leaseTtlSec: LEASE_TTL_SEC, renewalIntervalSec: RENEWAL_INTERVAL_SEC },
-      observed: { scenariosPlanned: SCENARIOS.length },
-      notes: ['The run was interrupted or died before any scenario could be recorded.'],
-    }),
+  // Arms the fallback, then clears the previous run's artifact — in that order, so an interrupt
+  // between the two leaves this run's aborted envelope rather than nothing at all. Clearing at the
+  // START is what stops a reader taking a previous run's file for this one's; the fallback is the
+  // other half of that bargain, because `process.exit` on the signal path bypasses every `catch`
+  // below. `onSignal` is where this suite's interrupt cleanup goes: a second listener of its own
+  // would give SIGTERM two termination policies.
+  const fallback = beginEvidence(
+    EVIDENCE_DIR,
+    EVIDENCE_FILE,
+    (exitCode) =>
+      buildEvidence({
+        harness: 'chaos',
+        outcome: 'aborted',
+        exitCode,
+        startedAt,
+        finishedAt: new Date(),
+        topology: { compose: COMPOSE_CMD, apiUrl },
+        configuration: { leaseTtlSec: LEASE_TTL_SEC, renewalIntervalSec: RENEWAL_INTERVAL_SEC },
+        observed: { scenariosPlanned: SCENARIOS.length },
+        notes: ['The run was interrupted or died before any scenario could be recorded.'],
+      }),
+    { onSignal: restoreStackOnInterrupt },
   );
 
   const results = [];
@@ -1170,27 +1199,6 @@ async function main() {
   }
   log(`Evidence written to ${evidencePath}`);
   process.exit(exitCode);
-}
-
-/**
- * An interrupted run must not leave the stack in pieces either.
- *
- * Ctrl-C between `docker kill` and the assertion that follows it is the most common way a developer
- * ends up with a gateway that is down and no memory of having stopped it.
- */
-for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.once(signal, () => {
-    console.error(`\n[chaos] ${signal} received — restoring the stack before exiting.`);
-    closeAllClients();
-    try {
-      execDocker(`start ${node1.service} ${node2.service} ${REDIS_SERVICE}`);
-      console.error('[chaos] Stack services restarted; they may need a moment to become ready.');
-    } catch (err) {
-      console.error(`[chaos] ✗ could not restore the stack: ${err.message}`);
-      console.error(`[chaos]   Restore it by hand: ${COMPOSE_CMD} up -d`);
-    }
-    process.exit(130);
-  });
 }
 
 main().catch((err) => {
