@@ -37,6 +37,19 @@ function line(multipv: number): EngineResult {
   };
 }
 
+
+/**
+ * A second, clearly distinguishable single-line analysis. Still multipv 1: a lone line(2) would
+ * be a set whose only line claims to be the second-best, which the payload contract refuses.
+ */
+function otherLine(): EngineResult {
+  return {
+    ...line(1),
+    evaluation: { type: 'cp', value: -60 },
+    principalVariation: ['d2d4', 'd7d5'],
+  };
+}
+
 /** A fresh identity per test, so suites sharing one database cannot collide. */
 function freshKey(overrides: Partial<AnalysisKey> = {}): AnalysisKey {
   return {
@@ -243,7 +256,7 @@ describe('PgAnalysisCache replacement semantics', { skip }, () => {
     await withCache(async (cache, pool) => {
       const key = freshKey();
       await cache.set(key, [line(1)], { limits: { depth: 20, nodes: 1_000_000 } });
-      await cache.set(key, [line(2)], { limits: { depth: 10, nodes: 100_000 } });
+      await cache.set(key, [otherLine()], { limits: { depth: 10, nodes: 100_000 } });
 
       const row = await storedLimitsOf(pool, key);
       assert.equal(row['achieved_depth'], 20);
@@ -259,10 +272,10 @@ describe('PgAnalysisCache replacement semantics', { skip }, () => {
     await withCache(async (cache, pool) => {
       const key = freshKey();
       await cache.set(key, [line(1)], { limits: { depth: 10, nodes: 100_000 } });
-      await cache.set(key, [line(2)], { limits: { depth: 20, nodes: 1_000_000 } });
+      await cache.set(key, [otherLine()], { limits: { depth: 20, nodes: 1_000_000 } });
 
       assert.equal((await storedLimitsOf(pool, key))['achieved_depth'], 20);
-      assert.deepEqual(await cache.get(key, { depth: 20 }), [line(2)]);
+      assert.deepEqual(await cache.get(key, { depth: 20 }), [otherLine()]);
     });
   });
 
@@ -271,7 +284,7 @@ describe('PgAnalysisCache replacement semantics', { skip }, () => {
       const key = freshKey();
       await cache.set(key, [line(1)], { limits: { depth: 20, nodes: 1_000_000 } });
       // Deeper, but on fewer nodes: it cannot serve the incumbent's nodes:1000000 request.
-      await cache.set(key, [line(2)], { limits: { depth: 22, nodes: 900_000 } });
+      await cache.set(key, [otherLine()], { limits: { depth: 22, nodes: 900_000 } });
 
       const row = await storedLimitsOf(pool, key);
       assert.equal(row['achieved_depth'], 20, 'a non-dominating write must not evict');
@@ -324,7 +337,7 @@ describe('PgAnalysisCache replacement semantics', { skip }, () => {
       );
 
       // Dominating on depth, but written by a build that cannot read what is already there.
-      await cache.set(key, [line(2)], { limits: { depth: 99 } });
+      await cache.set(key, [otherLine()], { limits: { depth: 99 } });
 
       const row = await storedLimitsOf(pool, key);
       assert.equal(

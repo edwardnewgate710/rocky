@@ -96,6 +96,15 @@ shape, unknown evaluation type, a fractional depth, a version this build does no
 **miss**, reported as a distinct `payload` fault. Casting unverified JSON to `EngineResult` would let
 a malformed evaluation reach a caller with no way left to tell it from a real one.
 
+The *set* of lines is held to the same standard as the fields, in both directions: `EngineResult`
+documents one result per requested line "ordered best-first (`multipv` 1..N)", so a payload whose
+lines are misordered, duplicated, gapped, or absent is refused on write and on read. The empty array
+is the case that makes this more than tidiness: it satisfies every per-field check, and
+`EngineManager.analyze` returns a hit with `if (cached) return cached`, where `[]` is truthy — so an
+empty stored payload would be served as a successful analysis to callers such as
+`packages/ai-features/src/endgame-trainer.ts` and `packages/ai-features/src/opening-explorer.ts`,
+which go straight to `results[0]`. A search that found no lines can answer nothing.
+
 `payload_version` is deliberately not pinned to a single value by the schema: a rolling deploy must
 be able to write a newer version against a schema an older reader still runs on. A newer payload
 version always wins the upsert and an older one never overwrites a newer, so the build that can still

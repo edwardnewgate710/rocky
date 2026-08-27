@@ -46,6 +46,14 @@ function encodeOne(result: EngineResult): Record<string, unknown> {
   return encodeAnalysisPayload([result])[0] as Record<string, unknown>;
 }
 
+/**
+ * Serialize one line WITHOUT the collection check, so a decoder test can present a set the
+ * encoder would have refused — which is what a corrupt or foreign-written row looks like.
+ */
+function bypassEncode(result: EngineResult): Record<string, unknown> {
+  return { ...encodeOne({ ...result, multipv: 1 }), multipv: result.multipv };
+}
+
 function roundTrip(results: readonly EngineResult[]): readonly EngineResult[] {
   // Through JSON, because that is what the column does to it.
   const stored: unknown = JSON.parse(JSON.stringify(encodeAnalysisPayload(results)));
@@ -67,7 +75,8 @@ function poolThatFails(error: unknown): Pool {
 
 describe('analysis cache payload contract', () => {
   it('round-trips every contractually meaningful field', () => {
-    assert.deepEqual(roundTrip([RICH, LEAN]), [RICH, LEAN]);
+    // LEAN is multipv 1 and RICH is multipv 2, so best-first is this order and not the other.
+    assert.deepEqual(roundTrip([LEAN, RICH]), [LEAN, RICH]);
   });
 
   it('keeps an absent optional absent rather than turning it into null', () => {
@@ -132,6 +141,42 @@ describe('achieved limit projection', () => {
       nodes: 5,
       timeMs: 0,
     });
+  });
+
+  /**
+   * The collection contract, not the field contract. An empty array passes every per-field check
+   * and is truthy, so `EngineManager.analyze`'s `if (cached) return cached` would serve it as a
+   * successful analysis to callers that then read `results[0]`.
+   */
+  it('refuses an analysis with no lines, in both directions', () => {
+    assert.throws(() => encodeAnalysisPayload([]), AnalysisCachePayloadError);
+    assert.throws(
+      () => decodeAnalysisPayload(ANALYSIS_CACHE_PAYLOAD_VERSION, []),
+      AnalysisCachePayloadError,
+    );
+  });
+
+  const misordered: readonly (readonly [string, readonly number[]])[] = [
+    ['does not start at the best line', [2, 3]],
+    ['repeats a line number', [1, 1]],
+    ['skips a line number', [1, 3]],
+    ['runs worst-first', [2, 1]],
+  ];
+
+  for (const [what, order] of misordered) {
+    it(`refuses a set of lines that ${what}`, () => {
+      const lines = order.map((multipv) => ({ ...LEAN, multipv }));
+      assert.throws(() => encodeAnalysisPayload(lines), AnalysisCachePayloadError);
+      assert.throws(
+        () => decodeAnalysisPayload(ANALYSIS_CACHE_PAYLOAD_VERSION, lines.map(bypassEncode)),
+        AnalysisCachePayloadError,
+      );
+    });
+  }
+
+  it('accepts lines that run 1..N in order', () => {
+    const lines = [1, 2, 3].map((multipv) => ({ ...LEAN, multipv }));
+    assert.deepEqual(roundTrip(lines), lines);
   });
 
   it('refuses limits that state nothing, which no request could ever match', () => {

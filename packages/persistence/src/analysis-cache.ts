@@ -77,6 +77,7 @@ function dimension(value: number | undefined, name: string): number | null {
  * stays absent instead of becoming `null`.
  */
 export function encodeAnalysisPayload(results: readonly EngineResult[]): unknown[] {
+  assertLineOrder(results);
   return results.map((result) => ({
     multipv: result.multipv,
     evaluation: { type: result.evaluation.type, value: result.evaluation.value },
@@ -103,7 +104,9 @@ export function decodeAnalysisPayload(payloadVersion: number, raw: unknown): rea
     throw new AnalysisCachePayloadError(`payload version ${payloadVersion} is not readable by this build`);
   }
   if (!Array.isArray(raw)) throw new AnalysisCachePayloadError('payload is not an array');
-  return Object.freeze(raw.map((entry, index) => decodeResult(entry, index)));
+  const results = raw.map((entry, index) => decodeResult(entry, index));
+  assertLineOrder(results);
+  return Object.freeze(results);
 }
 
 function decodeResult(entry: unknown, index: number): EngineResult {
@@ -167,4 +170,28 @@ function integer(value: unknown, at: string, minimum: number): number {
     throw new AnalysisCachePayloadError(`${at} is not an integer >= ${minimum}`);
   }
   return value as number;
+}
+
+/**
+ * Hold a set of lines to the collection contract `EngineResult` states: one result per requested
+ * line, "ordered best-first (`multipv` 1..N)".
+ *
+ * Individual fields being well-formed is not enough. An empty array is the sharper case: it passes
+ * every per-field check, and `EngineManager.analyze` returns a cache hit with `if (cached) return
+ * cached`, where `[]` is truthy — so an empty stored payload would be served as a successful
+ * analysis to callers like `endgame-trainer` and `opening-explorer`, which go straight to
+ * `results[0]` and would find `undefined`. A search that found no lines cannot answer anything, so
+ * it is refused in both directions: never stored, and never returned if some other writer stored it.
+ */
+function assertLineOrder(results: readonly EngineResult[]): void {
+  if (results.length === 0) {
+    throw new AnalysisCachePayloadError('an analysis with no lines cannot answer any request');
+  }
+  for (const [index, result] of results.entries()) {
+    if (result.multipv !== index + 1) {
+      throw new AnalysisCachePayloadError(
+        `line ${index} claims multipv ${result.multipv}; lines must run 1..N in order`,
+      );
+    }
+  }
 }
