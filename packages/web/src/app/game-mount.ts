@@ -89,6 +89,7 @@ import {
 import { formatClock, formatTimeControl } from './render-helpers.js';
 import type { AuthSession } from './auth-controller.js';
 import { gameReviewAnnotation } from './game-review-annotation.js';
+import { GameReviewController } from './game-review-controller.js';
 
 /**
  * The line counts the panel offers. Every one is at or below the server's published MultiPV
@@ -107,6 +108,7 @@ interface GameMountDependencies {
   readonly getAccessToken: () => string | undefined;
   readonly client: GambitClient;
   readonly token?: string;
+  readonly initialSessionId?: string;
   readonly restorePromise: Promise<AuthSession | null>;
 }
 
@@ -189,12 +191,13 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
   let gameOver = false;
   let isGamePlayer = false;
   let gameReviewPending = false;
+  let gameReviewSessionId = deps.initialSessionId ?? null;
 
   const refreshGameReview = (): void => {
     if (gameReviewSectionEl) gameReviewSectionEl.hidden = !gameOver || !isGamePlayer || !gameReviewAvailable;
-    if (gameReviewRunBtn) gameReviewRunBtn.disabled = !isUserAuthenticated() || gameReviewPending;
+    if (gameReviewRunBtn) gameReviewRunBtn.disabled = gameReviewSessionId === null || gameReviewPending;
     if (gameReviewNoteEl && !gameReviewPending && gameReviewMovesEl?.childElementCount === 0) {
-      gameReviewNoteEl.textContent = isUserAuthenticated()
+      gameReviewNoteEl.textContent = gameReviewSessionId !== null
         ? 'Review your moves after the game.'
         : 'Sign in to review your game.';
     }
@@ -1311,26 +1314,32 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     if (gameReviewNoteEl) gameReviewNoteEl.textContent = 'Select a move to see the position before it was played.';
   };
 
-  bindClick(gameReviewRunBtn, () => {
-    if (gameReviewPending || !gameOver || !isUserAuthenticated()) return;
-    gameReviewPending = true;
-    clearGameReview();
-    if (gameReviewMovesEl) gameReviewMovesEl.setAttribute('aria-busy', 'true');
-    if (gameReviewNoteEl) gameReviewNoteEl.textContent = 'Reviewing your moves…';
-    refreshGameReview();
-    void deps.client.games.review(gameId)
-      .then(renderGameReview)
-      .catch(() => {
+  const gameReviewController = new GameReviewController({
+    gameId,
+    sessionId: gameReviewSessionId,
+    requestReview: (requestedGameId, signal) => deps.client.games.review(requestedGameId, signal),
+    callbacks: {
+      onPhase: (phase) => {
+        gameReviewPending = phase === 'loading';
+        if (gameReviewMovesEl) gameReviewMovesEl.setAttribute('aria-busy', String(gameReviewPending));
+        if (phase === 'loading' && gameReviewNoteEl) gameReviewNoteEl.textContent = 'Reviewing your moves…';
+        refreshGameReview();
+      },
+      onResult: renderGameReview,
+      onFailure: () => {
         if (gameReviewErrorEl) {
           gameReviewErrorEl.hidden = false;
           gameReviewErrorEl.textContent = 'The review is not available right now. Please try again.';
         }
-      })
-      .finally(() => {
-        gameReviewPending = false;
-        if (gameReviewMovesEl) gameReviewMovesEl.setAttribute('aria-busy', 'false');
-        refreshGameReview();
-      });
+      },
+      onInvalidated: clearGameReview,
+    },
+  });
+
+  bindClick(gameReviewRunBtn, () => {
+    if (!gameOver) return;
+    clearGameReview();
+    void gameReviewController.review();
   });
 
   // Route-scoped, like every other control here. A bare `addEventListener` on this element stacked a
@@ -1502,6 +1511,7 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
       puzzleController.dispose();
       openingController.dispose();
       coachController.dispose();
+      gameReviewController.dispose();
     },
   };
 
@@ -1536,8 +1546,10 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     controller,
     connectivity,
     analysis,
-    onSessionChange: () => {
+    onSessionChange: (session) => {
       if (analysisDisposed) return;
+      gameReviewSessionId = session?.userId ?? null;
+      gameReviewController.sessionChanged(gameReviewSessionId);
       refreshAnalysisControls();
       // Every control depends on live authentication; refreshing only one left Explain disabled under
       // a stale sign-in note after signing in, and enabled after signing out, until some unrelated
@@ -1555,7 +1567,6 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
       // social region. Raised in the Qodo review of PR #152.
       if (!isUserAuthenticated()) coachController.targetLost();
       refreshCoachControls();
-      refreshGameReview();
     },
   };
 }

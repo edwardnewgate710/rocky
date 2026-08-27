@@ -2,8 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { GambitClient } from '../src/api/client.js';
 import type { RetryPolicy } from '../src/net/retry.js';
-import { UnauthorizedError } from '../src/net/errors.js';
-import { FakeTransport, empty, json } from './support/fake-transport.js';
+import { RequestAbortedError, UnauthorizedError } from '../src/net/errors.js';
+import type { HttpRequest, HttpTransport } from '../src/ports/http.js';
+import { abortableHang, FakeTransport, empty, json } from './support/fake-transport.js';
 import type { AuthResponse, SelfUser } from '../src/api/models.js';
 
 const NO_RETRY: RetryPolicy = { maxAttempts: 1, baseDelayMs: 1, maxDelayMs: 1, jitter: 'none' };
@@ -28,7 +29,7 @@ function auth(access: string, refresh = 'r', expiresIn = 3600): AuthResponse {
   };
 }
 
-function make(transport: FakeTransport): GambitClient {
+function make(transport: HttpTransport): GambitClient {
   return new GambitClient({
     baseUrl: 'https://api.test',
     transport,
@@ -213,6 +214,29 @@ test('games.review posts to the completed-game review endpoint with authenticati
   assert.equal(t.calls[1]!.url, 'https://api.test/v1/games/game%201/review');
   assert.equal(t.calls[1]!.method, 'POST');
   assert.equal(t.calls[1]!.headers['authorization'], 'Bearer tok-A');
+});
+
+test('games.review cancellation reaches the in-flight transport request', async () => {
+  const hangingTransport = abortableHang();
+  let callIndex = 0;
+  const captured: { reviewRequest?: HttpRequest } = {};
+  const transport: HttpTransport = {
+    send(request) {
+      if (callIndex++ === 0) return Promise.resolve(json(200, auth('tok-A')));
+      captured.reviewRequest = request;
+      return hangingTransport.send(request);
+    },
+  };
+  const c = make(transport);
+  await c.auth.login({ handle: 'alice', password: 'pw' });
+  const cancellation = new AbortController();
+
+  const pendingReview = c.games.review('game 1', cancellation.signal);
+  await Promise.resolve();
+  cancellation.abort();
+
+  await assert.rejects(pendingReview, RequestAbortedError);
+  assert.equal(captured.reviewRequest?.signal?.aborted, true);
 });
 
 test('tournaments.list fetches /v1/tournaments with auth:optional', async () => {

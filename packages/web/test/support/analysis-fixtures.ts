@@ -39,6 +39,10 @@ export class FakeElement {
     return this._innerHTML;
   }
 
+  get childElementCount() {
+    return this.children.length;
+  }
+
   set innerHTML(val: string) {
     this._innerHTML = val;
     if (val === '') {
@@ -76,6 +80,10 @@ export class FakeElement {
   /** The variadic form. Views that build a control from several nodes at once use it. */
   append = (...nodes: FakeElement[]) => {
     this.children.push(...nodes);
+  };
+
+  replaceChildren = (...nodes: FakeElement[]) => {
+    this.children = [...nodes];
   };
 
   removeChild = (child: FakeElement) => {
@@ -148,6 +156,12 @@ export const GAME_ELEMENT_IDS = [
   'draw-offer-received',
   'action-accept-draw',
   'action-decline-draw',
+  'game-review',
+  'game-review-run',
+  'game-review-note',
+  'game-review-error',
+  'game-review-summary',
+  'game-review-moves',
   'analysis',
   'analysis-heading',
   'analysis-run',
@@ -206,6 +220,9 @@ export function createGameDocument(): {
       id === 'confirm-resign' ||
       id === 'confirm-abort' ||
       id === 'draw-offer-received' ||
+      id === 'game-review' ||
+      id === 'game-review-error' ||
+      id === 'game-review-summary' ||
       id === 'analysis' ||
       id === 'analysis-error' ||
       id === 'analysis-reached' ||

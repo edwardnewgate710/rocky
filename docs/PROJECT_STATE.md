@@ -4,7 +4,20 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-27 — M15 Increment 32: completed-game review recovery._
+_Last updated: 2026-08-27 — M15 Increment 33: Game Review privacy and stale-request hardening (ADR-0135)._
+
+## M15 Increment 33 — Game Review privacy and stale-request hardening (ADR-0135)
+
+Completed-game review now has explicit request ownership at the route state boundary. Every request
+captures the immutable game ID, authenticated user ID, a generation, and its abort-controller
+identity; the response game ID and all captured ownership facts are checked again immediately before
+rendering. Sign-out, account replacement, and route disposal synchronously invalidate the generation,
+abort work, and remove the private summary, moves, and errors from the persistent page DOM.
+
+Deterministic controller, mounted-DOM, and API transport regressions cover rapid game switching,
+sign-out during an in-flight review, sign-out after a completed review, request A completing after
+request B, response identity mismatch, and AbortSignal propagation. The recovered server-authoritative
+review contract is unchanged, and Study Partner remains untouched.
 
 ## M15 Increment 32 — Completed-game review recovery
 
