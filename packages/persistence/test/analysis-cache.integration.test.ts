@@ -48,13 +48,27 @@ function freshKey(overrides: Partial<AnalysisKey> = {}): AnalysisKey {
   };
 }
 
+/**
+ * Migrations are applied once for the whole file, not once per test. The runner is safe either
+ * way — it holds an advisory lock — but re-walking every migration for each of twenty-odd tests
+ * buys nothing and slows the Postgres CI job for no reason.
+ */
+let migrated: Promise<void> | undefined;
+
+function ensureMigrated(pool: Pool): Promise<void> {
+  migrated ??= migrate(pool, join(process.cwd(), 'migrations')).then(() => undefined);
+  return migrated;
+}
+
 async function withCache(
   run: (cache: PgAnalysisCache, pool: Pool, faults: AnalysisCacheFault[]) => Promise<void>,
 ): Promise<void> {
-  const pool = createPool();
+  // A small pool per test: these suites share a server with every other integration file, and
+  // the default of ten connections each is pressure none of them needs.
+  const pool = createPool({ max: 2 });
   const faults: AnalysisCacheFault[] = [];
   try {
-    await migrate(pool, join(process.cwd(), 'migrations'));
+    await ensureMigrated(pool);
     await run(new PgAnalysisCache(pool, { onError: (fault) => faults.push(fault) }), pool, faults);
   } finally {
     await pool.end();
@@ -319,31 +333,38 @@ describe('PgAnalysisCache replacement semantics', { skip }, () => {
     });
   });
 
-  it('replaces a row whose payload version this build cannot read with one it can', async () => {
-    await withCache(async (cache, pool) => {
+  /*
+   * The other half of the version rule — a NEWER payload version replacing an older one
+   * regardless of limits — has no test here on purpose, because nothing can currently reach it.
+   * The schema requires `payload_version >= 1`, this build writes exactly
+   * ANALYSIS_CACHE_PAYLOAD_VERSION (1), so no write can present a version above an incumbent's.
+   * The clause is what lets a future version 2 take over rows a version 1 build wrote, and it
+   * becomes exercisable the moment that version exists. A test that forced it today could only
+   * do so by issuing its own copy of the upsert, which would assert that the copy works.
+   */
+
+  it('treats the row it refused to overwrite as unreadable rather than as results', async () => {
+    await withCache(async (cache, pool, faults) => {
       const key = freshKey();
       const now = new Date();
       await pool.query(
         `INSERT INTO engine_analysis_cache (
            fingerprint, variant, multi_pv, fen, achieved_depth,
            payload_version, results, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, 99, 0, $5::jsonb, $6, $6)`,
+         VALUES ($1, $2, $3, $4, 20, $5, $6::jsonb, $7, $7)`,
         [
           key.fingerprint,
           key.variant,
           key.multiPv,
           key.fen,
-          JSON.stringify([{ shape: 'from an older contract' }]),
+          ANALYSIS_CACHE_PAYLOAD_VERSION + 1,
+          JSON.stringify(encodeAnalysisPayload([line(1)])),
           now,
         ],
       );
 
-      // Weaker on depth, but the incumbent is unreadable, so it can serve nobody.
-      await cache.set(key, [line(1)], { limits: { depth: 20 } });
-
-      const row = await storedLimitsOf(pool, key);
-      assert.equal(row['payload_version'], ANALYSIS_CACHE_PAYLOAD_VERSION);
-      assert.deepEqual(await cache.get(key, { depth: 20 }), [line(1)]);
+      assert.equal(await cache.get(key, { depth: 20 }), undefined);
+      assert.deepEqual(faults, ['payload'], 'a version it cannot read is a miss, not a guess');
     });
   });
 });
@@ -378,11 +399,15 @@ describe('PgAnalysisCache under concurrency', { skip }, () => {
     });
   });
 
-  it('never shows a reader a partially written entry', async () => {
-    await withCache(async (cache, faultsPool, faults) => {
+  it('never shows a reader a half-written entry while writers replace it', async () => {
+    await withCache(async (cache, _pool, faults) => {
       const key = freshKey();
       await cache.set(key, [line(1)], { limits: { depth: 10 } });
 
+      // Every write dominates the seed, so the row's depth only ever climbs: a request for
+      // depth 10 is satisfied at every instant, and so every one of these reads must hit.
+      // Skipping undefined values instead of forbidding them would let this pass while the
+      // cache returned nothing at all.
       const writes = Array.from({ length: 12 }, (_, i) =>
         cache.set(key, [line(1), line(2)], { limits: { depth: 11 + i } }),
       );
@@ -391,16 +416,18 @@ describe('PgAnalysisCache under concurrency', { skip }, () => {
       const observed = await Promise.all(reads);
       await Promise.all(writes);
 
+      assert.equal(observed.length, 12);
       for (const value of observed) {
-        if (value === undefined) continue;
+        assert.ok(value !== undefined, 'a read missed a key that always satisfied the request');
+        // One line from the seed, two from any replacement — never a mixture of the two.
         assert.ok(value.length === 1 || value.length === 2, 'a read saw a torn line count');
-        for (const result of value) {
-          assert.equal(typeof result.depth, 'number');
-          assert.equal(typeof result.evaluation.value, 'number');
-        }
+        assert.deepEqual(
+          value,
+          value.length === 1 ? [line(1)] : [line(1), line(2)],
+          'a decoded entry must be exactly one of the values actually written',
+        );
       }
       assert.deepEqual(faults, [], 'no read or write should have faulted');
-      assert.ok(faultsPool);
     });
   });
 });

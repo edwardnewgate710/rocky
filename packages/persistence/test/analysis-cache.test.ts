@@ -6,7 +6,7 @@
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
 import type { Pool } from 'pg';
-import type { EngineResult } from '@chess-platform/engine';
+import type { AnalysisLimits, EngineResult } from '@chess-platform/engine';
 import {
   ANALYSIS_CACHE_PAYLOAD_VERSION,
   AnalysisCachePayloadError,
@@ -235,21 +235,35 @@ describe('PgAnalysisCache failure semantics', () => {
     await cache.set(KEY, [LEAN], { limits: { depth: 20 } });
   });
 
-  it('asks the database for nothing in a dimension the request does not state', async () => {
-    let params: unknown[] = [];
-    const pool = {
-      query: async (_sql: string, values: unknown[]) => {
-        params = values;
-        return { rows: [] };
-      },
-    } as unknown as Pool;
+  /**
+   * Each dimension is asserted on its own. A single case that states `depth` would leave the
+   * `nodes` and `timeMs` mappings unexercised, and a `?? 0` slipped into either of them would
+   * ask the database for "a bound of at least zero" — which every row satisfies — while the
+   * test went on passing.
+   */
+  const dimensions: readonly (readonly [string, AnalysisLimits, unknown[]])[] = [
+    ['depth', { depth: 20 }, [20, null, null]],
+    ['nodes', { nodes: 900_000 }, [null, 900_000, null]],
+    ['timeMs', { timeMs: 3000 }, [null, null, 3000]],
+  ];
 
-    await new PgAnalysisCache(pool).get(KEY, { depth: 20 });
+  for (const [dimension, requested, expected] of dimensions) {
+    it(`asks for nothing in a dimension the request omits, stating only ${dimension}`, async () => {
+      let params: unknown[] = [];
+      const pool = {
+        query: async (_sql: string, values: unknown[]) => {
+          params = values;
+          return { rows: [] };
+        },
+      } as unknown as Pool;
 
-    assert.deepEqual(
-      params.slice(4),
-      [20, null, null],
-      'an unstated dimension must be NULL, not 0, which would demand a bound of zero',
-    );
-  });
+      await new PgAnalysisCache(pool).get(KEY, requested);
+
+      assert.deepEqual(
+        params.slice(4),
+        expected,
+        'an unstated dimension must be NULL, not 0, which every stored row would satisfy',
+      );
+    });
+  }
 });

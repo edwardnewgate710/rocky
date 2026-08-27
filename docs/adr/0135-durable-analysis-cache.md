@@ -139,6 +139,11 @@ the platform rather than of this adapter:
 - **Retention.** This table has no TTL, consistent with ADR-0002 ("TTL only on ephemeral tiers"), and
   no eviction. Unbounded growth is acceptable for an unwired table and is not acceptable in
   production; a retention policy is part of wiring.
+- **A statement timeout on the pool.** Failing open protects the caller from an error, not from a
+  wait. `EngineManager.analyze` awaits `get` before it will search, so a query that hangs on lock
+  contention rather than failing would stall the analysis indefinitely — worse than the throw this
+  adapter exists to prevent. The bound belongs on the pool the composition root supplies
+  (`statement_timeout`), which is why it is a wiring precondition and not a constant here.
 
 ## Consequences
 
@@ -152,8 +157,10 @@ the platform rather than of this adapter:
   existing `/pg` subpath convention.
 - The engine port is imported **type-only**, so no runtime dependency edge is created. This follows
   the existing precedent for `@chess-platform/core`, which four persistence modules already import
-  type-only without declaring it. Declaring these edges properly would touch the root lockfile and is
-  left as its own change.
+  type-only without declaring it. As with `core`, the emitted declarations carry the reference —
+  `dist/analysis-cache.d.ts` names `@chess-platform/engine` — so a consumer typechecking against
+  them needs it resolvable; `packages/api`, the only consumer of both, already declares it. Declaring
+  these edges properly would touch the root lockfile and is left as its own change.
 - **Rollback.** Migrations are forward-only and checksummed, so 0026 is not un-applied by the runner.
   Because the table is new, referenced by no foreign key and read by no composed code, reverting the
   application code is sufficient to stop all use of it; the table can then be left in place at no

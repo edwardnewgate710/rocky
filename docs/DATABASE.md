@@ -657,12 +657,12 @@ CREATE TABLE engine_analysis_cache (
   achieved_depth   INTEGER     CHECK (achieved_depth IS NULL OR achieved_depth >= 0),
   achieved_nodes   BIGINT      CHECK (achieved_nodes IS NULL OR achieved_nodes >= 0),
   achieved_time_ms BIGINT      CHECK (achieved_time_ms IS NULL OR achieved_time_ms >= 0),
+  CHECK (num_nonnulls(achieved_depth, achieved_nodes, achieved_time_ms) >= 1),
   payload_version  INTEGER     NOT NULL CHECK (payload_version >= 1),
   results          JSONB       NOT NULL CHECK (jsonb_typeof(results) = 'array'),
   created_at       TIMESTAMPTZ NOT NULL,
   updated_at       TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (fingerprint, variant, multi_pv, fen),
-  CHECK (num_nonnulls(achieved_depth, achieved_nodes, achieved_time_ms) >= 1)
+  PRIMARY KEY (fingerprint, variant, multi_pv, fen)
 );
 ```
 
