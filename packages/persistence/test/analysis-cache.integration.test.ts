@@ -275,7 +275,10 @@ describe('PgAnalysisCache replacement semantics', { skip }, () => {
 
       const row = await storedLimitsOf(pool, key);
       assert.equal(row['achieved_depth'], 20, 'a non-dominating write must not evict');
-      assert.equal(row['achieved_nodes'], '1000000');
+      // BIGINT arrives from pg as a string, which is why this package reads such columns
+      // through Number() everywhere else; comparing that way keeps the assertion about the
+      // value rather than about the driver's representation of it.
+      assert.equal(Number(row['achieved_nodes']), 1_000_000);
     });
   });
 
@@ -383,7 +386,7 @@ describe('PgAnalysisCache under concurrency', { skip }, () => {
 
       const row = await storedLimitsOf(pool, key);
       assert.equal(row['achieved_depth'], 30);
-      assert.equal(row['achieved_nodes'], '30000');
+      assert.equal(Number(row['achieved_nodes']), 30_000);
     });
   });
 
