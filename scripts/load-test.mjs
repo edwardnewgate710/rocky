@@ -19,13 +19,42 @@
  *   READ_VUS, AUTH_VUS, DURATION   passed through to the scenario
  */
 
-import { fail, readSummaryMetrics, runK6 } from './lib/k6-docker.mjs';
+import { K6_IMAGE, fail, readSummaryMetrics, runK6 } from './lib/k6-docker.mjs';
+import {
+  EVIDENCE_DIR,
+  beginEvidence,
+  buildEvidence,
+  writeEvidence,
+} from './lib/run-evidence.mjs';
 
 const SCENARIO = 'deploy/load/scenarios/api-baseline.js';
+const EVIDENCE_FILE = 'http-load-evidence.json';
+
+/**
+ * The SLO targets, restated here only so the artifact can carry them beside what was measured.
+ *
+ * They are ENFORCED in `deploy/load/scenarios/api-baseline.js`, where they are the k6 thresholds —
+ * these are labels on a number, not a second gate. A summary that records `p99 = 240 ms` and
+ * nothing else cannot be read as a pass or a fail by anyone who was not at the terminal.
+ */
+const SLO_TARGETS = Object.freeze({
+  availability: 'http_req_failed rate<0.005 (5xx only)',
+  readLatency: 'http_req_duration{scenario:read} p(99)<250ms',
+  authLatency: 'http_req_duration{scenario:auth} p(95)<2000ms (not an SLO)',
+  authFailures: 'auth_failures rate<0.01',
+  readChecks: 'checks{scenario:read} rate>0.999',
+});
 
 const baseUrl = process.env['BASE_URL'] ?? 'http://host.docker.internal:8080';
 const healthUrl = process.env['HEALTH_URL'] ?? 'http://localhost:8080';
 
+/**
+ * Refuse to start against a stack that is not answering.
+ *
+ * Checked from THIS process via `HEALTH_URL`, while k6 uses `BASE_URL` from inside its container:
+ * the two are different views of the same service and are allowed to differ, so this proves the
+ * stack is up rather than that k6 can reach it.
+ */
 async function assertStackIsUp() {
   process.stdout.write(`Checking ${healthUrl}/v1/health ... `);
   try {
@@ -41,6 +70,7 @@ async function assertStackIsUp() {
   }
 }
 
+/** Run the HTTP scenario in the pinned k6 image, passing the tunables through as container env. */
 function runApiBaseline() {
   return runK6({
     scenario: SCENARIO,
@@ -55,6 +85,12 @@ function runApiBaseline() {
   });
 }
 
+/**
+ * Print the run against the SLOs it was held to, and return the figures for the evidence envelope.
+ *
+ * Deliberately does not exit: the caller writes evidence first, so a breached threshold still
+ * leaves an artifact explaining what breached.
+ */
 function report(summaryPath, k6ExitCode) {
   const m = readSummaryMetrics(summaryPath);
 
@@ -97,17 +133,84 @@ function report(summaryPath, k6ExitCode) {
     console.log('A k6 threshold here is an SLO from docs/SLO.md. Either the service regressed, or');
     console.log('the objective was never achievable on this hardware — both need a human decision,');
     console.log('so this exits non-zero rather than recording a number nobody looked at.');
-    process.exit(1);
+  } else {
+    console.log('=== Result: every SLO threshold held ===');
+    console.log(`Summary written to ${summaryPath}`);
   }
 
-  console.log('=== Result: every SLO threshold held ===');
-  console.log(`Summary written to ${summaryPath}`);
+  return {
+    requests: num(m.http_reqs?.count),
+    availability,
+    readP95Ms: num(read?.['p(95)']),
+    readP99Ms: num(read?.['p(99)']),
+    readMaxMs: num(read?.max),
+    authP95Ms: num(auth?.['p(95)']),
+    authRateLimited: limited,
+  };
 }
 
+/**
+ * The k6 summary says what was measured; this says what it was measured against.
+ *
+ * `results/summary.json` is a metrics blob with no scenario, no timestamp, no target and no
+ * verdict, which makes an old one indistinguishable from the run you just did — and makes a number
+ * in it unreadable without the console scrollback that produced it.
+ */
 async function main() {
+  const startedAt = new Date();
+  const topology = { scenario: SCENARIO, baseUrl, healthUrl };
+  const configuration = {
+    readVus: Number(process.env['READ_VUS'] ?? 20),
+    authVus: Number(process.env['AUTH_VUS'] ?? 3),
+    duration: process.env['DURATION'] ?? '30s',
+    k6Image: K6_IMAGE,
+  };
+
+  // Armed before the first thing that can exit: an unreachable stack, a k6 image that will not
+  // pull, or a summary that will not parse all end the process without reaching the write below,
+  // and the previous run's artifact has already been cleared by then.
+  const fallback = beginEvidence(EVIDENCE_DIR, EVIDENCE_FILE, (exitCode) =>
+    buildEvidence({
+      harness: 'http-load',
+      outcome: 'aborted',
+      exitCode,
+      startedAt,
+      finishedAt: new Date(),
+      topology,
+      configuration,
+      expected: SLO_TARGETS,
+      observed: {},
+      notes: ['The run ended before it produced a summary, so nothing was measured.'],
+    }),
+  );
+
   await assertStackIsUp();
   const { code, summaryPath } = runApiBaseline();
-  report(summaryPath, code);
+  const observed = report(summaryPath, code);
+
+  const path = writeEvidence(
+    EVIDENCE_DIR,
+    EVIDENCE_FILE,
+    buildEvidence({
+      harness: 'http-load',
+      outcome: code === 0 ? 'passed' : 'threshold-breached',
+      exitCode: code === 0 ? 0 : 1,
+      startedAt,
+      finishedAt: new Date(),
+      topology: { ...topology, summaryFile: summaryPath },
+      configuration,
+      expected: SLO_TARGETS,
+      observed,
+      notes: [
+        'One host, one dataset, one concurrency level. These figures describe this machine, not ' +
+          'the service capacity, and support no claim about scale.',
+      ],
+    }),
+  );
+  fallback.markWritten();
+  console.log(`Evidence written to ${path}`);
+
+  if (code !== 0) process.exit(1);
 }
 
 await main();
