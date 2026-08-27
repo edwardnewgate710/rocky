@@ -34,6 +34,9 @@ export const EVIDENCE_SCHEMA = 'gambit.run-evidence/1';
  */
 export const EVIDENCE_DIR = 'deploy/load/results';
 
+/** Conventional shell exit codes for the interrupts a harness can receive: 128 + the signal. */
+const SIGNAL_EXIT_CODE = Object.freeze({ SIGINT: 130, SIGTERM: 143 });
+
 /**
  * Key names that may not appear anywhere in an evidence envelope.
  *
@@ -220,15 +223,38 @@ export function clearEvidence(directory, file) {
  */
 export function armFailureEvidence(directory, file, buildFallback) {
   let written = false;
-  process.on('exit', (code) => {
+
+  /** Write the fallback at most once. Synchronous throughout: an exit handler cannot await. */
+  const persist = (exitCode) => {
     if (written) return;
+    written = true;
     try {
-      writeEvidence(directory, file, buildFallback(code));
+      writeEvidence(directory, file, buildFallback(exitCode));
       console.error(`[evidence] run ended without a result; wrote a failure envelope to ${file}`);
     } catch (err) {
       console.error(`[evidence] could not write a failure envelope: ${err?.message ?? err}`);
     }
-  });
+  };
+
+  process.on('exit', persist);
+
+  // `process.on('exit')` alone is not enough. Under the DEFAULT disposition for SIGINT or SIGTERM,
+  // Node terminates without running exit handlers at all — so Ctrl-C on a harness that has already
+  // cleared the previous artifact would leave nothing behind, which is the case this whole
+  // mechanism exists for. Installing a listener is what moves those signals off the default path.
+  for (const [signal, exitCode] of Object.entries(SIGNAL_EXIT_CODE)) {
+    const handler = () => {
+      persist(exitCode);
+      // Then die the way the signal asked. Removing this listener restores the default
+      // disposition, so re-raising terminates the process *by the signal* rather than turning an
+      // interrupt into an ordinary exit — a caller waiting on this process still sees what
+      // happened to it.
+      process.removeListener(signal, handler);
+      process.kill(process.pid, signal);
+    };
+    process.on(signal, handler);
+  }
+
   return {
     markWritten: () => {
       written = true;

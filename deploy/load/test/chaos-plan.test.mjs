@@ -231,6 +231,34 @@ test('a node that is part of the induced outage reads as unknown, not as a drop 
   );
 });
 
+test('a health payload that carries no count is unreadable, not a node reporting the same total', () => {
+  const baseline = { n1: 1, n2: 0 };
+  // What `readOwnedGames` returns when `/health` stops carrying `ownedGames`: undefined, which is
+  // not null. A reachability test written against null alone called this node readable, carried
+  // the previous count forward unchanged, and let the held-lease check conclude the owner had held
+  // its lease — on a number nobody read.
+  const merged = mergeOwnedCounts(baseline, { n1: undefined, n2: 0 });
+
+  assert.equal(merged.reachable.n1, false, '"it answered" and "it told us a count" are not the same fact');
+  assert.match(ownershipHeldProblem(baseline, merged, 1), /could not be read/);
+});
+
+test('a count that is not a count is unreadable, whatever shape it arrives in', () => {
+  const baseline = { n1: 4, n2: 4 };
+  for (const value of [undefined, null, '3', Number.NaN, -1, 1.5, {}, Infinity]) {
+    const merged = mergeOwnedCounts(baseline, { n1: value, n2: 4 });
+    assert.equal(
+      merged.reachable.n1,
+      false,
+      `${String(value)} was accepted as an owned-game count; none of these can be compared, and a ` +
+        'NaN answers false to every comparison — the direction that turns a failing proof into a ' +
+        'passing one',
+    );
+    assert.equal(merged.n1, 4, 'and the last count actually observed is what is carried forward');
+  }
+  assert.equal(mergeOwnedCounts(baseline, { n1: 0, n2: 7 }).reachable.n1, true, 'zero is a count');
+});
+
 test('an assertion about a node nobody could read refuses instead of holding vacuously', () => {
   const baseline = { n1: 1, n2: 0 };
   // Node1 is the owner AND the node that went away: carrying its baseline forward would make

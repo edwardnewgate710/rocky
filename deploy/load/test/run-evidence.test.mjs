@@ -14,7 +14,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -258,6 +259,61 @@ test('a run that dies after clearing still leaves a failure artifact', () => {
     'the previous run’s artifact was cleared, so leaving it in place would be worse than nothing',
   );
 });
+
+/**
+ * An interrupt must leave an artifact too.
+ *
+ * Under the default disposition for SIGINT and SIGTERM, Node terminates without running `exit`
+ * handlers at all — so a harness Ctrl-C'd after `clearEvidence` would leave nothing, which is the
+ * one case this whole mechanism exists for. Installing a listener is what moves the signal off that
+ * path, and that listener is what these two tests exercise.
+ */
+test('an interrupt after clearing still leaves a failure artifact', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gambit-evidence-'));
+  writeFileSync(join(dir, 'evidence.json'), '{"runId":"yesterday"}', 'utf8');
+
+  // Delivered synthetically rather than by the OS: `process.kill(pid, 'SIGINT')` terminates
+  // immediately on Windows without running any listener, so a real-signal test here would assert a
+  // platform's behaviour instead of this handler's. The listener path is identical either way, and
+  // the test below covers real delivery where the OS supports it.
+  const result = runInChild(armScript(dir, "process.emit('SIGINT');\nconsole.log('CONTINUED');"), dir);
+
+  const written = JSON.parse(readFileSync(join(dir, 'evidence.json'), 'utf8'));
+  assert.equal(written.outcome, 'aborted');
+  assert.equal(written.exitCode, 130, 'the conventional 128 + SIGINT, so a caller can read it');
+  assert.notEqual(written.runId, 'yesterday');
+  assert.doesNotMatch(
+    result.stdout,
+    /CONTINUED/,
+    'the handler must re-raise after writing; swallowing the interrupt would let an interrupted ' +
+      'harness carry on breaking things',
+  );
+  assert.notEqual(result.status, 0, 'and an interrupted run must never look like a successful one');
+});
+
+test(
+  'a real SIGTERM leaves the artifact and still terminates by the signal',
+  { skip: process.platform === 'win32' ? 'Windows terminates on kill() without running handlers' : false },
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gambit-evidence-'));
+    const file = join(dir, 'child.mjs');
+    writeFileSync(file, armScript(dir, "console.log('armed');\nsetTimeout(() => {}, 60_000);"), 'utf8');
+
+    const child = spawn(process.execPath, [file], { cwd: REPO_ROOT, encoding: 'utf8' });
+    await once(child.stdout, 'data');
+    child.kill('SIGTERM');
+    const [code, signal] = await once(child, 'exit');
+
+    assert.equal(
+      signal,
+      'SIGTERM',
+      'the handler re-raises after writing, so the process still dies BY the signal rather than ' +
+        'turning an interrupt into an ordinary exit',
+    );
+    assert.equal(code, null);
+    assert.equal(JSON.parse(readFileSync(join(dir, 'evidence.json'), 'utf8')).exitCode, 143);
+  },
+);
 
 test('a run that wrote its own evidence is not overwritten by the fallback', () => {
   const dir = mkdtempSync(join(tmpdir(), 'gambit-evidence-'));

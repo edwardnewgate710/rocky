@@ -215,11 +215,29 @@ export function restorationRequired(scenario) {
  * quietly holding.
  */
 export function mergeOwnedCounts(previous, reading) {
+  const n1 = ownedCount(reading.n1);
+  const n2 = ownedCount(reading.n2);
   return Object.freeze({
-    n1: reading.n1 ?? previous.n1,
-    n2: reading.n2 ?? previous.n2,
-    reachable: Object.freeze({ n1: reading.n1 !== null, n2: reading.n2 !== null }),
+    n1: n1 ?? previous.n1,
+    n2: n2 ?? previous.n2,
+    reachable: Object.freeze({ n1: n1 !== null, n2: n2 !== null }),
   });
+}
+
+/**
+ * One node's owned-game count, or `null` when the reading is not a count.
+ *
+ * "The node answered" and "the node told us how many games it owns" are different facts, and
+ * collapsing them is a way to pass an assertion on data nobody read. A `/health` payload that has
+ * stopped carrying `ownedGames` yields `undefined`, which is not `null` — so a reachability test
+ * written against `null` alone called that node readable, carried the previous count forward
+ * unchanged, and let `ownershipHeldProblem` conclude the owner had held its lease. The same applies
+ * to a count that arrives as a string, a float, a negative or a NaN: none of them can be compared,
+ * and a NaN answers `false` to every comparison, which is the direction that turns a failing proof
+ * into a passing one.
+ */
+function ownedCount(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 /**
@@ -245,6 +263,10 @@ export function unreadableNodeProblem(counts, expectedNode) {
  * scenario that created it — so by the third scenario both nodes legitimately report a non-zero
  * count and a raw reading says nothing about the game under test. Returns `null` while no single
  * node has grown, so the caller can keep polling: the claim races the command that triggers it.
+ *
+ * No reachability guard is needed here, and adding one would be the vacuous kind. This runs before
+ * anything has been broken, and an unreadable node produces no growth — so the caller keeps polling
+ * and times out with a message naming both counts, rather than deciding an owner it never saw.
  */
 export function ownershipFromCounts(baseline, current) {
   const grew1 = current.n1 > baseline.n1;

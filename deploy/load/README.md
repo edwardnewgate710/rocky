@@ -276,10 +276,15 @@ Stale artifacts cannot be mistaken for a current run: each harness clears its ev
 `runK6` already did the same for the k6 summaries.
 
 Clearing first would be a poor trade if it meant a failed run had nothing to show, so each harness
-also **arms a fallback envelope on process exit**. A stack that will not come up, a k6 image that
-will not pull, a summary that will not parse, or a Ctrl-C all leave an `aborted` envelope recording
-the exit code and the configuration, instead of an empty directory. Several of those paths call
-`process.exit` directly, which is why the fallback hangs off the exit event rather than a `catch`.
+also **arms a fallback envelope**. A stack that will not come up, a k6 image that will not pull, a
+summary that will not parse, or a Ctrl-C all leave an `aborted` envelope recording the exit code and
+the configuration, instead of an empty directory.
+
+It hangs off `process.on('exit')` rather than a `catch`, because several of those paths call
+`process.exit` directly. `exit` alone is not enough either: under the default disposition for
+`SIGINT` and `SIGTERM`, Node terminates *without* running exit handlers, so the harnesses install
+signal listeners as well — they write the envelope, then re-raise so the process still dies by the
+signal rather than turning an interrupt into an ordinary exit.
 
 ---
 
