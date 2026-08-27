@@ -252,6 +252,17 @@ test('beginEvidence arms before it clears, not merely by the time it returns', (
   const target = join(dir, file);
   writeFileSync(target, '{"runId":"yesterday"}', 'utf8');
 
+  // A stand-in for anything else that might be listening — the test runner, or another test file
+  // sharing this process. The cleanup below must not touch it.
+  const sentinel = () => {};
+  process.on('SIGINT', sentinel);
+
+  // Snapshotted BEFORE arming, so cleanup can remove only what this test added. Removing every
+  // listener instead would strip whatever else was there and quietly disarm its interrupt path.
+  const preexisting = new Map(
+    ['SIGINT', 'SIGTERM'].map((signal) => [signal, new Set(process.listeners(signal))]),
+  );
+
   let staleFileWasStillThereWhenArmed = null;
   const realOn = process.on;
   process.on = function (event, listener) {
@@ -266,12 +277,20 @@ test('beginEvidence arms before it clears, not merely by the time it returns', (
     armed = beginEvidence(dir, file, () => envelope());
   } finally {
     process.on = realOn;
-    // These handlers were armed in the test process itself; leaving them would make a later
+    // The armed handlers live in the test process itself; leaving them would make a later
     // interrupt of the suite write an envelope into a temp directory.
-    for (const signal of ['SIGINT', 'SIGTERM']) {
-      for (const listener of process.listeners(signal)) process.removeListener(signal, listener);
+    for (const [signal, original] of preexisting) {
+      for (const listener of process.listeners(signal)) {
+        if (!original.has(listener)) process.removeListener(signal, listener);
+      }
     }
   }
+
+  assert.ok(
+    process.listeners('SIGINT').includes(sentinel),
+    'cleanup removed a listener this test did not add; a later interrupt would skip its handler',
+  );
+  process.removeListener('SIGINT', sentinel);
 
   assert.equal(
     staleFileWasStillThereWhenArmed,
