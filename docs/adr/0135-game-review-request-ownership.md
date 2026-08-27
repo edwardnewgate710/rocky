@@ -40,6 +40,12 @@ capabilities response publishes those exact `gameReviewVariants`; the web gates 
 that feature-specific list. The service repeats the predicate before quota admission, so a direct or
 stale client cannot spend review quota on a request this deployment cannot execute.
 
+Durable archive validation still folds the complete event stream through the authoritative `Game`
+aggregate. Pre-move review positions are then captured by one forward `Position` replay rather than
+reconstructing every event prefix. Once quota admits a review, a server-owned 120-second deadline is
+combined with client cancellation and propagated through every engine search. The route's existing
+bounded-cardinality duration histogram observes both successful and failed review requests.
+
 ## Consequences
 
 Private review state cannot survive an authentication boundary in the mounted page, and no response
@@ -56,3 +62,6 @@ replacement, response game-ID mismatch, rendered-state erasure, and transport ca
 
 Capability regressions also cover insufficient deployment ceilings, unavailable MultiPV-2 routing,
 variant-subset publication, and withdrawal of the mounted control for an unsupported game.
+
+Archive and service regressions cover exact pre-move positions from forward replay and expiry of the
+server-owned total deadline, including propagation of its abort signal to engine work.

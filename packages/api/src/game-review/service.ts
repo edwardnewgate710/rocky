@@ -20,6 +20,9 @@ import {
 /** A full instant review is intentionally bounded to keep one request within the engine budget. */
 export const MAX_REVIEWED_PLAYER_MOVES = 40;
 
+/** Total engine-work ceiling for one accepted review, independent of client connection lifetime. */
+export const DEFAULT_GAME_REVIEW_DEADLINE_MS = 120_000;
+
 /** Exact evidence policy required to compare the played move with one alternative. */
 export const GAME_REVIEW_ANALYSIS_LIMITS = { multiPv: 2 } as const satisfies RequestedAnalysisLimits;
 
@@ -56,6 +59,8 @@ export interface GameReviewServiceOptions {
   readonly createMoveAssessment: (analysis: AnalysisPort) => MoveAssessmentService;
   /** The bounded bundled book marks only a known opening prefix; it never invents opening theory. */
   readonly openingDatabase?: OpeningDatabase;
+  /** Injectable only for deterministic tests; production owns the default ceiling. */
+  readonly deadlineMs?: number;
 }
 
 /**
@@ -69,12 +74,17 @@ export class GameReviewService {
   private readonly analysis: AnalysisPort;
   private readonly createMoveAssessment: (analysis: AnalysisPort) => MoveAssessmentService;
   private readonly openingDatabase: OpeningDatabase | undefined;
+  private readonly deadlineMs: number;
 
   constructor(options: GameReviewServiceOptions) {
     this.archive = options.archive;
     this.analysis = options.analysis;
     this.createMoveAssessment = options.createMoveAssessment;
     this.openingDatabase = options.openingDatabase;
+    this.deadlineMs = options.deadlineMs ?? DEFAULT_GAME_REVIEW_DEADLINE_MS;
+    if (!Number.isFinite(this.deadlineMs) || this.deadlineMs <= 0) {
+      throw new RangeError('game review deadline must be a positive finite number');
+    }
   }
 
   /** Whether this deployment can run the review's exact evidence policy for `variant`. */
@@ -109,55 +119,73 @@ export class GameReviewService {
     // consumes one quota unit even though it contains several fixed-policy engine assessments.
     await onAccepted();
 
-    const scoped = new RequestScopedAnalysis(this.analysis, input.signal);
-    const assessor = this.createMoveAssessment(scoped);
-    const reviewed: GameReviewMove[] = [];
-    const summary = emptyGameReviewSummary();
     const bookPly = knownBookPly(game, this.openingDatabase);
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(), this.deadlineMs);
+    timer.unref();
 
-    for (const move of moves) {
-      if (input.signal.aborted) throw HttpError.unavailable('game review was cancelled');
-      // The review owns this fixed two-line pre-move search. Passing the same evidence into the
-      // predictor preserves the normal mistake verdict while avoiding a duplicate first search.
-      const before = await scoped.analyze({
-        fen: move.fenBefore,
+    try {
+      const reviewSignal = AbortSignal.any([input.signal, deadline.signal]);
+      const scoped = new RequestScopedAnalysis(this.analysis, reviewSignal);
+      const assessor = this.createMoveAssessment(scoped);
+      const reviewed: GameReviewMove[] = [];
+      const summary = emptyGameReviewSummary();
+      for (const move of moves) {
+        throwIfReviewCancelled(input.signal, deadline.signal);
+        // The review owns this fixed two-line pre-move search. Passing the same evidence into the
+        // predictor preserves the normal mistake verdict while avoiding a duplicate first search.
+        const before = await scoped.analyze({
+          fen: move.fenBefore,
+          variant: game.variant,
+          multiPv: GAME_REVIEW_ANALYSIS_LIMITS.multiPv,
+        });
+        const assessment = await assessor.predict({
+          fen: move.fenBefore,
+          variant: game.variant,
+          move: move.uci,
+          analysisBefore: before.lines,
+        });
+        throwIfReviewCancelled(input.signal, deadline.signal);
+        const classification = classifyGameReviewMove({
+          assessment,
+          mover: move.by,
+          isBook: move.ply <= bookPly,
+          offeredMaterial: offersMaterial(move.fenBefore, move.uci, game.variant),
+          alternative: reviewAlternative(before.lines),
+        });
+        reviewed.push({
+          ply: move.ply,
+          san: move.san,
+          move: move.uci,
+          fenBefore: move.fenBefore,
+          assessment,
+          classification,
+        });
+        summary[classification] += 1;
+      }
+
+      return {
+        gameId: game.gameId,
         variant: game.variant,
-        multiPv: GAME_REVIEW_ANALYSIS_LIMITS.multiPv,
-      });
-      const assessment = await assessor.predict({
-        fen: move.fenBefore,
-        variant: game.variant,
-        move: move.uci,
-        analysisBefore: before.lines,
-      });
-      const classification = classifyGameReviewMove({
-        assessment,
-        mover: move.by,
-        isBook: move.ply <= bookPly,
-        offeredMaterial: offersMaterial(move.fenBefore, move.uci, game.variant),
-        alternative: reviewAlternative(before.lines),
-      });
-      reviewed.push({
-        ply: move.ply,
-        san: move.san,
-        move: move.uci,
-        fenBefore: move.fenBefore,
-        assessment,
-        classification,
-      });
-      summary[classification] += 1;
+        playerColor,
+        result: game.result,
+        termination: game.termination,
+        moves: reviewed,
+        summary,
+      };
+    } catch (error: unknown) {
+      throwIfReviewCancelled(input.signal, deadline.signal);
+      throw error;
+    } finally {
+      clearTimeout(timer);
     }
-
-    return {
-      gameId: game.gameId,
-      variant: game.variant,
-      playerColor,
-      result: game.result,
-      termination: game.termination,
-      moves: reviewed,
-      summary,
-    };
   }
+}
+
+/** Translate either ownership cancellation source into the stable public service error. */
+function throwIfReviewCancelled(client: AbortSignal, deadline: AbortSignal): void {
+  if (client.aborted) throw HttpError.unavailable('game review was cancelled');
+  if (deadline.aborted) throw HttpError.unavailable('game review deadline exceeded');
 }
 
 function knownBookPly(game: FinishedGameForReview, database: OpeningDatabase | undefined): number {

@@ -1,5 +1,5 @@
-import { Game } from '@chess-platform/game';
-import type { Color, Variant } from '@chess-platform/core';
+import { Game, type GameEvent } from '@chess-platform/game';
+import { Position, type Color, type Variant } from '@chess-platform/core';
 import type { EventStore } from '@chess-platform/persistence';
 
 /** One durable move together with the position it was played from. */
@@ -40,18 +40,7 @@ export class DurableFinishedGameReviewArchive implements FinishedGameReviewArchi
     const state = game.snapshot();
     if (!state.status.over || state.status.result === '*') return undefined;
 
-    const moves: FinishedGameReviewMove[] = [];
-    for (let index = 0; index < events.length; index += 1) {
-      const event = events[index]!;
-      if (event.type !== 'MovePlayed') continue;
-      moves.push({
-        ply: event.ply,
-        uci: event.uci,
-        san: event.san,
-        by: event.by,
-        fenBefore: Game.fromEvents(events.slice(0, index)).fen,
-      });
-    }
+    const moves = reviewMoves(events);
 
     return {
       gameId,
@@ -63,4 +52,29 @@ export class DurableFinishedGameReviewArchive implements FinishedGameReviewArchi
       moves,
     };
   }
+}
+
+/** Capture pre-move positions in one forward pass instead of replaying every event prefix. */
+function reviewMoves(events: readonly GameEvent[]): FinishedGameReviewMove[] {
+  const created = events[0];
+  if (created?.type !== 'GameCreated') {
+    // The full aggregate replay above already enforces this invariant. Keep the local guard so this
+    // helper remains total if archive assembly is later rearranged.
+    throw new Error('completed game history must start with GameCreated');
+  }
+
+  let position = Position.fromFen(created.initialFen, created.variant);
+  const moves: FinishedGameReviewMove[] = [];
+  for (const event of events.slice(1)) {
+    if (event.type !== 'MovePlayed') continue;
+    moves.push({
+      ply: event.ply,
+      uci: event.uci,
+      san: event.san,
+      by: event.by,
+      fenBefore: position.fen(),
+    });
+    position = position.play(event.uci);
+  }
+  return moves;
 }

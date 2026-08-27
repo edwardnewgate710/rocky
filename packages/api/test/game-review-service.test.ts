@@ -4,10 +4,15 @@ import type { AnalysisPort } from '../src/analysis/service.js';
 import type { MistakePredictionInput, MistakePredictionOutcome } from '../src/analysis/mistake-prediction-service.js';
 import type { FinishedGameForReview } from '../src/game-review/finished-game-review.js';
 import { createGameReview } from '../src/game-review/composition.js';
-import { GameReviewService, MAX_REVIEWED_PLAYER_MOVES } from '../src/game-review/service.js';
+import {
+  GameReviewService,
+  MAX_REVIEWED_PLAYER_MOVES,
+} from '../src/game-review/service.js';
 import { startHarness } from './helpers.js';
 
-const FEN = 'rnbqkbnr/pppppppp/8/8/8/8/8/8 w - - 0 1';
+const FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+const AFTER_E4_FEN = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
+const AFTER_E4_E5_FEN = 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2';
 
 const game = (overrides: Partial<FinishedGameForReview> = {}): FinishedGameForReview => ({
   gameId: '00000000-0000-4000-8000-000000000001',
@@ -18,8 +23,8 @@ const game = (overrides: Partial<FinishedGameForReview> = {}): FinishedGameForRe
   termination: 'resignation',
   moves: [
     { ply: 1, uci: 'e2e4', san: 'e4', by: 'w', fenBefore: FEN },
-    { ply: 2, uci: 'e7e5', san: 'e5', by: 'b', fenBefore: FEN },
-    { ply: 3, uci: 'g1f3', san: 'Nf3', by: 'w', fenBefore: FEN },
+    { ply: 2, uci: 'e7e5', san: 'e5', by: 'b', fenBefore: AFTER_E4_FEN },
+    { ply: 3, uci: 'g1f3', san: 'Nf3', by: 'w', fenBefore: AFTER_E4_E5_FEN },
   ],
   ...overrides,
 });
@@ -85,7 +90,7 @@ test('completed-game review assesses only the authenticated player moves and ret
   });
   assert.deepEqual(result.moves.map((move) => [move.ply, move.san, move.fenBefore]), [
     [1, 'e4', FEN],
-    [3, 'Nf3', FEN],
+    [3, 'Nf3', AFTER_E4_E5_FEN],
   ]);
 });
 
@@ -153,6 +158,33 @@ test('completed-game review rejects an unsupported engine policy before charging
   );
   assert.equal(charged, 0);
   assert.equal(analyzed, 0);
+});
+
+test('completed-game review enforces a server-owned total deadline', async () => {
+  let observedSignal: AbortSignal | undefined;
+  const hangingAnalysis: AnalysisPort = {
+    ...reviewAnalysis,
+    analyze: (input) => new Promise((_, reject) => {
+      observedSignal = input.signal;
+      input.signal?.addEventListener('abort', () => reject(new Error('engine stopped')), { once: true });
+    }),
+  };
+  const service = new GameReviewService({
+    archive: { async finishedGameForReview() { return game(); } },
+    analysis: hangingAnalysis,
+    createMoveAssessment: () => ({ async predict(input) { return outcome(input, 'ok'); } }),
+    deadlineMs: 5,
+  });
+
+  await assert.rejects(
+    () => service.review({
+      gameId: game().gameId,
+      userId: 'white-player',
+      signal: new AbortController().signal,
+    }, async () => undefined),
+    { code: 'service_unavailable', message: 'game review deadline exceeded' },
+  );
+  assert.equal(observedSignal?.aborted, true);
 });
 
 test('Game Review composition stays absent unless one variant can honor its exact policy', () => {

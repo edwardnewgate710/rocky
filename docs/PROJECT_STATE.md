@@ -4,7 +4,19 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-28 — M15 Increment 34: Game Review capability truthfulness (ADR-0135)._
+_Last updated: 2026-08-28 — M15 Increment 35: Game Review bounded replay and execution (ADR-0135)._
+
+## M15 Increment 35 — Game Review bounded replay and execution (ADR-0135)
+
+Durable review assembly now captures pre-move FENs with one forward `Position` replay after the
+authoritative aggregate validation, replacing the quadratic reconstruction of every event prefix.
+Accepted reviews also combine client cancellation with a server-owned 120-second total engine-work
+deadline; the existing route histogram records the complete request duration without a duplicate
+feature metric.
+
+Deterministic archive and deadline regressions pin both bounds. Game Review fixtures now use legal,
+move-accurate positions, and classification evidence overrides use the production input type. This
+closes the valid and partially valid findings from CodeRabbit's first full base-to-head review.
 
 ## M15 Increment 34 — Game Review capability truthfulness (ADR-0135)
 

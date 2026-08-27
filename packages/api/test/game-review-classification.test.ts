@@ -13,7 +13,10 @@ function assessment(overrides: Partial<MistakePredictionOutcome> = {}): MistakeP
   };
 }
 
-function classify(overrides: Parameters<typeof assessment>[0] = {}, evidence: Record<string, unknown> = {}) {
+function classify(
+  overrides: Parameters<typeof assessment>[0] = {},
+  evidence: Partial<Parameters<typeof classifyGameReviewMove>[0]> = {},
+) {
   return classifyGameReviewMove({ assessment: assessment(overrides), mover: 'w', isBook: false, offeredMaterial: false, alternative: null, ...evidence });
 }
 
