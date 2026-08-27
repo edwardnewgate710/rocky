@@ -44,6 +44,49 @@ const read = (relative) => readFileSync(join(REPO_ROOT, relative), 'utf8');
 /** The lease numbers `docker-compose.chaos.yml` actually runs the stack with. */
 const CHAOS_DEFAULTS = { leaseTtlSec: 6, renewalIntervalSec: 2 };
 
+/**
+ * How a `docker kill`/`docker stop` argument in a scenario body names a `SCENARIO_PLAN` target.
+ *
+ * Exhaustive by construction: a token that is not here fails the test below rather than being
+ * mapped to whichever target happened to be the fallback.
+ */
+const DISTURBANCE_TARGET_BY_TOKEN = Object.freeze({
+  'node1.service': 'node1',
+  'node2.service': 'node2',
+  REDIS_SERVICE: 'redis',
+});
+
+/**
+ * The `SCENARIO_PLAN` target a scenario body's `docker kill`/`docker stop` argument names.
+ *
+ * Throws on anything unrecognised rather than defaulting. A nested ternary here used to map
+ * *everything* that was not Redis or node1 onto node2, so a scenario stopping some third service
+ * would have been reported as disturbing node2 and could still have matched a `disturbs: ['node2']`
+ * declaration — the undeclared disturbance this file exists to catch, waved through by the check
+ * itself.
+ */
+function disturbanceTarget(token, scenarioKey) {
+  const target = DISTURBANCE_TARGET_BY_TOKEN[token];
+  if (!target) {
+    throw new Error(
+      `scenario ${scenarioKey} stops \`${token}\`, which this test does not know how to map to a ` +
+        'SCENARIO_PLAN target. Add it to DISTURBANCE_TARGET_BY_TOKEN, and to CHAOS_SERVICES if it ' +
+        'is a new service.',
+    );
+  }
+  return target;
+}
+
+test('an unrecognised docker target is refused, never mapped to whichever node is the default', () => {
+  assert.equal(disturbanceTarget('node2.service', 'E'), 'node2');
+  assert.throws(
+    () => disturbanceTarget('postgres.service', 'X'),
+    /does not know how to map/,
+    'a default here would let a scenario that stops a third service report node2 and still match ' +
+      'a node2 declaration, so the undeclared-disturbance check would pass on the wrong evidence',
+  );
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Timing is derived from the stack, not restated beside it
 // ─────────────────────────────────────────────────────────────────────────────
@@ -303,11 +346,7 @@ test('every scenario that stops a service declares it, so the runner puts it bac
         'restore it and the next scenario would open a socket on a service it had killed — the ' +
         'exact regression this declaration exists to prevent',
     );
-    const expected = new Set(
-      stops.map((token) =>
-        token === 'REDIS_SERVICE' ? 'redis' : token === 'node1.service' ? 'node1' : 'node2',
-      ),
-    );
+    const expected = new Set(stops.map((token) => disturbanceTarget(token, key)));
     assert.deepEqual(
       [...declared].sort(),
       [...expected].sort(),

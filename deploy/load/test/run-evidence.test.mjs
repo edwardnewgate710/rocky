@@ -253,15 +253,10 @@ test('beginEvidence arms before it clears, not merely by the time it returns', (
   writeFileSync(target, '{"runId":"yesterday"}', 'utf8');
 
   // A stand-in for anything else that might be listening — the test runner, or another test file
-  // sharing this process. The cleanup below must not touch it.
+  // sharing this process. Disarming must not touch it.
   const sentinel = () => {};
   process.on('SIGINT', sentinel);
-
-  // Snapshotted BEFORE arming, so cleanup can remove only what this test added. Removing every
-  // listener instead would strip whatever else was there and quietly disarm its interrupt path.
-  const preexisting = new Map(
-    ['SIGINT', 'SIGTERM'].map((signal) => [signal, new Set(process.listeners(signal))]),
-  );
+  const before = { exit: process.listenerCount('exit'), sigint: process.listenerCount('SIGINT') };
 
   let staleFileWasStillThereWhenArmed = null;
   const realOn = process.on;
@@ -277,18 +272,22 @@ test('beginEvidence arms before it clears, not merely by the time it returns', (
     armed = beginEvidence(dir, file, () => envelope());
   } finally {
     process.on = realOn;
-    // The armed handlers live in the test process itself; leaving them would make a later
-    // interrupt of the suite write an envelope into a temp directory.
-    for (const [signal, original] of preexisting) {
-      for (const listener of process.listeners(signal)) {
-        if (!original.has(listener)) process.removeListener(signal, listener);
-      }
-    }
+    // This test arms in a process that outlives it. `disarm` is the lifecycle's own inverse, so
+    // the test does not have to guess what was installed — and cannot miss the `exit` listener,
+    // which is the one that always fires.
+    armed?.disarm();
   }
 
+  assert.equal(
+    process.listenerCount('exit'),
+    before.exit,
+    'a leaked exit listener writes a stray aborted envelope during the test runner’s own ' +
+      'shutdown, long after this test has passed',
+  );
+  assert.equal(process.listenerCount('SIGINT'), before.sigint, 'and no signal handler outlives it');
   assert.ok(
     process.listeners('SIGINT').includes(sentinel),
-    'cleanup removed a listener this test did not add; a later interrupt would skip its handler',
+    'disarm removed a listener this call did not install; a later interrupt would skip its handler',
   );
   process.removeListener('SIGINT', sentinel);
 

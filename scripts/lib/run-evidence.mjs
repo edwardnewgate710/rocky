@@ -236,6 +236,7 @@ export function armFailureEvidence(directory, file, buildFallback, { onSignal } 
     }
   };
 
+  const installed = [['exit', persist]];
   process.on('exit', persist);
 
   // `process.on('exit')` alone is not enough. Under the DEFAULT disposition for SIGINT or SIGTERM,
@@ -264,12 +265,26 @@ export function armFailureEvidence(directory, file, buildFallback, { onSignal } 
       process.removeListener(signal, handler);
       process.kill(process.pid, signal);
     };
+    installed.push([signal, handler]);
     process.on(signal, handler);
   }
 
   return {
     markWritten: () => {
       written = true;
+    },
+    /**
+     * Take every listener this call installed back off, and only those.
+     *
+     * A harness never needs this: it arms once and the process dies armed. A *test* does, because
+     * it arms in a process that outlives it — and the `exit` listener is the one that bites. Signal
+     * handlers sit idle if no signal arrives, but `exit` always fires, so a test that removed only
+     * the signal handlers left this call writing a stray `aborted` envelope and an error line
+     * during the test runner's own shutdown. Disarming belongs here, next to the arming, rather
+     * than as a caller poking at `process.listeners`: only this function knows what it added.
+     */
+    disarm: () => {
+      for (const [event, listener] of installed) process.removeListener(event, listener);
     },
   };
 }
