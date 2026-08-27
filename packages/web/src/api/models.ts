@@ -261,6 +261,8 @@ export interface SystemCapabilities {
    * so it says the endpoint will answer — not that every section will.
    */
   readonly coach?: boolean;
+  /** Private durable Study Partner sessions over the production coaching path. */
+  readonly studyPartner?: boolean;
   /**
    * Engine-cited commentary on finished tournament games, and narrative round recaps
    * (M15 inc 22, ADR-0130).
@@ -1219,6 +1221,52 @@ export interface CoachResponse {
   readonly puzzle: CoachSection<CoachPuzzle>;
   readonly endgame: CoachSection<EndgamePosition>;
   readonly featuresFired: readonly string[];
+}
+
+// --- Study Partner v1 -------------------------------------------------------
+
+export type StudyPartnerExplanation = Omit<MoveExplanationResponse, 'providerId' | 'model'>;
+
+export interface StudyPartnerCoaching {
+  readonly version: 1;
+  readonly fen: string;
+  readonly variant: 'standard';
+  readonly move: string;
+  readonly mistake: CoachSection<MistakePredictionResponse>;
+  readonly explanation: CoachSection<StudyPartnerExplanation>;
+  readonly opening: CoachSection<OpeningExplorationResponse>;
+  readonly puzzle: CoachSection<CoachPuzzle>;
+  readonly endgame: CoachSection<EndgamePosition>;
+}
+
+export interface StudyPartnerTurn {
+  readonly id: string;
+  readonly turnNumber: number;
+  readonly move: string;
+  readonly fenBefore: string;
+  readonly fenAfter: string;
+  readonly coaching: StudyPartnerCoaching;
+  readonly sessionVersion: number;
+  readonly createdAt: string;
+}
+
+export interface StudyPartnerSession {
+  readonly id: string;
+  readonly variant: 'standard';
+  readonly initialFen: string;
+  readonly currentFen: string;
+  readonly status: 'active' | 'completed';
+  readonly version: number;
+  readonly turnCount: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly completedAt: string | null;
+  readonly turns: readonly StudyPartnerTurn[];
+}
+
+export interface SubmitStudyPartnerTurnResponse {
+  readonly turn: StudyPartnerTurn;
+  readonly replayed: boolean;
 }
 
 

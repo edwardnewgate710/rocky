@@ -113,6 +113,14 @@ import type { BotGameTimingSource } from './bot-detection/source';
 import { BotAnalysisService } from './bot-detection/analysis-service';
 import { createGraphQLHandler } from './graphql';
 import {
+  studyPartnerSessionView,
+  submitStudyPartnerTurnView,
+} from './study-partner/presenters';
+import {
+  MAX_IDEMPOTENCY_KEY_LENGTH,
+  STUDY_PARTNER_IDEMPOTENCY_KEY_PATTERN,
+} from './study-partner/service';
+import {
   parseNaturalQuery,
   type EmbeddingProvider,
   type SearchQuery,
@@ -185,6 +193,8 @@ export interface RouteDeps {
    * when at least one of them is.
    */
   readonly coach: import('./coach/coach-service').CoachService | undefined;
+  /** Private durable Study Partner sessions over the production CoachService. */
+  readonly studyPartner: import('./study-partner/service').StudyPartnerService | undefined;
   /**
    * Tournament commentary (ADR-0130). When absent, both commentary routes respond 503.
    *
@@ -1829,6 +1839,181 @@ export function buildRouter(deps: RouteDeps): Router {
       );
 
       return json(200, coachView(outcome));
+    },
+  );
+
+  // --- Study Partner v1 -----------------------------------------------------
+  router.post(
+    '/v1/study-partner/sessions',
+    doc({
+      summary: 'Create a private server-authoritative Study Partner session',
+      tags: ['study-partner'],
+      security: 'bearer',
+      requestSchema: 'CreateStudyPartnerSessionRequest',
+      responses: {
+        201: ['StudyPartnerSession', 'Session created'],
+        401: ['Error', 'Authentication required'],
+        422: ['Error', 'Invalid variant, FEN, or body'],
+        503: ['Error', 'Study Partner is not configured'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const actorId = requireAuth(ctx).userId;
+      const service = deps.studyPartner;
+      if (!service) throw HttpError.unavailable('study partner is not configured');
+      const body = strictObject(ctx.body, ['variant', 'initialFen']);
+      const variant = parseVariant(reqString(body, 'variant'));
+      const initialFen = reqString(body, 'initialFen', { min: 1, max: 200, trim: true });
+      return json(201, studyPartnerSessionView(await service.create(actorId, variant, initialFen)));
+    },
+  );
+
+  router.get(
+    '/v1/study-partner/sessions/:id',
+    doc({
+      summary: 'Read or resume an owned Study Partner session',
+      tags: ['study-partner'],
+      security: 'bearer',
+      params: [pathParam('id', 'Study Partner session ID (UUID)')],
+      responses: {
+        200: ['StudyPartnerSession', 'Owned session and its bounded turn history'],
+        401: ['Error', 'Authentication required'],
+        404: ['Error', 'Session missing or not owned by the caller'],
+        422: ['Error', 'Malformed session ID'],
+        503: ['Error', 'Study Partner is not configured'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const actorId = requireAuth(ctx).userId;
+      const service = deps.studyPartner;
+      if (!service) throw HttpError.unavailable('study partner is not configured');
+      const sessionId = parseUuid(ctx.params['id']!, 'id');
+      return json(200, studyPartnerSessionView(await service.get(actorId, sessionId)));
+    },
+  );
+
+  router.post(
+    '/v1/study-partner/sessions/:id/turns',
+    doc({
+      summary: 'Append one authoritative move and its production coaching result',
+      tags: ['study-partner'],
+      security: 'bearer',
+      params: [
+        pathParam('id', 'Study Partner session ID (UUID)'),
+        headerParam(
+          'Idempotency-Key',
+          'Unique turn intent key retained for the life of the session',
+          {
+            type: 'string',
+            minLength: 1,
+            maxLength: MAX_IDEMPOTENCY_KEY_LENGTH,
+            pattern: STUDY_PARTNER_IDEMPOTENCY_KEY_PATTERN,
+          },
+        ),
+      ],
+      requestSchema: 'SubmitStudyPartnerTurnRequest',
+      responses: {
+        200: ['SubmitStudyPartnerTurnResponse', 'Turn committed or a completed request replayed'],
+        401: ['Error', 'Authentication required'],
+        404: ['Error', 'Session missing or not owned by the caller'],
+        409: ['Error', 'Version conflict, completed session, failed key, or turn in progress'],
+        422: ['Error', 'Invalid move, key, body, or turn limit reached'],
+        429: ['Error', 'Coach rate limit exceeded'],
+        503: ['Error', 'Study Partner or coaching dependency unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const identity = requireAuth(ctx);
+      const service = deps.studyPartner;
+      if (!service) throw HttpError.unavailable('study partner is not configured');
+      const sessionId = parseUuid(ctx.params['id']!, 'id');
+      const body = strictObject(ctx.body, ['move', 'expectedVersion']);
+      const move = reqString(body, 'move', { min: 2, max: 6, trim: true });
+      const expectedVersion = optInt(body, 'expectedVersion', { min: 0 });
+      if (expectedVersion === undefined) {
+        throw HttpError.validation('"expectedVersion" is required', {
+          expectedVersion: 'must be a non-negative integer',
+        });
+      }
+      const idempotencyKey = studyPartnerIdempotencyKey(ctx);
+      const charge = (): Promise<void> => admit([
+        { key: `coach:user:${identity.userId}`, limit: config.rateLimit.coach.perUser },
+        { key: `coach:ip:${ctx.ip ?? 'unknown'}`, limit: config.rateLimit.coach.perIp },
+      ]);
+      const result = await service.submitTurn({
+        ownerId: identity.userId,
+        sessionId,
+        move,
+        expectedVersion,
+        idempotencyKey,
+        signal: ctx.signal,
+        charge,
+      });
+      return json(200, submitStudyPartnerTurnView(result));
+    },
+  );
+
+  router.post(
+    '/v1/study-partner/sessions/:id/end',
+    doc({
+      summary: 'Idempotently complete an owned Study Partner session',
+      tags: ['study-partner'],
+      security: 'bearer',
+      params: [pathParam('id', 'Study Partner session ID (UUID)')],
+      requestSchema: 'EndStudyPartnerSessionRequest',
+      responses: {
+        200: ['StudyPartnerSession', 'Session completed, or its existing completion returned'],
+        401: ['Error', 'Authentication required'],
+        404: ['Error', 'Session missing or not owned by the caller'],
+        409: ['Error', 'Version conflict or a turn is in progress'],
+        422: ['Error', 'Malformed session ID or body'],
+        503: ['Error', 'Study Partner is not configured'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const actorId = requireAuth(ctx).userId;
+      const service = deps.studyPartner;
+      if (!service) throw HttpError.unavailable('study partner is not configured');
+      const sessionId = parseUuid(ctx.params['id']!, 'id');
+      const body = strictObject(ctx.body, ['expectedVersion']);
+      const expectedVersion = optInt(body, 'expectedVersion', { min: 0 });
+      if (expectedVersion === undefined) {
+        throw HttpError.validation('"expectedVersion" is required', {
+          expectedVersion: 'must be a non-negative integer',
+        });
+      }
+      return json(200, studyPartnerSessionView(await service.end(actorId, sessionId, expectedVersion)));
+    },
+  );
+
+  router.delete(
+    '/v1/study-partner/sessions/:id',
+    doc({
+      summary: 'Permanently delete an owned Study Partner session and its turns',
+      tags: ['study-partner'],
+      security: 'bearer',
+      params: [pathParam('id', 'Study Partner session ID (UUID)')],
+      responses: {
+        204: [undefined, 'Session and turns deleted'],
+        401: ['Error', 'Authentication required'],
+        404: ['Error', 'Session missing or not owned by the caller'],
+        409: ['Error', 'A turn is active or inside the one-hour accepted-work protection window'],
+        422: ['Error', 'Malformed session ID'],
+        503: ['Error', 'Study Partner is not configured'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const actorId = requireAuth(ctx).userId;
+      const service = deps.studyPartner;
+      if (!service) throw HttpError.unavailable('study partner is not configured');
+      const sessionId = parseUuid(ctx.params['id']!, 'id');
+      await service.delete(actorId, sessionId);
+      return noContent();
     },
   );
 
@@ -5871,6 +6056,24 @@ function doc(spec: DocSpec): RouteDoc {
 
 function pathParam(name: string, description: string): NonNullable<RouteDoc['params']>[number] {
   return { name, in: 'path', required: true, description, schema: { type: 'string' } };
+}
+
+function headerParam(
+  name: string,
+  description: string,
+  schema: NonNullable<RouteDoc['params']>[number]['schema'],
+): NonNullable<RouteDoc['params']>[number] {
+  return { name, in: 'header', required: true, description, schema };
+}
+
+function studyPartnerIdempotencyKey(ctx: RequestContext): string {
+  const value = ctx.headers['idempotency-key'];
+  if (typeof value !== 'string' || !new RegExp(STUDY_PARTNER_IDEMPOTENCY_KEY_PATTERN).test(value)) {
+    throw HttpError.validation('Idempotency-Key header is required and malformed', {
+      idempotencyKey: 'use 1 to 128 letters, digits, dots, underscores, colons, or hyphens',
+    });
+  }
+  return value;
 }
 
 function statusParam(): NonNullable<RouteDoc['params']>[number] {

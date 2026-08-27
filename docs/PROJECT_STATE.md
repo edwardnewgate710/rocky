@@ -4,7 +4,97 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-24 — M15 Increment 25: Study Partner and Voice Coach depend on a narrow coaching capability._
+_Last updated: 2026-08-26 — M15 Increment 31: durable refusal confirmation._
+
+## M15 Increment 31 — Durable refusal confirmation (ADR-0134)
+
+A definitive 429 is returned as retryable only after `refuseTurn` confirms that exactly one request
+made the durable transition to `failed`. A database error or zero-row update now replaces the 429
+with an internal failure instead of falsely promising a safe retry while an `accepted` row remains.
+Cleanup for ambiguous accepted work remains best-effort and fail-closed.
+
+The service regression forces refusal persistence to throw and proves that the cleanup failure is
+surfaced. In-memory and PostgreSQL parity assertions also require a confirmed transition rather than
+accepting a silent no-op.
+
+## M15 Increment 30 — Retryable rate-limit refusal (ADR-0134)
+
+Study Partner now distinguishes a definitive atomic rate-limit refusal from ambiguous accepted-work
+failure. A known HTTP 429 occurs before Coach feature/provider work and consumes no quota, so the new
+`refuseTurn` repository transition moves that accepted request to `failed` and permits a new-key
+retry. Every unknown charge exception, successful admission followed by failure, and orphaned live
+worker remains `exhausted` and quarantines the session.
+
+The acceptance record still precedes quota admission; moving it later would reopen the crash window
+for double purchase. Service regressions prove 429-then-retry success and unknown charge-failure
+quarantine, while in-memory and PostgreSQL integration assertions pin the same refusal transition.
+
+## M15 Increment 29 — Accepted-turn session quarantine (ADR-0134)
+
+Accepted-turn recovery now preserves the stronger safety invariant that a merely slow worker cannot
+overlap a second quota or provider purchase. Any request that becomes `exhausted` quarantines its
+entire session from later turn claims, regardless of idempotency key, move, or request hash. The
+owner may still read, end, or delete the session after the one-hour recovery boundary.
+
+This deliberately trades continued play in an ambiguous session for provable at-most-one purchased
+turn. Renewable leases and database fencing cannot revoke an external charge or provider call that
+has already escaped the process. In-memory, PostgreSQL, and service regressions cover different-move
+retries and a live accepted worker crossing the recovery boundary; the latter proves the old worker
+cannot commit and no second worker reaches Coach or quota.
+
+## M15 Increment 28 — Durable accepted-turn recovery (ADR-0134)
+
+Study Partner accepted work can no longer leave a session permanently in progress after a process
+crash. Forward-only migration `0025_study_partner_accepted_recovery.sql` adds the terminal
+`exhausted` request state. A caught post-acceptance failure exhausts immediately; an orphaned
+accepted row exhausts transactionally after the existing one-hour protection window when claim,
+end, or delete next locks the session.
+
+The durable request hash now blocks the same `(session, move, expectedVersion)` intent across every
+idempotency key, so an ambiguous failure cannot be repurchased by changing the key. A different move
+has a different hash and may continue from the unchanged session version after recovery. Pre-charge
+claims retain their five-minute failure path and remain safely retryable with a new key. In-memory,
+PostgreSQL, API, migration, cancellation, lost-acceptance-response, and crash-boundary regression
+tests pin the same state machine.
+
+## M15 Increment 27 — Study Partner pull-request scope recovery
+
+PR #1 is again limited to the server-authoritative Study Partner v1 slice. Four later commits that
+mixed in completed-game review, board-review decoration, classification, and sign-in presentation
+were removed from the active tree with additive revert history. Their exact pre-remediation tree is
+preserved locally on `preserve/game-review-signin-ui-5410b1e` for separate follow-up; no preservation
+branch was published and no repository history was rewritten.
+
+The removal restored the existing capability-gated web contract: all 912 web tests pass, including
+the 11 cases that failed while the unrelated review feature was present. The Study Partner files and
+behavior are unchanged by this increment.
+
+## M15 Increment 26 — Study Partner v1 productionization (ADR-0134)
+
+Study Partner now has a private, durable, server-authoritative linear lifecycle. Five authenticated
+routes create, read/resume, append a move, end idempotently, and hard-delete a session. The client
+never supplies successive FENs or coaching policy: the service applies each move to the stored
+position, derives the next FEN, invokes the hardened production `CoachService` exactly once, and
+atomically stores the safe coaching projection with the position advance.
+
+Migration `0024_study_partner.sql` adds normalized sessions and turns plus a durable turn-request
+ledger. The ledger claims a bounded required `Idempotency-Key` before charging or expensive work,
+so concurrent retries cannot purchase coaching twice; completed retries replay the stored turn.
+Owner-scoped repositories make missing and foreign IDs the same 404, account/owner deletion
+cascades, cancellation persists no partial turn, and completion never rewrites `completedAt`.
+Deletion refuses a fresh claim and protects accepted work for one hour from a concurrent cascade;
+after that window privacy deletion is allowed without replaying or reclaiming the accepted request.
+Sessions are bounded to 20 turns and standard chess in v1; the latter avoids claiming FEN authority
+for variants whose complete rule state does not round-trip through the current FEN codec.
+
+Only versioned, tagged production coaching sections persist. Puzzle/endgame answers remain withheld,
+and explanation provider/model metadata, prompts, raw provider responses, usage, and library
+narrative are absent. OpenAPI and the typed web client expose exactly the five-route lifecycle; a
+visual UI, listing, retention jobs, branching/undo/collaboration, Study integration, Voice Coach,
+and recovery after ambiguous accepted requests remain deferred. Pre-charge claims are safely failed
+after five minutes by the next turn claim, without a background job.
+
+Detailed in `docs/adr/0134-study-partner-v1.md`.
 
 ## M15 Increment 25 — CoachPort extraction (ADR-0133)
 

@@ -42,6 +42,7 @@ import { InMemoryLearningRepository } from '@chess-platform/learning';
 import type { AuditEntry, AuditRepository } from './ports/audit';
 import type { Clock } from './ports/clock';
 import { InMemoryEventStore } from '@chess-platform/persistence';
+import { InMemoryStudyPartnerRepository } from '@chess-platform/persistence';
 import { InMemoryAntiCheatReportRepository, InMemoryBotBehaviorReportRepository } from '@chess-platform/anti-cheat';
 import type { GameEvent } from '@chess-platform/game';
 import { systemClock } from './ports/clock';
@@ -750,6 +751,7 @@ export interface InMemoryRepositories extends Repositories {
   readonly botReports: InMemoryBotBehaviorReportRepository;
   readonly studies: InMemoryStudiesRepository;
   readonly learning: InMemoryLearningRepository;
+  readonly studyPartner: InMemoryStudyPartnerRepository;
 }
 
 /** Construct a fresh set of in-memory repositories sharing a clock. */
@@ -777,5 +779,6 @@ export function createInMemoryRepositories(clock: Clock = systemClock): InMemory
     botReports: new InMemoryBotBehaviorReportRepository(),
     studies: new InMemoryStudiesRepository(),
     learning: new InMemoryLearningRepository(),
+    studyPartner: new InMemoryStudyPartnerRepository(),
   };
 }

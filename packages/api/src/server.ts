@@ -173,6 +173,7 @@ export function createApiServer(deps: ApiDependencies, options: ApiServerOptions
     openingExploration: deps.openingExploration,
     endgameTraining: deps.endgameTraining,
     coach: deps.coach,
+    studyPartner: deps.studyPartner,
     tournamentCommentary: deps.tournamentCommentary,
   };
 

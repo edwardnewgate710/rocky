@@ -122,6 +122,7 @@ function sourceValues(): SourceValues {
     openingExploration: present(),
     endgameTraining: present(),
     coach: present(),
+    studyPartner: present(),
     tournamentCommentary: present(),
   };
 }

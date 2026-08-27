@@ -21,3 +21,4 @@ export * from './achievements';
 export * from './achievements-game-source';
 export * from './studies';
 export * from './learning';
+export * from './study-partner';

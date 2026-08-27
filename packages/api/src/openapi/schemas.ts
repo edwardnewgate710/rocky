@@ -9,6 +9,7 @@ import { ROLES, SEEK_COLORS, TIME_CONTROL_KINDS, VARIANTS, CREATABLE_VARIANTS } 
 import { DEFAULT_ANALYSIS_LIMITS } from '../analysis/limits';
 import { MAX_EXPLORED_PLIES } from '../openings/opening-exploration-service';
 import { MAX_COACH_PLIES } from '../coach/coach-service';
+import { MAX_STUDY_PARTNER_TURNS } from '../study-partner/service';
 import type { ComponentSchemas, JsonSchema } from './types';
 import { nullable } from './types';
 
@@ -265,6 +266,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
           'openingExplorer',
           'endgameTrainer',
           'coach',
+          'studyPartner',
           'tournamentCommentary',
         ],
         properties: {
@@ -283,6 +285,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
           openingExplorer: { type: 'boolean' },
           endgameTrainer: { type: 'boolean' },
           coach: { type: 'boolean' },
+          studyPartner: { type: 'boolean' },
           tournamentCommentary: { type: 'boolean' },
         },
         additionalProperties: false,
@@ -2313,6 +2316,174 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
         type: 'array',
         items: { type: 'string' },
       },
+    },
+    additionalProperties: false,
+  },
+
+  // --- Study Partner v1 -----------------------------------------------------
+  CreateStudyPartnerSessionRequest: {
+    type: 'object',
+    required: ['variant', 'initialFen'],
+    properties: {
+      variant: { type: 'string', enum: ['standard'] },
+      initialFen: { type: 'string', minLength: 1, maxLength: 200 },
+    },
+    additionalProperties: false,
+  },
+
+  SubmitStudyPartnerTurnRequest: {
+    type: 'object',
+    description:
+      'The intended move and the session version observed by the client. Current and next FEN, '
+      + 'coaching policy, provider settings, and progress are server-owned and cannot be supplied.',
+    required: ['move', 'expectedVersion'],
+    properties: {
+      move: { type: 'string', minLength: 2, maxLength: 6 },
+      expectedVersion: { type: 'integer', minimum: 0 },
+    },
+    additionalProperties: false,
+  },
+
+  EndStudyPartnerSessionRequest: {
+    type: 'object',
+    required: ['expectedVersion'],
+    properties: { expectedVersion: { type: 'integer', minimum: 0 } },
+    additionalProperties: false,
+  },
+
+  StudyPartnerExplanation: {
+    type: 'object',
+    description: 'Grounded explanation with citation, without provider or model metadata.',
+    required: ['fen', 'variant', 'move', 'explanation', 'citation'],
+    properties: {
+      fen: { type: 'string' },
+      variant: { type: 'string', enum: ['standard'] },
+      move: { type: 'string' },
+      explanation: { type: 'string' },
+      citation: {
+        type: 'object',
+        required: ['moveOutcome', 'evalKind', 'evalValue', 'evalLabel', 'bestMove', 'bestLine', 'depth'],
+        properties: {
+          moveOutcome: {
+            oneOf: [
+              {
+                type: 'object',
+                required: ['kind', 'evalKind', 'evalValue', 'evalLabel'],
+                properties: {
+                  kind: { type: 'string', enum: ['evaluation'] },
+                  evalKind: { type: 'string', enum: ['cp', 'mate'] },
+                  evalValue: { type: 'number' },
+                  evalLabel: { type: 'string' },
+                },
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                required: ['kind', 'reason', 'result'],
+                properties: {
+                  kind: { type: 'string', enum: ['terminal'] },
+                  reason: { type: 'string', enum: [...TERMINAL_REASONS] },
+                  result: { type: 'string', enum: [...RESULT_STRINGS] },
+                },
+                additionalProperties: false,
+              },
+            ],
+          },
+          evalKind: { type: 'string', enum: ['cp', 'mate'] },
+          evalValue: { type: 'number' },
+          evalLabel: { type: 'string' },
+          bestMove: nullableString,
+          bestLine: { type: 'array', items: { type: 'string' } },
+          depth: { type: 'integer' },
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+
+  StudyPartnerExplanationSection: {
+    oneOf: [
+      {
+        type: 'object',
+        required: ['kind', 'value'],
+        properties: {
+          kind: { type: 'string', enum: ['present'] },
+          value: { $ref: '#/components/schemas/StudyPartnerExplanation' },
+        },
+        additionalProperties: false,
+      },
+      { $ref: '#/components/schemas/CoachOmittedSection' },
+    ],
+  },
+
+  StudyPartnerCoaching: {
+    type: 'object',
+    required: ['version', 'fen', 'variant', 'move', 'mistake', 'explanation', 'opening', 'puzzle', 'endgame'],
+    properties: {
+      version: { type: 'integer', enum: [1] },
+      fen: { type: 'string' },
+      variant: { type: 'string', enum: ['standard'] },
+      move: { type: 'string' },
+      mistake: { $ref: '#/components/schemas/CoachMistakeSection' },
+      explanation: { $ref: '#/components/schemas/StudyPartnerExplanationSection' },
+      opening: { $ref: '#/components/schemas/CoachOpeningSection' },
+      puzzle: { $ref: '#/components/schemas/CoachPuzzleSection' },
+      endgame: { $ref: '#/components/schemas/CoachEndgameSection' },
+    },
+    additionalProperties: false,
+  },
+
+  StudyPartnerTurn: {
+    type: 'object',
+    required: [
+      'id', 'turnNumber', 'move', 'fenBefore', 'fenAfter', 'coaching', 'sessionVersion', 'createdAt',
+    ],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      turnNumber: { type: 'integer', minimum: 1, maximum: MAX_STUDY_PARTNER_TURNS },
+      move: { type: 'string' },
+      fenBefore: { type: 'string' },
+      fenAfter: { type: 'string' },
+      coaching: { $ref: '#/components/schemas/StudyPartnerCoaching' },
+      sessionVersion: { type: 'integer', minimum: 1 },
+      createdAt: dateTime,
+    },
+    additionalProperties: false,
+  },
+
+  StudyPartnerSession: {
+    type: 'object',
+    required: [
+      'id', 'variant', 'initialFen', 'currentFen', 'status', 'version', 'turnCount',
+      'createdAt', 'updatedAt', 'completedAt', 'turns',
+    ],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      variant: { type: 'string', enum: ['standard'] },
+      initialFen: { type: 'string' },
+      currentFen: { type: 'string' },
+      status: { type: 'string', enum: ['active', 'completed'] },
+      version: { type: 'integer', minimum: 0 },
+      turnCount: { type: 'integer', minimum: 0, maximum: MAX_STUDY_PARTNER_TURNS },
+      createdAt: dateTime,
+      updatedAt: dateTime,
+      completedAt: nullable(dateTime),
+      turns: {
+        type: 'array',
+        maxItems: MAX_STUDY_PARTNER_TURNS,
+        items: { $ref: '#/components/schemas/StudyPartnerTurn' },
+      },
+    },
+    additionalProperties: false,
+  },
+
+  SubmitStudyPartnerTurnResponse: {
+    type: 'object',
+    required: ['turn', 'replayed'],
+    properties: {
+      turn: { $ref: '#/components/schemas/StudyPartnerTurn' },
+      replayed: { type: 'boolean' },
     },
     additionalProperties: false,
   },

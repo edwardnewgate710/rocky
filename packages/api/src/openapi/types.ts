@@ -34,6 +34,7 @@ export interface JsonSchema {
   readonly maximum?: number;
   readonly minLength?: number;
   readonly maxLength?: number;
+  readonly pattern?: string;
   /** Array bound. Published so a caller learns a server ceiling from the contract, not from a 422. */
   readonly maxItems?: number;
   readonly default?: string | number | boolean;
@@ -83,10 +84,10 @@ export function nullable(schema: JsonSchema): JsonSchema {
   };
 }
 
-/** An OpenAPI parameter (path or query). */
+/** An OpenAPI parameter (path, query, or header). */
 export interface DocParam {
   readonly name: string;
-  readonly in: 'path' | 'query';
+  readonly in: 'path' | 'query' | 'header';
   readonly required: boolean;
   readonly description: string;
   readonly schema: JsonSchema;

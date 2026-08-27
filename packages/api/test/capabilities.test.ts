@@ -37,6 +37,7 @@ test('GET /v1/capabilities returns capability flags for all subsystems when pres
         openingExplorer: true,
         endgameTrainer: true,
         coach: true,
+        studyPartner: true,
         // False beside `coach: true`, which is the pairing worth reading: coaching composes from
         // whichever features exist, while commentary needs an engine *and* a provider, and this
         // harness configures no provider (ADR-0130).
