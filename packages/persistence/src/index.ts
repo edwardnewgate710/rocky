@@ -17,3 +17,4 @@ export * from './study-partner';
 export * from './in-memory-study-partner';
 export * from './search-backfill';
 
+export * from './analysis-cache';
