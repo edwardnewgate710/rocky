@@ -206,6 +206,10 @@ test('gameReviewSupportsVariant requires the feature-specific advertised variant
     capabilities: { gameReview: true },
     gameReviewVariants: ['standard'],
   }, 'standard'), true);
+  assert.equal(gameReviewSupportsVariant({
+    capabilities: { gameReview: true },
+    gameReviewVariants: ['standard', 1],
+  }, 'standard'), false);
   for (const payload of [
     { capabilities: { gameReview: true }, gameReviewVariants: ['standard'] },
     { capabilities: { gameReview: true }, gameReviewVariants: [] },

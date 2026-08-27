@@ -4,7 +4,14 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-28 — M15 Increment 35: Game Review bounded replay and execution (ADR-0135)._
+_Last updated: 2026-08-28 — M15 Increment 36: Game Review pre-admission cancellation (ADR-0135)._
+
+## M15 Increment 36 — Game Review pre-admission cancellation (ADR-0135)
+
+Game Review now checks client cancellation before durable archive I/O and again immediately before
+quota admission. A sign-out or disconnect that wins while archive lookup is pending therefore spends
+no review quota and starts no engine work. The capability-list regression now also requests a listed
+variant from a malformed mixed-type list, proving the Web predicate fails closed for that exact case.
 
 ## M15 Increment 35 — Game Review bounded replay and execution (ADR-0135)
 

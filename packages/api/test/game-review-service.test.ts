@@ -131,6 +131,29 @@ test('completed-game review rejects an overlong game before charging the player'
   assert.equal(assessed.length, 0);
 });
 
+test('cancellation during archive lookup is rejected before review quota is charged', async () => {
+  let resolveArchive: ((source: FinishedGameForReview) => void) | undefined;
+  const archiveResult = new Promise<FinishedGameForReview>((resolve) => { resolveArchive = resolve; });
+  const service = new GameReviewService({
+    archive: { async finishedGameForReview() { return archiveResult; } },
+    analysis: reviewAnalysis,
+    createMoveAssessment: () => ({ async predict(input) { return outcome(input, 'ok'); } }),
+  });
+  const controller = new AbortController();
+  let charged = 0;
+
+  const pending = service.review({
+    gameId: game().gameId,
+    userId: 'white-player',
+    signal: controller.signal,
+  }, async () => { charged += 1; });
+  controller.abort();
+  resolveArchive!(game());
+
+  await assert.rejects(pending, { code: 'service_unavailable', message: 'game review was cancelled' });
+  assert.equal(charged, 0);
+});
+
 test('completed-game review rejects an unsupported engine policy before charging the player', async () => {
   let analyzed = 0;
   const unsupportedAnalysis: AnalysisPort = {

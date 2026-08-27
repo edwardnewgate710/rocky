@@ -97,6 +97,7 @@ export class GameReviewService {
     input: { readonly gameId: string; readonly userId: string; readonly signal: AbortSignal },
     onAccepted: () => Promise<void>,
   ): Promise<GameReviewOutcome> {
+    throwIfReviewCancelled(input.signal);
     const game = await this.archive.finishedGameForReview(input.gameId);
     if (!game) throw HttpError.notFound('completed game not found');
 
@@ -117,6 +118,7 @@ export class GameReviewService {
 
     // Archive/ownership/length validation is complete before quota is spent. One accepted review
     // consumes one quota unit even though it contains several fixed-policy engine assessments.
+    throwIfReviewCancelled(input.signal);
     await onAccepted();
 
     const bookPly = knownBookPly(game, this.openingDatabase);
@@ -183,9 +185,9 @@ export class GameReviewService {
 }
 
 /** Translate either ownership cancellation source into the stable public service error. */
-function throwIfReviewCancelled(client: AbortSignal, deadline: AbortSignal): void {
+function throwIfReviewCancelled(client: AbortSignal, deadline?: AbortSignal): void {
   if (client.aborted) throw HttpError.unavailable('game review was cancelled');
-  if (deadline.aborted) throw HttpError.unavailable('game review deadline exceeded');
+  if (deadline?.aborted) throw HttpError.unavailable('game review deadline exceeded');
 }
 
 function knownBookPly(game: FinishedGameForReview, database: OpeningDatabase | undefined): number {

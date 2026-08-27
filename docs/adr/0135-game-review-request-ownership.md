@@ -32,7 +32,8 @@ pending state, and invoke the view's invalidation callback. That callback remove
 move rows, and error state rather than merely hiding or disabling the control.
 
 The typed Game Review API accepts an `AbortSignal` and forwards it through the existing HTTP port.
-Abort reduces work; the final ownership predicate remains authoritative for stale-result rejection.
+Abort reduces work; the service checks it before archive I/O and again before quota admission, while
+the final ownership predicate remains authoritative for stale-result rejection.
 
 Game Review also owns a fixed MultiPV-2 evidence policy. Production composition stays absent unless
 the configured analysis ceilings and at least one routed engine can honor that policy exactly. The
