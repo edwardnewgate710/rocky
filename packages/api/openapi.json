@@ -13520,7 +13520,8 @@
         "required": [
           "capabilities",
           "analysisVariants",
-          "puzzleVariants"
+          "puzzleVariants",
+          "gameReviewVariants"
         ],
         "properties": {
           "analysisVariants": {
@@ -13540,6 +13541,22 @@
             }
           },
           "puzzleVariants": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "standard",
+                "chess960",
+                "kingofthehill",
+                "atomic",
+                "crazyhouse",
+                "threecheck",
+                "horde",
+                "racingkings"
+              ]
+            }
+          },
+          "gameReviewVariants": {
             "type": "array",
             "items": {
               "type": "string",

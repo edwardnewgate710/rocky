@@ -4,7 +4,20 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-27 — M15 Increment 33: Game Review privacy and stale-request hardening (ADR-0135)._
+_Last updated: 2026-08-28 — M15 Increment 34: Game Review capability truthfulness (ADR-0135)._
+
+## M15 Increment 34 — Game Review capability truthfulness (ADR-0135)
+
+Game Review now composes only when at least one routed engine can honor its exact MultiPV-2 evidence
+policy. The public capabilities document publishes `gameReviewVariants` from that same service-level
+predicate, and the web offers the post-game control only when the current game's variant is in the
+feature-specific list. Unsupported variants are rejected before quota admission as a request-time
+backstop.
+
+API composition, capability parity, service, OpenAPI, Web predicate, and mounted-route regressions
+pin the contract. This closes the valid Qodo finding that a restricted engine deployment could
+advertise a review it could not execute, or silently clamp away the second line required for richer
+classification.
 
 ## M15 Increment 33 — Game Review privacy and stale-request hardening (ADR-0135)
 

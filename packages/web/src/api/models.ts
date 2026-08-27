@@ -285,6 +285,8 @@ export interface CapabilitiesResponse {
   readonly analysisVariants?: readonly string[];
   /** Variants served by fixed-policy puzzle generation; absent on older servers. */
   readonly puzzleVariants?: readonly string[];
+  /** Variants served by fixed-policy completed-game review. */
+  readonly gameReviewVariants?: readonly string[];
   readonly capabilities: SystemCapabilities;
 }
 

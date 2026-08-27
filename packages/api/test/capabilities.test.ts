@@ -2,7 +2,9 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import type { AnalysisProvider } from '@chess-platform/engine';
 import { AnalysisService } from '../src/analysis/service';
+import type { AnalysisPort } from '../src/analysis/service';
 import { VARIANTS } from '../src/domain';
+import { createGameReview } from '../src/game-review/composition';
 import { startHarness } from './helpers';
 
 const stubProvider: AnalysisProvider = {
@@ -49,6 +51,7 @@ test('GET /v1/capabilities returns capability flags for all subsystems when pres
       // it has a configured engine for.
       analysisVariants: [...VARIANTS],
       puzzleVariants: [],
+      gameReviewVariants: [],
     });
   } finally {
     await h.close();
@@ -116,6 +119,25 @@ test('GET /v1/capabilities reports an empty analysisVariants when analysis is ab
     const res = await h.json('GET', '/v1/capabilities');
     assert.equal(res.body.capabilities.analysis, false);
     assert.deepEqual(res.body.analysisVariants, []);
+  } finally {
+    await h.close();
+  }
+});
+
+test('GET /v1/capabilities advertises only variants Game Review can serve', async () => {
+  const analysis: AnalysisPort = {
+    analyze: async () => { throw new Error('not used'); },
+    supportsVariant: () => true,
+    supportsMultiPv: (variant, count) => variant === 'standard' && count === 2,
+    canSatisfyLimits: () => true,
+  };
+  const gameReview = createGameReview(analysis, { async finishedGameForReview() { return undefined; } });
+  assert.ok(gameReview);
+  const h = await startHarness({}, { gameReview });
+  try {
+    const response = await h.json('GET', '/v1/capabilities');
+    assert.equal(response.body.capabilities.gameReview, true);
+    assert.deepEqual(response.body.gameReviewVariants, ['standard']);
   } finally {
     await h.close();
   }

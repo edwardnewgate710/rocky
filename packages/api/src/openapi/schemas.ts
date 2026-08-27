@@ -235,7 +235,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
 
   Capabilities: {
     type: 'object',
-    required: ['capabilities', 'analysisVariants', 'puzzleVariants'],
+    required: ['capabilities', 'analysisVariants', 'puzzleVariants', 'gameReviewVariants'],
     properties: {
       // The `analysis` flag is deployment-wide, but only engines with a configured binary are
       // registered (ADR-0113), so a deployment can report `analysis: true` while serving a subset of
@@ -246,6 +246,12 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
         items: { type: 'string', enum: [...VARIANTS] },
       },
       puzzleVariants: {
+        type: 'array',
+        items: { type: 'string', enum: [...VARIANTS] },
+      },
+      // Game Review requires an exact MultiPV-2 search, so this can be narrower than generic
+      // analysisVariants and must remain feature-specific like puzzleVariants.
+      gameReviewVariants: {
         type: 'array',
         items: { type: 'string', enum: [...VARIANTS] },
       },

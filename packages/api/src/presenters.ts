@@ -991,6 +991,8 @@ export interface CapabilitiesView {
   readonly analysisVariants: AnalysisVariants;
   /** Kept feature-specific so clients never infer future puzzle support from generic analysis. */
   readonly puzzleVariants: AnalysisVariants;
+  /** Kept feature-specific because Review's exact MultiPV-2 policy can narrow generic analysis. */
+  readonly gameReviewVariants: AnalysisVariants;
 }
 
 /**
@@ -1029,6 +1031,9 @@ export function capabilitiesView(
   const puzzleVariants = deps.puzzleGeneration
     ? VARIANTS.filter((variant) => deps.puzzleGeneration?.supportsVariant(variant) === true)
     : [];
+  const gameReviewVariants = deps.gameReview
+    ? VARIANTS.filter((variant) => deps.gameReview?.supportsVariant(variant) === true)
+    : [];
   return {
     capabilities: {
       learning: deps.learningRepository !== undefined,
@@ -1052,12 +1057,13 @@ export function capabilitiesView(
       coach: deps.coach !== undefined,
       studyPartner: deps.studyPartner !== undefined,
       tournamentCommentary: deps.tournamentCommentary !== undefined,
-      gameReview: deps.gameReview !== undefined,
+      gameReview: gameReviewVariants.length > 0,
     },
     analysisVariants: deps.analysis
       ? VARIANTS.filter((variant) => deps.analysis?.supportsVariant(variant) === true)
       : [],
     puzzleVariants,
+    gameReviewVariants,
   };
 }
 

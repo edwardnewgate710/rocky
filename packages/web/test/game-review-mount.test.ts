@@ -38,11 +38,11 @@ interface PendingReview {
   readonly resolve: (response: HttpResponse) => void;
 }
 
-function setup() {
+function setup(variant = 'standard', gameReviewVariants: readonly string[] = ['standard']) {
   const pendingReviews: PendingReview[] = [];
   const transport: HttpTransport = new AsyncTransport((request) => {
     if (request.url.endsWith('/v1/capabilities')) {
-      return json(200, { capabilities: { gameReview: true } });
+      return json(200, { capabilities: { gameReview: true }, gameReviewVariants });
     }
     if (request.url.endsWith('/v1/games/g-test-1/review')) {
       return new Promise<HttpResponse>((resolve) => pendingReviews.push({ request, resolve }));
@@ -77,7 +77,7 @@ function setup() {
     t: 'joined',
     gameId: 'g-test-1',
     role: 'white',
-    state: makeFinishedState(FEN),
+    state: { ...makeFinishedState(FEN), variant },
   });
 
   return { app, elements, mounted, pendingReviews };
@@ -147,6 +147,19 @@ test('sign-out aborts an in-flight review and a late response cannot repopulate 
     await settle();
     assert.equal(mountedGame.elements.get('game-review-summary')!.hidden, true);
     assert.equal(mountedGame.elements.get('game-review-summary')!.childElementCount, 0);
+  } finally {
+    dispose(mountedGame);
+  }
+});
+
+test('a completed game with an unsupported variant never offers Game Review', async () => {
+  const mountedGame = setup('atomic', ['standard']);
+  try {
+    await settle();
+    assert.equal(mountedGame.elements.get('game-review')!.hidden, true);
+    assert.equal(mountedGame.elements.get('game-review-run')!.disabled, true);
+    mountedGame.elements.get('game-review-run')!.click();
+    assert.equal(mountedGame.pendingReviews.length, 0);
   } finally {
     dispose(mountedGame);
   }

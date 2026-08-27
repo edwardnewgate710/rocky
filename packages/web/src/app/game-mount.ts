@@ -33,7 +33,7 @@ import {
   coachEnabled,
   puzzleGenerationEnabled,
   puzzleGenerationSupportsVariant,
-  gameReviewEnabled,
+  gameReviewSupportsVariant,
 } from './capabilities-nav.js';
 import { PuzzleController } from './puzzle-controller.js';
 import { MAX_OPENING_PLIES, OpeningController } from './opening-controller.js';
@@ -187,15 +187,18 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
   const gameReviewErrorEl = doc.getElementById('game-review-error');
   const gameReviewSummaryEl = doc.getElementById('game-review-summary');
   const gameReviewMovesEl = doc.getElementById('game-review-moves');
-  let gameReviewAvailable = false;
+  let gameReviewCapabilities: unknown = null;
   let gameOver = false;
   let isGamePlayer = false;
   let gameReviewPending = false;
   let gameReviewSessionId = deps.initialSessionId ?? null;
 
   const refreshGameReview = (): void => {
-    if (gameReviewSectionEl) gameReviewSectionEl.hidden = !gameOver || !isGamePlayer || !gameReviewAvailable;
-    if (gameReviewRunBtn) gameReviewRunBtn.disabled = gameReviewSessionId === null || gameReviewPending;
+    const variantSupported = gameReviewSupportsVariant(gameReviewCapabilities, currentVariant);
+    if (gameReviewSectionEl) gameReviewSectionEl.hidden = !gameOver || !isGamePlayer || !variantSupported;
+    if (gameReviewRunBtn) {
+      gameReviewRunBtn.disabled = !variantSupported || gameReviewSessionId === null || gameReviewPending;
+    }
     if (gameReviewNoteEl && !gameReviewPending && gameReviewMovesEl?.childElementCount === 0) {
       gameReviewNoteEl.textContent = gameReviewSessionId !== null
         ? 'Review your moves after the game.'
@@ -1107,6 +1110,7 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
           // Coaching has no target until the variant is known either, so it needs the same wake-up.
           // Omitting it here is what left the opening control permanently disabled in M15 inc 19.
           refreshCoachControls();
+          refreshGameReview();
         }
 
         let liveAnnouncement = '';
@@ -1337,7 +1341,7 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
   });
 
   bindClick(gameReviewRunBtn, () => {
-    if (!gameOver) return;
+    if (!gameOver || !gameReviewSupportsVariant(gameReviewCapabilities, currentVariant)) return;
     clearGameReview();
     void gameReviewController.review();
   });
@@ -1444,7 +1448,7 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
       // is inside that early return (ADR-0127).
       openingAvailable = openingExplorerEnabled(flags);
       coachAvailable = coachEnabled(flags);
-      gameReviewAvailable = gameReviewEnabled(flags);
+      gameReviewCapabilities = flags;
       refreshGameReview();
       refreshCoachControls();
       refreshOpeningControls();

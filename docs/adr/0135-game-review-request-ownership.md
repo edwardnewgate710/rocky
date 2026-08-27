@@ -4,7 +4,7 @@
 |------------|--------------------------------------------|
 | **Status** | Accepted                                   |
 | **Date**   | 2026-08-27                                 |
-| **Scope**  | Completed-game review web request lifecycle |
+| **Scope**  | Completed-game review API capability and web request lifecycle |
 
 ---
 
@@ -34,6 +34,12 @@ move rows, and error state rather than merely hiding or disabling the control.
 The typed Game Review API accepts an `AbortSignal` and forwards it through the existing HTTP port.
 Abort reduces work; the final ownership predicate remains authoritative for stale-result rejection.
 
+Game Review also owns a fixed MultiPV-2 evidence policy. Production composition stays absent unless
+the configured analysis ceilings and at least one routed engine can honor that policy exactly. The
+capabilities response publishes those exact `gameReviewVariants`; the web gates the current game on
+that feature-specific list. The service repeats the predicate before quota admission, so a direct or
+stale client cannot spend review quota on a request this deployment cannot execute.
+
 ## Consequences
 
 Private review state cannot survive an authentication boundary in the mounted page, and no response
@@ -47,3 +53,6 @@ for the same account does not erase a valid review, while any change to another 
 Deterministic controller and mount regressions cover rapid game switching, sign-out during an
 in-flight request, sign-out after a completed result, an older request completing after its
 replacement, response game-ID mismatch, rendered-state erasure, and transport cancellation.
+
+Capability regressions also cover insufficient deployment ceilings, unavailable MultiPV-2 routing,
+variant-subset publication, and withdrawal of the mounted control for an unsupported game.

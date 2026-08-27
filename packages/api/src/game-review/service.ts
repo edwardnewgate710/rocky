@@ -1,6 +1,7 @@
 import { Position, colorOf, isSquareAttacked, opposite, squareFromName, typeOf } from '@chess-platform/core';
 import type { OpeningDatabase } from '@chess-platform/ai-features';
 import type { AnalysisPort } from '../analysis/service.js';
+import type { RequestedAnalysisLimits } from '../analysis/limits.js';
 import type {
   MistakePredictionInput,
   MistakePredictionOutcome,
@@ -18,6 +19,9 @@ import {
 
 /** A full instant review is intentionally bounded to keep one request within the engine budget. */
 export const MAX_REVIEWED_PLAYER_MOVES = 40;
+
+/** Exact evidence policy required to compare the played move with one alternative. */
+export const GAME_REVIEW_ANALYSIS_LIMITS = { multiPv: 2 } as const satisfies RequestedAnalysisLimits;
 
 export interface MoveAssessmentService {
   predict(
@@ -73,6 +77,12 @@ export class GameReviewService {
     this.openingDatabase = options.openingDatabase;
   }
 
+  /** Whether this deployment can run the review's exact evidence policy for `variant`. */
+  supportsVariant(variant: string): boolean {
+    return this.analysis.canSatisfyLimits(GAME_REVIEW_ANALYSIS_LIMITS)
+      && this.analysis.supportsMultiPv(variant, GAME_REVIEW_ANALYSIS_LIMITS.multiPv);
+  }
+
   async review(
     input: { readonly gameId: string; readonly userId: string; readonly signal: AbortSignal },
     onAccepted: () => Promise<void>,
@@ -82,6 +92,10 @@ export class GameReviewService {
 
     const playerColor = playerColorFor(game, input.userId);
     if (!playerColor) throw HttpError.notFound('completed game not found');
+
+    if (!this.supportsVariant(game.variant)) {
+      throw HttpError.validation('unsupported variant', { variant: 'unsupported variant' });
+    }
 
     const moves = game.moves.filter((move) => move.by === (playerColor === 'white' ? 'w' : 'b'));
     if (moves.length > MAX_REVIEWED_PLAYER_MOVES) {
@@ -105,7 +119,11 @@ export class GameReviewService {
       if (input.signal.aborted) throw HttpError.unavailable('game review was cancelled');
       // The review owns this fixed two-line pre-move search. Passing the same evidence into the
       // predictor preserves the normal mistake verdict while avoiding a duplicate first search.
-      const before = await scoped.analyze({ fen: move.fenBefore, variant: game.variant, multiPv: 2 });
+      const before = await scoped.analyze({
+        fen: move.fenBefore,
+        variant: game.variant,
+        multiPv: GAME_REVIEW_ANALYSIS_LIMITS.multiPv,
+      });
       const assessment = await assessor.predict({
         fen: move.fenBefore,
         variant: game.variant,

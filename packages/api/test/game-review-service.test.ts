@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import type { AnalysisPort } from '../src/analysis/service.js';
 import type { MistakePredictionInput, MistakePredictionOutcome } from '../src/analysis/mistake-prediction-service.js';
 import type { FinishedGameForReview } from '../src/game-review/finished-game-review.js';
+import { createGameReview } from '../src/game-review/composition.js';
 import { GameReviewService, MAX_REVIEWED_PLAYER_MOVES } from '../src/game-review/service.js';
 import { startHarness } from './helpers.js';
 
@@ -123,6 +124,58 @@ test('completed-game review rejects an overlong game before charging the player'
   );
   assert.equal(charged, 0);
   assert.equal(assessed.length, 0);
+});
+
+test('completed-game review rejects an unsupported engine policy before charging the player', async () => {
+  let analyzed = 0;
+  const unsupportedAnalysis: AnalysisPort = {
+    ...reviewAnalysis,
+    analyze: async (input) => {
+      analyzed += 1;
+      return reviewAnalysis.analyze(input);
+    },
+    supportsMultiPv: () => false,
+  };
+  const service = new GameReviewService({
+    archive: { async finishedGameForReview() { return game(); } },
+    analysis: unsupportedAnalysis,
+    createMoveAssessment: () => ({ async predict(input) { return outcome(input, 'ok'); } }),
+  });
+  let charged = 0;
+
+  await assert.rejects(
+    () => service.review({
+      gameId: game().gameId,
+      userId: 'white-player',
+      signal: new AbortController().signal,
+    }, async () => { charged += 1; }),
+    { code: 'validation_failed' },
+  );
+  assert.equal(charged, 0);
+  assert.equal(analyzed, 0);
+});
+
+test('Game Review composition stays absent unless one variant can honor its exact policy', () => {
+  const archive = { async finishedGameForReview() { return undefined; } };
+  const insufficientLimits: AnalysisPort = {
+    ...reviewAnalysis,
+    canSatisfyLimits: () => false,
+  };
+  const noMultiPv: AnalysisPort = {
+    ...reviewAnalysis,
+    supportsMultiPv: () => false,
+  };
+  const standardOnly: AnalysisPort = {
+    ...reviewAnalysis,
+    supportsMultiPv: (variant, count) => variant === 'standard' && count === 2,
+  };
+
+  assert.equal(createGameReview(insufficientLimits, archive), undefined);
+  assert.equal(createGameReview(noMultiPv, archive), undefined);
+  const composed = createGameReview(standardOnly, archive);
+  assert.ok(composed);
+  assert.equal(composed.supportsVariant('standard'), true);
+  assert.equal(composed.supportsVariant('atomic'), false);
 });
 
 test('POST /v1/games/:id/review requires a player token and presents only that player\'s review', async () => {
