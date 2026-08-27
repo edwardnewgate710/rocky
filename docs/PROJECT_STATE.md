@@ -4,7 +4,14 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-28 — M15 Increment 36: Game Review pre-admission cancellation (ADR-0135)._
+_Last updated: 2026-08-28 — M15 Increment 37: Game Review deadline runtime parity (ADR-0135)._
+
+## M15 Increment 37 — Game Review deadline runtime parity (ADR-0135)
+
+The server-owned review deadline keeps its timer referenced until engine work completes or the bound
+fires, then clears it in `finally`. This preserves the deadline when it is the last live operation and
+fixes the Node 22/CI cancellation where an unreferenced timer allowed the event loop to resolve before
+the deadline regression's promise settled.
 
 ## M15 Increment 36 — Game Review pre-admission cancellation (ADR-0135)
 

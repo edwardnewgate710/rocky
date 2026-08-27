@@ -124,7 +124,6 @@ export class GameReviewService {
     const bookPly = knownBookPly(game, this.openingDatabase);
     const deadline = new AbortController();
     const timer = setTimeout(() => deadline.abort(), this.deadlineMs);
-    timer.unref();
 
     try {
       const reviewSignal = AbortSignal.any([input.signal, deadline.signal]);
