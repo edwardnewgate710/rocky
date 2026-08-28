@@ -183,22 +183,27 @@ export class Position {
     const from = squareFromName(uci.slice(0, 2));
     const to = squareFromName(uci.slice(2, 4));
     const promo = uci.length >= 5 ? (uci[4].toLowerCase() as Move['promotion']) : undefined;
+    const chess960 = this.state.variant === 'chess960';
     for (const m of this.legalMoves()) {
+      // In Chess960 a castle is spelled king-takes-rook and is resolved by the second pass alone.
+      // Letting it match here too would accept the king-destination spelling as well, including the
+      // degenerate `g1g1` — a king that starts on its own castling destination — which no engine or
+      // GUI emits and which reads as a move that goes nowhere. Raised in the CodeRabbit review of
+      // PR #10.
+      if (chess960 && m.castleRook !== undefined) continue;
       if (m.from === from && m.to === to && (m.promotion ?? undefined) === promo) return m;
     }
-    // Chess960 castling also arrives king-takes-rook, so a second pass reads `to` as the rook's
-    // square instead of the king's.
+    // Chess960 castling arrives king-takes-rook, so a second pass reads `to` as the rook's square
+    // instead of the king's.
     //
     // Gated on the variant, exactly as `toUci` is. Standard UCI spells castling `e1g1` and nothing
     // else, so accepting `e1h1` there would let a string no standard engine or GUI produces through
     // the one entry point that exists to refuse illegal moves. Raised in the Qodo review of PR #10.
     //
-    // Within Chess960 the two passes cannot disagree, and the order between them is therefore
-    // immaterial: the second only ever matches a square occupied by the mover's own rook, and no
-    // ordinary move can land there. Worth stating because the opposite is easy to assume — the two
-    // spellings look like they should collide, and a comment claiming this pass is "tried second for
-    // precedence" would describe a conflict that cannot arise.
-    if (promo === undefined && this.state.variant === 'chess960') {
+    // The two passes cannot disagree: this one only ever matches a square occupied by the mover's
+    // own rook, and no ordinary move can land there. Worth stating because the opposite is easy to
+    // assume — the two spellings look like they should collide.
+    if (promo === undefined && chess960) {
       for (const m of this.legalMoves()) {
         if (m.from === from && m.castleRook === to) return m;
       }

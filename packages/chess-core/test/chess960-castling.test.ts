@@ -405,6 +405,28 @@ test('king-takes-rook is a Chess960 input spelling and is refused elsewhere', ()
   assert.equal(whiteBackRank(chess960.play('e1h1')), 'R4RK1', 'chess960 castles as e1h1');
 });
 
+test('Chess960 castling is spelled king-takes-rook and only that', () => {
+  // The king-destination spelling is not merely redundant in Chess960 — for a king that already
+  // stands on its own destination it degenerates to `g1g1`, a move that appears to go nowhere and
+  // that no engine or GUI emits. Resolving castling through the rook square alone refuses it.
+  // Raised in the CodeRabbit review of PR #10.
+  const kingHome = Position.fromFen('8/8/8/k7/8/8/8/R5KR w K - 0 1', 'chess960');
+  assert.equal(kingHome.toUci(castles(kingHome)[0]), 'g1h1');
+  assert.equal(whiteBackRank(kingHome.play('g1h1')), 'R4RK1');
+  assert.throws(() => kingHome.play('g1g1'), IllegalMoveError, 'g1g1 is not a Chess960 castle');
+
+  // The same for the traditional array read as Chess960: `e1g1` is the standard spelling and is not
+  // how this variant expresses castling.
+  const sp518 = Position.fromFen('8/8/8/k7/8/8/8/R3K2R w KQ - 0 1', 'chess960');
+  assert.equal(whiteBackRank(sp518.play('e1h1')), 'R4RK1');
+  assert.throws(() => sp518.play('e1g1'), IllegalMoveError, 'e1g1 is the standard spelling');
+
+  // And an ordinary king move that happens to land on a castling destination keeps its own meaning,
+  // because it is not a castle and so was never resolved by the rook pass.
+  const stepping = Position.fromFen('8/8/8/k7/8/8/8/R4K1R w KQ - 0 1', 'chess960');
+  assert.equal(whiteBackRank(stepping.play('f1g1')), 'R5KR', 'f1g1 remains the ordinary step');
+});
+
 test('standard chess keeps its own UCI spelling, unchanged', () => {
   // The king-takes-rook convention is a Chess960 wire detail and must not leak into ordinary chess,
   // where every GUI and engine expects e1g1.

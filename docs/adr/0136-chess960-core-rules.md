@@ -122,9 +122,18 @@ finishes on g1 when it castles kingside — `g1g1` names a move that appears to 
 on f1 would emit `f1g1`, indistinguishable from stepping one square right. The rook's square is
 always unambiguous, because the king starts strictly between the two rooks.
 
-Both spellings are accepted on input, with the ordinary reading taking precedence: a king on f1 next
-to a rook on g1 can both step to g1 and castle, and `f1g1` keeps the meaning it has in every other
-variant. The castle stays reachable as `f1h1`.
+**Input is read the same way it is written: in Chess960, king-takes-rook is the only spelling of a
+castle.** The king-destination form is refused there, and refused deliberately. It is not merely a
+redundant second way to say the same thing — for a king that already stands on its own destination it
+degenerates to `g1g1`, a move that appears to go nowhere, and for a king on f1 it collides with the
+ordinary one-square step. Accepting it would mean `Position.play` tolerating strings no engine or GUI
+produces, in the one place whose job is to refuse illegal moves. Raised in the CodeRabbit review of
+PR #10.
+
+Ordinary moves are unaffected, including ones that happen to land on a castling destination: a king
+stepping f1→g1 is not a castle, was never resolved through the rook, and keeps the meaning it has in
+every other variant. Standard chess likewise keeps `e1g1` and refuses `e1h1` — the mirror image of
+the same boundary.
 
 **A defect this surfaced.** `Position.play(move)` matched a caller's move against the generated list
 on `from`/`to`/promotion/drop alone. In Chess960 that is not enough: a king on b1 whose queenside
@@ -172,8 +181,8 @@ exactly the sort of overclaim ADR-0079 warns about.
 
 ### 6. The suite was checked by breaking the code on purpose
 
-A passing suite proves the tests run, not that they would notice. **44 deliberate defects were
-injected one at a time, and all 44 were caught** — bishops onto same-coloured squares, the knight
+A passing suite proves the tests run, not that they would notice. **45 deliberate defects were
+injected one at a time, and all 45 were caught** — bishops onto same-coloured squares, the knight
 table shifted, castling destinations moved a file, the outermost-rook rule inverted on each side
 independently, the king's transit path shortened, the rook's origin left occupied, each castling
 right kept alive past the event that should end it, the king-takes-rook spelling applied to standard

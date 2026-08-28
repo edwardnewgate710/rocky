@@ -84,6 +84,14 @@ test('the corpus is the whole domain, one vector per starting position', () => {
     VECTORS.map((v) => v.id),
     Array.from({ length: 960 }, (_, i) => i),
   );
+  // Contiguous ids prove the fixture is whole, not that it is *varied*. A duplicated row given a
+  // fresh id would keep every assertion below passing while silently covering fewer arrangements.
+  // Raised in the CodeRabbit review of PR #10.
+  assert.equal(
+    new Set(VECTORS.map((v) => v.epd)).size,
+    960,
+    'every vector must be a distinct position',
+  );
   for (const v of VECTORS) {
     assert.equal(v.expected.length, 4, `id ${v.id} does not carry four depths`);
     assert.ok(v.expected.every(Number.isInteger), `id ${v.id} has a non-integer count`);
