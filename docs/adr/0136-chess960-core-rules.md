@@ -157,14 +157,20 @@ exactly the sort of overclaim ADR-0079 warns about.
 
 ### 6. The suite was checked by breaking the code on purpose
 
-A passing suite proves the tests run, not that they would notice. Thirty-nine deliberate defects were
-injected one at a time — bishops onto same-coloured squares, the knight table shifted, castling
-destinations moved a file, the outermost-rook rule inverted on each side independently, the king's
-transit path shortened, the rook's origin left occupied, each castling right kept alive past the
-event that should end it, the king-takes-rook spelling applied to standard chess — and every one was
-caught. The harness proves each mutation actually landed before trusting the result, because sources
+A passing suite proves the tests run, not that they would notice. **43 deliberate defects were
+injected one at a time, and all 43 were caught** — bishops onto same-coloured squares, the knight
+table shifted, castling destinations moved a file, the outermost-rook rule inverted on each side
+independently, the king's transit path shortened, the rook's origin left occupied, each castling
+right kept alive past the event that should end it, the king-takes-rook spelling applied to standard
+chess. The harness proves each mutation actually landed before trusting the result, because sources
 here are CRLF while anchors are written with `\n`, and a substitution that silently fails to apply
 reports a cheerful false "caught".
+
+The count reached 43 in two steps: 39 covering the rules themselves, then 4 more for the variant
+gates added in §7 after review. **The denominator counts injected mutations only.** The equivalent
+mutant described at the end of this section is not among them — it was identified as equivalent and
+removed from the set rather than injected and excused, so it neither inflates the numerator nor
+shrinks the denominator.
 
 Three things it found that review had not:
 
