@@ -646,6 +646,57 @@ CREATE TABLE learning_progress (
 
 Stores structured curriculum courses, lessons, interactive steps (text, move, quiz), and per-player progress history. Active course slugs are constrained by partial unique index `learning_courses_slug_idx WHERE deleted_at IS NULL`. Active lesson and step order indexes within their parent containers use partial unique indexes `WHERE deleted_at IS NULL`. Dedicated full indexes on foreign key columns (`author_id`, `course_id`, `lesson_id`, `step_id`) guarantee cascade deletion performance on tombstoned rows.
 
+### 4.21 Durable engine analysis cache (`0026_engine_analysis_cache.sql`, ADR-0135)
+
+```sql
+CREATE TABLE engine_analysis_cache (
+  fingerprint      TEXT        NOT NULL CHECK (length(fingerprint) BETWEEN 1 AND 128),
+  variant          TEXT        NOT NULL CHECK (length(variant) BETWEEN 1 AND 64),
+  multi_pv         INTEGER     NOT NULL CHECK (multi_pv >= 1),
+  fen              TEXT        NOT NULL CHECK (length(fen) BETWEEN 1 AND 256),
+  achieved_depth   INTEGER     CHECK (achieved_depth IS NULL OR achieved_depth >= 0),
+  achieved_nodes   BIGINT      CHECK (achieved_nodes IS NULL OR achieved_nodes >= 0),
+  achieved_time_ms BIGINT      CHECK (achieved_time_ms IS NULL OR achieved_time_ms >= 0),
+  CHECK (num_nonnulls(achieved_depth, achieved_nodes, achieved_time_ms) >= 1),
+  payload_version  INTEGER     NOT NULL CHECK (payload_version >= 1),
+  results          JSONB       NOT NULL CHECK (jsonb_typeof(results) = 'array'),
+  created_at       TIMESTAMPTZ NOT NULL,
+  updated_at       TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (fingerprint, variant, multi_pv, fen)
+);
+```
+
+Durable backend for the engine's `AnalysisCache` port — the decision ADR-0002 deferred. **Not
+composed by the API**: this phase ships the schema and adapter only.
+
+The primary key is the whole of what makes two searches interchangeable (engine build fingerprint,
+variant, MultiPV width, position), so a result can never be served for a different build, variant,
+line count or position. FEN is stored verbatim; the platform defines no canonical FEN normalization
+for cache identity, so two spellings of one position cache separately — a miss, never a wrong answer.
+
+The `achieved_*` columns record what a search **reached**, not what it was asked for, and live
+outside the JSON payload because they are the only basis on which a later request may be answered.
+`NULL` means no stated bound was reached in that dimension and satisfies only a request that asks
+nothing of it; a row stating no dimension at all could answer nothing and is refused. A read returns
+a row only when it satisfies the request in **every** stated dimension.
+
+Writes are a dominance-guarded upsert: an entry may only be replaced by one that could serve every
+request the entry could serve, evaluated inside `ON CONFLICT DO UPDATE ... WHERE` under the row lock.
+A shallower search finishing later therefore cannot destroy a deeper cached result, and concurrent
+writers cannot both decide they are stronger. The payload version never excuses a write from that
+comparison — a version 2 result at depth 5 does not replace a version 1 result at depth 30 — it only
+gates the direction a dominating write may travel: an older version never replaces a newer, so a
+rolling deploy cannot let a build that speaks an older payload contract destroy a row a newer build
+can still read.
+
+`results` is validated field-by-field on read; an unreadable or unknown-version payload is treated as
+a cache miss and reported, never cast to a trusted type. The adapter fails open on every
+infrastructure fault (a cache is an optimization and `EngineManager.analyze` calls it unguarded) and
+reports each one through an injected hook.
+
+No TTL and no eviction, consistent with ADR-0002's "TTL only on ephemeral tiers". A retention policy
+is a precondition of production wiring, not of the schema.
+
 
 
 

@@ -4,7 +4,55 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-26 — M15 Increment 31: durable refusal confirmation._
+_Last updated: 2026-08-28 — M15 Increment 32: durable engine analysis cache._
+
+## M15 Increment 32 — Durable engine analysis cache, Phase A (ADR-0135)
+
+- **What it is**: the durable backend ADR-0002 Decision 4 deferred. That ADR predicted the decision
+  would be `ADR-0003`; the number was taken by the legal-moves contract before it was written, so
+  this is ADR-0135. Infrastructure only — **nothing composes it**, and the default stays the
+  in-process LRU.
+- **Why durable at all**: the LRU is process-scoped. Every worker starts cold, an entry dies with the
+  process that made it, and nothing is shared between replicas, so the expensive deep searches the
+  cache exists to avoid are repeated per process and per deploy.
+- **Identity** (`packages/persistence/migrations/0026_engine_analysis_cache.sql`): keyed on
+  (fingerprint, variant, multi_pv, fen) as separate columns rather than the concatenated
+  `cacheKeyString`, so no delimiter inside a component can collide two identities. FEN is stored
+  verbatim: the platform defines no canonical FEN normalization for cache identity, and inventing one
+  here would change what the port means. Two spellings of a position therefore cache separately —
+  a miss, never a wrong answer.
+- **Satisfaction**: the read predicate is `limitsSatisfy(stored, requested)` expressed in SQL. The
+  achieved limits live in comparable columns outside the JSON payload because they are the only basis
+  on which a later request may be answered. NULL means no stated bound was reached, and `IS NOT NULL`
+  is what makes an absent measurement fail closed instead of reading as an adequate one.
+- **Replacement**: an entry may only be replaced by one that could serve every request the entry
+  could serve — the read predicate with its arguments swapped — evaluated inside
+  `ON CONFLICT DO UPDATE ... WHERE`, under the row lock. A depth-10 search finishing after a depth-20
+  one cannot destroy it, and two concurrent writers cannot both conclude they are stronger. Doing this
+  as read-then-write in TypeScript would lose exactly that race. Merging successive writes' limits was
+  rejected as untruthful: it would claim a search that never ran, the defect `achievedLimits` exists
+  to prevent.
+- **Failure semantics**: `EngineManager.analyze` calls the port unguarded, so a throw would turn a
+  database blip into a failed analysis. Every fault is absorbed and reported through an injected
+  `onError`, with `payload` kept distinct from `read` because corruption and an unreachable database
+  are different alerts. The one thing never absorbed is a wrong answer.
+- **Tests**: 51 hermetic (payload contract, achieved limit projection, analysis line collection,
+  MultiPV width, adapter failure semantics) and 7 Postgres suites (satisfaction, identity
+  isolation, round trip, replacement, concurrency, schema constraints, corrupt row). 25/25
+  mutations caught. The pass found two of its own gaps: an assertion that only exercised the
+  `depth` parameter, so a `?? 0` in the nodes or time mapping would have gone unnoticed, and a
+  concurrency test that skipped its own assertions whenever a read missed.
+- **No Postgres or Docker was reachable locally**, so the integration suites have only ever run in
+  CI's postgres-integration job. An adversarial review pass caught what that cost: a setup INSERT
+  using `payload_version = 0` against a `CHECK (payload_version >= 1)`, which would have errored on
+  the first real server.
+- **Recorded gaps for Phase B wiring**: `computeFingerprint` hashes option *names*, not their values,
+  so two workers differing only in `EvalFile` or `SyzygyPath` share a fingerprint — an isolation the
+  process-scoped LRU provided by accident and a shared table removes; the table has no retention
+  policy; and the pool needs a `statement_timeout`, because failing open protects the caller from an
+  error but not from a hang.
+- Detailed in `docs/adr/0135-durable-analysis-cache.md`, with the schema addendum in
+  `docs/DATABASE.md` §4.21.
 
 ## M15 Increment 31 — Durable refusal confirmation (ADR-0134)
 
