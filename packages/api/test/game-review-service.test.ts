@@ -14,6 +14,7 @@ const FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const AFTER_E4_FEN = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
 const AFTER_E4_E5_FEN = 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2';
 
+/** Build one legal authoritative archive record with optional case-specific overrides. */
 const game = (overrides: Partial<FinishedGameForReview> = {}): FinishedGameForReview => ({
   gameId: '00000000-0000-4000-8000-000000000001',
   variant: 'standard',
@@ -29,6 +30,7 @@ const game = (overrides: Partial<FinishedGameForReview> = {}): FinishedGameForRe
   ...overrides,
 });
 
+/** Echo assessment identity while selecting the base mistake-prediction verdict. */
 const outcome = (input: MistakePredictionInput, classification: MistakePredictionOutcome['classification']): MistakePredictionOutcome => ({
   fen: input.fen,
   variant: input.variant,
@@ -57,6 +59,7 @@ const reviewAnalysis: AnalysisPort = {
   canSatisfyLimits: () => true,
 };
 
+/** Compose the service with a fixed archive result and capture every assessment input. */
 function build(source: FinishedGameForReview | undefined) {
   const assessed: MistakePredictionInput[] = [];
   const service = new GameReviewService({
@@ -83,6 +86,10 @@ test('completed-game review assesses only the authenticated player moves and ret
 
   assert.equal(charged, 1);
   assert.deepEqual(assessed.map((entry) => entry.move), ['e2e4', 'g1f3']);
+  assert.deepEqual(
+    assessed.map((entry) => entry.analysisBefore?.map((line) => line.multipv)),
+    [[1, 2], [1, 2]],
+  );
   assert.equal(result.playerColor, 'white');
   assert.deepEqual(result.summary, {
     brilliant: 0, great: 1, best: 0, excellent: 0, good: 0, book: 0,

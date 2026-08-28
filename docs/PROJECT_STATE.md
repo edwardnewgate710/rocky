@@ -4,7 +4,20 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-28 — M15 Increment 39: Game Review evidence identity and recovery parity (ADR-0136)._
+_Last updated: 2026-08-28 — M15 Increment 40: Game Review presentation invalidation and review-gate closure (ADR-0136)._
+
+## M15 Increment 40 — Game Review presentation invalidation and review-gate closure (ADR-0136)
+
+Authentication invalidation now restores the latest server-owned board position, turn state,
+last-move highlight, and game status after erasing Game Review DOM. A selected private pre-move
+position and best-move text therefore cannot survive sign-out or account replacement. Review
+classification colors now use theme-aware semantic tokens whose compact text is deterministically
+checked at WCAG AA contrast in both themes.
+
+Regressions also cover request rejection and aborted-rejection silence, typed API fixtures, reuse of
+the review's MultiPV evidence, and the OpenAPI response contract. Touched Game Review functions now
+carry concise ownership and contract documentation, closing CodeRabbit's docstring pre-merge gate
+without changing unrelated Study Partner code.
 
 ## M15 Increment 39 — Game Review evidence identity and recovery parity (ADR-0136)
 
@@ -41,7 +54,7 @@ feature metric.
 
 Deterministic archive and deadline regressions pin both bounds. Game Review fixtures now use legal,
 move-accurate positions, and classification evidence overrides use the production input type. This
-closes the valid and partially valid findings from CodeRabbit's first full base-to-head review.
+closes the valid and partially-valid findings from CodeRabbit's first full base-to-head review.
 
 ## M15 Increment 35 — Game Review capability truthfulness (ADR-0136)
 

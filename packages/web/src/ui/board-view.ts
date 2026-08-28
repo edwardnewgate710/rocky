@@ -100,7 +100,8 @@ export class BoardView {
     this.render();
   }
 
-  setLastMove(from: Square, to: Square): void {
+  /** Replace the last-move highlight, or clear it when the game has no last move. */
+  setLastMove(from: Square | null, to: Square | null): void {
     this.interaction.setLastMove(from, to);
     this.render();
   }

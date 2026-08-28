@@ -38,6 +38,7 @@ export class GameReviewController {
   private inFlight: AbortController | null = null;
   private disposed = false;
 
+  /** Capture the immutable game and initial session ownership for this mounted route. */
   constructor(options: GameReviewControllerOptions) {
     this.gameId = options.gameId;
     this.sessionId = options.sessionId;
@@ -45,6 +46,7 @@ export class GameReviewController {
     this.callbacks = options.callbacks;
   }
 
+  /** Whether the current owner has an unsettled request. */
   get isPending(): boolean {
     return this.pending;
   }
@@ -78,6 +80,7 @@ export class GameReviewController {
     this.disposed = true;
   }
 
+  /** Start one generation only when this live mount has an authenticated owner. */
   private startRequest(): ReviewOwner | null {
     if (this.disposed || this.pending || this.sessionId === null) return null;
     const abortController = new AbortController();
@@ -93,6 +96,7 @@ export class GameReviewController {
     return owner;
   }
 
+  /** Commit a response only after every captured ownership identity still matches. */
   private accept(owner: ReviewOwner, completedReview: GameReviewResponse): void {
     if (!this.isCurrent(owner)) return;
     this.settle(owner.abortController);
@@ -105,6 +109,7 @@ export class GameReviewController {
     this.callbacks.onPhase('result');
   }
 
+  /** Publish only failures belonging to the still-current, non-aborted request. */
   private reject(owner: ReviewOwner, error: unknown): void {
     if (!this.isCurrent(owner) || owner.abortController.signal.aborted) return;
     this.settle(owner.abortController);
@@ -112,6 +117,7 @@ export class GameReviewController {
     this.callbacks.onPhase('error');
   }
 
+  /** Advance the generation, abort work, and synchronously clear private presentation state. */
   private invalidate(): void {
     this.generation += 1;
     this.inFlight?.abort();
@@ -121,12 +127,14 @@ export class GameReviewController {
     this.callbacks.onPhase('idle');
   }
 
+  /** Release pending state only when settling the controller that still owns it. */
   private settle(abortController: AbortController): void {
     if (this.inFlight !== abortController) return;
     this.inFlight = null;
     this.pending = false;
   }
 
+  /** Verify route, session, generation, and concrete request-controller identity. */
   private isCurrent(owner: ReviewOwner): boolean {
     return !this.disposed
       && owner.gameId === this.gameId

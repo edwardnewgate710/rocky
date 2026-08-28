@@ -71,6 +71,7 @@ export function classifyGameReviewMove(input: GameReviewClassificationEvidence):
   return 'good';
 }
 
+/** Create a complete zero-valued summary so new classifications cannot disappear from responses. */
 export function emptyGameReviewSummary(): Record<GameReviewClassification, number> {
   return {
     brilliant: 0,
@@ -87,14 +88,17 @@ export function emptyGameReviewSummary(): Record<GameReviewClassification, numbe
   };
 }
 
+/** Whether a winning pre-move evaluation fell below the safe post-move floor. */
 function missedWin(assessment: MistakePredictionOutcome, mover: Color): boolean {
   return isWinning(assessment.before, mover) && !stillAhead(assessment, mover);
 }
 
+/** Whether a tactical pre-move chance was lost without first reaching a forced win. */
 function missedTactic(assessment: MistakePredictionOutcome, mover: Color): boolean {
   return isTacticalChance(assessment.before, mover) && !stillAhead(assessment, mover);
 }
 
+/** Interpret a positive mate or the configured centipawn threshold as winning for the mover. */
 function isWinning(
   evaluation: { readonly evalKind: 'cp' | 'mate'; readonly evalValue: number },
   _mover: Color,
@@ -102,6 +106,7 @@ function isWinning(
   return evaluation.evalKind === 'mate' ? evaluation.evalValue > 0 : evaluation.evalValue >= WINNING_CP;
 }
 
+/** Whether the evaluation is strong enough to teach as a tactical opportunity. */
 function isTacticalChance(
   evaluation: { readonly evalKind: 'cp' | 'mate'; readonly evalValue: number },
   mover: Color,
@@ -117,10 +122,12 @@ function stillAhead(assessment: MistakePredictionOutcome, mover: Color): boolean
     : assessment.after.evalValue >= SAFE_AFTER_CP;
 }
 
+/** Match a terminal result to the color whose move is being reviewed. */
 function terminalIsWin(result: '1-0' | '0-1' | '1/2-1/2', mover: Color): boolean {
   return (result === '1-0' && mover === 'w') || (result === '0-1' && mover === 'b');
 }
 
+/** Whether engine-best play materially outperforms the independently identified runner-up line. */
 function alternativeGapIsGreat(
   assessment: MistakePredictionOutcome,
   alternative: ReviewAlternative | null,

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { classifyGameReviewMove, emptyGameReviewSummary } from '../src/game-review/classification.js';
 import type { MistakePredictionOutcome } from '../src/analysis/mistake-prediction-service.js';
 
+/** Build stable engine evidence while exposing only the fields a classification case varies. */
 function assessment(overrides: Partial<MistakePredictionOutcome> = {}): MistakePredictionOutcome {
   return {
     fen: 'fen', variant: 'standard', move: 'e2e4', classification: 'ok',
@@ -13,6 +14,7 @@ function assessment(overrides: Partial<MistakePredictionOutcome> = {}): MistakeP
   };
 }
 
+/** Classify one move with production-typed evidence overrides. */
 function classify(
   overrides: Parameters<typeof assessment>[0] = {},
   evidence: Partial<Parameters<typeof classifyGameReviewMove>[0]> = {},

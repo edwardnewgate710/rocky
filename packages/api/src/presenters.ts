@@ -1500,6 +1500,7 @@ export interface GameReviewView {
   readonly summary: GameReviewSummary;
 }
 
+/** Present the private service outcome through the stable public Game Review contract. */
 export function gameReviewView(
   outcome: import('./game-review/service.js').GameReviewOutcome,
 ): GameReviewView {

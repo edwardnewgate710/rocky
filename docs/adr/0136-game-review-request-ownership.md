@@ -83,3 +83,9 @@ The server-owned review vocabulary remains the closed eleven-label contract reco
 `GAME_REVIEW_CLASSIFICATIONS`. A `forced` label is not added because neither the current policy nor
 the recovered classification implementation defines deterministic engine evidence for it; inventing
 that evidence in a recovery change would make the result less truthful, not more complete.
+
+Selecting a review row temporarily borrows the shared board and status region. The invalidation
+callback therefore restores the latest authoritative FEN, turn state, last-move highlight, and game
+status in addition to clearing the dedicated review nodes. This closes the privacy boundary for
+review-derived presentation state, not only the response object and panel DOM. Theme-aware verdict
+tokens keep that presentation readable at WCAG AA contrast on both supported panel surfaces.

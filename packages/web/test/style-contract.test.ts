@@ -8,6 +8,16 @@ import { fileURLToPath } from 'node:url';
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CSS = readFileSync(resolve(PACKAGE_ROOT, 'src/style.css'), 'utf8');
 
+const REVIEW_TONES = [
+  'brilliant',
+  'great',
+  'excellent',
+  'book',
+  'inaccuracy',
+  'mistake',
+  'miss',
+] as const;
+
 interface Rule {
   readonly selectors: readonly string[];
   readonly body: string;
@@ -57,6 +67,29 @@ function atRuleBody(marker: string, source = CSS): string {
   throw new Error(`could not find the closing brace for ${marker}`);
 }
 
+/** Read one hexadecimal custom-property value from a declaration block. */
+function hexProperty(body: string, name: string): string {
+  const match = body.match(new RegExp(`--${name}\\s*:\\s*(#[0-9a-f]{6})`, 'i'));
+  assert.ok(match, `missing hexadecimal --${name} token`);
+  return match[1]!;
+}
+
+/** Convert an sRGB hexadecimal color into WCAG relative luminance. */
+function luminance(hex: string): number {
+  const channels = hex.slice(1).match(/../g)!.map((pair) => Number.parseInt(pair, 16) / 255);
+  const [red, green, blue] = channels.map((channel) =>
+    channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * red! + 0.7152 * green! + 0.0722 * blue!;
+}
+
+/** Return the WCAG contrast ratio between two opaque hexadecimal colors. */
+function contrast(first: string, second: string): number {
+  const firstLuminance = luminance(first);
+  const secondLuminance = luminance(second);
+  return (Math.max(firstLuminance, secondLuminance) + 0.05)
+    / (Math.min(firstLuminance, secondLuminance) + 0.05);
+}
+
 test('at-rule parsing ignores braces in comments and quoted values', () => {
   const source = `@media (min-width: 720px) {
     /* A closing brace here must not terminate the at-rule: } */
@@ -65,6 +98,33 @@ test('at-rule parsing ignores braces in comments and quoted values', () => {
   }`;
 
   assert.match(atRuleBody('@media (min-width: 720px)', source), /\.target\s*\{\s*inline-size:\s*100%/);
+});
+
+test('Game Review classification tokens meet text contrast in both themes', () => {
+  const root = rules().find((rule) => rule.selectors.includes(':root'));
+  const explicitLight = rules().find((rule) => rule.selectors.includes(':root.light'));
+  assert.ok(root, 'missing :root theme tokens');
+  assert.ok(explicitLight, 'missing explicit light-theme tokens');
+  const automaticLight = atRuleBody('@media (prefers-color-scheme: light)');
+
+  for (const tone of REVIEW_TONES) {
+    const darkColor = hexProperty(root.body, `review-${tone}`);
+    const lightColor = hexProperty(root.body, `light-review-${tone}`);
+    assert.ok(contrast(darkColor, '#1f1e1b') >= 4.5, `${tone} fails dark-theme contrast`);
+    assert.ok(contrast(lightColor, '#ecebea') >= 4.5, `${tone} fails light-theme contrast`);
+    const lightAssignment = new RegExp(`--review-${tone}\\s*:\\s*var\\(--light-review-${tone}\\)`);
+    assert.match(explicitLight.body, lightAssignment);
+    assert.match(automaticLight, lightAssignment);
+
+    const selector = `.game-review-${tone} strong`;
+    const toneRule = rules().find((rule) => rule.selectors.includes(selector));
+    assert.ok(toneRule, `missing ${selector}`);
+    assert.match(toneRule.body, new RegExp(`color\\s*:\\s*var\\(--review-${tone}\\)`));
+  }
+
+  const good = rules().find((rule) => rule.selectors.includes('.game-review-good strong'));
+  assert.ok(good, 'missing .game-review-good strong');
+  assert.match(good.body, /color\s*:\s*var\(--fg\)/);
 });
 
 const USES_BACKGROUND_SHORTHAND = /(^|[;\s])background\s*:/;

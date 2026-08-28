@@ -192,7 +192,12 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
   let isGamePlayer = false;
   let gameReviewPending = false;
   let gameReviewSessionId = deps.initialSessionId ?? null;
+  let authoritativeGameFen: string | null = null;
+  let authoritativeGameTurn = false;
+  let authoritativeGameStatus = '';
+  let authoritativeLastMove: readonly [string, string] | null = null;
 
+  /** Recompute visibility and availability from game, capability, session, and request state. */
   const refreshGameReview = (): void => {
     const variantSupported = gameReviewSupportsVariant(gameReviewCapabilities, currentVariant);
     if (gameReviewSectionEl) gameReviewSectionEl.hidden = !gameOver || !isGamePlayer || !variantSupported;
@@ -210,6 +215,7 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     }
   };
 
+  /** Remove all private review nodes from persistent route DOM. */
   const clearGameReview = (): void => {
     if (gameReviewErrorEl) {
       gameReviewErrorEl.hidden = true;
@@ -1050,6 +1056,7 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     gameSync,
     callbacks: {
       onPosition: (fen: string) => {
+        authoritativeGameFen = fen;
         board.setPosition(fen);
         analysisController.positionChanged(fen);
         if (currentVariant) puzzleController.positionChanged({ fen, variant: currentVariant });
@@ -1081,7 +1088,10 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
         refreshOpeningControls();
         coachStateChanged();
       },
-      onTurn: (myTurn: boolean) => board.setTurn(myTurn),
+      onTurn: (myTurn: boolean) => {
+        authoritativeGameTurn = myTurn;
+        board.setTurn(myTurn);
+      },
       onClock: (whiteMs: number, blackMs: number) => {
         if (whiteClockEl) whiteClockEl.textContent = formatClock(whiteMs);
         if (blackClockEl) blackClockEl.textContent = formatClock(blackMs);
@@ -1090,10 +1100,12 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
         }
       },
       onStatus: (text: string) => {
+        authoritativeGameStatus = text;
         if (statusEl) statusEl.textContent = text;
       },
       onLastMove: (from: string | null, to: string | null) => {
-        if (from && to) board.setLastMove(from, to);
+        authoritativeLastMove = from !== null && to !== null ? [from, to] : null;
+        board.setLastMove(from, to);
       },
       onColor: (color) => {
         if (color === 'b') board.setOrientation('black');
@@ -1269,6 +1281,17 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     unbinds.push(() => el.removeEventListener('click', listener));
   };
 
+  /** Remove private review output and restore the latest server-owned game presentation. */
+  const invalidateGameReviewPresentation = (): void => {
+    clearGameReview();
+    if (authoritativeGameFen === null) return;
+    board.setPosition(authoritativeGameFen);
+    board.setTurn(authoritativeGameTurn);
+    board.setLastMove(authoritativeLastMove?.[0] ?? null, authoritativeLastMove?.[1] ?? null);
+    if (statusEl) statusEl.textContent = authoritativeGameStatus;
+  };
+
+  /** Render a controller-approved review and its navigable pre-move positions. */
   const renderGameReview = (review: Awaited<ReturnType<GambitClient['games']['review']>>): void => {
     if (gameReviewSummaryEl) {
       const summary = [
@@ -1340,13 +1363,13 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
           gameReviewErrorEl.textContent = 'The review is not available right now. Please try again.';
         }
       },
-      onInvalidated: clearGameReview,
+      onInvalidated: invalidateGameReviewPresentation,
     },
   });
 
   bindClick(gameReviewRunBtn, () => {
     if (!gameOver || !gameReviewSupportsVariant(gameReviewCapabilities, currentVariant)) return;
-    clearGameReview();
+    invalidateGameReviewPresentation();
     void gameReviewController.review();
   });
 

@@ -86,8 +86,9 @@ export class BoardInteraction {
     this.pending = null;
   }
 
-  setLastMove(from: Square, to: Square): void {
-    this.lastMove = [from, to];
+  /** Replace the authoritative last-move highlight, or clear it when no move exists. */
+  setLastMove(from: Square | null, to: Square | null): void {
+    this.lastMove = from !== null && to !== null ? [from, to] : null;
   }
 
   setTurn(myTurn: boolean): void {

@@ -76,6 +76,7 @@ export class GameReviewService {
   private readonly openingDatabase: OpeningDatabase | undefined;
   private readonly deadlineMs: number;
 
+  /** Configure the authoritative archive, exact engine policy, and bounded execution deadline. */
   constructor(options: GameReviewServiceOptions) {
     this.archive = options.archive;
     this.analysis = options.analysis;
@@ -93,6 +94,7 @@ export class GameReviewService {
       && this.analysis.supportsMultiPv(variant, GAME_REVIEW_ANALYSIS_LIMITS.multiPv);
   }
 
+  /** Produce one ownership-checked, quota-admitted review or fail without returning partial data. */
   async review(
     input: { readonly gameId: string; readonly userId: string; readonly signal: AbortSignal },
     onAccepted: () => Promise<void>,
@@ -189,12 +191,14 @@ function throwIfReviewCancelled(client: AbortSignal, deadline?: AbortSignal): vo
   if (deadline?.aborted) throw HttpError.unavailable('game review deadline exceeded');
 }
 
+/** Return the length of the known standard-opening prefix, or zero when no book applies. */
 function knownBookPly(game: FinishedGameForReview, database: OpeningDatabase | undefined): number {
   if (game.variant !== 'standard' || !database) return 0;
   const result = database.lookup(game.moves.map((move) => move.uci as import('@chess-platform/ai-features').MoveUci));
   return result.kind === 'found' ? result.matchedMoves : 0;
 }
 
+/** Select the MultiPV-2 line by identity rather than relying on engine response order. */
 function reviewAlternative(lines: readonly {
   readonly multipv: number;
   readonly principalVariation: readonly string[];
@@ -232,6 +236,7 @@ function offersMaterial(fen: string, uci: string, variant: FinishedGameForReview
   }
 }
 
+/** Map piece roles to the coarse material scale used only for sacrifice candidacy. */
 function pieceValue(piece: 'p' | 'n' | 'b' | 'r' | 'q' | 'k'): number {
   switch (piece) {
     case 'q': return 900;
@@ -243,6 +248,7 @@ function pieceValue(piece: 'p' | 'n' | 'b' | 'r' | 'q' | 'k'): number {
   }
 }
 
+/** Resolve a participant's color without revealing whether a non-participant's game exists. */
 function playerColorFor(game: FinishedGameForReview, userId: string): 'white' | 'black' | undefined {
   if (game.white === userId) return 'white';
   if (game.black === userId) return 'black';

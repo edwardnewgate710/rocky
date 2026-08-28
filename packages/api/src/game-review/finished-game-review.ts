@@ -29,8 +29,10 @@ export interface FinishedGameReviewArchive {
 
 /** Reads completed game history from the authoritative event stream. */
 export class DurableFinishedGameReviewArchive implements FinishedGameReviewArchive {
+  /** Bind the archive to the authoritative append-only event store. */
   constructor(private readonly events: EventStore) {}
 
+  /** Reconstruct a completed game and its pre-move positions, withholding live or unknown games. */
   async finishedGameForReview(gameId: string): Promise<FinishedGameForReview | undefined> {
     const stored = await this.events.load(gameId);
     if (stored.length === 0) return undefined;

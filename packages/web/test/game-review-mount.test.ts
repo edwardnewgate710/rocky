@@ -10,6 +10,7 @@ import { FakeSocketFactory } from './support/fake-socket.js';
 import { json } from './support/fake-transport.js';
 
 const FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+const AFTER_E4_FEN = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
 
 const COMPLETED_REVIEW: GameReviewResponse = {
   gameId: 'g-test-1',
@@ -68,8 +69,10 @@ interface SetupOptions {
   readonly role?: 'white' | 'black' | 'spectator';
   readonly gameDocument?: ReturnType<typeof createGameDocument>;
   readonly gameId?: string;
+  readonly fen?: string;
 }
 
+/** Mount a controllable finished-game route with a deferred private review response. */
 function setup(options: SetupOptions = {}) {
   const {
     variant = 'standard',
@@ -78,6 +81,7 @@ function setup(options: SetupOptions = {}) {
     role = 'white',
     gameDocument,
     gameId = 'g-test-1',
+    fen = FEN,
   } = options;
   const pendingReviews: PendingReview[] = [];
   const transport: HttpTransport = new AsyncTransport((request) => {
@@ -117,17 +121,19 @@ function setup(options: SetupOptions = {}) {
     t: 'joined',
     gameId,
     role,
-    state: { ...(lifecycle === 'finished' ? makeFinishedState(FEN) : makeState(FEN)), gameId, variant },
+    state: { ...(lifecycle === 'finished' ? makeFinishedState(fen) : makeState(fen)), gameId, variant },
   });
 
   return { app, elements, mounted, pendingReviews, socket: sockets.last };
 }
 
+/** Drain the promise turns used by controller completion callbacks. */
 async function settle(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
 }
 
+/** Drain bounded promise turns until a deterministic DOM condition becomes true. */
 async function waitUntil(condition: () => boolean): Promise<void> {
   for (let turn = 0; turn < 20; turn += 1) {
     if (condition()) return;
@@ -136,15 +142,18 @@ async function waitUntil(condition: () => boolean): Promise<void> {
   assert.fail('condition did not become true while draining queued work');
 }
 
+/** Activate the mounted Game Review control. */
 function runReview(elements: Map<string, FakeElement>): void {
   elements.get('game-review-run')!.click();
 }
 
+/** Read rendered coordinate labels in their visual DOM order. */
 function coordinateValues(html: string, kind: 'rank' | 'file'): string[] {
   return [...html.matchAll(new RegExp(`cb-coordinate cb-${kind}[^>]*>([^<]+)<`, 'g'))]
     .map((match) => match[1]!);
 }
 
+/** Tear down every route-scoped controller created by the fixture. */
 function dispose(setupResult: ReturnType<typeof setup>): void {
   setupResult.mounted.analysis.dispose();
   setupResult.mounted.connectivity.dispose();
@@ -173,13 +182,17 @@ test('mounted session changes synchronously refresh Game Review controls', async
   }
 });
 
-test('sign-out removes a completed private review from the mounted page', async () => {
-  const mountedGame = setup();
+test('sign-out removes a completed private review and restores the authoritative game presentation', async () => {
+  const mountedGame = setup({ fen: AFTER_E4_FEN });
   try {
     await waitUntil(() => mountedGame.elements.get('game-review-run')!.disabled === false);
+    const board = mountedGame.elements.get('board')!;
+    const status = mountedGame.elements.get('status')!;
+    const authoritativeBoard = board.innerHTML;
+    const authoritativeStatus = status.textContent;
     runReview(mountedGame.elements);
     await waitUntil(() => mountedGame.pendingReviews.length === 1);
-    mountedGame.pendingReviews[0]!.resolve(json(200, COMPLETED_REVIEW));
+    mountedGame.pendingReviews[0]!.resolve(json(200, COMPLETED_REVIEW_WITH_MOVE));
     await waitUntil(() => mountedGame.elements.get('game-review-summary')!.hidden === false);
 
     const summary = mountedGame.elements.get('game-review-summary')!;
@@ -187,6 +200,9 @@ test('sign-out removes a completed private review from the mounted page', async 
     assert.equal(summary.childElementCount, 11);
     assert.equal(summary.children[2]!.children[0]!.textContent, '★ Best');
     assert.equal(summary.children[2]!.children[1]!.textContent, '1');
+    mountedGame.elements.get('game-review-moves')!.children[0]!.click();
+    assert.notEqual(board.innerHTML, authoritativeBoard);
+    assert.match(status.textContent, /^Reviewing e4\. Best move:/);
 
     mountedGame.mounted.onSessionChange(null);
 
@@ -194,6 +210,8 @@ test('sign-out removes a completed private review from the mounted page', async 
     assert.equal(summary.childElementCount, 0);
     assert.equal(mountedGame.elements.get('game-review-moves')!.childElementCount, 0);
     assert.equal(mountedGame.elements.get('game-review-note')!.textContent, 'Sign in to review your game.');
+    assert.equal(board.innerHTML, authoritativeBoard);
+    assert.equal(status.textContent, authoritativeStatus);
   } finally {
     dispose(mountedGame);
   }

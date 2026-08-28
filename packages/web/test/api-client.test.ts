@@ -5,7 +5,7 @@ import type { RetryPolicy } from '../src/net/retry.js';
 import { RequestAbortedError, UnauthorizedError } from '../src/net/errors.js';
 import type { HttpRequest, HttpTransport } from '../src/ports/http.js';
 import { abortableHang, FakeTransport, empty, json } from './support/fake-transport.js';
-import type { AuthResponse, SelfUser } from '../src/api/models.js';
+import type { AuthResponse, GameReviewResponse, SelfUser } from '../src/api/models.js';
 
 const NO_RETRY: RetryPolicy = { maxAttempts: 1, baseDelayMs: 1, maxDelayMs: 1, jitter: 'none' };
 const selfUser: SelfUser = {
@@ -195,7 +195,7 @@ test('games.createVsBot posts to /v1/games/bot with auth and returns summary', a
 });
 
 test('games.review posts to the completed-game review endpoint with authentication', async () => {
-  const review = {
+  const review: GameReviewResponse = {
     gameId: 'game 1', variant: 'standard', playerColor: 'white', result: '1-0', termination: 'resignation',
     moves: [], summary: {
       brilliant: 0, great: 0, best: 1, excellent: 1, good: 0, book: 0,

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { GameReviewController } from '../src/app/game-review-controller.js';
+import { GameReviewController, type GameReviewPhase } from '../src/app/game-review-controller.js';
 import type { GameReviewResponse } from '../src/api/models.js';
 
 interface ReviewCall {
@@ -8,6 +8,7 @@ interface ReviewCall {
   readonly signal: AbortSignal;
 }
 
+/** Build a minimal successful review whose identity is controlled by the test. */
 function review(gameId: string): GameReviewResponse {
   return {
     gameId,
@@ -32,21 +33,26 @@ function review(gameId: string): GameReviewResponse {
   };
 }
 
+/** Capture requests, phases, results, failures, and manual promise settlement deterministically. */
 function harness(gameId: string, sessionId: string | null) {
   const calls: ReviewCall[] = [];
-  const settlers: Array<{ resolve: (review: GameReviewResponse) => void }> = [];
+  const settlers: Array<{
+    resolve: (review: GameReviewResponse) => void;
+    reject: (error: unknown) => void;
+  }> = [];
   let rendered: GameReviewResponse | null = null;
   let invalidations = 0;
   let failures = 0;
+  const phases: GameReviewPhase[] = [];
   const controller = new GameReviewController({
     gameId,
     sessionId,
     requestReview: (requestedGameId, signal) => {
       calls.push({ gameId: requestedGameId, signal });
-      return new Promise<GameReviewResponse>((resolve) => settlers.push({ resolve }));
+      return new Promise<GameReviewResponse>((resolve, reject) => settlers.push({ resolve, reject }));
     },
     callbacks: {
-      onPhase: () => {},
+      onPhase: (phase) => { phases.push(phase); },
       onResult: (completedReview) => { rendered = completedReview; },
       onFailure: () => { failures += 1; },
       onInvalidated: () => {
@@ -62,7 +68,9 @@ function harness(gameId: string, sessionId: string | null) {
     rendered: () => rendered,
     invalidations: () => invalidations,
     failures: () => failures,
+    phases: () => phases,
     resolve: (index: number, completedReview: GameReviewResponse) => settlers[index]!.resolve(completedReview),
+    reject: (index: number, error: unknown) => settlers[index]!.reject(error),
     flush: async () => {
       await Promise.resolve();
       await Promise.resolve();
@@ -124,6 +132,7 @@ test('request A completing after request B cannot replace the new session result
   h.resolve(1, review('game-a'));
   await h.flush();
   const requestBResult = h.rendered();
+  assert.deepEqual(requestBResult, review('game-a'));
   h.resolve(0, review('game-a'));
   await h.flush();
 
@@ -140,4 +149,23 @@ test('a response carrying another game identity is rejected at the final commit 
 
   assert.equal(h.rendered(), null);
   assert.equal(h.failures(), 1);
+});
+
+test('request rejection reports an error, while an aborted rejection stays silent', async () => {
+  const failed = harness('game-a', 'user-1');
+  void failed.controller.review();
+  failed.reject(0, new Error('network failed'));
+  await failed.flush();
+
+  assert.equal(failed.failures(), 1);
+  assert.deepEqual(failed.phases(), ['loading', 'error']);
+
+  const aborted = harness('game-a', 'user-1');
+  void aborted.controller.review();
+  aborted.controller.sessionChanged(null);
+  aborted.reject(0, new Error('aborted transport'));
+  await aborted.flush();
+
+  assert.equal(aborted.failures(), 0);
+  assert.deepEqual(aborted.phases(), ['loading', 'idle']);
 });

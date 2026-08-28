@@ -55,6 +55,22 @@
   --light-panel: rgba(22, 21, 18, 0.05);
   --light-panel-strong: rgba(22, 21, 18, 0.07);
   --light-muted: #5c5b57;
+  /* Review verdicts are semantic data, not interactive accents. Each hue has a
+     dark- and light-surface value so its compact text stays at WCAG AA. */
+  --review-brilliant: #a78bfa;
+  --review-great: #60a5fa;
+  --review-excellent: #4ade80;
+  --review-book: #d4a574;
+  --review-inaccuracy: #facc15;
+  --review-mistake: #fb923c;
+  --review-miss: #f472b6;
+  --light-review-brilliant: #6d28d9;
+  --light-review-great: #1d4ed8;
+  --light-review-excellent: #166534;
+  --light-review-book: #7c4a21;
+  --light-review-inaccuracy: #805800;
+  --light-review-mistake: #9a3412;
+  --light-review-miss: #9d174d;
   /* Semantic z-index scale (low → high): board cues sit under the promotion
      overlay, which sits under the dragged piece; the skip link tops everything
      so keyboard users can always reach it. */
@@ -72,6 +88,13 @@
     --panel: var(--light-panel);
     --panel-strong: var(--light-panel-strong);
     --muted: var(--light-muted);
+    --review-brilliant: var(--light-review-brilliant);
+    --review-great: var(--light-review-great);
+    --review-excellent: var(--light-review-excellent);
+    --review-book: var(--light-review-book);
+    --review-inaccuracy: var(--light-review-inaccuracy);
+    --review-mistake: var(--light-review-mistake);
+    --review-miss: var(--light-review-miss);
     /* Selection/focus deepens on light surfaces (see --sel-deep). */
     --sel: var(--sel-deep);
     color-scheme: light;
@@ -89,6 +112,13 @@
   --panel: var(--light-panel);
   --panel-strong: var(--light-panel-strong);
   --muted: var(--light-muted);
+  --review-brilliant: var(--light-review-brilliant);
+  --review-great: var(--light-review-great);
+  --review-excellent: var(--light-review-excellent);
+  --review-book: var(--light-review-book);
+  --review-inaccuracy: var(--light-review-inaccuracy);
+  --review-mistake: var(--light-review-mistake);
+  --review-miss: var(--light-review-miss);
   /* Selection/focus deepens on light surfaces (see --sel-deep). */
   --sel: var(--sel-deep);
   color-scheme: light;
@@ -1120,15 +1150,15 @@ button:disabled {
   white-space: nowrap;
 }
 .game-review-best strong { color: var(--sel); }
-.game-review-brilliant strong { color: #8564d6; }
-.game-review-great strong { color: #2d82bf; }
-.game-review-excellent strong { color: #3b9d6d; }
-.game-review-good strong { color: var(--text); }
-.game-review-book strong { color: #976436; }
-.game-review-inaccuracy strong { color: #bf8b24; }
-.game-review-mistake strong { color: #d76b32; }
+.game-review-brilliant strong { color: var(--review-brilliant); }
+.game-review-great strong { color: var(--review-great); }
+.game-review-excellent strong { color: var(--review-excellent); }
+.game-review-good strong { color: var(--fg); }
+.game-review-book strong { color: var(--review-book); }
+.game-review-inaccuracy strong { color: var(--review-inaccuracy); }
+.game-review-mistake strong { color: var(--review-mistake); }
 .game-review-miss strong,
-.game-review-missed_win strong { color: #d44b86; }
+.game-review-missed_win strong { color: var(--review-miss); }
 .game-review-blunder strong { color: var(--ember); }
 /* The system's Label voice, unmodified. An earlier version added uppercase and letter-spacing,
    which would have been the only `text-transform` in the stylesheet — a new typographic treatment
