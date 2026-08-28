@@ -107,6 +107,7 @@ import type {
   MoveExplanationResponse,
   MistakePredictionRequest,
   MistakePredictionResponse,
+  GameReviewResponse,
 } from './models.js';
 
 /** A request spec plus whether it requires authentication. */
@@ -459,6 +460,16 @@ export class GamesApi {
 
   createVsBot(body: CreateBotGameRequest): Promise<GameSummary> {
     return this.execute<GameSummary>({ method: 'POST', path: '/v1/games/bot', body, auth: true });
+  }
+
+  /** Request the authenticated player's completed-game review with caller-owned cancellation. */
+  review(id: string, signal?: AbortSignal): Promise<GameReviewResponse> {
+    return this.execute<GameReviewResponse>({
+      method: 'POST',
+      path: `/v1/games/${encodeURIComponent(id)}/review`,
+      auth: true,
+      ...(signal !== undefined ? { signal } : {}),
+    });
   }
 }
 

@@ -13,13 +13,13 @@ import { mountBoard } from '../src/app/board.js';
 function fakeElement() {
   const live = new Map<string, Set<unknown>>();
   let adds = 0;
+  let html = '';
   return {
     el: {
       classList: { add: (): void => undefined },
       setAttribute: (): void => undefined,
-      set innerHTML(_v: string) {
-        /* render output is not under test here */
-      },
+      set innerHTML(value: string) { html = value; },
+      get innerHTML() { return html; },
       getBoundingClientRect: () => ({ width: 512, height: 512, left: 0, top: 0 }),
       addEventListener(type: string, fn: unknown): void {
         adds += 1;
@@ -59,4 +59,22 @@ test('remounting a board does not stack listeners on the same element', () => {
   assert.equal(board.liveCount('click'), 0, 'destroy detaches the last view too');
   assert.equal(board.liveCount('keydown'), 0, 'destroy detaches keyboard input too');
   assert.equal(flip.liveCount('click'), 0);
+});
+
+function coordinateValues(html: string, kind: 'rank' | 'file'): string[] {
+  return [...html.matchAll(new RegExp(`cb-coordinate cb-${kind}[^>]*>([^<]+)<`, 'g'))]
+    .map((match) => match[1]!);
+}
+
+test('board renders every algebraic coordinate in the current orientation', () => {
+  const board = fakeElement();
+  const mounted = mountBoard({ boardEl: board.el });
+
+  assert.deepEqual(coordinateValues(board.el.innerHTML, 'rank'), ['8', '7', '6', '5', '4', '3', '2', '1']);
+  assert.deepEqual(coordinateValues(board.el.innerHTML, 'file'), ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']);
+
+  mounted.view.flip();
+  assert.deepEqual(coordinateValues(board.el.innerHTML, 'rank'), ['1', '2', '3', '4', '5', '6', '7', '8']);
+  assert.deepEqual(coordinateValues(board.el.innerHTML, 'file'), ['h', 'g', 'f', 'e', 'd', 'c', 'b', 'a']);
+  mounted.destroy();
 });

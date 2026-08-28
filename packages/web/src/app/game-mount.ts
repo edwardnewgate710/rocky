@@ -33,6 +33,7 @@ import {
   coachEnabled,
   puzzleGenerationEnabled,
   puzzleGenerationSupportsVariant,
+  gameReviewSupportsVariant,
 } from './capabilities-nav.js';
 import { PuzzleController } from './puzzle-controller.js';
 import { MAX_OPENING_PLIES, OpeningController } from './opening-controller.js';
@@ -87,6 +88,8 @@ import {
 } from './explain-view.js';
 import { formatClock, formatTimeControl } from './render-helpers.js';
 import type { AuthSession } from './auth-controller.js';
+import { gameReviewAnnotation } from './game-review-annotation.js';
+import { GameReviewController } from './game-review-controller.js';
 
 /**
  * The line counts the panel offers. Every one is at or below the server's published MultiPV
@@ -105,6 +108,7 @@ interface GameMountDependencies {
   readonly getAccessToken: () => string | undefined;
   readonly client: GambitClient;
   readonly token?: string;
+  readonly initialSessionId?: string;
   readonly restorePromise: Promise<AuthSession | null>;
 }
 
@@ -174,6 +178,56 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
   const drawOfferReceivedEl = doc.getElementById('draw-offer-received');
   const btnAcceptDraw = doc.getElementById('action-accept-draw');
   const btnDeclineDraw = doc.getElementById('action-decline-draw');
+
+  // Post-game review is deliberately separate from the live engine tools. It is not constructed
+  // from browser history: the server owns the finished event stream and verifies player ownership.
+  const gameReviewSectionEl = doc.getElementById('game-review');
+  const gameReviewRunBtn = doc.getElementById('game-review-run') as HTMLButtonElement | null;
+  const gameReviewNoteEl = doc.getElementById('game-review-note');
+  const gameReviewErrorEl = doc.getElementById('game-review-error');
+  const gameReviewSummaryEl = doc.getElementById('game-review-summary');
+  const gameReviewMovesEl = doc.getElementById('game-review-moves');
+  let gameReviewCapabilities: unknown = null;
+  let gameOver = false;
+  let isGamePlayer = false;
+  let gameReviewPending = false;
+  let gameReviewSessionId = deps.initialSessionId ?? null;
+  let authoritativeGameFen: string | null = null;
+  let authoritativeGameTurn = false;
+  let authoritativeGameStatus = '';
+  let authoritativeLastMove: readonly [string, string] | null = null;
+
+  /** Recompute visibility and availability from game, capability, session, and request state. */
+  const refreshGameReview = (): void => {
+    const variantSupported = gameReviewSupportsVariant(gameReviewCapabilities, currentVariant);
+    if (gameReviewSectionEl) gameReviewSectionEl.hidden = !gameOver || !isGamePlayer || !variantSupported;
+    if (gameReviewRunBtn) {
+      gameReviewRunBtn.disabled = !gameOver
+        || !isGamePlayer
+        || !variantSupported
+        || gameReviewSessionId === null
+        || gameReviewPending;
+    }
+    if (gameReviewNoteEl && !gameReviewPending && gameReviewMovesEl?.childElementCount === 0) {
+      gameReviewNoteEl.textContent = gameReviewSessionId !== null
+        ? 'Review your moves after the game.'
+        : 'Sign in to review your game.';
+    }
+  };
+
+  /** Remove all private review nodes from persistent route DOM. */
+  const clearGameReview = (): void => {
+    if (gameReviewErrorEl) {
+      gameReviewErrorEl.hidden = true;
+      gameReviewErrorEl.textContent = '';
+    }
+    if (gameReviewSummaryEl) {
+      gameReviewSummaryEl.hidden = true;
+      gameReviewSummaryEl.replaceChildren();
+    }
+    gameReviewMovesEl?.replaceChildren();
+  };
+  clearGameReview();
 
   // Engine analysis panel (M15 inc 2)
   const analysisSectionEl = doc.getElementById('analysis');
@@ -1002,6 +1056,7 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     gameSync,
     callbacks: {
       onPosition: (fen: string) => {
+        authoritativeGameFen = fen;
         board.setPosition(fen);
         analysisController.positionChanged(fen);
         if (currentVariant) puzzleController.positionChanged({ fen, variant: currentVariant });
@@ -1033,7 +1088,10 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
         refreshOpeningControls();
         coachStateChanged();
       },
-      onTurn: (myTurn: boolean) => board.setTurn(myTurn),
+      onTurn: (myTurn: boolean) => {
+        authoritativeGameTurn = myTurn;
+        board.setTurn(myTurn);
+      },
       onClock: (whiteMs: number, blackMs: number) => {
         if (whiteClockEl) whiteClockEl.textContent = formatClock(whiteMs);
         if (blackClockEl) blackClockEl.textContent = formatClock(blackMs);
@@ -1042,10 +1100,12 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
         }
       },
       onStatus: (text: string) => {
+        authoritativeGameStatus = text;
         if (statusEl) statusEl.textContent = text;
       },
       onLastMove: (from: string | null, to: string | null) => {
-        if (from && to) board.setLastMove(from, to);
+        authoritativeLastMove = from !== null && to !== null ? [from, to] : null;
+        board.setLastMove(from, to);
       },
       onColor: (color) => {
         if (color === 'b') board.setOrientation('black');
@@ -1066,6 +1126,7 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
           // Coaching has no target until the variant is known either, so it needs the same wake-up.
           // Omitting it here is what left the opening control permanently disabled in M15 inc 19.
           refreshCoachControls();
+          refreshGameReview();
         }
 
         let liveAnnouncement = '';
@@ -1152,6 +1213,9 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
         }
       },
       onActionState: (state) => {
+        isGamePlayer = state.isPlayer;
+        gameOver = state.isOver;
+        refreshGameReview();
         if (actionsPanelEl) actionsPanelEl.hidden = !state.isPlayer;
         if (!state.isPlayer) return;
 
@@ -1216,6 +1280,98 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     el.addEventListener('click', listener);
     unbinds.push(() => el.removeEventListener('click', listener));
   };
+
+  /** Remove private review output and restore the latest server-owned game presentation. */
+  const invalidateGameReviewPresentation = (): void => {
+    clearGameReview();
+    if (authoritativeGameFen === null) return;
+    board.setPosition(authoritativeGameFen);
+    board.setTurn(authoritativeGameTurn);
+    board.setLastMove(authoritativeLastMove?.[0] ?? null, authoritativeLastMove?.[1] ?? null);
+    if (statusEl) statusEl.textContent = authoritativeGameStatus;
+  };
+
+  /** Render a controller-approved review and its navigable pre-move positions. */
+  const renderGameReview = (review: Awaited<ReturnType<GambitClient['games']['review']>>): void => {
+    if (gameReviewSummaryEl) {
+      const summary = [
+        ['Brilliant', '!!', review.summary.brilliant, 'brilliant'],
+        ['Great', '!', review.summary.great, 'great'],
+        ['Best', '★', review.summary.best, 'best'],
+        ['Excellent', '✓', review.summary.excellent, 'excellent'],
+        ['Good', '✓', review.summary.good, 'good'],
+        ['Book', '📖', review.summary.book, 'book'],
+        ['Inaccuracy', '?!', review.summary.inaccuracy, 'inaccuracy'],
+        ['Mistake', '?', review.summary.mistake, 'mistake'],
+        ['Miss', '×', review.summary.miss, 'miss'],
+        ['Blunder', '??', review.summary.blunder, 'blunder'],
+        ['Missed win', '×', review.summary.missed_win, 'missed_win'],
+      ] as const;
+      gameReviewSummaryEl.replaceChildren(...summary.map(([label, symbol, count, tone]) => {
+        const stat = doc.createElement('div');
+        stat.className = `game-review-stat game-review-${tone}`;
+        const name = doc.createElement('span');
+        name.textContent = `${symbol} ${label}`;
+        const value = doc.createElement('strong');
+        value.textContent = String(count);
+        stat.replaceChildren(name, value);
+        return stat;
+      }));
+      gameReviewSummaryEl.hidden = false;
+    }
+    if (gameReviewMovesEl) {
+      gameReviewMovesEl.replaceChildren(...review.moves.map((move) => {
+        const row = doc.createElement('button');
+        row.type = 'button';
+        const annotation = gameReviewAnnotation(move.classification);
+        row.className = `panel-row game-review-move game-review-${annotation.tone}`;
+        const loss = move.assessment.centipawnLoss === null
+          ? ''
+          : ` · ${move.assessment.centipawnLoss} cp`;
+        const moveLabel = doc.createElement('span');
+        moveLabel.textContent = `${move.ply}. ${move.san}`;
+        const verdict = doc.createElement('strong');
+        verdict.textContent = `${annotation.symbol} ${annotation.label}${loss}`;
+        row.replaceChildren(moveLabel, verdict);
+        row.addEventListener('click', () => {
+          board.setPosition(move.fenBefore);
+          board.setTurn(false);
+          if (move.move.length >= 4) board.setLastMove(move.move.slice(0, 2), move.move.slice(2, 4));
+          if (statusEl) statusEl.textContent = `Reviewing ${move.san}. Best move: ${move.assessment.bestMove ?? 'not available'}.`;
+        });
+        return row;
+      }));
+    }
+    if (gameReviewNoteEl) gameReviewNoteEl.textContent = 'Select a move to see the position before it was played.';
+  };
+
+  const gameReviewController = new GameReviewController({
+    gameId,
+    sessionId: gameReviewSessionId,
+    requestReview: (requestedGameId, signal) => deps.client.games.review(requestedGameId, signal),
+    callbacks: {
+      onPhase: (phase) => {
+        gameReviewPending = phase === 'loading';
+        if (gameReviewMovesEl) gameReviewMovesEl.setAttribute('aria-busy', String(gameReviewPending));
+        if (phase === 'loading' && gameReviewNoteEl) gameReviewNoteEl.textContent = 'Reviewing your moves…';
+        refreshGameReview();
+      },
+      onResult: renderGameReview,
+      onFailure: () => {
+        if (gameReviewErrorEl) {
+          gameReviewErrorEl.hidden = false;
+          gameReviewErrorEl.textContent = 'The review is not available right now. Please try again.';
+        }
+      },
+      onInvalidated: invalidateGameReviewPresentation,
+    },
+  });
+
+  bindClick(gameReviewRunBtn, () => {
+    if (!gameOver || !gameReviewSupportsVariant(gameReviewCapabilities, currentVariant)) return;
+    invalidateGameReviewPresentation();
+    void gameReviewController.review();
+  });
 
   // Route-scoped, like every other control here. A bare `addEventListener` on this element stacked a
   // new listener — each holding a disposed controller — on every SPA navigation to a game, because
@@ -1319,6 +1475,8 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
       // is inside that early return (ADR-0127).
       openingAvailable = openingExplorerEnabled(flags);
       coachAvailable = coachEnabled(flags);
+      gameReviewCapabilities = flags;
+      refreshGameReview();
       refreshCoachControls();
       refreshOpeningControls();
       if (!analysisEnabled(flags)) return;
@@ -1384,6 +1542,7 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
       puzzleController.dispose();
       openingController.dispose();
       coachController.dispose();
+      gameReviewController.dispose();
     },
   };
 
@@ -1418,8 +1577,10 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     controller,
     connectivity,
     analysis,
-    onSessionChange: () => {
+    onSessionChange: (session) => {
       if (analysisDisposed) return;
+      gameReviewSessionId = session?.userId ?? null;
+      gameReviewController.sessionChanged(gameReviewSessionId);
       refreshAnalysisControls();
       // Every control depends on live authentication; refreshing only one left Explain disabled under
       // a stale sign-in note after signing in, and enabled after signing out, until some unrelated

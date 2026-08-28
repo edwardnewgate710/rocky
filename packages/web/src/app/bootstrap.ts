@@ -371,6 +371,7 @@ export function bootstrap(
       getAccessToken: () => app.api.session.current?.tokens.accessToken,
       client: app.api,
       ...(token !== undefined ? { token } : {}),
+      ...(auth.currentSession !== null ? { initialSessionId: auth.currentSession.userId } : {}),
       restorePromise,
     });
     gameSessionHandler = mountedGame.onSessionChange;

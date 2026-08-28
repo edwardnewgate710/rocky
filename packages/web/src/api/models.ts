@@ -272,6 +272,8 @@ export interface SystemCapabilities {
    * has only one of them — do not infer it from `analysis` or from `coach`.
    */
   readonly tournamentCommentary?: boolean;
+  /** Completed-game review for a participating player. */
+  readonly gameReview?: boolean;
 }
 
 export interface CapabilitiesResponse {
@@ -283,6 +285,8 @@ export interface CapabilitiesResponse {
   readonly analysisVariants?: readonly string[];
   /** Variants served by fixed-policy puzzle generation; absent on older servers. */
   readonly puzzleVariants?: readonly string[];
+  /** Variants served by fixed-policy completed-game review. */
+  readonly gameReviewVariants?: readonly string[];
   readonly capabilities: SystemCapabilities;
 }
 
@@ -1221,6 +1225,29 @@ export interface CoachResponse {
   readonly puzzle: CoachSection<CoachPuzzle>;
   readonly endgame: CoachSection<EndgamePosition>;
   readonly featuresFired: readonly string[];
+}
+
+export type GameReviewClassification =
+  | 'brilliant' | 'great' | 'best' | 'excellent' | 'good' | 'book'
+  | 'inaccuracy' | 'mistake' | 'miss' | 'blunder' | 'missed_win';
+
+export interface GameReviewMove {
+  readonly ply: number;
+  readonly san: string;
+  readonly move: string;
+  readonly fenBefore: string;
+  readonly assessment: MistakePredictionResponse;
+  readonly classification: GameReviewClassification;
+}
+
+export interface GameReviewResponse {
+  readonly gameId: string;
+  readonly variant: string;
+  readonly playerColor: 'white' | 'black';
+  readonly result: '1-0' | '0-1' | '1/2-1/2';
+  readonly termination: string;
+  readonly moves: readonly GameReviewMove[];
+  readonly summary: Readonly<Record<GameReviewClassification, number>>;
 }
 
 // --- Study Partner v1 -------------------------------------------------------

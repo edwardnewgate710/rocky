@@ -78,6 +78,7 @@ export interface Harness {
   readonly puzzleGeneration?: import('../src/analysis/puzzle-generation-service').PuzzleGenerationService;
   readonly openingExploration?: import('../src/openings/opening-exploration-service').OpeningExplorationService;
   readonly endgameTraining?: import('../src/endgames/endgame-training-service').EndgameTrainingService;
+  readonly gameReview?: import('../src/game-review/service').GameReviewService;
   readonly clock: ManualClock;
   readonly tokens: AccessTokenService;
   readonly emailSender: InMemoryEmailSender;
@@ -150,6 +151,8 @@ export interface HarnessOptions {
   readonly withoutCoach?: boolean;
   /** Inject an optional endgame training service. */
   readonly endgameTraining?: import('../src/endgames/endgame-training-service').EndgameTrainingService;
+  /** Inject completed-game review as a whole, so tests control its durable source and assessments. */
+  readonly gameReview?: import('../src/game-review/service').GameReviewService;
   /**
    * Inject tournament commentary (ADR-0130).
    *
@@ -304,6 +307,7 @@ export async function startHarness(
     ...(harnessOptions.puzzleGeneration ? { puzzleGeneration: harnessOptions.puzzleGeneration } : {}),
     ...(openingExploration ? { openingExploration } : {}),
     ...(endgameTraining ? { endgameTraining } : {}),
+    ...(harnessOptions.gameReview ? { gameReview: harnessOptions.gameReview } : {}),
     ...(coach ? { coach } : {}),
     ...(studyPartner ? { studyPartner } : {}),
     ...(harnessOptions.tournamentCommentary
@@ -342,6 +346,7 @@ export async function startHarness(
     puzzleGeneration: harnessOptions.puzzleGeneration,
     openingExploration,
     endgameTraining,
+    gameReview: harnessOptions.gameReview,
     clock,
     tokens,
     emailSender,

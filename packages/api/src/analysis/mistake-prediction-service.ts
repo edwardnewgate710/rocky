@@ -17,6 +17,7 @@ import type { Variant } from '@chess-platform/core';
 import type { MistakePredictor, MistakeClassification } from '@chess-platform/ai-features';
 import { HttpError } from '../http/errors.js';
 import type { AnalysisPort } from './service.js';
+import type { EngineResult } from '@chess-platform/engine';
 import { coreFenValidator } from './fen-validator.js';
 import { isUciShape } from './uci.js';
 import type { TerminalReason } from './terminal.js';
@@ -26,6 +27,15 @@ export interface MistakePredictionInput {
   readonly fen: string;
   readonly variant: Variant;
   readonly move: string;
+  /**
+   * Server-computed pre-move lines a higher-level fixed-policy feature already obtained.
+   *
+   * This is deliberately absent from the HTTP body. It lets completed-game review reuse its
+   * MultiPV evidence instead of paying for the same pre-move engine search twice.
+   * The caller must supply lines computed from exactly `fen` under exactly `variant`; this service
+   * deliberately trusts that server-internal ownership rather than trying to re-identify the lines.
+   */
+  readonly analysisBefore?: readonly EngineResult[];
 }
 
 /**
@@ -201,13 +211,16 @@ export class MistakePredictionService {
     // that accepted the move — not inferred from what an engine says about it.
     const moveTerminal = fromStatus(afterMove.status());
 
-    // The pre-move search always runs: it is what the engine would have played instead, and the gap
-    // between that and what the move achieved is the whole verdict. The post-move search runs only
-    // when there is something left to evaluate — so an accepted move costs two searches normally and
-    // one when it ends the game. Both go through `AnalysisService`, so the server's limits policy,
-    // FEN validation, deterministic timeout and the one dedicated pool of ADR-0113 apply to each.
+    // Unless the trusted caller supplied pre-move lines, that search establishes what the engine
+    // would have played instead; its gap from the move's outcome is the whole verdict. The post-move
+    // search runs only when there is something left to evaluate. Searches executed here go through
+    // `AnalysisService`, so its limits policy, FEN validation, deterministic timeout and the one
+    // dedicated pool of ADR-0113 apply. A caller supplying `analysisBefore` owns those guarantees for
+    // the reused evidence.
     const [before, afterAnalysis] = await Promise.all([
-      this.analysis.analyze({ fen: input.fen, variant: input.variant, multiPv: 1 }),
+      input.analysisBefore === undefined
+        ? this.analysis.analyze({ fen: input.fen, variant: input.variant, multiPv: 1 })
+        : Promise.resolve({ lines: input.analysisBefore }),
       moveTerminal
         ? Promise.resolve(undefined)
         : this.analysis.analyze({ fen: afterMove.fen(), variant: input.variant, multiPv: 1 }),

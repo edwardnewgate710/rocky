@@ -210,6 +210,22 @@ export function mistakePredictionEnabled(payload: unknown): boolean {
   return capabilityFlags(payload)?.['mistakePrediction'] === true;
 }
 
+/** Whether this deployment can review a participant's completed game. */
+export function gameReviewEnabled(payload: unknown): boolean {
+  return capabilityFlags(payload)?.['gameReview'] === true;
+}
+
+/**
+ * Feature-specific Game Review gate. Its MultiPV-2 policy can be narrower than ordinary analysis,
+ * so neither the deployment-wide flag nor `analysisVariants` is an honest substitute.
+ */
+export function gameReviewSupportsVariant(payload: unknown, variant: string | null): boolean {
+  if (!gameReviewEnabled(payload) || variant === null) return false;
+  const variants = (payload as { gameReviewVariants?: unknown } | null)?.gameReviewVariants;
+  if (!Array.isArray(variants) || variants.some((entry) => typeof entry !== 'string')) return false;
+  return variants.includes(variant);
+}
+
 /**
  * Whether this deployment can assess a move in a specific variant.
  *

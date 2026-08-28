@@ -4,7 +4,93 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-28 — M15 Increment 32: durable engine analysis cache._
+_Last updated: 2026-08-28 — M15 Increment 40: Game Review presentation invalidation and review-gate closure (ADR-0136)._
+
+## M15 Increment 40 — Game Review presentation invalidation and review-gate closure (ADR-0136)
+
+Authentication invalidation now restores the latest server-owned board position, turn state,
+last-move highlight, and game status after erasing Game Review DOM. A selected private pre-move
+position and best-move text therefore cannot survive sign-out or account replacement. Review
+classification colors now use theme-aware semantic tokens whose compact text is deterministically
+checked at WCAG AA contrast in both themes.
+
+Regressions also cover request rejection and aborted-rejection silence, typed API fixtures, reuse of
+the review's MultiPV evidence, and the OpenAPI response contract. Touched Game Review functions now
+carry concise ownership and contract documentation, closing CodeRabbit's docstring pre-merge gate
+without changing unrelated Study Partner code.
+
+## M15 Increment 39 — Game Review evidence identity and recovery parity (ADR-0136)
+
+Game Review now rejects an archive record whose identity differs from the requested game before
+participant checks, quota admission, or engine work, and selects the runner-up engine line by
+`multipv === 2` instead of response order. Deterministic regressions cover reordered and absent
+runner-up lines, mismatched archive identity, live authoritative archives, live-to-ended control
+gating, spectator exclusion, shared-DOM remount clearing, exact White/Black coordinate sequences,
+and coordinate preservation while navigating a reviewed position. Summary totals and rendered
+labels are checked against the moves and server response they describe. The existing live position
+analysis contract remains separate; only authoritative completed-game review is restored here.
+
+## M15 Increment 38 — Game Review deadline runtime parity (ADR-0136)
+
+The server-owned review deadline keeps its timer referenced until engine work completes or the bound
+fires, then clears it in `finally`. This preserves the deadline when it is the last live operation and
+fixes the Node 22/CI cancellation where an unreferenced timer allowed the event loop to resolve before
+the deadline regression's promise settled.
+
+## M15 Increment 37 — Game Review pre-admission cancellation (ADR-0136)
+
+Game Review now checks client cancellation before durable archive I/O and again immediately before
+quota admission. A sign-out or disconnect that wins while archive lookup is pending therefore spends
+no review quota and starts no engine work. The capability-list regression now also requests a listed
+variant from a malformed mixed-type list, proving the Web predicate fails closed for that exact case.
+
+## M15 Increment 36 — Game Review bounded replay and execution (ADR-0136)
+
+Durable review assembly now captures pre-move FENs with one forward `Position` replay after the
+authoritative aggregate validation, replacing the quadratic reconstruction of every event prefix.
+Accepted reviews also combine client cancellation with a server-owned 120-second total engine-work
+deadline; the existing route histogram records the complete request duration without a duplicate
+feature metric.
+
+Deterministic archive and deadline regressions pin both bounds. Game Review fixtures now use legal,
+move-accurate positions, and classification evidence overrides use the production input type. This
+closes the valid and partially-valid findings from CodeRabbit's first full base-to-head review.
+
+## M15 Increment 35 — Game Review capability truthfulness (ADR-0136)
+
+Game Review now composes only when at least one routed engine can honor its exact MultiPV-2 evidence
+policy. The public capabilities document publishes `gameReviewVariants` from that same service-level
+predicate, and the web offers the post-game control only when the current game's variant is in the
+feature-specific list. Unsupported variants are rejected before quota admission as a request-time
+backstop.
+
+API composition, capability parity, service, OpenAPI, Web predicate, and mounted-route regressions
+pin the contract. This closes the valid Qodo finding that a restricted engine deployment could
+advertise a review it could not execute, or silently clamp away the second line required for richer
+classification.
+
+## M15 Increment 34 — Game Review privacy and stale-request hardening (ADR-0136)
+
+Completed-game review now has explicit request ownership at the route state boundary. Every request
+captures the immutable game ID, authenticated user ID, a generation, and its abort-controller
+identity; the response game ID and all captured ownership facts are checked again immediately before
+rendering. Sign-out, account replacement, and route disposal synchronously invalidate the generation,
+abort work, and remove the private summary, moves, and errors from the persistent page DOM.
+
+Deterministic controller, mounted-DOM, and API transport regressions cover rapid game switching,
+sign-out during an in-flight review, sign-out after a completed review, request A completing after
+request B, response identity mismatch, and AbortSignal propagation. The recovered server-authoritative
+review contract is unchanged, and Study Partner remains untouched.
+
+## M15 Increment 33 — Completed-game review recovery (ADR-0136)
+
+The completed-game review work removed from Study Partner PR #1 is restored independently from the
+preserved `8a57548`, `2286a09`, and `5410b1e` commits. Authenticated participants can request a
+server-authoritative review of a finished game; the API reconstructs the durable event stream,
+bounds analysis work, enforces ownership and rate limits, and advertises the capability through
+OpenAPI. The web route restores the capability-gated review, board coordinates and review marks,
+and the richer server-owned move classifications. The unrelated sign-in presentation commit remains
+excluded, and the merged Study Partner implementation is unchanged.
 
 ## M15 Increment 32 — Durable engine analysis cache, Phase A (ADR-0135)
 

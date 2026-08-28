@@ -91,6 +91,7 @@ import {
   moveExplanationView,
   openingExplorationView,
   mistakePredictionView,
+  gameReviewView,
   puzzleGenerationView,
   endgameNextView,
   endgameAttemptView,
@@ -202,6 +203,8 @@ export interface RouteDeps {
    * subsystem and the AI subsystem are both configured.
    */
   readonly tournamentCommentary: import('./commentary/tournament-commentary-service').TournamentCommentaryService | undefined;
+  /** Optional completed-game review. Never operates on a live board. */
+  readonly gameReview: import('./game-review/service').GameReviewService | undefined;
 }
 
 /** Narrows without a cast, so the request array reaches the service as the type it was checked to be. */
@@ -1450,6 +1453,38 @@ export function buildRouter(deps: RouteDeps): Router {
       const game = await repos.games.findById(ctx.params['id']!);
       if (!game) throw HttpError.notFound('game not found');
       return json(200, gameSummaryView(game));
+    },
+  );
+
+  router.post(
+    '/v1/games/:id/review',
+    doc({
+      summary: 'Review a player\'s completed game with fixed-policy engine assessments',
+      tags: ['games', 'analysis'],
+      security: 'bearer',
+      params: [pathParam('id', 'Game id')],
+      responses: {
+        200: ['GameReviewResponse', 'The authenticated player\'s completed-game review'],
+        401: ['Error', 'Authentication required'],
+        404: ['Error', 'No completed game belonging to the player'],
+        422: ['Error', 'The request carried a body, or the game uses an unsupported variant, has no moves, or exceeds the instant-review limit'],
+        429: ['Error', 'Rate limit exceeded'],
+        503: ['Error', 'Game review is not configured, cancelled, or the engine is unavailable'],
+      },
+    }),
+    AUTHED,
+    async (ctx) => {
+      const identity = requireAuth(ctx);
+      const service = deps.gameReview;
+      if (!service) throw HttpError.unavailable('game review is not configured');
+      noBody(ctx);
+      const gameId = parseUuid(ctx.params['id']!, 'id');
+      const charge = (): Promise<void> => admit([
+        { key: `game-review:user:${identity.userId}`, limit: config.rateLimit.gameReview.perUser },
+        { key: `game-review:ip:${ctx.ip ?? 'unknown'}`, limit: config.rateLimit.gameReview.perIp },
+      ]);
+      const outcome = await service.review({ gameId, userId: identity.userId, signal: ctx.signal }, charge);
+      return json(200, gameReviewView(outcome));
     },
   );
 

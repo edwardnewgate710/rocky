@@ -59,8 +59,8 @@ export interface MountedBoard {
   readonly view: BoardView;
   /** Update the displayed position (FEN). Delegates to `BoardView.setPosition`. */
   setPosition: (fen: string) => void;
-  /** Highlight the last move. Delegates to `BoardView.setLastMove`. */
-  setLastMove: (from: string, to: string) => void;
+  /** Replace or clear the last-move highlight. Delegates to `BoardView.setLastMove`. */
+  setLastMove: (from: string | null, to: string | null) => void;
   /** Update whose turn it is (affects legal highlights + premoves). */
   setTurn: (myTurn: boolean) => void;
   /** Set the board orientation ('white' or 'black' perspective). */
@@ -166,7 +166,7 @@ export function mountBoard(
   return {
     view,
     setPosition: (f: string) => view.setPosition(f),
-    setLastMove: (from: string, to: string) => view.setLastMove(from, to),
+    setLastMove: (from: string | null, to: string | null) => view.setLastMove(from, to),
     setTurn: (myTurn: boolean) => view.setTurn(myTurn),
     setOrientation: (orientation: 'white' | 'black') => {
       if (view.orientationColor !== orientation) view.flip();

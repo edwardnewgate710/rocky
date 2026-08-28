@@ -92,11 +92,11 @@ const theClassifiedSetIsNotEmpty: IsAssignable<
  * The mapped type is the point: a dependency added to the presenter's parameter has no entry here
  * and this stops compiling, so it cannot reach the test below unexamined.
  *
- * The presenter reads all but two of these for presence alone, so those are supplied as bare
+ * The presenter reads all but three of these for presence alone, so those are supplied as bare
  * objects. That is not a mock standing in for behaviour — there is no behaviour to stand in for, and
  * it fails loudly rather than silently if that ever changes: the day `capabilitiesView` calls a
- * method on one, this throws a `TypeError` naming it. `analysis` and `puzzleGeneration` do have a
- * method read — `supportsVariant` — so they carry one.
+ * method on one, this throws a `TypeError` naming it. `analysis`, `puzzleGeneration`, and
+ * `gameReview` do have a method read — `supportsVariant` — so they carry one.
  */
 type SourceValues = {
   [K in CapabilitySourceKey]-?: NonNullable<Parameters<typeof capabilitiesView>[0][K]>;
@@ -124,6 +124,7 @@ function sourceValues(): SourceValues {
     coach: present(),
     studyPartner: present(),
     tournamentCommentary: present(),
+    gameReview: variantAware(),
   };
 }
 

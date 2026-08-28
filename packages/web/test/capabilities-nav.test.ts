@@ -11,6 +11,8 @@ import {
   applySearchCapability,
   searchEnabled,
   semanticSearchEnabled,
+  gameReviewEnabled,
+  gameReviewSupportsVariant,
 } from '../src/app/capabilities-nav.js';
 
 class FakeElement {
@@ -183,6 +185,38 @@ test('analysisEnabled requires an explicit true', () => {
       false,
       `${JSON.stringify(payload)} is not an explicit true and must not enable the panel`,
     );
+  }
+});
+
+test('gameReviewEnabled requires an explicit true', () => {
+  assert.equal(gameReviewEnabled({ capabilities: { gameReview: true } }), true);
+  for (const payload of [
+    { capabilities: { gameReview: false } },
+    { capabilities: { gameReview: 'true' } },
+    { capabilities: {} },
+    {},
+    null,
+  ]) {
+    assert.equal(gameReviewEnabled(payload), false);
+  }
+});
+
+test('gameReviewSupportsVariant requires the feature-specific advertised variant', () => {
+  assert.equal(gameReviewSupportsVariant({
+    capabilities: { gameReview: true },
+    gameReviewVariants: ['standard'],
+  }, 'standard'), true);
+  assert.equal(gameReviewSupportsVariant({
+    capabilities: { gameReview: true },
+    gameReviewVariants: ['standard', 1],
+  }, 'standard'), false);
+  for (const payload of [
+    { capabilities: { gameReview: true }, gameReviewVariants: ['standard'] },
+    { capabilities: { gameReview: true }, gameReviewVariants: [] },
+    { capabilities: { gameReview: true } },
+    { capabilities: { gameReview: true }, gameReviewVariants: ['standard', 1] },
+  ]) {
+    assert.equal(gameReviewSupportsVariant(payload, 'atomic'), false);
   }
 });
 

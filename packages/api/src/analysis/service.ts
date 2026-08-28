@@ -103,9 +103,9 @@ export interface AnalysisServiceOptions {
 /**
  * What a feature service needs from analysis, as an interface rather than the concrete class.
  *
- * Every one of the five feature services (mistake prediction, move explanation, puzzle generation,
- * endgame training, and the Coach orchestrator that composes them) reaches the engine only through
- * these four methods. Naming them is what lets `RequestScopedAnalysis` — which de-duplicates
+ * The feature services (mistake prediction, move explanation, puzzle generation, endgame training,
+ * Game Review, and the Coach orchestrator that composes them) reach the engine only through these
+ * four methods. Naming them is what lets `RequestScopedAnalysis` — which de-duplicates
  * identical searches and threads a cancellation signal through them — be passed to a service that
  * previously named `AnalysisService` directly. `AnalysisService` implements this as written; the
  * change is types only, and no runtime behaviour moves.
