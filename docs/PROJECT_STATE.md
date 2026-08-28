@@ -4,9 +4,9 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-28 — M15 Increment 38: Game Review evidence identity and recovery parity (ADR-0135)._
+_Last updated: 2026-08-28 — M15 Increment 39: Game Review evidence identity and recovery parity (ADR-0136)._
 
-## M15 Increment 38 — Game Review evidence identity and recovery parity (ADR-0135)
+## M15 Increment 39 — Game Review evidence identity and recovery parity (ADR-0136)
 
 Game Review now rejects an archive record whose identity differs from the requested game before
 participant checks, quota admission, or engine work, and selects the runner-up engine line by
@@ -17,21 +17,21 @@ and coordinate preservation while navigating a reviewed position. Summary totals
 labels are checked against the moves and server response they describe. The existing live position
 analysis contract remains separate; only authoritative completed-game review is restored here.
 
-## M15 Increment 37 — Game Review deadline runtime parity (ADR-0135)
+## M15 Increment 38 — Game Review deadline runtime parity (ADR-0136)
 
 The server-owned review deadline keeps its timer referenced until engine work completes or the bound
 fires, then clears it in `finally`. This preserves the deadline when it is the last live operation and
 fixes the Node 22/CI cancellation where an unreferenced timer allowed the event loop to resolve before
 the deadline regression's promise settled.
 
-## M15 Increment 36 — Game Review pre-admission cancellation (ADR-0135)
+## M15 Increment 37 — Game Review pre-admission cancellation (ADR-0136)
 
 Game Review now checks client cancellation before durable archive I/O and again immediately before
 quota admission. A sign-out or disconnect that wins while archive lookup is pending therefore spends
 no review quota and starts no engine work. The capability-list regression now also requests a listed
 variant from a malformed mixed-type list, proving the Web predicate fails closed for that exact case.
 
-## M15 Increment 35 — Game Review bounded replay and execution (ADR-0135)
+## M15 Increment 36 — Game Review bounded replay and execution (ADR-0136)
 
 Durable review assembly now captures pre-move FENs with one forward `Position` replay after the
 authoritative aggregate validation, replacing the quadratic reconstruction of every event prefix.
@@ -43,7 +43,7 @@ Deterministic archive and deadline regressions pin both bounds. Game Review fixt
 move-accurate positions, and classification evidence overrides use the production input type. This
 closes the valid and partially valid findings from CodeRabbit's first full base-to-head review.
 
-## M15 Increment 34 — Game Review capability truthfulness (ADR-0135)
+## M15 Increment 35 — Game Review capability truthfulness (ADR-0136)
 
 Game Review now composes only when at least one routed engine can honor its exact MultiPV-2 evidence
 policy. The public capabilities document publishes `gameReviewVariants` from that same service-level
@@ -56,7 +56,7 @@ pin the contract. This closes the valid Qodo finding that a restricted engine de
 advertise a review it could not execute, or silently clamp away the second line required for richer
 classification.
 
-## M15 Increment 33 — Game Review privacy and stale-request hardening (ADR-0135)
+## M15 Increment 34 — Game Review privacy and stale-request hardening (ADR-0136)
 
 Completed-game review now has explicit request ownership at the route state boundary. Every request
 captures the immutable game ID, authenticated user ID, a generation, and its abort-controller
@@ -69,7 +69,7 @@ sign-out during an in-flight review, sign-out after a completed review, request 
 request B, response identity mismatch, and AbortSignal propagation. The recovered server-authoritative
 review contract is unchanged, and Study Partner remains untouched.
 
-## M15 Increment 32 — Completed-game review recovery
+## M15 Increment 33 — Completed-game review recovery
 
 The completed-game review work removed from Study Partner PR #1 is restored independently from the
 preserved `8a57548`, `2286a09`, and `5410b1e` commits. Authenticated participants can request a
@@ -78,6 +78,54 @@ bounds analysis work, enforces ownership and rate limits, and advertises the cap
 OpenAPI. The web route restores the capability-gated review, board coordinates and review marks,
 and the richer server-owned move classifications. The unrelated sign-in presentation commit remains
 excluded, and the merged Study Partner implementation is unchanged.
+
+## M15 Increment 32 — Durable engine analysis cache, Phase A (ADR-0135)
+
+- **What it is**: the durable backend ADR-0002 Decision 4 deferred. That ADR predicted the decision
+  would be `ADR-0003`; the number was taken by the legal-moves contract before it was written, so
+  this is ADR-0135. Infrastructure only — **nothing composes it**, and the default stays the
+  in-process LRU.
+- **Why durable at all**: the LRU is process-scoped. Every worker starts cold, an entry dies with the
+  process that made it, and nothing is shared between replicas, so the expensive deep searches the
+  cache exists to avoid are repeated per process and per deploy.
+- **Identity** (`packages/persistence/migrations/0026_engine_analysis_cache.sql`): keyed on
+  (fingerprint, variant, multi_pv, fen) as separate columns rather than the concatenated
+  `cacheKeyString`, so no delimiter inside a component can collide two identities. FEN is stored
+  verbatim: the platform defines no canonical FEN normalization for cache identity, and inventing one
+  here would change what the port means. Two spellings of a position therefore cache separately —
+  a miss, never a wrong answer.
+- **Satisfaction**: the read predicate is `limitsSatisfy(stored, requested)` expressed in SQL. The
+  achieved limits live in comparable columns outside the JSON payload because they are the only basis
+  on which a later request may be answered. NULL means no stated bound was reached, and `IS NOT NULL`
+  is what makes an absent measurement fail closed instead of reading as an adequate one.
+- **Replacement**: an entry may only be replaced by one that could serve every request the entry
+  could serve — the read predicate with its arguments swapped — evaluated inside
+  `ON CONFLICT DO UPDATE ... WHERE`, under the row lock. A depth-10 search finishing after a depth-20
+  one cannot destroy it, and two concurrent writers cannot both conclude they are stronger. Doing this
+  as read-then-write in TypeScript would lose exactly that race. Merging successive writes' limits was
+  rejected as untruthful: it would claim a search that never ran, the defect `achievedLimits` exists
+  to prevent.
+- **Failure semantics**: `EngineManager.analyze` calls the port unguarded, so a throw would turn a
+  database blip into a failed analysis. Every fault is absorbed and reported through an injected
+  `onError`, with `payload` kept distinct from `read` because corruption and an unreachable database
+  are different alerts. The one thing never absorbed is a wrong answer.
+- **Tests**: 51 hermetic (payload contract, achieved limit projection, analysis line collection,
+  MultiPV width, adapter failure semantics) and 7 Postgres suites (satisfaction, identity
+  isolation, round trip, replacement, concurrency, schema constraints, corrupt row). 25/25
+  mutations caught. The pass found two of its own gaps: an assertion that only exercised the
+  `depth` parameter, so a `?? 0` in the nodes or time mapping would have gone unnoticed, and a
+  concurrency test that skipped its own assertions whenever a read missed.
+- **No Postgres or Docker was reachable locally**, so the integration suites have only ever run in
+  CI's postgres-integration job. An adversarial review pass caught what that cost: a setup INSERT
+  using `payload_version = 0` against a `CHECK (payload_version >= 1)`, which would have errored on
+  the first real server.
+- **Recorded gaps for Phase B wiring**: `computeFingerprint` hashes option *names*, not their values,
+  so two workers differing only in `EvalFile` or `SyzygyPath` share a fingerprint — an isolation the
+  process-scoped LRU provided by accident and a shared table removes; the table has no retention
+  policy; and the pool needs a `statement_timeout`, because failing open protects the caller from an
+  error but not from a hang.
+- Detailed in `docs/adr/0135-durable-analysis-cache.md`, with the schema addendum in
+  `docs/DATABASE.md` §4.21.
 
 ## M15 Increment 31 — Durable refusal confirmation (ADR-0134)
 

@@ -1,4 +1,4 @@
-# ADR-0135 — Game Review request ownership and privacy invalidation
+# ADR-0136 — Game Review request ownership and privacy invalidation
 
 | Field      | Value                                      |
 |------------|--------------------------------------------|
