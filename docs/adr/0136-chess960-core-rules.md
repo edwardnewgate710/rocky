@@ -181,8 +181,8 @@ exactly the sort of overclaim ADR-0079 warns about.
 
 ### 6. The suite was checked by breaking the code on purpose
 
-A passing suite proves the tests run, not that they would notice. **45 deliberate defects were
-injected one at a time, and all 45 were caught** — bishops onto same-coloured squares, the knight
+A passing suite proves the tests run, not that they would notice. **47 deliberate defects were
+injected one at a time, and all 47 were caught** — bishops onto same-coloured squares, the knight
 table shifted, castling destinations moved a file, the outermost-rook rule inverted on each side
 independently, the king's transit path shortened, the rook's origin left occupied, each castling
 right kept alive past the event that should end it, the king-takes-rook spelling applied to standard
@@ -190,8 +190,9 @@ chess. The harness proves each mutation actually landed before trusting the resu
 here are CRLF while anchors are written with `\n`, and a substitution that silently fails to apply
 reports a cheerful false "caught".
 
-The set grew as the code did: 39 for the rules themselves, then more for the variant gates in §7 and
-for the move-matching tie-break in §4, both of which were added during review of PR #10. **The
+The set grew as the code did: 39 for the rules themselves, then more for the variant gates in §7, the
+move-matching rules in §4, and the Horde and Racing Kings guards in §8 — all added during review of
+PR #10. **The
 denominator counts injected mutations only.** The equivalent mutant described at the end of this
 section is not among them — it was identified as equivalent and removed from the set rather than
 injected and excused, so it neither inflates the numerator nor shrinks the denominator.
@@ -236,18 +237,39 @@ That is worth recording rather than quietly fixing, because the regression was i
 obvious tests: every published standard perft position has its king on e1, so the whole standard
 suite stayed green while non-e-file castling was legal.
 
-### A pre-existing defect this deliberately does not fix
+### 8. Horde: Black is an ordinary army, and now castles
 
-`generateCastles` returns early for `horde`, which also suppresses castling for **Black** — an
-ordinary army with a king that starts with `kq` rights. Raised in the CodeRabbit review of PR #10 and
-confirmed real; also confirmed pre-existing, since `main` generates no Horde castles either.
+`generateCastles` returned early for the whole `horde` variant, which suppressed castling for
+**Black** as well — an ordinary army with a king, which `HORDE_FEN` starts with `kq` rights. The
+engine was handing out rights it then refused to honour. Raised in the CodeRabbit review of PR #10,
+and confirmed pre-existing rather than caused here: `main` generates no Horde castles either.
 
-Left alone on purpose. This increment is Chess960, and Horde is one of the variants whose behaviour
-it undertook not to change. Fixing it means changing Horde move generation, which wants its own
-increment and its own published perft evidence — the existing Horde vectors cannot confirm it, since
-Black's back rank is full in all three and no castle is available at any depth they cover. The
-misleading comment that claimed "the Horde army has no king" has been corrected in place to say what
-is actually true and why the return stays.
+This was initially deferred as out of scope, on the grounds that Horde is a variant this increment
+undertook not to change and that no published vector could evidence a fix. The first is true and the
+second is the interesting part — but neither survives contact with what the defect actually is. The
+guard is not a rule about Horde; it is a rule about *kings*, applied to a variant where only one side
+has one. Leaving it meant leaving the code asserting something false about the position it ships.
+
+**The evidence is the rule, and a relationship — not a node count.** No published Horde perft vector
+can settle it: all three start with Black's back rank full, so no castle is reachable at any depth
+they cover. What settles it instead:
+
+- Lichess states the Horde rule as "a move is legal if and only if it is legal in standard chess for
+  a similar position", with an exception only for The Pawns. Castling is not among the exceptions.
+- `HORDE_FEN` in this repository, and the identical starting FEN in python-chess's `HordeBoard`,
+  both grant `kq` and apply no castling override to Black.
+- Horde changes White's pawns and the win conditions, and nothing about how Black moves. So for any
+  board with Black to move, **Black's legal moves under `horde` must be exactly those under
+  `standard`** — a relationship no fixed output can satisfy, and the form the other variant tests in
+  `packages/chess-core/test/perft.test.ts` already take.
+
+Excluding White was also unnecessary as well as insufficient: White has no king, and `generateCastles`
+is only ever reached from the king branch of `generatePseudoLegal`. The guard now names Racing Kings
+alone, which is the variant that genuinely forbids castling.
+
+All three published Horde perft vectors are unchanged by this, which is the regression check: their
+counts depend on Black's back rank being full, so a change that altered them would mean the fix had
+reached further than castling.
 
 ## Consequences
 

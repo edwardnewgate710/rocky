@@ -337,12 +337,13 @@ function generateCastles(state: PositionState, from: number, piece: Piece, moves
   const us = colorOf(piece);
   // Racing Kings has no castling at all.
   //
-  // Horde returns here too, which also suppresses castling for *Black*, who is an ordinary army
-  // with a king and starts with `kq`. That is a pre-existing defect, not a consequence of this
-  // change — `main` generates no Horde castles either — and it is left alone deliberately: this
-  // increment is Chess960, and altering Horde's move generation is out of its scope. Raised in the
-  // CodeRabbit review of PR #10; see ADR-0136.
-  if (state.variant === 'racingkings' || state.variant === 'horde') return;
+  // Horde is deliberately *not* excluded here, though it used to be. Only White is a horde of
+  // pawns; Black is an ordinary army with a king, and `HORDE_FEN` grants it `kq` — so the engine
+  // was handing Black rights it then refused to honour. Excluding White is unnecessary as well as
+  // insufficient: White has no king, so this function is only ever reached for Black anyway, being
+  // called from the king branch of `generatePseudoLegal`. Raised in the CodeRabbit review of PR #10;
+  // see ADR-0136.
+  if (state.variant === 'racingkings') return;
 
   const backRank = backRankOf(us);
   if (rankOf(from) !== backRank) return;
