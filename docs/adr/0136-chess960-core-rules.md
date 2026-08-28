@@ -130,7 +130,14 @@ variant. The castle stays reachable as `f1h1`.
 on `from`/`to`/promotion/drop alone. In Chess960 that is not enough: a king on b1 whose queenside
 castle lands it on c1 can *also* simply step to c1, so asking to castle silently played the king one
 square and left the rook behind — a legal-looking position that was not the one requested. Found by
-the exhaustive castling test, not by review. `castleRook` is now part of the comparison.
+the exhaustive castling test, not by review.
+
+The tie is now broken on whatever the caller supplied, most specific first: `castleRook` when given,
+otherwise a castling flag, otherwise the first match as before. Requiring `castleRook` unconditionally
+was the first attempt and silently narrowed the public API — `play({ from: e1, to: g1, piece: 'K',
+flags: KingCastle })` is an ordinary way to express standard castling and began throwing. Raised in
+the CodeRabbit review of PR #10. A fix for one variant is not allowed to cost the others their
+existing contract, which is the same principle as §7.
 
 ### 5. Perft, from published values only
 
@@ -157,8 +164,8 @@ exactly the sort of overclaim ADR-0079 warns about.
 
 ### 6. The suite was checked by breaking the code on purpose
 
-A passing suite proves the tests run, not that they would notice. **43 deliberate defects were
-injected one at a time, and all 43 were caught** — bishops onto same-coloured squares, the knight
+A passing suite proves the tests run, not that they would notice. **44 deliberate defects were
+injected one at a time, and all 44 were caught** — bishops onto same-coloured squares, the knight
 table shifted, castling destinations moved a file, the outermost-rook rule inverted on each side
 independently, the king's transit path shortened, the rook's origin left occupied, each castling
 right kept alive past the event that should end it, the king-takes-rook spelling applied to standard
@@ -166,11 +173,16 @@ chess. The harness proves each mutation actually landed before trusting the resu
 here are CRLF while anchors are written with `\n`, and a substitution that silently fails to apply
 reports a cheerful false "caught".
 
-The count reached 43 in two steps: 39 covering the rules themselves, then 4 more for the variant
-gates added in §7 after review. **The denominator counts injected mutations only.** The equivalent
-mutant described at the end of this section is not among them — it was identified as equivalent and
-removed from the set rather than injected and excused, so it neither inflates the numerator nor
-shrinks the denominator.
+The set grew as the code did: 39 for the rules themselves, then more for the variant gates in §7 and
+for the move-matching tie-break in §4, both of which were added during review of PR #10. **The
+denominator counts injected mutations only.** The equivalent mutant described at the end of this
+section is not among them — it was identified as equivalent and removed from the set rather than
+injected and excused, so it neither inflates the numerator nor shrinks the denominator.
+
+The last of those found a live gap rather than confirming coverage, which is the point of running it
+again after every change: the flag-only tie-break was first tested on standard castling, where
+`e1`→`g1` is two squares and no ordinary king move competes, so *any* tie-break would have appeared
+to work. It is now tested where the two genuinely collide.
 
 Three things it found that review had not:
 

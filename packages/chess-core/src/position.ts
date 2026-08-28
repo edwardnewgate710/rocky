@@ -130,23 +130,38 @@ export class Position {
   /**
    * Find the generated move a caller-supplied one refers to.
    *
-   * `castleRook` is part of the comparison because in Chess960 it is the only thing that tells two
-   * different moves apart. A king on b1 whose queenside castle lands it on c1 can also simply step
-   * to c1, and both moves share a `from` and a `to`. Matching on those alone returned whichever was
-   * generated first — the ordinary step — so asking to castle quietly moved the king one square and
-   * left the rook behind, producing a legal-looking position that was not the one requested.
+   * `from`, `to`, promotion and drop are not always enough. In Chess960 a king on b1 whose queenside
+   * castle lands it on c1 can *also* simply step to c1, and both moves share all four. Matching on
+   * them alone returned whichever was generated first — the ordinary step — so asking to castle
+   * quietly moved the king one square and left the rook behind.
+   *
+   * The tie is broken on whatever the caller actually supplied, most specific first:
+   *
+   * 1. `castleRook`, when given, must match exactly. Every move from {@link Position.legalMoves}
+   *    carries it, so a move handed straight back always resolves to itself.
+   * 2. Otherwise a castling **flag**, when given, must match. That is what a hand-built move
+   *    normally carries.
+   * 3. Otherwise the first move matching the four fields wins, which is what this method has always
+   *    done.
+   *
+   * Requiring `castleRook` unconditionally was the first attempt, and it silently narrowed the
+   * public API: `play({ from: e1, to: g1, piece: 'K', flags: KingCastle })` — an ordinary way to
+   * express standard castling, and one that worked before — began throwing. Raised in the CodeRabbit
+   * review of PR #10.
    */
   private matchLegal(move: Move): Move | null {
+    const castleFlags = MoveFlag.KingCastle | MoveFlag.QueenCastle;
+    const wantedCastle = move.flags & castleFlags;
     for (const m of this.legalMoves()) {
-      if (
-        m.from === move.from &&
-        m.to === move.to &&
-        (m.promotion ?? null) === (move.promotion ?? null) &&
-        (m.drop ?? null) === (move.drop ?? null) &&
-        (m.castleRook ?? null) === (move.castleRook ?? null)
-      ) {
-        return m;
+      if (m.from !== move.from || m.to !== move.to) continue;
+      if ((m.promotion ?? null) !== (move.promotion ?? null)) continue;
+      if ((m.drop ?? null) !== (move.drop ?? null)) continue;
+      if (move.castleRook !== undefined) {
+        if (m.castleRook !== move.castleRook) continue;
+      } else if (wantedCastle !== 0 && (m.flags & castleFlags) !== wantedCastle) {
+        continue;
       }
+      return m;
     }
     return null;
   }

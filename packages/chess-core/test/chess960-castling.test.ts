@@ -276,6 +276,48 @@ test('the two UCI spellings cannot collide, because a king never steps onto its 
   assert.equal(whiteBackRank(adjacent.play('f1g1')), 'R4RK1', 'f1g1 can only be the castle here');
 });
 
+test('a hand-built castling move still plays, in standard and in Chess960', () => {
+  // `Position.play` takes a `Move`, and a caller may build one rather than pass back something from
+  // `legalMoves()`. Requiring `castleRook` unconditionally silently narrowed that: the ordinary way
+  // to express standard castling began throwing. Raised in the CodeRabbit review of PR #10.
+  const standard = Position.fromFen('4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1', 'standard');
+  const kingside: Move = { from: 4, to: 6, piece: 'K', flags: MoveFlag.KingCastle };
+  const queenside: Move = { from: 4, to: 2, piece: 'K', flags: MoveFlag.QueenCastle };
+  assert.equal(whiteBackRank(standard.play(kingside)), 'R4RK1');
+  assert.equal(whiteBackRank(standard.play(queenside)), '2KR3R');
+
+  // The same in Chess960, where the rook is not on h1 — the flag alone is enough to say which
+  // castle is meant, and the generated move supplies the rook.
+  const c960 = Position.fromFen('8/8/8/k7/8/8/8/R3KR2 w KQ - 0 1', 'chess960');
+  assert.equal(whiteBackRank(c960.play({ from: 4, to: 6, piece: 'K', flags: MoveFlag.KingCastle })), 'R4RK1');
+
+  // And where the caller *does* name the rook, that still wins. This is the ambiguous shape: the
+  // king on b1 can both castle to c1 and simply step to c1, so `from`/`to` alone cannot choose, and
+  // comparing only those resolved the castle to the step and left the rook on a1.
+  const ambiguous = Position.fromFen('8/8/8/k7/8/8/8/RK5R w Q - 0 1', 'chess960');
+  const castle = castles(ambiguous)[0];
+  assert.equal(castle.to, 2, 'the castle lands the king on c1');
+  assert.ok(
+    ambiguous.legalMoves().some((m) => m.from === castle.from && m.to === castle.to && !isCastle(m)),
+    'and an ordinary king step to c1 exists alongside it',
+  );
+  assert.equal(whiteBackRank(ambiguous.play(castle)), '2KR3R', 'the rook comes with it');
+
+  // The flag alone must also be enough *here*, where it is the only thing separating the two. The
+  // earlier standard cases cannot show this: e1->g1 is two squares, so no ordinary king move
+  // competes with the castle and any tie-break at all would appear to work.
+  assert.equal(
+    whiteBackRank(ambiguous.play({ from: 1, to: 2, piece: 'K', flags: MoveFlag.QueenCastle })),
+    '2KR3R',
+    'a flag-only castle must not resolve to the ordinary king step',
+  );
+  assert.equal(
+    whiteBackRank(ambiguous.play({ from: 1, to: 2, piece: 'K', flags: MoveFlag.Normal })),
+    'R1K4R',
+    'and asking for the plain move must still give the plain move',
+  );
+});
+
 test('a castling move without its rook is refused rather than applied', () => {
   // `applyMove` is part of the public surface, so a caller can build a move by hand. A castle
   // missing `castleRook` has no origin to vacate, and applying it anyway would duplicate the rook —
