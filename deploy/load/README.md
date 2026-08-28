@@ -1,15 +1,21 @@
-# Gambit — load baselines
+# Gambit — load and chaos harnesses
 
-Two on-demand harnesses, both k6 from the same pinned image, measuring two different things:
+Three on-demand harnesses. Two of them are k6 from the same pinned image measuring different things;
+the third breaks the stack on purpose.
 
 | Harness | Runs | Measures | Pass criteria |
 |---|---|---|---|
 | **HTTP** (ADR-0065) | `npm run load-test` | the REST API | the SLOs in `docs/SLO.md` |
 | **WebSocket** (ADR-0111) | `npm run load-test:ws` | real sockets against two gateway nodes | coverage and correctness only |
+| **Chaos** (ADR-0077) | `node scripts/chaos-test.mjs` | failover across two gateway nodes and a Redis outage | correctness of the failover paths |
+
+All three are manual. Their *logic* is not: `npm run test:load-harness` runs on every PR and covers
+the planning, verification, timing, ownership, verdict and evidence code all three depend on,
+without a container in sight. See **Its own tests** and **CI cost** below.
 
 ## What this is not
 
-**Neither is the 100k-user validation.** That remains deferred in `docs/ROADMAP.md` and needs real
+**None of them is the 100k-user validation.** That remains deferred in `docs/ROADMAP.md` and needs real
 infrastructure — a cluster, generated load from multiple hosts, and production-shaped data. What
 these give you is a baseline you can run on one machine, so a regression shows up as a number rather
 than as a feeling, and so the SLO targets stop being pure guesses.
@@ -163,22 +169,173 @@ irreversible, so no position can repeat. That second one matters: the engine end
 threefold repetition, so a piece shuffle would end the game mid-run, and a famous opening line could
 end it in mate. Either would fail the run for a reason that has nothing to do with the gateway.
 
-## Its own tests
+---
 
-`npm run test:load-harness` exercises the planning and frame-verification logic in
-`deploy/load/scenarios/lib/ws-baseline-plan.mjs` directly — the k6 scenario cannot be run by
-`node --test` because it imports `k6/*`. It runs in CI even though the load test does not: the load
-run needs a stack, its correctness guards are pure functions.
+# Chaos & failover suite
+
+`scripts/chaos-test.mjs` (ADR-0077) is the odd one out: it runs no k6, generates no load, and breaks
+the stack on purpose. It validates the multi-node ownership and command-forwarding architecture of
+ADR-0010 by removing pieces of it.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.chaos.yml up -d --build
+node scripts/chaos-test.mjs
+```
+
+| Scenario | Induces | Asserts |
+|---|---|---|
+| A — cross-node correctness | nothing | two players on different nodes play with no spurious rejections, converge on every position, and the non-owner's `gateway_forwarded_commands_total` grows |
+| B — ungraceful owner loss | `docker kill` the owner | after the lease TTL expires, the survivor takes the game over and play continues |
+| C — graceful drain | `docker stop` the owner | the SIGTERM release path runs, so the successor claims **faster than the TTL** |
+| E — non-owner loss | `docker kill` the node that owns nothing | the owner's lease does not move in either direction, and play is uninterrupted |
+| D — Redis loss | `docker stop redis` | the owner serves from its unexpired lease, the non-owner cannot forward, the owner fails closed once the window ages out, and everything recovers when Redis returns |
+
+Scenario E is the only one whose correct outcome is that *nothing happens*, which is why it is worth
+its ~20 seconds: every other scenario would still pass if a peer's departure triggered a global
+ownership reshuffle.
+
+## What makes a run here evidence
+
+Every scenario induces a failure and then asserts something about it, so the ways a run could report
+success without having tested anything are what the suite defends against first:
+
+- **The stack must be a cluster.** Two gateways each routing locally answer every health check, serve
+  every socket, own every game they are asked about, and forward nothing. The preflight refuses to
+  start without `commandRouting: redis` on both, and without two genuinely distinct endpoints.
+- **The chaos target must actually go away.** `docker compose kill` exits 0 for a service that was
+  already stopped, so every induced outage is confirmed observable — node liveness stops answering,
+  or `/ready` starts reporting 503 — before anything is asserted about it.
+- **Waits are derived, never guessed.** Every deadline comes from `leaseTiming()` over the same
+  `OWNERSHIP_LEASE_TTL_SEC` / `OWNERSHIP_RENEWAL_INTERVAL_SEC` the stack runs with, so editing
+  `docker-compose.chaos.yml` cannot leave a sleep here silently testing something else.
+- **"It failed as expected" has to say how.** The budget for a command issued into an outage is
+  longer than the gateway's own 5 s forwarding timeout, because a shorter one cannot tell a refusal
+  from a decision that has not finished. The outcome is recorded as `rejected` (with the reject code)
+  or `silent`, not collapsed into a pass.
+- **Ownership is read as a delta.** `ownedGames` is a per-node count that outlives the scenario which
+  created it, so a raw `>= 1` on the survivor is satisfied by a game an earlier scenario left behind.
+
+## Cleanup
+
+Restoration happens at three levels, because each covers a case the others do not:
+
+1. **After every scenario that declares it broke something.** Each entry in `SCENARIO_PLAN` names the
+   services it leaves stopped, and the runner puts them back before the next scenario starts. The
+   declaration is what makes this hard to get wrong: a scenario that stops a service without saying
+   so fails a contract test rather than handing the *next* scenario a dead gateway.
+2. **From a `finally`,** so a scenario that throws partway through is still followed by restoration.
+3. **On `SIGINT`/`SIGTERM`,** because Ctrl-C between `docker kill` and the assertion after it is the
+   most common way to end up with a gateway that is down and no memory of having stopped it.
+
+A restoration that does not work is reported and **fails the run even when every scenario passed**: a
+half-restored stack is a worse outcome than a red build, because the next person does not know
+about it.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | every scenario held and the stack was restored |
+| 1 | a regression, or the environment could not be restored |
+| 2 | only defects listed in `KNOWN_OPEN_DEFECTS` were observed |
+
+That list is currently **empty**, so every failure is a regression. It is a list of decisions, not an
+escape hatch: adding an entry silences a real failure, and `chaos-plan.test.mjs` is where that
+decision is recorded.
+
+---
+
+# Run evidence
+
+All three harnesses write a self-identifying envelope next to their metrics, into the same gitignored
+`results/` directory:
+
+| Harness | File |
+|---|---|
+| HTTP | `results/http-load-evidence.json` |
+| WebSocket | `results/ws-load-evidence.json` |
+| Chaos | `results/chaos-evidence.json` |
+
+Each carries the scenario, a run id, start and finish timestamps, the runner, the target topology,
+the harness configuration, the thresholds the run was held to, what was actually measured, and the
+outcome. A k6 metrics blob alone cannot answer the two questions a reader has — *what was this
+measured against* and *is this from the run I just did* — and the chaos suite previously produced no
+artifact at all.
+
+**No evidence file ever carries a credential.** `scripts/lib/run-evidence.mjs` walks the envelope and
+*refuses to write it* when any field is named like a token, password, secret, cookie, authorization
+or session; when any value looks like a JWT or an `Authorization` header; or when any value is a URL
+carrying credentials in its user-info (`https://user:pass@host`) or in a secret-bearing query
+parameter (`wss://host/live?access_token=…`). That last one matters because every URL in an envelope
+comes from an environment variable and lands under a perfectly innocent key like `topology.baseUrl`.
+It fails closed rather than trusting its callers, which is what makes the chaos evidence safe to
+upload as a CI artifact.
+
+Stale artifacts cannot be mistaken for a current run: each harness clears its evidence file at the
+*start* of a run, so a run that dies partway can never leave the previous run's file behind.
+`runK6` already did the same for the k6 summaries.
+
+Clearing first would be a poor trade if it meant a failed run had nothing to show, so each harness
+also **arms a fallback envelope** — and arms it *before* clearing. A stack that will not come up, a
+k6 image that will not pull, a summary that will not parse, or a Ctrl-C all leave an `aborted`
+envelope recording the exit code and the configuration, instead of an empty directory. The two steps
+are one call, `beginEvidence`, because the order is the whole point: clearing first opens a window
+where the old artifact is gone and no handler is installed yet, and an interrupt landing there
+leaves neither run's evidence.
+
+It hangs off `process.on('exit')` rather than a `catch`, because several of those paths call
+`process.exit` directly. `exit` alone is not enough either: under the default disposition for
+`SIGINT` and `SIGTERM`, Node terminates *without* running exit handlers, so signal listeners are
+installed as well. They write the envelope, run whatever cleanup the harness passed as `onSignal`,
+then re-raise, so the process still dies by the signal rather than turning an interrupt into an
+ordinary exit.
+
+There is exactly **one listener per signal**, owned by the evidence lifecycle. Harness-specific
+interrupt cleanup — the chaos suite's stack restoration — goes through `onSignal` rather than a
+second listener of its own: two listeners on one signal is two termination policies, which is how
+the chaos suite came to exit with `SIGINT`'s code on a `SIGTERM`.
+
+---
+
+# Its own tests
+
+`npm run test:load-harness` exercises the pure logic all three harnesses depend on, directly:
+
+- `deploy/load/scenarios/lib/ws-baseline-plan.mjs` — planning and frame verification for the k6
+  scenario, which `node --test` cannot execute because it imports `k6/*`.
+- `scripts/lib/chaos-plan.mjs` — the chaos suite's lease timing, topology preconditions, ownership
+  deltas, induced-failure classification and exit-code contract. `scripts/chaos-test.mjs` cannot be
+  imported either: importing it starts a run against a live stack.
+- `scripts/lib/run-evidence.mjs` — the envelope, and the credential scan that guards it.
+- `scripts/lib/prometheus-text.mjs` — the counter reader both the WebSocket and chaos harnesses use
+  to prove commands crossed between nodes.
+
+They run in CI even though none of the harnesses does: the runs need a stack, their correctness
+guards are pure functions.
 
 The WebSocket scenario deliberately does not use k6's built-in `--summary-export`: k6 includes
 `setup_data` there, which contains the two short-lived access tokens. Its `handleSummary` writes a
 metrics-only `results/ws-summary.json`, and the contract test proves representative setup data and
 tokens cannot enter that serialization. Results remain gitignored.
 
+# CI cost
+
+Nothing expensive runs routinely, and that is deliberate.
+
+| Runs | What |
+|---|---|
+| every PR and push | `npm run test:load-harness` — pure functions, no containers, well under a second |
+| manual only | the HTTP baseline, the WebSocket baseline, and `chaos.yml` (`workflow_dispatch`) |
+
+`chaos.yml` builds a gateway image and stands up two gateways, Postgres and Redis, then spends real
+wall-clock time waiting out ownership leases. It is capped with `timeout-minutes` so a wedged
+container cannot bill the six-hour GitHub default, and superseded dispatches cancel each other.
+Adding a push or schedule trigger to it needs a reason the hermetic tests cannot cover.
+
 ---
 
-Both harnesses run k6 from a pinned Docker image (`grafana/k6:0.55.0`), like helm, kubeconform and
-promtool elsewhere in this repo — load tooling is not something the application should carry as a
+Both load harnesses run k6 from a pinned Docker image (`grafana/k6:0.55.0`), like helm, kubeconform
+and promtool elsewhere in this repo — load tooling is not something the application should carry as a
 dependency. The version is pinned, in one place (`scripts/lib/k6-docker.mjs`), because a baseline
 measured with a drifting tool is not a baseline.
 

@@ -29,14 +29,22 @@
  *   SPECTATORS_PER_NODE, MOVE_PLIES, MOVE_INTERVAL_MS   passed through to the scenario
  */
 
-import { fail, readSummaryMetrics, runK6 } from './lib/k6-docker.mjs';
+import { K6_IMAGE, fail, readSummaryMetrics, runK6 } from './lib/k6-docker.mjs';
 import { readPrometheusCounter } from './lib/prometheus-text.mjs';
+import {
+  EVIDENCE_DIR,
+  beginEvidence,
+  buildEvidence,
+  writeEvidence,
+} from './lib/run-evidence.mjs';
 import {
   DEFAULTS,
   expectedForwardedCommands,
   forwardingMismatch,
   wsBaselineK6Config,
 } from '../deploy/load/scenarios/lib/ws-baseline-plan.mjs';
+
+const EVIDENCE_FILE = 'ws-load-evidence.json';
 
 const apiUrl = process.env['API_URL'] ?? 'http://host.docker.internal:8080';
 const nodes = [
@@ -110,6 +118,7 @@ async function assertRoutingThroughRedis(node) {
     );
   }
   console.log(`ok (${health.commandRouting} routing, ${health.ownedGames} owned games)`);
+  return health;
 }
 
 const FORWARDED_METRIC = 'gateway_forwarded_commands_total';
@@ -189,8 +198,71 @@ function reportForwarding(before, after) {
   );
 }
 
+/** Counts and trend summaries worth carrying in the artifact beside the thresholds they answer. */
+function observedFrom(metrics, forwarded) {
+  const count = (metric) => (typeof metric?.count === 'number' ? metric.count : null);
+  const trend = (metric) =>
+    metric === undefined
+      ? null
+      : { med: metric.med ?? null, p95: metric['p(95)'] ?? null, max: metric.max ?? null };
+  return {
+    joinsObserved: count(metrics.ws_joins_observed),
+    broadcastsObserved: count(metrics.ws_broadcasts_observed),
+    protocolErrors: count(metrics.ws_protocol_errors),
+    forwardedCommands: forwarded,
+    latencyMs: {
+      connect: trend(metrics.ws_connect_duration),
+      join: trend(metrics.ws_join_duration),
+      moveAck: trend(metrics.ws_move_ack_duration),
+      moveSameNode: trend(metrics.ws_move_same_node_duration),
+      moveOtherNode: trend(metrics.ws_move_other_node_duration),
+    },
+  };
+}
+
+/**
+ * The k6 summary says what was measured; this says what it was measured against.
+ *
+ * `results/ws-summary.json` is deliberately metrics-only, because k6's built-in export would carry
+ * the run's access tokens. That keeps it safe and leaves it unreadable on its own: no scenario, no
+ * timestamp, no topology, no thresholds, no verdict. The envelope supplies those, and refuses to
+ * be written if anything in it looks like a credential.
+ */
 async function main() {
-  for (const node of nodes) await assertRoutingThroughRedis(node);
+  const startedAt = new Date();
+  const configuration = {
+    spectatorsPerNode: Number(process.env['SPECTATORS_PER_NODE'] || DEFAULTS.spectatorsPerNode),
+    plies,
+    moveIntervalMs: Number(process.env['MOVE_INTERVAL_MS'] || DEFAULTS.moveIntervalMs),
+    k6Image: K6_IMAGE,
+  };
+
+  // Armed before the first thing that can exit. A node that is not routing through Redis, an
+  // unreadable metric surface, or a summary that will not parse all end the process without
+  // reaching the write below — and the previous run's artifact has already been cleared by then.
+  const fallback = beginEvidence(EVIDENCE_DIR, EVIDENCE_FILE, (exitCode) =>
+    buildEvidence({
+      harness: 'ws-load',
+      outcome: 'aborted',
+      exitCode,
+      startedAt,
+      finishedAt: new Date(),
+      topology: {
+        apiUrl,
+        nodes: nodes.map((node) => ({
+          name: node.name,
+          wsUrl: node.wsUrl,
+          healthUrl: node.healthUrl,
+        })),
+      },
+      configuration,
+      observed: {},
+      notes: ['The run ended before it produced a summary, so nothing was measured.'],
+    }),
+  );
+
+  const routing = [];
+  for (const node of nodes) routing.push(await assertRoutingThroughRedis(node));
 
   const before = await Promise.all(nodes.map(readForwardedCommands));
   const { code, summaryPath } = runWsBaseline();
@@ -200,17 +272,71 @@ async function main() {
   reportCoverage(metrics);
   reportLatency(metrics);
 
+  const delta = forwardedDelta(before, after);
+  const forwarded = {
+    expected: expectedForwardedCommands(plies),
+    observed: delta,
+    perNode: nodes.map((node, index) => ({
+      name: node.name,
+      before: before[index],
+      after: after[index],
+    })),
+  };
+
+  const finish = (outcome, exitCode, note) => {
+    const path = writeEvidence(
+      EVIDENCE_DIR,
+      EVIDENCE_FILE,
+      buildEvidence({
+        harness: 'ws-load',
+        outcome,
+        exitCode,
+        startedAt,
+        finishedAt: new Date(),
+        topology: {
+          apiUrl,
+          summaryFile: summaryPath,
+          nodes: nodes.map((node, index) => ({
+            name: node.name,
+            wsUrl: node.wsUrl,
+            healthUrl: node.healthUrl,
+            commandRouting: routing[index]?.commandRouting ?? null,
+          })),
+        },
+        configuration,
+        expected: {
+          joins: 'ws_joins_observed count == planned sockets',
+          broadcasts: 'ws_broadcasts_observed count == sockets x plies',
+          protocolErrors: 'ws_protocol_errors count == 0',
+          forwardedCommands: forwarded.expected,
+          latency: 'no thresholds — docs/SLO.md has no WebSocket objective',
+        },
+        observed: observedFrom(metrics, forwarded),
+        notes: [
+          'Latency figures are informational and an upper bound: one k6 VU drives every socket on ' +
+            'one event loop. They are not an SLO and support no claim about capacity.',
+          ...(note ? [note] : []),
+        ],
+      }),
+    );
+    fallback.markWritten();
+    console.log(`Evidence written to ${path}`);
+  };
+
   if (code !== 0) {
     console.log('\n=== Result: THE RUN FAILED ===');
     console.log('A threshold here is coverage or correctness, not performance: a socket that never');
     console.log('joined, a ply a room never saw, or a frame the gateway should not have sent.');
+    finish('threshold-breached', 1);
     process.exit(1);
   }
 
   reportForwarding(before, after);
-  const delta = forwardedDelta(before, after);
   const mismatch = forwardingMismatch(delta, plies);
   if (mismatch) {
+    // Evidence first: `fail` exits, and a run that proved the wrong thing is exactly the one whose
+    // artifact somebody will want afterwards.
+    finish('forwarding-mismatch', 1, mismatch);
     fail(
       `${mismatch}. The isolated plan alternates ${plies} plies across two nodes. A different ` +
         'count means the run did not exercise the path it claims to, or unrelated traffic shared the stack.',
@@ -219,6 +345,7 @@ async function main() {
 
   console.log('\n=== Result: every socket saw every ply, and the cluster path carried them ===');
   console.log(`Summary written to ${summaryPath}`);
+  finish('passed', 0);
 }
 
 await main();
