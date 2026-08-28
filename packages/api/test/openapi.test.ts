@@ -72,6 +72,17 @@ test('protected operations declare bearer security', async () => {
   }
 });
 
+test('Game Review documents unsupported variants among its validation outcomes', async () => {
+  const h = await startHarness();
+  try {
+    const response = (h.server.openapiDocument() as any)
+      .paths['/v1/games/{id}/review'].post.responses['422'];
+    assert.match(response.description, /unsupported variant/i);
+  } finally {
+    await h.close();
+  }
+});
+
 test('Study Partner publishes only the private five-route lifecycle and its safe turn contract', async () => {
   const h = await startHarness();
   try {

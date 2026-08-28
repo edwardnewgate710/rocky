@@ -1467,7 +1467,7 @@ export function buildRouter(deps: RouteDeps): Router {
         200: ['GameReviewResponse', 'The authenticated player\'s completed-game review'],
         401: ['Error', 'Authentication required'],
         404: ['Error', 'No completed game belonging to the player'],
-        422: ['Error', 'The request carried a body, or the game has no moves or exceeds the instant-review limit'],
+        422: ['Error', 'The request carried a body, or the game uses an unsupported variant, has no moves, or exceeds the instant-review limit'],
         429: ['Error', 'Rate limit exceeded'],
         503: ['Error', 'Game review is not configured, cancelled, or the engine is unavailable'],
       },
