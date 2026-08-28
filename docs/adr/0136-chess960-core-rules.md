@@ -148,6 +148,35 @@ transit-safety error that survives two plies shows up. All 960 were additionally
 locally — 20,607,998 nodes, zero mismatches — but that costs ~28s per Node version and finds nothing
 the sample does not.
 
+### 6. The suite was checked by breaking the code on purpose
+
+A passing suite proves the tests run, not that they would notice. Thirty-nine deliberate defects were
+injected one at a time — bishops onto same-coloured squares, the knight table shifted, castling
+destinations moved a file, the outermost-rook rule inverted on each side independently, the king's
+transit path shortened, the rook's origin left occupied, each castling right kept alive past the
+event that should end it, the king-takes-rook spelling applied to standard chess — and every one was
+caught. The harness proves each mutation actually landed before trusting the result, because sources
+here are CRLF while anchors are written with `\n`, and a substitution that silently fails to apply
+reports a cheerful false "caught".
+
+Three things it found that review had not:
+
+- **`Position.play(move)` matched on `from`/`to` alone.** Covered in §4.
+- **Two guards were unreachable and one was redundant.** A second `RangeError` on the knight lookup
+  stood in for the id range check, so loosening the real bound changed nothing; and an explicit
+  "cannot castle out of check" return restated what the king's transit walk already covers. Both
+  were removed. Unreachable defensive code is worse than none: it absorbs the mutation that should
+  have failed a test, and so certifies coverage that does not exist.
+- **A test that could not distinguish the parser from its own bug.** The absent-rook case was written
+  as `BA`, where the valid `A` overwrites the queenside slot and the field prints `Q` whether or not
+  `B` was believed. It now asserts `B` alone.
+
+One mutation is recorded as deliberately not chased: swapping the order of the two `resolveUci`
+passes. The king-takes-rook pass only ever matches a square holding the mover's own rook, and no
+ordinary move can land there, so the passes are disjoint and either order gives the same answer.
+That is an equivalent mutant, and writing a test for it would mean staging a collision that cannot
+occur.
+
 ## Consequences
 
 - Chess960 is genuinely implemented at the rules layer. All 960 arrangements generate, castle, and

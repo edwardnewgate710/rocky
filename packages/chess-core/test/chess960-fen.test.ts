@@ -60,8 +60,12 @@ test('a partial right in either spelling grants exactly that right', () => {
 test('a right naming a rook that is not there is dropped rather than believed', () => {
   // `B` claims a white rook on b1; kiwipete has none. Keeping the right would leave move generation
   // pointing at an empty square.
-  const pos = Position.fromFen(`${KIWIPETE} BA - 0 1`, 'chess960');
-  assert.equal(castlingField(pos), 'Q');
+  //
+  // Asserted on its own, not only alongside a valid right. With `BA` the surviving `A` overwrites
+  // the queenside slot and the field prints `Q` either way, so a parser that believed `B` would look
+  // exactly like one that discarded it.
+  assert.equal(castlingField(Position.fromFen(`${KIWIPETE} B - 0 1`, 'chess960')), '-');
+  assert.equal(castlingField(Position.fromFen(`${KIWIPETE} BA - 0 1`, 'chess960')), 'Q');
 });
 
 test('an inner rook is spelled by file, because KQkq cannot say which rook is meant', () => {
@@ -76,9 +80,21 @@ test('an inner rook is spelled by file, because KQkq cannot say which rook is me
 });
 
 test('KQkq resolves to the outermost rook when there is more than one candidate', () => {
-  // `K` on a board with white rooks on f1 and h1 must pick h1, so it re-serialises as `K`, not `F`.
-  const pos = Position.fromFen('4k3/8/8/8/8/8/8/R3KR1R w K - 0 1', 'chess960');
-  assert.equal(castlingField(pos), 'K');
+  // `K` on a board with white rooks on f1 and h1 must pick h1 — the outermost — so it re-serialises
+  // as `K`, not `F`.
+  const kingside = Position.fromFen('4k3/8/8/8/8/8/8/R3KR1R w K - 0 1', 'chess960');
+  assert.equal(castlingField(kingside), 'K');
+
+  // The queenside is a separate branch and picks the other end of the list: with white rooks on a1
+  // and c1, `Q` must mean a1. Choosing c1 would still re-serialise as `Q` — c1 is not outermost, so
+  // it would be written `C` — which is what makes this cheap to get wrong and invisible without a
+  // second rook on the queenside to tell the two ends apart.
+  const queenside = Position.fromFen('4k3/8/8/8/8/8/8/R1R1K2R w Q - 0 1', 'chess960');
+  assert.equal(castlingField(queenside), 'Q');
+
+  // And naming the inner queenside rook explicitly must survive as a file letter.
+  const innerQueenside = Position.fromFen('4k3/8/8/8/8/8/8/R1R1K2R w C - 0 1', 'chess960');
+  assert.equal(castlingField(innerQueenside), 'C');
 });
 
 test('every one of the 960 starting positions survives a FEN round trip', () => {

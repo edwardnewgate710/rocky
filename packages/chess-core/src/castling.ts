@@ -31,16 +31,6 @@ export function cloneCastlingRights(rights: CastlingRights): CastlingRights {
   return { w: { k: rights.w.k, q: rights.w.q }, b: { k: rights.b.k, q: rights.b.q } };
 }
 
-/** True when any right at all is held. */
-export function hasAnyCastlingRight(rights: CastlingRights): boolean {
-  return (
-    rights.w.k !== NO_CASTLING_ROOK ||
-    rights.w.q !== NO_CASTLING_ROOK ||
-    rights.b.k !== NO_CASTLING_ROOK ||
-    rights.b.q !== NO_CASTLING_ROOK
-  );
-}
-
 /** The back rank a colour castles on. */
 export function backRankOf(color: Color): number {
   return color === 'w' ? 0 : 7;

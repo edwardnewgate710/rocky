@@ -17,15 +17,12 @@ export {
   chess960BackRank,
   chess960Fen,
 } from './chess960';
-// The rights bookkeeping stays internal. What is published is the vocabulary a caller needs to
-// read a `PositionState`, plus the FEN castling codec so the spelling can be exercised directly.
-export {
-  NO_CASTLING_ROOK,
-  castledKingSquare,
-  castledRookSquare,
-  formatCastlingField,
-  parseCastlingField,
-} from './castling';
+// Deliberately not `export *`, for the same reason as `check-counters.ts` below: the rights
+// bookkeeping is how this package maintains castling state, and publishing it invites a second
+// copy of that logic. Only `NO_CASTLING_ROOK` is exported, because `CastlingRights` is public and a
+// caller reading `state.castling` needs to know what marks an absent right. The `CastlingRights`,
+// `ColorCastlingRights` and `CastlingSide` types themselves come from `./types` above.
+export { NO_CASTLING_ROOK } from './castling';
 // Deliberately not `export *`. The field-shape predicates and the counter-field parsers are how
 // the codec reads a FEN, and `check-counters.ts` exists so that the conversion lives in one
 // place; publishing them invites a second one. Raised in the CodeRabbit review of PR #140.

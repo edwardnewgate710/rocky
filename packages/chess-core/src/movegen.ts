@@ -332,8 +332,11 @@ function generateCastles(state: PositionState, from: number, piece: Piece, moves
   const backRank = backRankOf(us);
   if (rankOf(from) !== backRank) return;
 
+  // "May not castle out of check" is enforced by `kingPathSafe` below, not by a separate test here.
+  // That function walks from the king's origin to its destination inclusive, so the origin is
+  // already among the squares required to be unattacked. A second early return would restate the
+  // same rule in a form no test could tell apart from the first.
   const them = opposite(us);
-  if (isSquareAttacked(state, from, them)) return;
 
   for (const side of CASTLING_SIDES) {
     const rookFile = state.castling[us][side];
@@ -405,7 +408,16 @@ export function applyMove(state: PositionState, move: Move): PositionState {
     // and rook that swap — so clearing an origin after placing a destination can erase a piece
     // that was just put down. Both origins are vacated first, then both destinations written.
     const side: CastlingSide = move.flags & MoveFlag.KingCastle ? 'k' : 'q';
-    const rookFrom = move.castleRook ?? -1;
+    const rookFrom = move.castleRook;
+    if (rookFrom === undefined) {
+      // `applyMove` is exported, so a caller can hand it a move this package did not generate.
+      // Without the rook's origin there is no square to vacate, and the writes below would leave a
+      // rook standing on both its old square and its new one — a position quietly wrong rather than
+      // obviously broken. Refusing is the only honest answer.
+      // Deliberately a plain Error: `IllegalMoveError` lives in `position.ts`, which imports this
+      // module, and importing it back would make the cycle real for the sake of a label.
+      throw new Error('A castling move must carry castleRook, the square its rook starts on');
+    }
     const rookTo = castledRookSquare(us, side);
     board[move.from] = null;
     board[rookFrom] = null;

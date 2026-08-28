@@ -13,11 +13,15 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { MoveFlag, type Move } from '../src/types';
+import { MoveFlag, type Move, type PositionState } from '../src/types';
+import { NO_CASTLING_ROOK } from '../src/castling';
+import { applyMove, generateLegalMoves } from '../src/movegen';
 import { Position } from '../src/position';
 
-const castles = (pos: Position): readonly Move[] =>
-  pos.legalMoves().filter((m) => (m.flags & (MoveFlag.KingCastle | MoveFlag.QueenCastle)) !== 0);
+const isCastle = (m: Move): boolean =>
+  (m.flags & (MoveFlag.KingCastle | MoveFlag.QueenCastle)) !== 0;
+
+const castles = (pos: Position): readonly Move[] => pos.legalMoves().filter(isCastle);
 
 /** The back rank of the side that just moved, as it appears in the resulting FEN. */
 const whiteBackRank = (pos: Position): string => pos.fen().split(' ')[0].split('/')[7];
@@ -194,11 +198,38 @@ test('capturing a rook on its own square clears the right it carried', () => {
   assert.equal(after.fen().split(' ')[2], 'K', 'the captured rook takes its right with it');
 });
 
-test('a right whose rook is not standing there cannot be exercised', () => {
-  // A hand-written FEN can name a right the board does not support. The generator must not follow
-  // it to an empty square.
-  const pos = Position.fromFen('8/8/8/k7/8/8/8/4K3 w KQ - 0 1', 'chess960');
-  assert.equal(castles(pos).length, 0);
+test('a right the board does not support cannot be exercised, however it got there', () => {
+  // Every path inside this package keeps rights and board in step: `parseCastlingField` drops a
+  // right naming a rook that is not there, and `updateCastlingRights` clears one the moment its rook
+  // moves or is captured. So neither guard below is reachable from a FEN — this position parses to
+  // no rights at all, which is itself worth pinning.
+  assert.equal(castles(Position.fromFen('8/8/8/k7/8/8/8/4K3 w KQ - 0 1', 'chess960')).length, 0);
+
+  // They are reachable from the exported API, though: `PositionState` and `generateLegalMoves` are
+  // both public, so a caller can hand the generator a state whose rights disagree with its board.
+  // The generator must not follow a right to an empty square, nor castle a king that has wandered
+  // off its back rank.
+  const bothRights = { w: { k: 7, q: 0 }, b: { k: NO_CASTLING_ROOK, q: NO_CASTLING_ROOK } };
+
+  const noRook: PositionState = {
+    ...Position.fromFen('8/8/8/k7/8/8/8/4K3 w - - 0 1', 'chess960').snapshot(),
+    castling: bothRights,
+  };
+  assert.equal(
+    generateLegalMoves(noRook).filter(isCastle).length,
+    0,
+    'the rights name h1 and a1, but no rook stands on either',
+  );
+
+  const kingOffBackRank: PositionState = {
+    ...Position.fromFen('8/8/8/k7/8/8/4K3/R6R w - - 0 1', 'chess960').snapshot(),
+    castling: bothRights,
+  };
+  assert.equal(
+    generateLegalMoves(kingOffBackRank).filter(isCastle).length,
+    0,
+    'both rooks are home, but the king is on e2',
+  );
 });
 
 test('SAN spells castling O-O and O-O-O however far the king actually travels', () => {
@@ -224,17 +255,34 @@ test('a Chess960 castle round-trips through its UCI spelling', () => {
   }
 });
 
-test('king-takes-rook never steals a spelling that is already an ordinary king move', () => {
-  // King f1, rook g1. `f1g1` is both a legal one-square step and the kingside castle. The step must
-  // win, because that is what the same four characters mean in every other variant; the castle
-  // stays reachable as the unambiguous king-takes-rook `f1g1`... which here is the same string, so
-  // the rook square is what disambiguates: castling to the h-rook spells `f1h1`.
+test('the two UCI spellings cannot collide, because a king never steps onto its own rook', () => {
+  // King f1, rooks a1 and h1. `f1g1` is an ordinary one-square step onto an empty square; `f1h1` is
+  // the castle, named by the rook. They stay distinct for a structural reason rather than by luck:
+  // king-takes-rook always names a square holding the mover's own rook, and no ordinary move can
+  // land there. So neither spelling can ever be read as the other.
   const pos = Position.fromFen('8/8/8/k7/8/8/8/R4K1R w KQ - 0 1', 'chess960');
-  const stepped = pos.play('f1g1');
-  assert.equal(whiteBackRank(stepped), 'R5KR', 'f1g1 is the ordinary step, leaving both rooks put');
 
-  const castled = pos.play('f1h1');
-  assert.equal(whiteBackRank(castled), 'R4RK1', 'f1h1 is the castle');
+  assert.equal(whiteBackRank(pos.play('f1g1')), 'R5KR', 'f1g1 is the step, leaving both rooks put');
+  assert.equal(whiteBackRank(pos.play('f1h1')), 'R4RK1', 'f1h1 is the castle');
+
+  // And when the rook *is* adjacent, the step is simply illegal, so the castle owns the spelling.
+  const adjacent = Position.fromFen('8/8/8/k7/8/8/8/R4KR1 w KQ - 0 1', 'chess960');
+  assert.equal(whiteBackRank(adjacent.play('f1g1')), 'R4RK1', 'f1g1 can only be the castle here');
+});
+
+test('a castling move without its rook is refused rather than applied', () => {
+  // `applyMove` is part of the public surface, so a caller can build a move by hand. A castle
+  // missing `castleRook` has no origin to vacate, and applying it anyway would duplicate the rook —
+  // wrong in a way nothing downstream could detect.
+  const pos = Position.fromFen('8/8/8/k7/8/8/8/R3K2R w KQ - 0 1', 'chess960');
+  const real = castles(pos)[0];
+  const { castleRook: _dropped, ...withoutRook } = real;
+  assert.throws(
+    () => applyMove(pos.snapshot(), withoutRook as Move),
+    /castleRook/,
+  );
+  // The genuine move, carrying its rook, still applies.
+  assert.equal(whiteBackRank(pos.play(real)), 'R4RK1');
 });
 
 test('standard chess keeps its own UCI spelling, unchanged', () => {

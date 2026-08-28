@@ -63,11 +63,12 @@ export function chess960BackRank(id: number): string {
   }
 
   // 4. Knights placed on the pair of slots selected by n4 among the 5 remaining empty files.
-  const pair = KNIGHT_PAIRS[n4];
-  if (!pair) {
-    throw new RangeError(`Invalid Chess960 starting-position id: ${id}`);
-  }
-  const [k1, k2] = pair;
+  //
+  // n4 is in range by construction, not by luck: the largest accepted id is 959, and
+  // floor(floor(floor(959 / 4) / 4) / 6) is 9, the last entry. A second bounds check here would be
+  // unreachable — and worse than useless, because it would re-throw the same RangeError the guard
+  // above throws and so quietly stand in for it, leaving the real range check untested.
+  const [k1, k2] = KNIGHT_PAIRS[n4];
 
   const emptyFiles: number[] = [];
   for (let file = 0; file < 8; file++) {

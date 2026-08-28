@@ -168,9 +168,14 @@ export class Position {
     for (const m of this.legalMoves()) {
       if (m.from === from && m.to === to && (m.promotion ?? undefined) === promo) return m;
     }
-    // Chess960 castling also arrives king-takes-rook. It is tried second so that a spelling which
-    // is already a legal ordinary move keeps its ordinary meaning: a king on f1 beside a rook on
-    // g1 can both step to g1 and castle, and `f1g1` must remain the step.
+    // Chess960 castling also arrives king-takes-rook, so a second pass reads `to` as the rook's
+    // square instead of the king's.
+    //
+    // The two passes cannot disagree, and the order between them is therefore immaterial: the
+    // second only ever matches a square occupied by the mover's own rook, and no ordinary move can
+    // land there. That is worth stating because the opposite is easy to assume — the two spellings
+    // look like they should collide, and a comment claiming this pass is "tried second for
+    // precedence" would be describing a conflict that cannot arise.
     if (promo === undefined) {
       for (const m of this.legalMoves()) {
         if (m.from === from && m.castleRook === to) return m;
