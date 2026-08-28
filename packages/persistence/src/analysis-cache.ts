@@ -61,10 +61,24 @@ export function toStoredLimits(limits: AnalysisLimits): StoredAnalysisLimits {
   return stored;
 }
 
+/**
+ * `depth` is stored in an `INTEGER` column and the other two in `BIGINT`, so the ceilings differ.
+ * Bounding them here rather than letting Postgres refuse the row keeps the reason legible: a limit
+ * this large is a defect in the caller, not a database problem to read out of a SQLSTATE.
+ */
+const COLUMN_CEILING: Readonly<Record<string, number>> = {
+  depth: 2_147_483_647,
+  nodes: Number.MAX_SAFE_INTEGER,
+  timeMs: Number.MAX_SAFE_INTEGER,
+};
+
 function dimension(value: number | undefined, name: string): number | null {
   if (value === undefined) return null;
   if (!Number.isSafeInteger(value) || value < 0) {
     throw new AnalysisCachePayloadError(`${name} limit is not a non-negative integer`);
+  }
+  if (value > (COLUMN_CEILING[name] as number)) {
+    throw new AnalysisCachePayloadError(`${name} limit exceeds what its column can hold`);
   }
   return value;
 }

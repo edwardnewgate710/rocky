@@ -58,8 +58,13 @@ const SELECT_SQL = `
  * result already there. Evaluated inside `ON CONFLICT DO UPDATE`, so the comparison happens under
  * the row lock: two concurrent writers cannot both read "stronger" and then both overwrite.
  *
- * A newer payload version always wins, and an older one never overwrites a newer: during a rolling
- * deploy the build that can still read a row must not lose it to one that cannot.
+ * Dominance is required of *every* update, and the payload version only gates which direction a
+ * dominating write may travel: an older version never overwrites a newer, so during a rolling deploy
+ * the build that can still read a row does not lose it to one that cannot. Letting a newer version
+ * through on its own — the obvious way to keep forward migration open — would have made the version
+ * a way around the invariant, so a version 2 build could evict a depth-30 row with a depth-5 one. A
+ * strong row written under an older payload version therefore stays until something genuinely better
+ * replaces it, and a reader that cannot parse it takes the miss.
  *
  * Writes that dominate each other in neither direction (deeper but fewer nodes) leave the incumbent
  * in place. The outcome then depends on which arrived first, which no cache can control, but every
@@ -79,17 +84,16 @@ const UPSERT_SQL = `
          payload_version  = EXCLUDED.payload_version,
          results          = EXCLUDED.results,
          updated_at       = EXCLUDED.updated_at
-   WHERE engine_analysis_cache.payload_version < EXCLUDED.payload_version
-      OR (engine_analysis_cache.payload_version = EXCLUDED.payload_version
-          AND (engine_analysis_cache.achieved_depth IS NULL
-               OR (EXCLUDED.achieved_depth IS NOT NULL
-                   AND EXCLUDED.achieved_depth >= engine_analysis_cache.achieved_depth))
-          AND (engine_analysis_cache.achieved_nodes IS NULL
-               OR (EXCLUDED.achieved_nodes IS NOT NULL
-                   AND EXCLUDED.achieved_nodes >= engine_analysis_cache.achieved_nodes))
-          AND (engine_analysis_cache.achieved_time_ms IS NULL
-               OR (EXCLUDED.achieved_time_ms IS NOT NULL
-                   AND EXCLUDED.achieved_time_ms >= engine_analysis_cache.achieved_time_ms)))`;
+   WHERE engine_analysis_cache.payload_version <= EXCLUDED.payload_version
+     AND (engine_analysis_cache.achieved_depth IS NULL
+          OR (EXCLUDED.achieved_depth IS NOT NULL
+              AND EXCLUDED.achieved_depth >= engine_analysis_cache.achieved_depth))
+     AND (engine_analysis_cache.achieved_nodes IS NULL
+          OR (EXCLUDED.achieved_nodes IS NOT NULL
+              AND EXCLUDED.achieved_nodes >= engine_analysis_cache.achieved_nodes))
+     AND (engine_analysis_cache.achieved_time_ms IS NULL
+          OR (EXCLUDED.achieved_time_ms IS NOT NULL
+              AND EXCLUDED.achieved_time_ms >= engine_analysis_cache.achieved_time_ms))`;
 
 interface CachedRow {
   payload_version: number;

@@ -350,13 +350,12 @@ describe('PgAnalysisCache replacement semantics', { skip }, () => {
   });
 
   /*
-   * The other half of the version rule — a NEWER payload version replacing an older one
-   * regardless of limits — has no test here on purpose, because nothing can currently reach it.
-   * The schema requires `payload_version >= 1`, this build writes exactly
-   * ANALYSIS_CACHE_PAYLOAD_VERSION (1), so no write can present a version above an incumbent's.
-   * The clause is what lets a future version 2 take over rows a version 1 build wrote, and it
-   * becomes exercisable the moment that version exists. A test that forced it today could only
-   * do so by issuing its own copy of the upsert, which would assert that the copy works.
+   * The version gates a dominating write; it is never a way past the dominance check. So no branch
+   * here can replace a row without comparing limits — which is exactly what a newer version used to
+   * be able to do. What remains unreachable from this build is only the benign direction: it writes
+   * exactly ANALYSIS_CACHE_PAYLOAD_VERSION, so no write presents a version above an incumbent's,
+   * and a version 2 taking over a version 1 row becomes exercisable when that version exists.
+   * Every case that could lose a stronger result is covered above.
    */
 
   it('treats the row it refused to overwrite as unreadable rather than as results', async () => {

@@ -106,9 +106,13 @@ empty stored payload would be served as a successful analysis to callers such as
 which go straight to `results[0]`. A search that found no lines can answer nothing.
 
 `payload_version` is deliberately not pinned to a single value by the schema: a rolling deploy must
-be able to write a newer version against a schema an older reader still runs on. A newer payload
-version always wins the upsert and an older one never overwrites a newer, so the build that can still
-read a row does not lose it to one that cannot.
+be able to write a newer version against a schema an older reader still runs on. The version does not
+exempt a write from §4 — dominance is required of every update — it only gates the direction a
+dominating write may travel: an older version never overwrites a newer, so the build that can still
+read a row does not lose it to one that cannot. Letting a newer version through on its own would have
+made the version a way around the invariant, and a version 2 build could have evicted a depth-30 row
+with a depth-5 one. The cost is that a strong row in an older payload version is never rewritten by a
+weaker newer one, and a reader that cannot parse it takes the miss until retention removes it.
 
 ### 6. A cache is an optimization: fail open, but never silently
 
@@ -164,12 +168,13 @@ the platform rather than of this adapter:
   encoding rules are testable without a database and a consumer that only needs the contract does not
   pull in `pg`. The adapter lives at `packages/persistence/src/pg/analysis-cache.ts`, behind the
   existing `/pg` subpath convention.
-- The engine port is imported **type-only**, so no runtime dependency edge is created. This follows
-  the existing precedent for `@chess-platform/core`, which four persistence modules already import
-  type-only without declaring it. As with `core`, the emitted declarations carry the reference —
-  `dist/analysis-cache.d.ts` names `@chess-platform/engine` — so a consumer typechecking against
-  them needs it resolvable; `packages/api`, the only consumer of both, already declares it. Declaring
-  these edges properly would touch the root lockfile and is left as its own change.
+- The engine port is imported **type-only**, so no value crosses at runtime — but the edge is
+  declared anyway. `@chess-platform/engine` is a dependency of `packages/persistence`, because the
+  emitted declarations carry the reference (`dist/analysis-cache.d.ts` names it), and a package whose
+  public types name a module it does not depend on is only resolvable by accident: workspace hoisting
+  and root build order, neither of which is a dependency. The four modules that import
+  `@chess-platform/core` type-only without declaring it are the same latent problem, left alone here
+  rather than fixed in a cache change.
 - **Rollback.** Migrations are forward-only and checksummed, so 0026 is not un-applied by the runner.
   Because the table is new, referenced by no foreign key and read by no composed code, reverting the
   application code is sufficient to stop all use of it; the table can then be left in place at no

@@ -183,6 +183,15 @@ describe('achieved limit projection', () => {
     assert.throws(() => toStoredLimits({}), AnalysisCachePayloadError);
   });
 
+  it('refuses a depth its INTEGER column could not hold', () => {
+    assert.equal(toStoredLimits({ depth: 2_147_483_647 }).depth, 2_147_483_647);
+    assert.throws(() => toStoredLimits({ depth: 2_147_483_648 }), AnalysisCachePayloadError);
+  });
+
+  it('allows a node count up to what BIGINT holds, which INTEGER would not', () => {
+    assert.equal(toStoredLimits({ nodes: 2_147_483_648 }).nodes, 2_147_483_648);
+    assert.equal(toStoredLimits({ timeMs: 2_147_483_648 }).timeMs, 2_147_483_648);
+  });
   const rejected: readonly (readonly [string, number])[] = [
     ['negative', -1],
     ['fractional', 18.5],
