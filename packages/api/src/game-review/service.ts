@@ -1,5 +1,6 @@
 import { Position, colorOf, isSquareAttacked, opposite, squareFromName, typeOf } from '@chess-platform/core';
 import type { OpeningDatabase } from '@chess-platform/ai-features';
+import type { EngineResult } from '@chess-platform/engine';
 import type { AnalysisPort } from '../analysis/service.js';
 import type { RequestedAnalysisLimits } from '../analysis/limits.js';
 import type {
@@ -199,11 +200,7 @@ function knownBookPly(game: FinishedGameForReview, database: OpeningDatabase | u
 }
 
 /** Select the MultiPV-2 line by identity rather than relying on engine response order. */
-function reviewAlternative(lines: readonly {
-  readonly multipv: number;
-  readonly principalVariation: readonly string[];
-  readonly evaluation: { readonly type: 'cp' | 'mate'; readonly value: number };
-}[]): ReviewAlternative | null {
+function reviewAlternative(lines: readonly EngineResult[]): ReviewAlternative | null {
   const alternative = lines.find((line) => line.multipv === 2);
   const move = alternative?.principalVariation[0];
   if (!alternative || !move) return null;
