@@ -253,11 +253,14 @@ describe('PgAnalysisCache round trip', { skip }, () => {
 
 describe('PgAnalysisCache replacement semantics', { skip }, () => {
   it('does not let a weaker search that finishes later destroy a stronger entry', async () => {
-    await withCache(async (cache, pool) => {
+    await withCache(async (cache, pool, faults) => {
       const key = freshKey();
       await cache.set(key, [line(1)], { limits: { depth: 20, nodes: 1_000_000 } });
       await cache.set(key, [otherLine()], { limits: { depth: 10, nodes: 100_000 } });
 
+      // A write that THREW would also leave the row untouched, so without this the test would
+      // pass whether the dominance guard ran or the statement simply failed.
+      assert.deepEqual(faults, [], 'the weaker write must be refused by the guard, not by an error');
       const row = await storedLimitsOf(pool, key);
       assert.equal(row['achieved_depth'], 20);
       assert.deepEqual(
@@ -280,12 +283,13 @@ describe('PgAnalysisCache replacement semantics', { skip }, () => {
   });
 
   it('keeps the incumbent when neither search could serve the other request', async () => {
-    await withCache(async (cache, pool) => {
+    await withCache(async (cache, pool, faults) => {
       const key = freshKey();
       await cache.set(key, [line(1)], { limits: { depth: 20, nodes: 1_000_000 } });
       // Deeper, but on fewer nodes: it cannot serve the incumbent's nodes:1000000 request.
       await cache.set(key, [otherLine()], { limits: { depth: 22, nodes: 900_000 } });
 
+      assert.deepEqual(faults, [], 'the non-dominating write must be refused by the guard');
       const row = await storedLimitsOf(pool, key);
       assert.equal(row['achieved_depth'], 20, 'a non-dominating write must not evict');
       // BIGINT arrives from pg as a string, which is why this package reads such columns
@@ -317,7 +321,7 @@ describe('PgAnalysisCache replacement semantics', { skip }, () => {
   });
 
   it('never lets a build that speaks an older payload version overwrite a newer one', async () => {
-    await withCache(async (cache, pool) => {
+    await withCache(async (cache, pool, faults) => {
       const key = freshKey();
       const now = new Date();
       await pool.query(
@@ -339,6 +343,7 @@ describe('PgAnalysisCache replacement semantics', { skip }, () => {
       // Dominating on depth, but written by a build that cannot read what is already there.
       await cache.set(key, [otherLine()], { limits: { depth: 99 } });
 
+      assert.deepEqual(faults, [], 'the write must be refused by the guard, not by an error');
       const row = await storedLimitsOf(pool, key);
       assert.equal(
         row['payload_version'],

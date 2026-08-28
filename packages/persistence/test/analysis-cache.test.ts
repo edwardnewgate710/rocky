@@ -175,6 +175,23 @@ describe('achieved limit projection', () => {
     });
   }
 
+  /**
+   * Projecting a field is not vouching for it. A malformed write would be stored and then be
+   * undecodable forever — and since the achieved limits live in their own columns, such a write
+   * can dominate, replacing a readable row with one nothing can read.
+   */
+  const unwritable: readonly (readonly [string, EngineResult])[] = [
+    ['a negative depth', { ...LEAN, depth: -1 }],
+    ['a NaN node count, which JSON turns into null', { ...LEAN, nodes: Number.NaN }],
+    ['an infinite nps, which JSON turns into null', { ...LEAN, nps: Number.POSITIVE_INFINITY }],
+    ['a fractional time', { ...LEAN, timeMs: 1.5 }],
+  ];
+
+  for (const [what, result] of unwritable) {
+    it(`refuses to encode ${what}`, () => {
+      assert.throws(() => encodeAnalysisPayload([result]), AnalysisCachePayloadError);
+    });
+  }
   it('accepts lines that run 1..N in order', () => {
     const lines = [1, 2, 3].map((multipv) => ({ ...LEAN, multipv }));
     assert.deepEqual(roundTrip(lines), lines);

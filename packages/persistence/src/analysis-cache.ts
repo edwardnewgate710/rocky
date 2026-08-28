@@ -92,7 +92,7 @@ function dimension(value: number | undefined, name: string): number | null {
  */
 export function encodeAnalysisPayload(results: readonly EngineResult[]): unknown[] {
   assertLineOrder(results);
-  return results.map((result) => ({
+  const payload = results.map((result) => ({
     multipv: result.multipv,
     evaluation: { type: result.evaluation.type, value: result.evaluation.value },
     ...(result.evaluationBound !== undefined ? { evaluationBound: result.evaluationBound } : {}),
@@ -103,6 +103,16 @@ export function encodeAnalysisPayload(results: readonly EngineResult[]): unknown
     nps: result.nps,
     timeMs: result.timeMs,
   }));
+
+  // The writer applies the reader's own checks, by calling them rather than restating them.
+  // Projecting a field is not the same as vouching for it: nothing stops a caller handing over a
+  // negative depth, and `JSON.stringify` quietly turns NaN and Infinity into null. Either way the
+  // row would be written and then be undecodable forever — and because the achieved limits live in
+  // their own columns, such a write can *dominate*, replacing a perfectly readable row with one
+  // nothing can read. Validating here is what keeps "only a better analysis replaces this one"
+  // true when the incoming analysis is malformed rather than merely weaker.
+  payload.forEach((entry, index) => decodeResult(entry, index));
+  return payload;
 }
 
 /**
