@@ -416,7 +416,9 @@ describe('PgAnalysisCache under concurrency', { skip }, () => {
 
   it('never shows a reader a half-written entry while writers replace it', async () => {
     await withCache(async (cache, _pool, faults) => {
-      const key = freshKey();
+      // Filed at width 2 because the replacements carry two lines. A one-line seed under that
+      // width is still legitimate — an analysis may be narrower than its key, never wider.
+      const key = freshKey({ multiPv: 2 });
       await cache.set(key, [line(1)], { limits: { depth: 10 } });
 
       // Every write dominates the seed, so the row's depth only ever climbs: a request for
