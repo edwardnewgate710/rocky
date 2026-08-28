@@ -33,12 +33,26 @@ export type Variant =
   | 'horde'
   | 'racingkings';
 
-/** Castling rights as an integer bitmask. */
-export const enum CastleRight {
-  WhiteKing = 1,
-  WhiteQueen = 2,
-  BlackKing = 4,
-  BlackQueen = 8,
+/** The two castling directions: `k` toward the h-file, `q` toward the a-file. */
+export type CastlingSide = 'k' | 'q';
+
+/**
+ * One colour's castling rights, each held as the **file** of the rook that carries it, or `-1`.
+ *
+ * Standard chess can imply the rook — kingside is h, queenside is a — which is why a four-bit mask
+ * was enough for it. Chess960 starts the rooks on arbitrary files, so the implication fails and a
+ * mask cannot say which rook a right belongs to. Naming the file keeps rook identity in the state
+ * itself rather than in an assumption about the board.
+ */
+export interface ColorCastlingRights {
+  k: number;
+  q: number;
+}
+
+/** Castling rights for both colours. See {@link ColorCastlingRights}. */
+export interface CastlingRights {
+  w: ColorCastlingRights;
+  b: ColorCastlingRights;
 }
 
 /** Bit flags describing the nature of a move. */
@@ -63,6 +77,14 @@ export interface Move {
   readonly captured?: Piece;
   readonly promotion?: PieceType;
   readonly drop?: PieceType;
+  /**
+   * For a castling move, the 0x88 square the rook starts on.
+   *
+   * `to` remains the king's final square in every variant, so nothing that reads a move has to
+   * know about Chess960. The rook cannot be re-derived from `from` by a fixed offset once it may
+   * start anywhere, so the move has to carry it.
+   */
+  readonly castleRook?: number;
   readonly flags: number;
 }
 
@@ -75,8 +97,8 @@ export interface PositionState {
   /** 0x88 board; each cell is a {@link Piece} or `null`. */
   board: (Piece | null)[];
   turn: Color;
-  /** Castling rights bitmask, see {@link CastleRight}. */
-  castling: number;
+  /** Castling rights, each naming the rook that carries it. See {@link CastlingRights}. */
+  castling: CastlingRights;
   /** En-passant target square (0x88 index) or -1 if none. */
   epSquare: number;
   /** Halfmove clock for the fifty-move rule. */

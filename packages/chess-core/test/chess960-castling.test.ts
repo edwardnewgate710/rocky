@@ -1,0 +1,246 @@
+/**
+ * Castling from arbitrary king and rook squares.
+ *
+ * The rule these tests exist for is that the *destinations* are fixed even though the *origins* are
+ * not: whatever the arrangement, a castled king stands on g1/g8 or c1/c8 and its rook beside it on
+ * f1/f8 or d1/d8. Everything that used to be a shortcut — the king starting on e, the rooks on a
+ * and h, the king moving exactly two squares — is a coincidence of the traditional array and is
+ * false in general.
+ *
+ * Positions here park the Black king on a5 (or elsewhere off the back rank) so that White's
+ * castling is decided by the arrangement under test rather than by an incidental attack.
+ */
+
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { MoveFlag, type Move } from '../src/types';
+import { Position } from '../src/position';
+
+const castles = (pos: Position): readonly Move[] =>
+  pos.legalMoves().filter((m) => (m.flags & (MoveFlag.KingCastle | MoveFlag.QueenCastle)) !== 0);
+
+/** The back rank of the side that just moved, as it appears in the resulting FEN. */
+const whiteBackRank = (pos: Position): string => pos.fen().split(' ')[0].split('/')[7];
+
+interface CastleCase {
+  readonly name: string;
+  readonly fen: string;
+  /** SAN of each castling move expected, in generation order. */
+  readonly expected: readonly string[];
+  /** White's back rank after playing the first expected castle. */
+  readonly after?: string;
+  /** UCI spelling of the first expected castle. */
+  readonly uci?: string;
+}
+
+const CASES: readonly CastleCase[] = [
+  {
+    name: 'the traditional array still castles exactly as it always did',
+    fen: '8/8/8/k7/8/8/8/R3K2R w KQ - 0 1',
+    expected: ['O-O', 'O-O-O'],
+    after: 'R4RK1',
+    uci: 'e1h1',
+  },
+  {
+    name: 'a king that never stood on the e-file',
+    fen: '8/8/8/k7/8/8/8/RK5R w KQ - 0 1',
+    expected: ['O-O', 'O-O-O'],
+    after: 'R4RK1',
+    uci: 'b1h1',
+  },
+  {
+    name: 'a king that already stands on its own destination',
+    // King g1 castling kingside finishes on g1: it does not move at all, only the rook does.
+    fen: '8/8/8/k7/8/8/8/R5KR w KQ - 0 1',
+    expected: ['O-O', 'O-O-O'],
+    after: 'R4RK1',
+    uci: 'g1h1',
+  },
+  {
+    name: 'a rook that already stands on its own destination',
+    // The f1 rook is the kingside rook and finishes on f1; only the king travels.
+    fen: '8/8/8/k7/8/8/8/R3KR2 w KQ - 0 1',
+    expected: ['O-O', 'O-O-O'],
+    after: 'R4RK1',
+    uci: 'e1f1',
+  },
+  {
+    name: 'a king and rook that cross over each other',
+    // King b1 -> g1 travels rightwards past its rook; rook c1 -> f1 travels rightwards past the
+    // king. Neither can be applied before the other without a square being briefly wrong.
+    fen: '8/8/8/k7/8/8/8/RKR5 w K - 0 1',
+    expected: ['O-O'],
+    after: 'R4RK1',
+    uci: 'b1c1',
+  },
+  {
+    name: 'a king directly adjacent to its rook',
+    fen: '8/8/8/k7/8/8/8/R4KR1 w KQ - 0 1',
+    expected: ['O-O', 'O-O-O'],
+    after: 'R4RK1',
+    uci: 'f1g1',
+  },
+  {
+    name: 'a queenside castle from an inner rook',
+    fen: '8/8/8/k7/8/8/8/1R2K2R w KQ - 0 1',
+    expected: ['O-O', 'O-O-O'],
+  },
+];
+
+for (const c of CASES) {
+  test(`castling: ${c.name}`, () => {
+    const pos = Position.fromFen(c.fen, 'chess960');
+    const found = castles(pos);
+    assert.deepEqual(
+      found.map((m) => pos.toSan(m).replace(/[+#]$/, '')),
+      c.expected,
+      c.fen,
+    );
+    if (c.uci !== undefined) {
+      assert.equal(pos.toUci(found[0]), c.uci, 'UCI spelling');
+    }
+    if (c.after !== undefined) {
+      assert.equal(whiteBackRank(pos.play(found[0])), c.after, 'resulting back rank');
+    }
+  });
+}
+
+test('a castled king and rook always land on the same squares, whatever the arrangement', () => {
+  // This is the invariant the whole feature turns on, so it is asserted across every arrangement
+  // rather than in the handful of shapes above. Each case clears the back rank down to one king and
+  // one rook, which is the only way to reach every relative placement.
+  for (let kingFile = 0; kingFile < 8; kingFile++) {
+    for (let rookFile = 0; rookFile < 8; rookFile++) {
+      if (rookFile === kingFile) continue;
+      const rank: string[] = Array.from({ length: 8 }, () => '1');
+      rank[kingFile] = 'K';
+      rank[rookFile] = 'R';
+      const side = rookFile > kingFile ? 'K' : 'Q';
+      const fen = `8/8/8/k7/8/8/8/${rank.join('')} w ${side} - 0 1`;
+      const pos = Position.fromFen(fen, 'chess960');
+      const found = castles(pos);
+      if (found.length === 0) continue; // blocked or attacked; covered elsewhere
+      assert.equal(found.length, 1);
+      const after = pos.play(found[0]);
+      assert.equal(
+        whiteBackRank(after),
+        side === 'K' ? '5RK1' : '2KR4',
+        `king ${kingFile} rook ${rookFile} landed wrong`,
+      );
+    }
+  }
+});
+
+test('the king may not castle out of, through, or into an attacked square', () => {
+  const cases: readonly [string, string, number][] = [
+    ['out of check', '1r6/8/8/k7/8/8/8/RK5R w K - 0 1', 0],
+    ['through an attacked square', '3r4/8/8/k7/8/8/8/RK5R w K - 0 1', 0],
+    ['into an attacked square', '6r1/8/8/k7/8/8/8/RK5R w K - 0 1', 0],
+    ['with the path unobserved', '8/8/8/k7/8/8/8/RK5R w K - 0 1', 1],
+  ];
+  for (const [name, fen, expected] of cases) {
+    assert.equal(castles(Position.fromFen(fen, 'chess960')).length, expected, name);
+  }
+});
+
+test('the rook may cross an attacked square, because only the king transit is constrained', () => {
+  // Black's rook on f8 attacks f1. The king starts on g1 and finishes on g1, so it never touches
+  // f1; the rook travels h1 -> f1 straight across it. Refusing this would be the classic Chess960
+  // castling bug — confusing rook exposure with king transit.
+  const pos = Position.fromFen('5r2/8/8/k7/8/8/8/R5KR w K - 0 1', 'chess960');
+  const found = castles(pos);
+  assert.equal(found.length, 1, 'the rook crossing an attacked square is legal');
+  assert.equal(whiteBackRank(pos.play(found[0])), 'R4RK1');
+});
+
+test('a piece standing anywhere in either span blocks castling', () => {
+  // The blocker sits on d1: outside the king's b1->c1 walk but inside the rook's a1->d1 walk. A
+  // check that only looked at the king's path would let this through.
+  const blocked = Position.fromFen('8/8/8/k7/8/8/8/RK1B4 w Q - 0 1', 'chess960');
+  assert.equal(castles(blocked).length, 0, 'd1 blocks the rook even though the king never reaches it');
+
+  const clear = Position.fromFen('8/8/8/k7/8/8/8/RK6 w Q - 0 1', 'chess960');
+  assert.equal(castles(clear).length, 1, 'the same position without the blocker castles');
+});
+
+test('castling rights follow the rook that holds them, not a corner square', () => {
+  // Rooks on b1 and g1, king on d1. Neither is on a corner, so a rights table keyed on a1/h1 would
+  // never clear either of them.
+  const start = Position.fromFen('8/8/8/k7/8/8/8/1R1K2R1 w KQ - 0 1', 'chess960');
+  assert.equal(start.fen().split(' ')[2], 'KQ');
+
+  const rookMoved = start.play('g1g2');
+  assert.equal(rookMoved.fen().split(' ')[2], 'Q', 'moving the kingside rook clears only that right');
+
+  const otherMoved = start.play('b1b2');
+  assert.equal(otherMoved.fen().split(' ')[2], 'K', 'moving the queenside rook clears only that right');
+});
+
+test('a king move clears both rights, and castling itself clears both', () => {
+  const start = Position.fromFen('8/8/8/k7/8/8/8/1R1K2R1 w KQ - 0 1', 'chess960');
+  assert.equal(start.play('d1d2').fen().split(' ')[2], '-', 'a plain king move surrenders both');
+
+  const castled = start.play('d1g1');
+  assert.equal(castled.fen().split(' ')[2], '-', 'castling surrenders both');
+  assert.equal(whiteBackRank(castled), '1R3RK1');
+});
+
+test('capturing a rook on its own square clears the right it carried', () => {
+  // The right has to die where it lives. White's queenside right is held by the rook on b1 — not a
+  // corner — so a rights table keyed on a1 would leave it standing after the rook is taken.
+  const pos = Position.fromFen('1r2k3/8/8/8/8/8/8/1R1K2R1 b KQ - 0 1', 'chess960');
+  assert.equal(pos.fen().split(' ')[2], 'KQ');
+  const after = pos.play('b8b1');
+  assert.equal(after.fen().split(' ')[2], 'K', 'the captured rook takes its right with it');
+});
+
+test('a right whose rook is not standing there cannot be exercised', () => {
+  // A hand-written FEN can name a right the board does not support. The generator must not follow
+  // it to an empty square.
+  const pos = Position.fromFen('8/8/8/k7/8/8/8/4K3 w KQ - 0 1', 'chess960');
+  assert.equal(castles(pos).length, 0);
+});
+
+test('SAN spells castling O-O and O-O-O however far the king actually travels', () => {
+  const cases: readonly [string, string][] = [
+    ['8/8/8/k7/8/8/8/R5KR w K - 0 1', 'O-O'], // king does not move at all
+    ['8/8/8/k7/8/8/8/RK5R w K - 0 1', 'O-O'], // king crosses five files
+    ['8/8/8/k7/8/8/8/R6K w Q - 0 1', 'O-O-O'], // king crosses six files the other way
+    ['8/8/8/k7/8/8/8/3RK3 w Q - 0 1', 'O-O-O'], // rook already home; only the king travels
+  ];
+  for (const [fen, san] of cases) {
+    const pos = Position.fromFen(fen, 'chess960');
+    const found = castles(pos);
+    assert.equal(found.length, 1, fen);
+    assert.equal(pos.toSan(found[0]).replace(/[+#]$/, ''), san, fen);
+  }
+});
+
+test('a Chess960 castle round-trips through its UCI spelling', () => {
+  const pos = Position.fromFen('8/8/8/k7/8/8/8/RK5R w KQ - 0 1', 'chess960');
+  for (const move of castles(pos)) {
+    const uci = pos.toUci(move);
+    assert.equal(pos.play(uci).fen(), pos.play(move).fen(), uci);
+  }
+});
+
+test('king-takes-rook never steals a spelling that is already an ordinary king move', () => {
+  // King f1, rook g1. `f1g1` is both a legal one-square step and the kingside castle. The step must
+  // win, because that is what the same four characters mean in every other variant; the castle
+  // stays reachable as the unambiguous king-takes-rook `f1g1`... which here is the same string, so
+  // the rook square is what disambiguates: castling to the h-rook spells `f1h1`.
+  const pos = Position.fromFen('8/8/8/k7/8/8/8/R4K1R w KQ - 0 1', 'chess960');
+  const stepped = pos.play('f1g1');
+  assert.equal(whiteBackRank(stepped), 'R5KR', 'f1g1 is the ordinary step, leaving both rooks put');
+
+  const castled = pos.play('f1h1');
+  assert.equal(whiteBackRank(castled), 'R4RK1', 'f1h1 is the castle');
+});
+
+test('standard chess keeps its own UCI spelling, unchanged', () => {
+  // The king-takes-rook convention is a Chess960 wire detail and must not leak into ordinary chess,
+  // where every GUI and engine expects e1g1.
+  const pos = Position.fromFen('8/8/8/k7/8/8/8/R3K2R w KQ - 0 1', 'standard');
+  const found = castles(pos);
+  assert.deepEqual(found.map((m) => pos.toUci(m)), ['e1g1', 'e1c1']);
+});

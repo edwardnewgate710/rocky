@@ -22,13 +22,26 @@ const create = (variant?: Variant) =>
     at: 0,
   });
 
-test('the defect this refusal exists for: chess960 has no start position of its own', () => {
-  // Not a test of the guard — a test of the premise. If these ever differ, Chess960 has gained a
-  // real start position and the refusal below should be reconsidered rather than left standing.
+test('the premise has changed: the rules exist now, so the refusal rests on something else', () => {
+  // This test used to assert that `Position.initial('chess960')` was the standard array and conclude
+  // from that that Chess960 was unplayable. The premise is dead: ADR-0136 implements all 960
+  // arrangements and castling from arbitrary king and rook squares, verified against published perft
+  // counts. Left as it was, it would have gone on passing while the reason it existed had evaporated.
+  //
+  // What it asserts instead is the reason the refusal still stands. The engine can play any
+  // arrangement, but `Game.create` has no way to be *told* which one — no parameter and no event
+  // field carries a starting-position id. A game created today could therefore only ever be position
+  // 518, recorded as `chess960` without anyone having chosen it: the same durable falsehood ADR-0123
+  // refused, arrived at from the opposite direction.
+  const distinct = new Set(
+    [0, 1, 42, 517, 518, 519, 959].map((id) => Position.chess960(id).fen()),
+  );
+  assert.equal(distinct.size, 7, 'the engine really does produce distinct Chess960 positions now');
+
   assert.equal(
     Position.initial('chess960').fen(),
     Position.initial('standard').fen(),
-    'chess960 still returns the standard array, so a chess960 game would be ordinary chess',
+    'while the default stays position 518, the traditional array, deliberately chosen by nobody',
   );
 });
 

@@ -6,7 +6,8 @@
  * piece-placement field in brackets, e.g. `rnbqkbnr/...[NPp] w ...`.
  */
 
-import { CastleRight, type Piece, type PieceType, type PositionState, type Variant } from './types';
+import type { Piece, PieceType, PositionState, Variant } from './types';
+import { cloneCastlingRights, formatCastlingField, parseCastlingField } from './castling';
 import { emptyBoard, makeSquare, squareFromName, squareName, rankOf } from './board';
 
 /** The standard starting position FEN. */
@@ -84,19 +85,9 @@ export function parseFen(fen: string, variant: Variant = 'standard'): PositionSt
     throw new FenError(`Side to move must be 'w' or 'b', got '${turnRaw}'`);
   }
 
-  let castling = 0;
-  if (castlingRaw !== '-') {
-    for (const ch of castlingRaw) {
-      switch (ch) {
-        case 'K': castling |= CastleRight.WhiteKing; break;
-        case 'Q': castling |= CastleRight.WhiteQueen; break;
-        case 'k': castling |= CastleRight.BlackKing; break;
-        case 'q': castling |= CastleRight.BlackQueen; break;
-        // Chess960 uses file letters (A-H/a-h); handled by the 960 module.
-        default: break;
-      }
-    }
-  }
+  // Resolved against the board, because a right names a rook and only the board says where the
+  // rooks are. This is also what lets one reader accept both Shredder-FEN and X-FEN spellings.
+  const castling = parseCastlingField(castlingRaw, board);
 
   const epSquare = epRaw === '-' ? -1 : squareFromName(epRaw);
 
@@ -138,12 +129,7 @@ export function toFen(state: PositionState): string {
     placement += `[${pocket}]`;
   }
 
-  let castling = '';
-  if (state.castling & CastleRight.WhiteKing) castling += 'K';
-  if (state.castling & CastleRight.WhiteQueen) castling += 'Q';
-  if (state.castling & CastleRight.BlackKing) castling += 'k';
-  if (state.castling & CastleRight.BlackQueen) castling += 'q';
-  if (castling === '') castling = '-';
+  const castling = formatCastlingField(state.castling, state.board);
 
   const ep = state.epSquare === -1 ? '-' : squareName(state.epSquare);
 
@@ -297,7 +283,7 @@ export function cloneState(state: PositionState): PositionState {
   return {
     board: state.board.slice(),
     turn: state.turn,
-    castling: state.castling,
+    castling: cloneCastlingRights(state.castling),
     epSquare: state.epSquare,
     halfmoves: state.halfmoves,
     fullmoves: state.fullmoves,

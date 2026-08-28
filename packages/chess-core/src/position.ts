@@ -6,6 +6,7 @@
 
 import { fileOf, opposite, rankOf, squareFromName, squareName, typeOf } from './board';
 import { START_FEN, cloneState, parseFen, toFen } from './fen';
+import { CHESS960_STANDARD_ID, chess960Fen } from './chess960';
 import {
   applyMove,
   findKing,
@@ -30,11 +31,31 @@ export class Position {
     this.state = state;
   }
 
-  /** Create the starting position for a variant. */
+  /**
+   * Create the starting position for a variant.
+   *
+   * Chess960 resolves to starting-position 518, the traditional array, and does so on every
+   * call. Choosing one of the 960 at random is a decision for whoever starts a game, not for the
+   * rules engine: a core that reached for entropy here would make every position it produced
+   * unreproducible, and callers that legitimately want a fixed position — tests, analysis,
+   * replaying a stored game — would have no way to ask for one. Use {@link Position.chess960} to
+   * name the arrangement you want.
+   */
   static initial(variant: Variant = 'standard'): Position {
     if (variant === 'horde') return Position.fromFen(HORDE_FEN, 'horde');
     if (variant === 'racingkings') return Position.fromFen(RACING_KINGS_FEN, 'racingkings');
+    if (variant === 'chess960') return Position.chess960(CHESS960_STANDARD_ID);
     return Position.fromFen(START_FEN, variant);
+  }
+
+  /**
+   * Create the Chess960 starting position with Scharnagl id `id` (0..959).
+   *
+   * Deterministic: the same id always gives the same position. Throws `RangeError` for an
+   * id outside the range.
+   */
+  static chess960(id: number): Position {
+    return Position.fromFen(chess960Fen(id), 'chess960');
   }
 
   /** Create a position from FEN. */
@@ -106,9 +127,24 @@ export class Position {
     return new Position(applyMove(this.state, resolved));
   }
 
+  /**
+   * Find the generated move a caller-supplied one refers to.
+   *
+   * `castleRook` is part of the comparison because in Chess960 it is the only thing that tells two
+   * different moves apart. A king on b1 whose queenside castle lands it on c1 can also simply step
+   * to c1, and both moves share a `from` and a `to`. Matching on those alone returned whichever was
+   * generated first — the ordinary step — so asking to castle quietly moved the king one square and
+   * left the rook behind, producing a legal-looking position that was not the one requested.
+   */
   private matchLegal(move: Move): Move | null {
     for (const m of this.legalMoves()) {
-      if (m.from === move.from && m.to === move.to && (m.promotion ?? null) === (move.promotion ?? null) && (m.drop ?? null) === (move.drop ?? null)) {
+      if (
+        m.from === move.from &&
+        m.to === move.to &&
+        (m.promotion ?? null) === (move.promotion ?? null) &&
+        (m.drop ?? null) === (move.drop ?? null) &&
+        (m.castleRook ?? null) === (move.castleRook ?? null)
+      ) {
         return m;
       }
     }
@@ -132,12 +168,37 @@ export class Position {
     for (const m of this.legalMoves()) {
       if (m.from === from && m.to === to && (m.promotion ?? undefined) === promo) return m;
     }
+    // Chess960 castling also arrives king-takes-rook. It is tried second so that a spelling which
+    // is already a legal ordinary move keeps its ordinary meaning: a king on f1 beside a rook on
+    // g1 can both step to g1 and castle, and `f1g1` must remain the step.
+    if (promo === undefined) {
+      for (const m of this.legalMoves()) {
+        if (m.from === from && m.castleRook === to) return m;
+      }
+    }
     return null;
   }
 
-  /** Convert a legal move to UCI notation. */
+  /**
+   * Convert a legal move to UCI notation.
+   *
+   * Chess960 castling is written **king-takes-rook** — `e1h1` rather than `e1g1` — which is
+   * the convention a UCI engine expects once `UCI_Chess960` is on, and this repository already
+   * switches that option on for the variant. The internal move is unaffected: `to` remains the
+   * king's final square in every variant, and the engine spelling is applied only here, at the
+   * wire boundary.
+   *
+   * The convention exists because the king's destination is not always a distinct square. A king
+   * that starts on g1 finishes on g1 when it castles kingside, so `g1g1` would name a move that
+   * appears to go nowhere; a king on f1 castling kingside would emit `f1g1`, indistinguishable
+   * from stepping one square right. The rook's square is always unambiguous, because the king
+   * starts strictly between the two rooks.
+   */
   toUci(move: Move): string {
     if (move.drop) return `${move.drop.toUpperCase()}@${squareName(move.to)}`;
+    if (move.castleRook !== undefined && this.state.variant === 'chess960') {
+      return squareName(move.from) + squareName(move.castleRook);
+    }
     return squareName(move.from) + squareName(move.to) + (move.promotion ?? '');
   }
 
