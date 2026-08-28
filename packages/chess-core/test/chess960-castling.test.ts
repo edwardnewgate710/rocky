@@ -124,8 +124,13 @@ test('a castled king and rook always land on the same squares, whatever the arra
       const fen = `8/8/8/k7/8/8/8/${rank.join('')} w ${side} - 0 1`;
       const pos = Position.fromFen(fen, 'chess960');
       const found = castles(pos);
-      if (found.length === 0) continue; // blocked or attacked; covered elsewhere
-      assert.equal(found.length, 1);
+      // Every one of the 56 must castle, and the board is built so that nothing can excuse a
+      // failure: the only pieces are the two movers and a Black king parked on a5, which attacks
+      // nothing on rank 1, so no span is blocked and no transit square is observed. An earlier
+      // version skipped empty results and asserted a lower bound, which let arrangements vanish
+      // silently — and would have passed against a generator that produced nothing at all. Raised in
+      // the CodeRabbit review of PR #10.
+      assert.equal(found.length, 1, `king ${kingFile} rook ${rookFile} produced ${found.length} castles`);
       castled++;
       const after = pos.play(found[0]);
       assert.equal(
@@ -135,10 +140,9 @@ test('a castled king and rook always land on the same squares, whatever the arra
       );
     }
   }
-  // Without this the `continue` above would make the whole sweep vacuous: a generator that produced
-  // no castling move for any arrangement would skip every case and pass. Raised in the CodeRabbit
-  // review of PR #10.
-  assert.ok(castled >= 50, `only ${castled} of the 56 arrangements produced a castle`);
+  // Guards the sweep itself: an off-by-one in the loop bounds would leave every assertion above
+  // untouched and still pass.
+  assert.equal(castled, 56, 'the sweep must cover all 56 king/rook arrangements');
 });
 
 test('the king may not castle out of, through, or into an attacked square', () => {
@@ -316,6 +320,33 @@ test('a hand-built castling move still plays, in standard and in Chess960', () =
     'R1K4R',
     'and asking for the plain move must still give the plain move',
   );
+
+  // Naming the rook must be enough on its own, with no flag at all — this is the only shape in
+  // which `castleRook` is what separates the two, since everywhere else the flag already does.
+  assert.equal(
+    whiteBackRank(ambiguous.play({ from: 1, to: 2, piece: 'K', castleRook: 0, flags: MoveFlag.Normal })),
+    '2KR3R',
+    'naming the a1 rook must select the castle, not the king step',
+  );
+});
+
+test('a move whose rook and castling flag disagree is refused, not reinterpreted', () => {
+  // `castleRook` and the castling flag are cumulative constraints, not alternatives. Checking the
+  // flag only when no rook was named let a self-contradictory move — the queenside rook carrying
+  // `KingCastle` — resolve to the queenside castle and play it, so a caller that had confused itself
+  // got a silently different move instead of an error. Raised in the Qodo review of PR #10.
+  const pos = Position.fromFen('4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1', 'standard');
+  const queenside = pos.legalMoves().find((m) => (m.flags & MoveFlag.QueenCastle) !== 0);
+  assert.ok(queenside);
+
+  assert.throws(
+    () => pos.play({ ...queenside, flags: MoveFlag.KingCastle }),
+    IllegalMoveError,
+    'the queenside rook with a kingside flag is a contradiction',
+  );
+
+  // The consistent move it was being mistaken for still works.
+  assert.equal(whiteBackRank(pos.play(queenside)), '2KR3R');
 });
 
 test('a castling move without its rook is refused rather than applied', () => {

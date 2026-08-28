@@ -132,12 +132,20 @@ castle lands it on c1 can *also* simply step to c1, so asking to castle silently
 square and left the rook behind — a legal-looking position that was not the one requested. Found by
 the exhaustive castling test, not by review.
 
-The tie is now broken on whatever the caller supplied, most specific first: `castleRook` when given,
-otherwise a castling flag, otherwise the first match as before. Requiring `castleRook` unconditionally
-was the first attempt and silently narrowed the public API — `play({ from: e1, to: g1, piece: 'K',
-flags: KingCastle })` is an ordinary way to express standard castling and began throwing. Raised in
-the CodeRabbit review of PR #10. A fix for one variant is not allowed to cost the others their
-existing contract, which is the same principle as §7.
+Whatever the caller supplies is now applied as a constraint, and the constraints are **cumulative**:
+`castleRook` must match when given, a castling flag must match when given, and when neither is given
+the first match wins as before.
+
+Two earlier versions were wrong in opposite directions, which is why the final shape is worth stating
+precisely. Requiring `castleRook` unconditionally silently narrowed the public API —
+`play({ from: e1, to: g1, piece: 'K', flags: KingCastle })` is an ordinary way to express standard
+castling and began throwing. Treating the two as *alternatives* then accepted contradictory input: a
+move naming the queenside rook while carrying `KingCastle` resolved to the queenside castle and
+played it, so a caller that had confused itself received a different move instead of an error. Both
+were raised in review of PR #10, the second by Qodo.
+
+The through-line is the same as §7: a fix for one variant may not cost the others their existing
+contract, and being permissive is not the same as being correct.
 
 ### 5. Perft, from published values only
 

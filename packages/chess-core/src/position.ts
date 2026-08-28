@@ -135,19 +135,25 @@ export class Position {
    * them alone returned whichever was generated first — the ordinary step — so asking to castle
    * quietly moved the king one square and left the rook behind.
    *
-   * The tie is broken on whatever the caller actually supplied, most specific first:
+   * Whatever the caller supplied is applied as a constraint, and the constraints are **cumulative**
+   * rather than alternatives:
    *
-   * 1. `castleRook`, when given, must match exactly. Every move from {@link Position.legalMoves}
-   *    carries it, so a move handed straight back always resolves to itself.
-   * 2. Otherwise a castling **flag**, when given, must match. That is what a hand-built move
-   *    normally carries.
-   * 3. Otherwise the first move matching the four fields wins, which is what this method has always
-   *    done.
+   * - `castleRook`, when given, must match exactly. Every move from {@link Position.legalMoves}
+   *   carries it, so a move handed straight back always resolves to itself.
+   * - a castling **flag**, when given, must match too. That is what a hand-built move normally
+   *   carries.
+   * - when neither is given, the first move matching the four fields wins, which is what this method
+   *   has always done.
    *
-   * Requiring `castleRook` unconditionally was the first attempt, and it silently narrowed the
-   * public API: `play({ from: e1, to: g1, piece: 'K', flags: KingCastle })` — an ordinary way to
-   * express standard castling, and one that worked before — began throwing. Raised in the CodeRabbit
-   * review of PR #10.
+   * Two earlier versions were wrong in opposite directions, and both are worth recording.
+   *
+   * Requiring `castleRook` unconditionally silently narrowed the public API:
+   * `play({ from: e1, to: g1, piece: 'K', flags: KingCastle })` is an ordinary way to express
+   * standard castling and began throwing. Then treating the two as *alternatives* — checking the
+   * flag only when no rook was named — accepted contradictory input: a move naming the queenside
+   * rook while carrying `KingCastle` resolved to the queenside castle and played it, so a caller
+   * that had confused itself got a silently different move rather than an error. Both raised in
+   * review of PR #10, the second by Qodo.
    */
   private matchLegal(move: Move): Move | null {
     const castleFlags = MoveFlag.KingCastle | MoveFlag.QueenCastle;
@@ -156,11 +162,8 @@ export class Position {
       if (m.from !== move.from || m.to !== move.to) continue;
       if ((m.promotion ?? null) !== (move.promotion ?? null)) continue;
       if ((m.drop ?? null) !== (move.drop ?? null)) continue;
-      if (move.castleRook !== undefined) {
-        if (m.castleRook !== move.castleRook) continue;
-      } else if (wantedCastle !== 0 && (m.flags & castleFlags) !== wantedCastle) {
-        continue;
-      }
+      if (move.castleRook !== undefined && m.castleRook !== move.castleRook) continue;
+      if (wantedCastle !== 0 && (m.flags & castleFlags) !== wantedCastle) continue;
       return m;
     }
     return null;
