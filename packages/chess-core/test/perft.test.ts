@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Position } from '../src/position';
-import type { Variant } from '../src/types';
+import { MoveFlag, type Variant } from '../src/types';
 
 interface PerftCase {
   name: string;
@@ -210,4 +210,94 @@ test('perft divide: a variant-terminal position has no root branches', () => {
   const terminal = Position.fromFen('2K5/8/8/8/8/8/8/4k3 b - - 0 1', 'racingkings');
   assert.equal(terminal.perft(1), 0);
   assert.deepEqual(terminal.perftDivide(1), {});
+});
+
+/**
+ * Horde: only White is a horde. Black is an ordinary army and castles.
+ *
+ * `generateCastles` used to return early for the whole variant, which suppressed Black's castling
+ * too — while `HORDE_FEN` granted Black `kq`. The engine handed out rights it then refused to
+ * honour. Raised in the CodeRabbit review of PR #10; see ADR-0136.
+ *
+ * There is no published perft vector that can settle this: all three Horde vectors above start with
+ * Black's back rank full, so no castle is reachable at any depth they cover. The evidence is
+ * therefore the rule itself and a relationship, not a node count:
+ *
+ * - Lichess states the rule as "a move is legal if and only if it is legal in standard chess for a
+ *   similar position", with an exception only for The Pawns — castling is not among the exceptions;
+ * - `HORDE_FEN` here, and the identical starting FEN in python-chess's `HordeBoard`, both grant `kq`
+ *   and apply no castling override for Black.
+ *
+ * The relationship below is what a fixed number cannot satisfy: Horde changes White's pawns and the
+ * win conditions, and nothing about how Black moves. So for any board with Black to move, Black's
+ * legal moves under `horde` must be exactly those under `standard`.
+ */
+const HORDE_BLACK_TO_MOVE: readonly string[] = [
+  'r3k2r/pppppppp/8/8/8/8/PPPPPPPP/PPPPPPPP b kq - 0 1',
+  'r3k2r/pp1ppppp/8/8/8/8/PPPPPPPP/PPPPPPPP b kq - 0 1',
+  'rn2k1nr/pppppppp/8/8/8/8/PPPPPPPP/PPPPPPPP b kq - 0 1',
+  'r3k2r/pppppppp/8/8/8/8/PPPPPPPP/PPPPPPPP b - - 0 1',
+];
+
+test('horde: Black moves exactly as in standard chess, castling included', () => {
+  for (const fen of HORDE_BLACK_TO_MOVE) {
+    const horde = Position.fromFen(fen, 'horde');
+    const standard = Position.fromFen(fen, 'standard');
+    assert.deepEqual(
+      horde.legalMoves().map((m) => horde.toSan(m)).sort(),
+      standard.legalMoves().map((m) => standard.toSan(m)).sort(),
+      `Black's moves diverge from standard in: ${fen}`,
+    );
+  }
+});
+
+test('horde: Black castles to the ordinary squares, and loses the right the ordinary way', () => {
+  // Asserted separately from the relationship above, which would be satisfied if *both* rule sets
+  // lost castling together.
+  const pos = Position.fromFen(HORDE_BLACK_TO_MOVE[0], 'horde');
+  const castles = pos.legalMoves().filter((m) => (m.flags & (MoveFlag.KingCastle | MoveFlag.QueenCastle)) !== 0);
+  assert.deepEqual(castles.map((m) => pos.toSan(m).replace(/[+#]$/, '')), ['O-O', 'O-O-O']);
+
+  assert.equal(pos.play(castles[0]).fen().split(' ')[0].split('/')[0], 'r4rk1', 'kingside');
+  assert.equal(pos.play(castles[1]).fen().split(' ')[0].split('/')[0], '2kr3r', 'queenside');
+
+  // A rook move still surrenders exactly one right, as anywhere else.
+  assert.equal(pos.play('a8b8').fen().split(' ')[2], 'k', 'the a8 rook takes its right with it');
+});
+
+test('racing kings forbids castling, and that refusal is the variant, not the position', () => {
+  // The counterpart to the Horde change: `generateCastles` still returns early for Racing Kings, and
+  // that guard had no test — mutation testing showed it could be deleted without a failure. The
+  // published Racing Kings vectors cannot cover it, since all of them carry no castling rights at
+  // all, and the start position keeps both kings off their back ranks.
+  //
+  // Asserted as a relationship so it cannot be satisfied by a generator that has simply stopped
+  // producing castles: the identical board must castle under standard rules and must not under
+  // Racing Kings.
+  const fen = '4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1';
+  const isCastle = (m: { flags: number }) =>
+    (m.flags & (MoveFlag.KingCastle | MoveFlag.QueenCastle)) !== 0;
+
+  assert.equal(
+    Position.fromFen(fen, 'standard').legalMoves().filter(isCastle).length,
+    2,
+    'the position itself permits castling',
+  );
+  assert.equal(
+    Position.fromFen(fen, 'racingkings').legalMoves().filter(isCastle).length,
+    0,
+    'and Racing Kings is what refuses it',
+  );
+});
+
+test('horde: the pawn army has no king and therefore no castling', () => {
+  // The early return that used to cover White was not merely wrong for Black, it was unnecessary for
+  // White: `generateCastles` is reached only from the king branch of move generation.
+  const start = Position.initial('horde');
+  assert.equal(start.turn, 'w');
+  assert.equal(
+    start.legalMoves().filter((m) => (m.flags & (MoveFlag.KingCastle | MoveFlag.QueenCastle)) !== 0).length,
+    0,
+  );
+  assert.equal(start.fen().split(' ')[2], 'kq', 'and Black keeps the rights the start position grants');
 });

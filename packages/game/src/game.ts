@@ -93,24 +93,27 @@ export class Game {
    * every game is born: seek acceptance, the bot route and the tournament launcher all arrive at
    * this call, and a future fourth caller would inherit the rule instead of having to remember it.
    *
-   * The reason is not policy but honesty about what the engine can do. `Position.initial('chess960')`
-   * returns the standard array — verified identical to `Position.initial('standard')` — and castling
-   * generation is hardcoded to e1/a1/h1, so the only Chess960 arrangement that works is the one that
-   * is ordinary chess. Creating the game anyway wrote `variant: 'chess960'` beside a standard
-   * `initialFen` into an append-only event store, which is a durable lie: the row says a rule set the
-   * position never used, and nothing downstream can tell it from a real one.
+   * **The reason for the refusal has changed, and the refusal has not.** It was originally that the
+   * engine could not play the variant at all: `Position.initial('chess960')` returned the standard
+   * array and castling was hardcoded to e1/a1/h1, so the only arrangement that worked was ordinary
+   * chess. ADR-0136 fixed that — all 960 arrangements are generated, castling works from arbitrary
+   * king and rook squares, and both are verified against published perft counts.
    *
-   * ADR-0099 withheld the variant from the lobby and deliberately left the server contract open.
-   * ADR-0123 closes it, because a client-side list cannot be an invariant. See ADR-0123 for what
-   * implementing the variant properly requires; `chess960` stays in `Variant` throughout, since
-   * reading and analysing such a position is legitimate and only *creating* one is not.
+   * What is still missing is everything *around* the rules. Creating a Chess960 game means deciding
+   * and recording which of the 960 arrangements it is, and no request schema, event field, or client
+   * carries that yet. Creating one now would write a `variant: 'chess960'` event whose arrangement
+   * nobody chose, into an append-only store — the same durable falsehood ADR-0123 refused, arrived at
+   * from the opposite direction. ADR-0136 §"Phase B" lists what has to exist first.
+   *
+   * `chess960` stays in `Variant` throughout, since reading and analysing such a position is
+   * legitimate and only *creating* one is not.
    */
   static create(params: CreateGameParams): { game: Game; events: GameEvent[] } {
     const variant = params.variant ?? 'standard';
     if (variant === 'chess960') {
       throw new GameError(
-        'chess960 games cannot be created: the variant is named but not implemented, so the game ' +
-          'would start from the standard position. See ADR-0123.',
+        'chess960 games cannot be created: the rules are implemented but there is no way yet to choose ' +
+          'and record which of the 960 starting arrangements the game uses. See ADR-0136.',
       );
     }
     const initialFen = params.initialFen ?? Position.initial(variant).fen();

@@ -14,16 +14,28 @@ import {
   KNIGHT_OFFSETS,
   ROOK_OFFSETS,
   colorOf,
+  fileOf,
   makePiece,
+  makeSquare,
   onBoard,
   opposite,
   rankOf,
   typeOf,
 } from './board';
+import {
+  NO_CASTLING_ROOK,
+  backRankOf,
+  castledKingSquare,
+  castledRookSquare,
+  clearColorRights,
+  clearRightsForSquare,
+  cloneCastlingRights,
+} from './castling';
 import { cloneState } from './fen';
 import {
-  CastleRight,
   MoveFlag,
+  type CastlingRights,
+  type CastlingSide,
   type Color,
   type Move,
   type Piece,
@@ -248,39 +260,128 @@ function generateSliding(
   }
 }
 
-function generateCastles(state: PositionState, from: number, piece: Piece, moves: Move[]): void {
-  const us = colorOf(piece);
-  const them = opposite(us);
-  const board = state.board;
-  // Racing kings has no castling; king must never be in/near check anyway.
-  if (state.variant === 'racingkings' || state.variant === 'horde') return;
+const CASTLING_SIDES: readonly CastlingSide[] = ['k', 'q'];
 
-  const homeKing = us === 'w' ? 4 : 116;
-  if (from !== homeKing) return;
-  if (isSquareAttacked(state, from, them)) return; // can't castle out of check
+/** Where the king and rooks must stand to castle in every rule set except Chess960. */
+const TRADITIONAL_KING_FILE = 4;
+const TRADITIONAL_ROOK_FILES: Readonly<Record<CastlingSide, number>> = { k: 7, q: 0 };
 
-  const kingRight = us === 'w' ? CastleRight.WhiteKing : CastleRight.BlackKing;
-  const queenRight = us === 'w' ? CastleRight.WhiteQueen : CastleRight.BlackQueen;
-
-  if (state.castling & kingRight) {
-    const f = from + 1, g = from + 2, rookSq = from + 3;
-    if (
-      board[f] === null && board[g] === null &&
-      board[rookSq] === makePiece(us, 'r') &&
-      !isSquareAttacked(state, f, them) && !isSquareAttacked(state, g, them)
-    ) {
-      pushMove(moves, { from, to: g, piece, flags: MoveFlag.KingCastle });
+/**
+ * Every square the king and the rook pass over, the two movers themselves excepted, must be empty.
+ *
+ * Both spans are checked, not just the king's. In standard chess the rook's span is contained in
+ * the king's for the kingside and adds only b1 for the queenside, which is why a hardcoded
+ * three-square test worked. In Chess960 the rook can start further out than the king travels, or on
+ * the far side of where the king lands, so neither span contains the other.
+ *
+ * The king and the castling rook are skipped by square rather than by piece kind, because either may
+ * already be standing on its own destination and must not be read as an obstruction to itself.
+ */
+function castlingSpanClear(
+  board: readonly (Piece | null)[],
+  kingFrom: number,
+  kingTo: number,
+  rookFrom: number,
+  rookTo: number,
+): boolean {
+  const rank = rankOf(kingFrom);
+  for (const [a, b] of [[kingFrom, kingTo], [rookFrom, rookTo]] as const) {
+    const lo = Math.min(fileOf(a), fileOf(b));
+    const hi = Math.max(fileOf(a), fileOf(b));
+    for (let file = lo; file <= hi; file++) {
+      const sq = makeSquare(file, rank);
+      if (sq === kingFrom || sq === rookFrom) continue;
+      if (board[sq] !== null) return false;
     }
   }
-  if (state.castling & queenRight) {
-    const d = from - 1, c = from - 2, b = from - 3, rookSq = from - 4;
-    if (
-      board[d] === null && board[c] === null && board[b] === null &&
-      board[rookSq] === makePiece(us, 'r') &&
-      !isSquareAttacked(state, d, them) && !isSquareAttacked(state, c, them)
-    ) {
-      pushMove(moves, { from, to: c, piece, flags: MoveFlag.QueenCastle });
-    }
+  return true;
+}
+
+/**
+ * The king may not castle out of, through, or into check.
+ *
+ * Every square from its origin to its destination inclusive is tested, which in Chess960 may be no
+ * squares of movement at all (a king already on g1 castling kingside) or as many as four. The
+ * destination is tested here as well as by the ordinary post-move legality filter; that is
+ * deliberate redundancy, since the two look at different boards — this one before the rook has
+ * moved, the filter after.
+ *
+ * Note what is *not* tested: the rook's own path. A rook may legally pass over an attacked square,
+ * and only the king's transit is constrained. Conflating the two is the classic Chess960 castling
+ * bug and would refuse legal moves.
+ */
+function kingPathSafe(state: PositionState, kingFrom: number, kingTo: number, them: Color): boolean {
+  const rank = rankOf(kingFrom);
+  const lo = Math.min(fileOf(kingFrom), fileOf(kingTo));
+  const hi = Math.max(fileOf(kingFrom), fileOf(kingTo));
+  for (let file = lo; file <= hi; file++) {
+    if (isSquareAttacked(state, makeSquare(file, rank), them)) return false;
+  }
+  return true;
+}
+
+/**
+ * Castling from wherever the king and the chosen rook actually stand — in Chess960.
+ *
+ * For Chess960 nothing here assumes the e-file, the a/h-files, or that the king moves two squares:
+ * the rook is read from the castling rights, which name it by file, and the destinations are the
+ * fixed g/f and c/d squares that standard chess already uses.
+ *
+ * **Every other rule set keeps the traditional origins, and that is a rule rather than a
+ * coincidence.** Ordinary chess does not merely happen to castle from e1 with the rook on a or h; it
+ * permits nothing else. Applying the general form everywhere let a standard position with a king on
+ * d1 and a rook on h1 produce `d1g1` — a legal Chess960 castle and an illegal standard one. Raised
+ * in the Qodo review of PR #10.
+ */
+function generateCastles(state: PositionState, from: number, piece: Piece, moves: Move[]): void {
+  const us = colorOf(piece);
+  // Racing Kings has no castling at all.
+  //
+  // Horde is deliberately *not* excluded here, though it used to be. Only White is a horde of
+  // pawns; Black is an ordinary army with a king, and `HORDE_FEN` grants it `kq` — so the engine
+  // was handing Black rights it then refused to honour. Excluding White is unnecessary as well as
+  // insufficient: White has no king, so this function is only ever reached for Black anyway, being
+  // called from the king branch of `generatePseudoLegal`. Raised in the CodeRabbit review of PR #10;
+  // see ADR-0136.
+  if (state.variant === 'racingkings') return;
+
+  const backRank = backRankOf(us);
+  if (rankOf(from) !== backRank) return;
+
+  // Outside Chess960 the king castles only from its e-file home square.
+  const arbitraryOrigins = state.variant === 'chess960';
+  if (!arbitraryOrigins && fileOf(from) !== TRADITIONAL_KING_FILE) return;
+
+  // "May not castle out of check" is enforced by `kingPathSafe` below, not by a separate test here.
+  // That function walks from the king's origin to its destination inclusive, so the origin is
+  // already among the squares required to be unattacked. A second early return would restate the
+  // same rule in a form no test could tell apart from the first.
+  const them = opposite(us);
+
+  for (const side of CASTLING_SIDES) {
+    const rookFile = state.castling[us][side];
+    if (rookFile === NO_CASTLING_ROOK) continue;
+    // ...and only with the rook on a or h. A standard position whose kingside right had been
+    // resolved to a rook on g1 would otherwise castle with it.
+    if (!arbitraryOrigins && rookFile !== TRADITIONAL_ROOK_FILES[side]) continue;
+
+    const rookFrom = makeSquare(rookFile, backRank);
+    // A right whose rook is not standing there cannot be exercised. Rights are kept in step with
+    // the board on every move, so this is a guard against a hand-written FEN rather than drift.
+    if (state.board[rookFrom] !== makePiece(us, 'r')) continue;
+
+    const kingTo = castledKingSquare(us, side);
+    const rookTo = castledRookSquare(us, side);
+    if (!castlingSpanClear(state.board, from, kingTo, rookFrom, rookTo)) continue;
+    if (!kingPathSafe(state, from, kingTo, them)) continue;
+
+    pushMove(moves, {
+      from,
+      to: kingTo,
+      piece,
+      castleRook: rookFrom,
+      flags: side === 'k' ? MoveFlag.KingCastle : MoveFlag.QueenCastle,
+    });
   }
 }
 
@@ -323,6 +424,30 @@ export function applyMove(state: PositionState, move: Move): PositionState {
     const idx = next.pockets[us].indexOf(move.drop);
     if (idx !== -1) next.pockets[us].splice(idx, 1);
     next.halfmoves = 0;
+  } else if (move.flags & (MoveFlag.KingCastle | MoveFlag.QueenCastle)) {
+    // Castling is written as its own branch because the general path cannot express it. In
+    // Chess960 the king's origin, the rook's origin and the two destinations may be any
+    // combination of the same four squares — a king already on g1, a rook already on f1, a king
+    // and rook that swap — so clearing an origin after placing a destination can erase a piece
+    // that was just put down. Both origins are vacated first, then both destinations written.
+    const side: CastlingSide = move.flags & MoveFlag.KingCastle ? 'k' : 'q';
+    const rookFrom = move.castleRook;
+    if (rookFrom === undefined) {
+      // `applyMove` is exported, so a caller can hand it a move this package did not generate.
+      // Without the rook's origin there is no square to vacate, and the writes below would leave a
+      // rook standing on both its old square and its new one — a position quietly wrong rather than
+      // obviously broken. Refusing is the only honest answer.
+      // Deliberately a plain Error: `IllegalMoveError` lives in `position.ts`, which imports this
+      // module, and importing it back would make the cycle real for the sake of a label.
+      throw new Error('A castling move must carry castleRook, the square its rook starts on');
+    }
+    const rookTo = castledRookSquare(us, side);
+    board[move.from] = null;
+    board[rookFrom] = null;
+    board[move.to] = makePiece(us, 'k');
+    board[rookTo] = makePiece(us, 'r');
+    next.halfmoves = state.halfmoves + 1;
+    next.castling = updateCastlingRights(state.castling, move);
   } else {
     const movingPiece = board[move.from];
     board[move.from] = null;
@@ -345,17 +470,6 @@ export function applyMove(state: PositionState, move: Move): PositionState {
       board[move.to] = makePiece(us, move.promotion);
     } else {
       board[move.to] = movingPiece;
-    }
-
-    // Castling: move the rook too.
-    if (move.flags & MoveFlag.KingCastle) {
-      const rookFrom = move.from + 3, rookTo = move.from + 1;
-      board[rookTo] = board[rookFrom];
-      board[rookFrom] = null;
-    } else if (move.flags & MoveFlag.QueenCastle) {
-      const rookFrom = move.from - 4, rookTo = move.from - 1;
-      board[rookTo] = board[rookFrom];
-      board[rookFrom] = null;
     }
 
     // Double pawn push sets the en-passant target (only from standard starting rank).
@@ -386,28 +500,23 @@ export function applyMove(state: PositionState, move: Move): PositionState {
   return next;
 }
 
-function updateCastlingRights(rights: number, move: Move): number {
-  let r = rights;
-  // King moves remove both rights for that color.
-  const t = typeOf(move.piece);
-  const c = colorOf(move.piece);
-  if (t === 'k') {
-    r &= c === 'w'
-      ? ~(CastleRight.WhiteKing | CastleRight.WhiteQueen)
-      : ~(CastleRight.BlackKing | CastleRight.BlackQueen);
-  }
-  // Rook leaving its home square, or being captured on it, clears that right.
-  const clearFor = (sq: number) => {
-    switch (sq) {
-      case 7: r &= ~CastleRight.WhiteKing; break;   // h1
-      case 0: r &= ~CastleRight.WhiteQueen; break;  // a1
-      case 119: r &= ~CastleRight.BlackKing; break; // h8
-      case 112: r &= ~CastleRight.BlackQueen; break;// a8
-    }
-  };
-  clearFor(move.from);
-  clearFor(move.to);
-  return r;
+/**
+ * Rights after a move.
+ *
+ * The standard version switched on the four corner squares, which is correct only while the rooks
+ * start in the corners. Rights now name the rook by file, so a right dies when something happens
+ * on the square that rook occupies — it moving away, or an enemy capturing it there — whichever
+ * file that is. `clearRightsForSquare` also checks the rank, so a move on White's back rank can
+ * never disturb Black's rights.
+ */
+function updateCastlingRights(rights: CastlingRights, move: Move): CastlingRights {
+  const next = cloneCastlingRights(rights);
+  if (typeOf(move.piece) === 'k') clearColorRights(next, colorOf(move.piece));
+  clearRightsForSquare(next, move.from);
+  clearRightsForSquare(next, move.to);
+  // A castling rook vacates a square that is neither `from` nor `to`.
+  if (move.castleRook !== undefined) clearRightsForSquare(next, move.castleRook);
+  return next;
 }
 
 /** Atomic: remove the captured piece, the capturer, and all adjacent non-pawns. */
