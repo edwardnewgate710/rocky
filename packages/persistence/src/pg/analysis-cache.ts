@@ -9,6 +9,7 @@ import type { AnalysisCache, AnalysisKey, CacheMeta } from '@chess-platform/engi
 import type { AnalysisLimits, EngineResult } from '@chess-platform/engine';
 import {
   ANALYSIS_CACHE_PAYLOAD_VERSION,
+  assertWithinMultiPv,
   decodeAnalysisPayload,
   encodeAnalysisPayload,
   toStoredLimits,
@@ -150,7 +151,9 @@ export class PgAnalysisCache implements AnalysisCache {
     if (!row) return undefined;
 
     try {
-      return decodeAnalysisPayload(row.payload_version, row.results);
+      const results = decodeAnalysisPayload(row.payload_version, row.results);
+      assertWithinMultiPv(results.length, key.multiPv);
+      return results;
     } catch (error) {
       this.onError('payload', error);
       return undefined;
@@ -160,6 +163,7 @@ export class PgAnalysisCache implements AnalysisCache {
   async set(key: AnalysisKey, value: readonly EngineResult[], meta: CacheMeta): Promise<void> {
     try {
       const limits = toStoredLimits(meta.limits);
+      assertWithinMultiPv(value.length, key.multiPv);
       await this.pool.query(UPSERT_SQL, [
         key.fingerprint,
         key.variant,

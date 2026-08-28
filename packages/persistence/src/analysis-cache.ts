@@ -209,3 +209,21 @@ function assertLineOrder(results: readonly EngineResult[]): void {
     }
   }
 }
+
+/**
+ * A stored analysis may hold fewer lines than the width it was filed under, but never more.
+ *
+ * Not an equality check, deliberately. The engine returns however many lines it actually found:
+ * a position with fewer legal moves than the requested width yields fewer, and
+ * `UciEngineInstance.assembleResults` emits exactly one line for a terminal or book reply whatever
+ * the width. Requiring `length === multiPv` would refuse to cache the engine's own output. More
+ * lines than were asked for is the direction that cannot happen honestly, so that is the one worth
+ * refusing — a four-line payload filed under `multiPv: 1` is a corrupt row, not a lucky one.
+ */
+export function assertWithinMultiPv(lineCount: number, multiPv: number): void {
+  if (lineCount > multiPv) {
+    throw new AnalysisCachePayloadError(
+      `an analysis of ${lineCount} lines cannot be filed under a MultiPV width of ${multiPv}`,
+    );
+  }
+}

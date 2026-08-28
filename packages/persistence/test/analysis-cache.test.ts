@@ -9,6 +9,7 @@ import type { Pool } from 'pg';
 import type { AnalysisLimits, EngineResult } from '@chess-platform/engine';
 import {
   ANALYSIS_CACHE_PAYLOAD_VERSION,
+  assertWithinMultiPv,
   AnalysisCachePayloadError,
   decodeAnalysisPayload,
   encodeAnalysisPayload,
@@ -206,6 +207,47 @@ describe('achieved limit projection', () => {
   }
 });
 
+describe('MultiPV width', () => {
+  it('accepts an analysis narrower than the width it was filed under', () => {
+    // The engine returns what it found: a terminal position yields one line at any width.
+    assert.doesNotThrow(() => assertWithinMultiPv(1, 4));
+    assert.doesNotThrow(() => assertWithinMultiPv(4, 4));
+  });
+
+  it('refuses an analysis wider than the width it was filed under', () => {
+    assert.throws(() => assertWithinMultiPv(4, 1), AnalysisCachePayloadError);
+  });
+
+  it('will not store lines the key did not ask for, and reaches no database doing it', async () => {
+    const faults: AnalysisCacheFault[] = [];
+    let queried = false;
+    const pool = {
+      query: async () => {
+        queried = true;
+        return { rows: [] };
+      },
+    } as unknown as Pool;
+    const cache = new PgAnalysisCache(pool, { onError: (fault) => faults.push(fault) });
+
+    const three = [1, 2, 3].map((multipv) => ({ ...LEAN, multipv }));
+    await cache.set(KEY, three, { limits: { depth: 20 } });
+
+    assert.deepEqual(faults, ['write']);
+    assert.equal(queried, false);
+  });
+
+  it('treats a stored analysis wider than its key as a miss, not as results', async () => {
+    const faults: AnalysisCacheFault[] = [];
+    const three = [1, 2, 3].map((multipv) => ({ ...LEAN, multipv }));
+    const pool = poolReturning([
+      { payload_version: ANALYSIS_CACHE_PAYLOAD_VERSION, results: encodeAnalysisPayload(three) },
+    ]);
+    const cache = new PgAnalysisCache(pool, { onError: (fault) => faults.push(fault) });
+
+    assert.equal(await cache.get(KEY, { depth: 1 }), undefined);
+    assert.deepEqual(faults, ['payload']);
+  });
+});
 describe('PgAnalysisCache failure semantics', () => {
   it('reports a read failure as a miss, so a database blip cannot fail an analysis', async () => {
     const faults: AnalysisCacheFault[] = [];

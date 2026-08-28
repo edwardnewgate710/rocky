@@ -683,9 +683,11 @@ a row only when it satisfies the request in **every** stated dimension.
 Writes are a dominance-guarded upsert: an entry may only be replaced by one that could serve every
 request the entry could serve, evaluated inside `ON CONFLICT DO UPDATE ... WHERE` under the row lock.
 A shallower search finishing later therefore cannot destroy a deeper cached result, and concurrent
-writers cannot both decide they are stronger. A newer `payload_version` always wins and an older one
-never overwrites a newer, so a rolling deploy cannot let a build that speaks an older payload
-contract destroy a row a newer build can still read.
+writers cannot both decide they are stronger. The payload version never excuses a write from that
+comparison — a version 2 result at depth 5 does not replace a version 1 result at depth 30 — it only
+gates the direction a dominating write may travel: an older version never replaces a newer, so a
+rolling deploy cannot let a build that speaks an older payload contract destroy a row a newer build
+can still read.
 
 `results` is validated field-by-field on read; an unreadable or unknown-version payload is treated as
 a cache miss and reported, never cast to a trusted type. The adapter fails open on every
