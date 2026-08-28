@@ -36,12 +36,12 @@ _Last updated: 2026-08-28 — M15 Increment 32: durable engine analysis cache._
   database blip into a failed analysis. Every fault is absorbed and reported through an injected
   `onError`, with `payload` kept distinct from `read` because corruption and an unreachable database
   are different alerts. The one thing never absorbed is a wrong answer.
-- **Tests**: 51 hermetic (payload contract, line-collection contract, limit projection, fault
-  absorption) and 7 Postgres suites (satisfaction, identity isolation, round trip, replacement,
-  concurrency, schema constraints, corrupt row). 25/25 mutations caught. The pass found two of its
-  own gaps: an assertion that only exercised the `depth` parameter,
-  so a `?? 0` in the nodes or time mapping would have gone unnoticed, and a concurrency test that
-  skipped its own assertions whenever a read missed.
+- **Tests**: 51 hermetic (payload contract, achieved limit projection, analysis line collection,
+  MultiPV width, adapter failure semantics) and 7 Postgres suites (satisfaction, identity
+  isolation, round trip, replacement, concurrency, schema constraints, corrupt row). 25/25
+  mutations caught. The pass found two of its own gaps: an assertion that only exercised the
+  `depth` parameter, so a `?? 0` in the nodes or time mapping would have gone unnoticed, and a
+  concurrency test that skipped its own assertions whenever a read missed.
 - **No Postgres or Docker was reachable locally**, so the integration suites have only ever run in
   CI's postgres-integration job. An adversarial review pass caught what that cost: a setup INSERT
   using `payload_version = 0` against a `CHECK (payload_version >= 1)`, which would have errored on

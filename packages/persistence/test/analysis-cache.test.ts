@@ -144,6 +144,35 @@ describe('achieved limit projection', () => {
     });
   });
 
+
+  it('refuses limits that state nothing, which no request could ever match', () => {
+    assert.throws(() => toStoredLimits({}), AnalysisCachePayloadError);
+  });
+
+  it('refuses a depth its INTEGER column could not hold', () => {
+    assert.equal(toStoredLimits({ depth: 2_147_483_647 }).depth, 2_147_483_647);
+    assert.throws(() => toStoredLimits({ depth: 2_147_483_648 }), AnalysisCachePayloadError);
+  });
+
+  it('stores a node or time bound beyond what INTEGER holds', () => {
+    assert.equal(toStoredLimits({ nodes: 2_147_483_648 }).nodes, 2_147_483_648);
+    assert.equal(toStoredLimits({ timeMs: 2_147_483_648 }).timeMs, 2_147_483_648);
+  });
+  const rejected: readonly (readonly [string, number])[] = [
+    ['negative', -1],
+    ['fractional', 18.5],
+    ['beyond safe integers', 1e300],
+    ['not a number at all', Number.NaN],
+  ];
+
+  for (const [what, depth] of rejected) {
+    it(`refuses a ${what} limit instead of storing an untrue claim`, () => {
+      assert.throws(() => toStoredLimits({ depth }), AnalysisCachePayloadError);
+    });
+  }
+});
+
+describe('analysis line collection', () => {
   /**
    * The collection contract, not the field contract. An empty array passes every per-field check
    * and is truthy, so `EngineManager.analyze`'s `if (cached) return cached` would serve it as a
@@ -196,32 +225,6 @@ describe('achieved limit projection', () => {
     const lines = [1, 2, 3].map((multipv) => ({ ...LEAN, multipv }));
     assert.deepEqual(roundTrip(lines), lines);
   });
-
-  it('refuses limits that state nothing, which no request could ever match', () => {
-    assert.throws(() => toStoredLimits({}), AnalysisCachePayloadError);
-  });
-
-  it('refuses a depth its INTEGER column could not hold', () => {
-    assert.equal(toStoredLimits({ depth: 2_147_483_647 }).depth, 2_147_483_647);
-    assert.throws(() => toStoredLimits({ depth: 2_147_483_648 }), AnalysisCachePayloadError);
-  });
-
-  it('allows a node count up to what BIGINT holds, which INTEGER would not', () => {
-    assert.equal(toStoredLimits({ nodes: 2_147_483_648 }).nodes, 2_147_483_648);
-    assert.equal(toStoredLimits({ timeMs: 2_147_483_648 }).timeMs, 2_147_483_648);
-  });
-  const rejected: readonly (readonly [string, number])[] = [
-    ['negative', -1],
-    ['fractional', 18.5],
-    ['beyond safe integers', 1e300],
-    ['not a number at all', Number.NaN],
-  ];
-
-  for (const [what, depth] of rejected) {
-    it(`refuses a ${what} limit instead of storing an untrue claim`, () => {
-      assert.throws(() => toStoredLimits({ depth }), AnalysisCachePayloadError);
-    });
-  }
 });
 
 describe('MultiPV width', () => {

@@ -96,9 +96,13 @@ shape, unknown evaluation type, a fractional depth, a version this build does no
 **miss**, reported as a distinct `payload` fault. Casting unverified JSON to `EngineResult` would let
 a malformed evaluation reach a caller with no way left to tell it from a real one.
 
-The *set* of lines is held to the same standard as the fields, in both directions: `EngineResult`
-documents one result per requested line "ordered best-first (`multipv` 1..N)", so a payload whose
-lines are misordered, duplicated, gapped, or absent is refused on write and on read. The empty array
+The *set* of lines is held to the same standard as the fields, in both directions. `EngineResult`
+documents lines "ordered best-first (`multipv` 1..N)", so a payload that is empty, misordered,
+duplicated or gapped is refused on write and on read, as is one holding more lines than the
+`multiPv` its key was filed under. A payload holding *fewer* lines than that width is accepted: the
+engine returns what it found, so a position with fewer legal moves than the requested width yields
+fewer lines, and `UciEngineInstance.assembleResults` emits a single line for a terminal or book reply
+whatever the width was. Requiring one line per requested line would refuse the engine's own output. The empty array
 is the case that makes this more than tidiness: it satisfies every per-field check, and
 `EngineManager.analyze` returns a hit with `if (cached) return cached`, where `[]` is truthy — so an
 empty stored payload would be served as a successful analysis to callers such as

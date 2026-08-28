@@ -65,12 +65,17 @@ function freshKey(overrides: Partial<AnalysisKey> = {}): AnalysisKey {
  * Migrations are applied once for the whole file, not once per test. The runner is safe either
  * way — it holds an advisory lock — but re-walking every migration for each of twenty-odd tests
  * buys nothing and slows the Postgres CI job for no reason.
+ *
+ * A flag rather than a memoized promise: a promise would stay bound to the first test's pool,
+ * which `withCache` closes on the way out. Nothing runs on it today, but a later caller awaiting
+ * this for its own connection would be waiting on a pool that no longer exists.
  */
-let migrated: Promise<void> | undefined;
+let migrated = false;
 
-function ensureMigrated(pool: Pool): Promise<void> {
-  migrated ??= migrate(pool, join(process.cwd(), 'migrations')).then(() => undefined);
-  return migrated;
+async function ensureMigrated(pool: Pool): Promise<void> {
+  if (migrated) return;
+  await migrate(pool, join(process.cwd(), 'migrations'));
+  migrated = true;
 }
 
 async function withCache(
