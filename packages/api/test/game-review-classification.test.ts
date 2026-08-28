@@ -54,6 +54,32 @@ test('positive move labels require explicit engine evidence', () => {
   assert.equal(classify({ bestMove: 'd2d4', centipawnLoss: 30 }), 'good');
 });
 
+test('terminal results are interpreted from the reviewed mover perspective', () => {
+  const whiteWin = {
+    kind: 'terminal' as const,
+    reason: 'checkmate' as const,
+    result: '1-0' as const,
+    label: 'White wins by checkmate',
+  };
+  const blackWin = {
+    kind: 'terminal' as const,
+    reason: 'checkmate' as const,
+    result: '0-1' as const,
+    label: 'Black wins by checkmate',
+  };
+
+  assert.equal(classify({ after: whiteWin }, { offeredMaterial: true, mover: 'w' }), 'brilliant');
+  assert.equal(classify({ after: blackWin }, { offeredMaterial: true, mover: 'b' }), 'brilliant');
+  assert.equal(classify({
+    before: { evalKind: 'cp', evalValue: 450, evalLabel: '+4.50' },
+    after: blackWin,
+  }, { mover: 'w' }), 'missed_win');
+  assert.equal(classify({
+    before: { evalKind: 'cp', evalValue: 180, evalLabel: '+1.80' },
+    after: whiteWin,
+  }, { mover: 'b' }), 'miss');
+});
+
 test('the measured error ladder remains legible when no special teaching event occurred', () => {
   assert.equal(classify({ classification: 'inaccuracy', centipawnLoss: 60 }), 'inaccuracy');
   assert.equal(classify({ classification: 'mistake', centipawnLoss: 150 }), 'mistake');

@@ -64,7 +64,7 @@ export function classifyGameReviewMove(input: GameReviewClassificationEvidence):
   }
 
   const isBest = assessment.bestMove !== null && assessment.bestMove === assessment.move;
-  if (isBest && input.offeredMaterial && remainsFavourable(assessment, input.mover)) return 'brilliant';
+  if (isBest && input.offeredMaterial && stillAhead(assessment, input.mover)) return 'brilliant';
   if (isBest && alternativeGapIsGreat(assessment, input.alternative)) return 'great';
   if (isBest) return 'best';
   if (assessment.centipawnLoss !== null && assessment.centipawnLoss <= EXCELLENT_LOSS_CP) return 'excellent';
@@ -88,11 +88,11 @@ export function emptyGameReviewSummary(): Record<GameReviewClassification, numbe
 }
 
 function missedWin(assessment: MistakePredictionOutcome, mover: Color): boolean {
-  return isWinning(assessment.before, mover) && !remainsWinning(assessment, mover);
+  return isWinning(assessment.before, mover) && !stillAhead(assessment, mover);
 }
 
 function missedTactic(assessment: MistakePredictionOutcome, mover: Color): boolean {
-  return isTacticalChance(assessment.before, mover) && !remainsTactical(assessment, mover);
+  return isTacticalChance(assessment.before, mover) && !stillAhead(assessment, mover);
 }
 
 function isWinning(
@@ -109,21 +109,8 @@ function isTacticalChance(
   return isWinning(evaluation, mover) || (evaluation.evalKind === 'cp' && evaluation.evalValue >= TACTICAL_CHANCE_CP);
 }
 
-function remainsWinning(assessment: MistakePredictionOutcome, mover: Color): boolean {
-  if (assessment.after.kind === 'terminal') return terminalIsWin(assessment.after.result, mover);
-  return assessment.after.evalKind === 'mate'
-    ? assessment.after.evalValue > 0
-    : assessment.after.evalValue >= SAFE_AFTER_CP;
-}
-
-function remainsTactical(assessment: MistakePredictionOutcome, mover: Color): boolean {
-  if (assessment.after.kind === 'terminal') return terminalIsWin(assessment.after.result, mover);
-  return assessment.after.evalKind === 'mate'
-    ? assessment.after.evalValue > 0
-    : assessment.after.evalValue >= SAFE_AFTER_CP;
-}
-
-function remainsFavourable(assessment: MistakePredictionOutcome, mover: Color): boolean {
+/** The reviewed move preserves a win, mate score, or at least the safe evaluation floor. */
+function stillAhead(assessment: MistakePredictionOutcome, mover: Color): boolean {
   if (assessment.after.kind === 'terminal') return terminalIsWin(assessment.after.result, mover);
   return assessment.after.evalKind === 'mate'
     ? assessment.after.evalValue > 0

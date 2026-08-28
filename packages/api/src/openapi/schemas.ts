@@ -2189,19 +2189,12 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
       summary: {
         type: 'object',
         required: [...GAME_REVIEW_CLASSIFICATIONS],
-        properties: {
-          brilliant: { type: 'integer', minimum: 0 },
-          great: { type: 'integer', minimum: 0 },
-          best: { type: 'integer', minimum: 0 },
-          excellent: { type: 'integer', minimum: 0 },
-          good: { type: 'integer', minimum: 0 },
-          book: { type: 'integer', minimum: 0 },
-          inaccuracy: { type: 'integer', minimum: 0 },
-          mistake: { type: 'integer', minimum: 0 },
-          miss: { type: 'integer', minimum: 0 },
-          blunder: { type: 'integer', minimum: 0 },
-          missed_win: { type: 'integer', minimum: 0 },
-        },
+        properties: Object.fromEntries(
+          GAME_REVIEW_CLASSIFICATIONS.map((classification) => [
+            classification,
+            { type: 'integer', minimum: 0 },
+          ]),
+        ),
         additionalProperties: false,
       },
     },
