@@ -99,7 +99,7 @@ export class GameReviewService {
   ): Promise<GameReviewOutcome> {
     throwIfReviewCancelled(input.signal);
     const game = await this.archive.finishedGameForReview(input.gameId);
-    if (!game) throw HttpError.notFound('completed game not found');
+    if (!game || game.gameId !== input.gameId) throw HttpError.notFound('completed game not found');
 
     const playerColor = playerColorFor(game, input.userId);
     if (!playerColor) throw HttpError.notFound('completed game not found');
@@ -196,10 +196,11 @@ function knownBookPly(game: FinishedGameForReview, database: OpeningDatabase | u
 }
 
 function reviewAlternative(lines: readonly {
+  readonly multipv: number;
   readonly principalVariation: readonly string[];
   readonly evaluation: { readonly type: 'cp' | 'mate'; readonly value: number };
 }[]): ReviewAlternative | null {
-  const alternative = lines[1];
+  const alternative = lines.find((line) => line.multipv === 2);
   const move = alternative?.principalVariation[0];
   if (!alternative || !move) return null;
   return {

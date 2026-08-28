@@ -32,3 +32,21 @@ test('finished-game review captures each pre-move position during one forward re
   assert.deepEqual(reviewed.moves.map((move) => move.fenBefore), expectedFens);
   assert.deepEqual(reviewed.moves.map((move) => move.uci), ['e2e4', 'e7e5', 'g1f3']);
 });
+
+test('finished-game review returns no archive record while the authoritative game is live', async () => {
+  const gameId = '00000000-0000-4000-8000-000000000088';
+  const store = new InMemoryEventStore(() => 1_000);
+  const created = Game.create({
+    gameId,
+    players: { white: 'white-player', black: 'black-player' },
+    timeControl: { initialMs: 60_000, incrementMs: 0, delayMs: 0, kind: 'increment' },
+    at: 1_000,
+  });
+  const head = await store.append(gameId, -1, created.events);
+  const played = created.game.playMove('e2e4', 2_000);
+  await store.append(gameId, head, played.events);
+
+  const reviewed = await new DurableFinishedGameReviewArchive(store).finishedGameForReview(gameId);
+
+  assert.equal(reviewed, undefined);
+});

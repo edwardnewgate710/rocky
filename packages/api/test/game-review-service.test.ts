@@ -92,6 +92,58 @@ test('completed-game review assesses only the authenticated player moves and ret
     [1, 'e4', FEN],
     [3, 'Nf3', AFTER_E4_E5_FEN],
   ]);
+  assert.equal(
+    Object.values(result.summary).reduce((total, count) => total + count, 0),
+    result.moves.length,
+  );
+});
+
+test('completed-game review selects the runner-up by MultiPV identity when engine lines are reordered', async () => {
+  const reorderedAnalysis: AnalysisPort = {
+    ...reviewAnalysis,
+    analyze: async (input) => {
+      const result = await reviewAnalysis.analyze(input);
+      return { ...result, lines: [result.lines[1]!, result.lines[0]!] };
+    },
+  };
+  const service = new GameReviewService({
+    archive: { async finishedGameForReview() { return game({ moves: [game().moves[0]!] }); } },
+    analysis: reorderedAnalysis,
+    createMoveAssessment: () => ({ async predict(input) { return outcome(input, 'ok'); } }),
+  });
+
+  const result = await service.review({
+    gameId: game().gameId,
+    userId: 'white-player',
+    signal: new AbortController().signal,
+  }, async () => undefined);
+
+  assert.equal(result.moves[0]!.classification, 'great');
+  assert.equal(result.summary.great, 1);
+});
+
+test('completed-game review falls back to best when the runner-up MultiPV line is absent', async () => {
+  const singleLineAnalysis: AnalysisPort = {
+    ...reviewAnalysis,
+    analyze: async (input) => {
+      const result = await reviewAnalysis.analyze(input);
+      return { ...result, lines: [result.lines[0]!] };
+    },
+  };
+  const service = new GameReviewService({
+    archive: { async finishedGameForReview() { return game({ moves: [game().moves[0]!] }); } },
+    analysis: singleLineAnalysis,
+    createMoveAssessment: () => ({ async predict(input) { return outcome(input, 'ok'); } }),
+  });
+
+  const result = await service.review({
+    gameId: game().gameId,
+    userId: 'white-player',
+    signal: new AbortController().signal,
+  }, async () => undefined);
+
+  assert.equal(result.moves[0]!.classification, 'best');
+  assert.equal(result.summary.best, 1);
 });
 
 test('completed-game review hides a game from a non-player without charging or assessing it', async () => {
@@ -105,6 +157,26 @@ test('completed-game review hides a game from a non-player without charging or a
     }, async () => { charged += 1; }),
     { code: 'not_found' },
   );
+  assert.equal(charged, 0);
+  assert.equal(assessed.length, 0);
+});
+
+test('completed-game review rejects a mismatched archive identity before charging or assessing it', async () => {
+  const requestedGameId = game().gameId;
+  const { service, assessed } = build(game({
+    gameId: '00000000-0000-4000-8000-000000000002',
+  }));
+  let charged = 0;
+
+  await assert.rejects(
+    () => service.review({
+      gameId: requestedGameId,
+      userId: 'white-player',
+      signal: new AbortController().signal,
+    }, async () => { charged += 1; }),
+    { code: 'not_found' },
+  );
+
   assert.equal(charged, 0);
   assert.equal(assessed.length, 0);
 });

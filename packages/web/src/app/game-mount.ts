@@ -197,7 +197,11 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
     const variantSupported = gameReviewSupportsVariant(gameReviewCapabilities, currentVariant);
     if (gameReviewSectionEl) gameReviewSectionEl.hidden = !gameOver || !isGamePlayer || !variantSupported;
     if (gameReviewRunBtn) {
-      gameReviewRunBtn.disabled = !variantSupported || gameReviewSessionId === null || gameReviewPending;
+      gameReviewRunBtn.disabled = !gameOver
+        || !isGamePlayer
+        || !variantSupported
+        || gameReviewSessionId === null
+        || gameReviewPending;
     }
     if (gameReviewNoteEl && !gameReviewPending && gameReviewMovesEl?.childElementCount === 0) {
       gameReviewNoteEl.textContent = gameReviewSessionId !== null

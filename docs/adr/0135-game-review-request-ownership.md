@@ -66,3 +66,20 @@ variant-subset publication, and withdrawal of the mounted control for an unsuppo
 
 Archive and service regressions cover exact pre-move positions from forward replay and expiry of the
 server-owned total deadline, including propagation of its abort signal to engine work.
+
+The archive result is also treated as untrusted at the service boundary: a record whose `gameId`
+does not exactly match the requested ID is hidden as not found before participant checks, quota, or
+engine work. MultiPV evidence is selected by the engine's `multipv` identity rather than array order,
+so reordered output cannot change a positive classification and an absent runner-up degrades to the
+ordinary best-move label.
+
+Game Review remains strictly post-game. The durable archive returns no record for a live aggregate,
+and the mounted control is both hidden and disabled until an authoritative ended state arrives. This
+does not disable the separate position-analysis surface: ADR-0113 and the engine scheduling contract
+explicitly define user-triggered live analysis/hints. The historical rule is retained for Game Review,
+not generalized into an unrelated product change.
+
+The server-owned review vocabulary remains the closed eleven-label contract recorded in
+`GAME_REVIEW_CLASSIFICATIONS`. A `forced` label is not added because neither the current policy nor
+the recovered classification implementation defines deterministic engine evidence for it; inventing
+that evidence in a recovery change would make the result less truthful, not more complete.

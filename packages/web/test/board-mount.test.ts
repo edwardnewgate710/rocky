@@ -61,15 +61,20 @@ test('remounting a board does not stack listeners on the same element', () => {
   assert.equal(flip.liveCount('click'), 0);
 });
 
-test('board renders algebraic rank and file coordinates', () => {
+function coordinateValues(html: string, kind: 'rank' | 'file'): string[] {
+  return [...html.matchAll(new RegExp(`cb-coordinate cb-${kind}[^>]*>([^<]+)<`, 'g'))]
+    .map((match) => match[1]!);
+}
+
+test('board renders every algebraic coordinate in the current orientation', () => {
   const board = fakeElement();
   const mounted = mountBoard({ boardEl: board.el });
 
-  assert.match(board.el.innerHTML, /cb-coordinate cb-rank[^>]*>8</);
-  assert.match(board.el.innerHTML, /cb-coordinate cb-file[^>]*>a</);
+  assert.deepEqual(coordinateValues(board.el.innerHTML, 'rank'), ['8', '7', '6', '5', '4', '3', '2', '1']);
+  assert.deepEqual(coordinateValues(board.el.innerHTML, 'file'), ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']);
 
   mounted.view.flip();
-  assert.match(board.el.innerHTML, /cb-coordinate cb-rank[^>]*>1</);
-  assert.match(board.el.innerHTML, /cb-coordinate cb-file[^>]*>h</);
+  assert.deepEqual(coordinateValues(board.el.innerHTML, 'rank'), ['1', '2', '3', '4', '5', '6', '7', '8']);
+  assert.deepEqual(coordinateValues(board.el.innerHTML, 'file'), ['h', 'g', 'f', 'e', 'd', 'c', 'b', 'a']);
   mounted.destroy();
 });

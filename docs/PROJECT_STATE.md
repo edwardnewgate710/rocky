@@ -4,7 +4,18 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-28 — M15 Increment 37: Game Review deadline runtime parity (ADR-0135)._
+_Last updated: 2026-08-28 — M15 Increment 38: Game Review evidence identity and recovery parity (ADR-0135)._
+
+## M15 Increment 38 — Game Review evidence identity and recovery parity (ADR-0135)
+
+Game Review now rejects an archive record whose identity differs from the requested game before
+participant checks, quota admission, or engine work, and selects the runner-up engine line by
+`multipv === 2` instead of response order. Deterministic regressions cover reordered and absent
+runner-up lines, mismatched archive identity, live authoritative archives, live-to-ended control
+gating, spectator exclusion, shared-DOM remount clearing, exact White/Black coordinate sequences,
+and coordinate preservation while navigating a reviewed position. Summary totals and rendered
+labels are checked against the moves and server response they describe. The existing live position
+analysis contract remains separate; only authoritative completed-game review is restored here.
 
 ## M15 Increment 37 — Game Review deadline runtime parity (ADR-0135)
 
