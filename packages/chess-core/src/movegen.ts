@@ -262,6 +262,10 @@ function generateSliding(
 
 const CASTLING_SIDES: readonly CastlingSide[] = ['k', 'q'];
 
+/** Where the king and rooks must stand to castle in every rule set except Chess960. */
+const TRADITIONAL_KING_FILE = 4;
+const TRADITIONAL_ROOK_FILES: Readonly<Record<CastlingSide, number>> = { k: 7, q: 0 };
+
 /**
  * Every square the king and the rook pass over, the two movers themselves excepted, must be empty.
  *
@@ -317,20 +321,35 @@ function kingPathSafe(state: PositionState, kingFrom: number, kingTo: number, th
 }
 
 /**
- * Castling from wherever the king and the chosen rook actually stand.
+ * Castling from wherever the king and the chosen rook actually stand — in Chess960.
  *
- * Nothing here assumes the e-file, the a/h-files, or that the king moves two squares. The rook is
- * read from the castling rights, which name it by file; the destinations are the Chess960-standard
- * ones (g/f kingside, c/d queenside) and are the same squares standard chess already uses, so this
- * generalisation leaves ordinary chess bit-for-bit unchanged.
+ * For Chess960 nothing here assumes the e-file, the a/h-files, or that the king moves two squares:
+ * the rook is read from the castling rights, which name it by file, and the destinations are the
+ * fixed g/f and c/d squares that standard chess already uses.
+ *
+ * **Every other rule set keeps the traditional origins, and that is a rule rather than a
+ * coincidence.** Ordinary chess does not merely happen to castle from e1 with the rook on a or h; it
+ * permits nothing else. Applying the general form everywhere let a standard position with a king on
+ * d1 and a rook on h1 produce `d1g1` — a legal Chess960 castle and an illegal standard one. Raised
+ * in the Qodo review of PR #10.
  */
 function generateCastles(state: PositionState, from: number, piece: Piece, moves: Move[]): void {
   const us = colorOf(piece);
-  // Racing Kings has no castling, and the Horde army has no king to castle with.
+  // Racing Kings has no castling at all.
+  //
+  // Horde returns here too, which also suppresses castling for *Black*, who is an ordinary army
+  // with a king and starts with `kq`. That is a pre-existing defect, not a consequence of this
+  // change — `main` generates no Horde castles either — and it is left alone deliberately: this
+  // increment is Chess960, and altering Horde's move generation is out of its scope. Raised in the
+  // CodeRabbit review of PR #10; see ADR-0136.
   if (state.variant === 'racingkings' || state.variant === 'horde') return;
 
   const backRank = backRankOf(us);
   if (rankOf(from) !== backRank) return;
+
+  // Outside Chess960 the king castles only from its e-file home square.
+  const arbitraryOrigins = state.variant === 'chess960';
+  if (!arbitraryOrigins && fileOf(from) !== TRADITIONAL_KING_FILE) return;
 
   // "May not castle out of check" is enforced by `kingPathSafe` below, not by a separate test here.
   // That function walks from the king's origin to its destination inclusive, so the origin is
@@ -341,6 +360,9 @@ function generateCastles(state: PositionState, from: number, piece: Piece, moves
   for (const side of CASTLING_SIDES) {
     const rookFile = state.castling[us][side];
     if (rookFile === NO_CASTLING_ROOK) continue;
+    // ...and only with the rook on a or h. A standard position whose kingside right had been
+    // resolved to a rook on g1 would otherwise castle with it.
+    if (!arbitraryOrigins && rookFile !== TRADITIONAL_ROOK_FILES[side]) continue;
 
     const rookFrom = makeSquare(rookFile, backRank);
     // A right whose rook is not standing there cannot be exercised. Rights are kept in step with

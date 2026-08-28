@@ -171,12 +171,16 @@ export class Position {
     // Chess960 castling also arrives king-takes-rook, so a second pass reads `to` as the rook's
     // square instead of the king's.
     //
-    // The two passes cannot disagree, and the order between them is therefore immaterial: the
-    // second only ever matches a square occupied by the mover's own rook, and no ordinary move can
-    // land there. That is worth stating because the opposite is easy to assume — the two spellings
-    // look like they should collide, and a comment claiming this pass is "tried second for
-    // precedence" would be describing a conflict that cannot arise.
-    if (promo === undefined) {
+    // Gated on the variant, exactly as `toUci` is. Standard UCI spells castling `e1g1` and nothing
+    // else, so accepting `e1h1` there would let a string no standard engine or GUI produces through
+    // the one entry point that exists to refuse illegal moves. Raised in the Qodo review of PR #10.
+    //
+    // Within Chess960 the two passes cannot disagree, and the order between them is therefore
+    // immaterial: the second only ever matches a square occupied by the mover's own rook, and no
+    // ordinary move can land there. Worth stating because the opposite is easy to assume — the two
+    // spellings look like they should collide, and a comment claiming this pass is "tried second for
+    // precedence" would describe a conflict that cannot arise.
+    if (promo === undefined && this.state.variant === 'chess960') {
       for (const m of this.legalMoves()) {
         if (m.from === from && m.castleRook === to) return m;
       }

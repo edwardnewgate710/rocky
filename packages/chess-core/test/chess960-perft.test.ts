@@ -11,10 +11,17 @@
  * are partly cleared and castling is genuinely reachable. Its EPDs are written in Shredder-FEN,
  * which is why reading that spelling is a hard requirement rather than a nicety.
  *
- * Depth is split deliberately. Every position runs to depth 2, which is what proves no arrangement
- * is mis-generated. A fixed, evenly-spaced sample runs to depth 4, which is where a castling-rights
- * or transit-safety error that survives two plies shows up. Running all 960 to depth 4 costs several
- * minutes of CI per Node version and finds nothing the sample does not.
+ * **What this suite does not prove.** Every vector is read with `Position.fromFen`, so it exercises
+ * FEN parsing, move generation and castling across 960 distinct arrangements — not the
+ * starting-position generator. A defect in `chess960BackRank` for some id would leave every test
+ * here green. That guarantee belongs to `chess960-positions.test.ts`, which enumerates all 960 ids
+ * and checks the arrangements themselves. The two are complementary and neither substitutes for the
+ * other. Raised in the CodeRabbit review of PR #10.
+ *
+ * Depth is split deliberately. Every position runs to depth 2, which is what catches an arrangement
+ * whose moves are generated wrongly. A fixed, evenly-spaced sample runs to depth 4, which is where a
+ * castling-rights or transit-safety error that survives two plies shows up. Running all 960 to
+ * depth 4 costs several minutes of CI per Node version and finds nothing the sample does not.
  */
 
 import assert from 'node:assert/strict';

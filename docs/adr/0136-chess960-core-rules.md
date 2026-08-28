@@ -142,11 +142,18 @@ vectors in `packages/chess-core/test/perft.test.ts` already use.
 None of these numbers came from this engine. Recording what the implementation prints and calling it
 `expected` is a golden master: it locks in today's bugs and passes forever.
 
-Depth is split on cost. Every one of the 960 runs to depth 2, which is what proves no arrangement is
-mis-generated; an evenly spaced sample of 32 runs to depth 4, which is where a castling-rights or
-transit-safety error that survives two plies shows up. All 960 were additionally verified to depth 3
-locally — 20,607,998 nodes, zero mismatches — but that costs ~28s per Node version and finds nothing
-the sample does not.
+Depth is split on cost. Every one of the 960 runs to depth 2, which is what catches an arrangement
+whose moves are generated wrongly; an evenly spaced sample of 32 runs to depth 4, which is where a
+castling-rights or transit-safety error that survives two plies shows up. All 960 were additionally
+verified to depth 3 locally — 20,607,998 nodes, zero mismatches — but that costs ~28s per Node
+version and finds nothing the sample does not.
+
+These vectors are read with `Position.fromFen`, so they cover FEN parsing, move generation and
+castling across 960 distinct arrangements — **not** the starting-position generator. A defect in
+`chess960BackRank` for some id would leave the whole perft suite green. That guarantee belongs to
+`packages/chess-core/test/chess960-positions.test.ts`, which enumerates all 960 ids and checks the
+arrangements themselves. Neither suite substitutes for the other, and saying otherwise would be
+exactly the sort of overclaim ADR-0079 warns about.
 
 ### 6. The suite was checked by breaking the code on purpose
 
@@ -176,6 +183,36 @@ passes. The king-takes-rook pass only ever matches a square holding the mover's 
 ordinary move can land there, so the passes are disjoint and either order gives the same answer.
 That is an equivalent mutant, and writing a test for it would mean staging a collision that cannot
 occur.
+
+### 7. The generalisation applies to Chess960 only
+
+Rewriting `generateCastles` to read the rook from the rights, rather than from a fixed offset, made
+it correct for Chess960 and briefly wrong for everything else: it accepted **any** king on its back
+rank, in every variant. A standard position with a king on d1 and a rook on h1 generated `d1g1` — a
+legal Chess960 castle and an illegal standard one. The same slip let `Position.play('e1h1')` be
+accepted in standard chess, where UCI spells castling `e1g1` and nothing else.
+
+Both were caught in review of PR #10, and both are now gated on the variant: outside Chess960 the
+king must stand on its e-file home square and the rook on a or h, and the king-takes-rook input
+spelling is refused. The traditional squares are a **rule** in ordinary chess, not a coincidence of
+the starting array, and generalising them away is the exact failure mode this increment had to avoid.
+
+That is worth recording rather than quietly fixing, because the regression was invisible to the
+obvious tests: every published standard perft position has its king on e1, so the whole standard
+suite stayed green while non-e-file castling was legal.
+
+### A pre-existing defect this deliberately does not fix
+
+`generateCastles` returns early for `horde`, which also suppresses castling for **Black** — an
+ordinary army with a king that starts with `kq` rights. Raised in the CodeRabbit review of PR #10 and
+confirmed real; also confirmed pre-existing, since `main` generates no Horde castles either.
+
+Left alone on purpose. This increment is Chess960, and Horde is one of the variants whose behaviour
+it undertook not to change. Fixing it means changing Horde move generation, which wants its own
+increment and its own published perft evidence — the existing Horde vectors cannot confirm it, since
+Black's back rank is full in all three and no castle is available at any depth they cover. The
+misleading comment that claimed "the Horde army has no king" has been corrected in place to say what
+is actually true and why the return stays.
 
 ## Consequences
 

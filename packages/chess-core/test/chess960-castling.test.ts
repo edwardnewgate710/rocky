@@ -16,7 +16,7 @@ import { test } from 'node:test';
 import { MoveFlag, type Move, type PositionState } from '../src/types';
 import { NO_CASTLING_ROOK } from '../src/castling';
 import { applyMove, generateLegalMoves } from '../src/movegen';
-import { Position } from '../src/position';
+import { IllegalMoveError, Position } from '../src/position';
 
 const isCastle = (m: Move): boolean =>
   (m.flags & (MoveFlag.KingCastle | MoveFlag.QueenCastle)) !== 0;
@@ -113,6 +113,7 @@ test('a castled king and rook always land on the same squares, whatever the arra
   // This is the invariant the whole feature turns on, so it is asserted across every arrangement
   // rather than in the handful of shapes above. Each case clears the back rank down to one king and
   // one rook, which is the only way to reach every relative placement.
+  let castled = 0;
   for (let kingFile = 0; kingFile < 8; kingFile++) {
     for (let rookFile = 0; rookFile < 8; rookFile++) {
       if (rookFile === kingFile) continue;
@@ -125,6 +126,7 @@ test('a castled king and rook always land on the same squares, whatever the arra
       const found = castles(pos);
       if (found.length === 0) continue; // blocked or attacked; covered elsewhere
       assert.equal(found.length, 1);
+      castled++;
       const after = pos.play(found[0]);
       assert.equal(
         whiteBackRank(after),
@@ -133,6 +135,10 @@ test('a castled king and rook always land on the same squares, whatever the arra
       );
     }
   }
+  // Without this the `continue` above would make the whole sweep vacuous: a generator that produced
+  // no castling move for any arrangement would skip every case and pass. Raised in the CodeRabbit
+  // review of PR #10.
+  assert.ok(castled >= 50, `only ${castled} of the 56 arrangements produced a castle`);
 });
 
 test('the king may not castle out of, through, or into an attacked square', () => {
@@ -283,6 +289,47 @@ test('a castling move without its rook is refused rather than applied', () => {
   );
   // The genuine move, carrying its rook, still applies.
   assert.equal(whiteBackRank(pos.play(real)), 'R4RK1');
+});
+
+test('the arbitrary-origin rule is Chess960 only: other variants keep the traditional squares', () => {
+  // Ordinary chess does not merely happen to castle from e1 with a rook on a or h — it permits
+  // nothing else. Applying the general form to every rule set let a standard position with a king on
+  // d1 and a rook on h1 generate `d1g1`: a legal Chess960 castle and an illegal standard one.
+  // Raised in the Qodo review of PR #10.
+  const offFileKing = '4k3/8/8/8/8/8/8/3K3R w K - 0 1';
+  const innerRook = '4k3/8/8/8/8/8/8/4K1R1 w K - 0 1';
+
+  for (const variant of ['standard', 'kingofthehill', 'atomic', 'crazyhouse', 'threecheck'] as const) {
+    assert.equal(
+      castles(Position.fromFen(offFileKing, variant)).length,
+      0,
+      `${variant}: a king off the e-file must not castle`,
+    );
+    assert.equal(
+      castles(Position.fromFen(innerRook, variant)).length,
+      0,
+      `${variant}: a rook off the a/h-files must not castle`,
+    );
+  }
+
+  // The very same positions are legal Chess960 castles, which is what makes the gate load-bearing
+  // rather than a formality.
+  assert.equal(castles(Position.fromFen(offFileKing, 'chess960')).length, 1);
+  assert.equal(castles(Position.fromFen(innerRook, 'chess960')).length, 1);
+});
+
+test('king-takes-rook is a Chess960 input spelling and is refused elsewhere', () => {
+  // `toUci` already gated this notation on the variant; resolution has to draw the same boundary, or
+  // `play` — the one entry point whose job is refusing illegal moves — accepts a string no standard
+  // engine or GUI ever produces. Raised in the Qodo review of PR #10.
+  const fen = '4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1';
+
+  const standard = Position.fromFen(fen, 'standard');
+  assert.equal(whiteBackRank(standard.play('e1g1')), 'R4RK1', 'standard castles as e1g1');
+  assert.throws(() => standard.play('e1h1'), IllegalMoveError, 'standard must refuse e1h1');
+
+  const chess960 = Position.fromFen(fen, 'chess960');
+  assert.equal(whiteBackRank(chess960.play('e1h1')), 'R4RK1', 'chess960 castles as e1h1');
 });
 
 test('standard chess keeps its own UCI spelling, unchanged', () => {
