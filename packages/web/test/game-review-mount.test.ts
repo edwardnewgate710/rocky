@@ -152,6 +152,27 @@ function dispose(setupResult: ReturnType<typeof setup>): void {
   setupResult.app.dispose();
 }
 
+test('mounted session changes synchronously refresh Game Review controls', async () => {
+  const mountedGame = setup();
+  try {
+    const runButton = mountedGame.elements.get('game-review-run')!;
+    const note = mountedGame.elements.get('game-review-note')!;
+    await waitUntil(() => runButton.disabled === false);
+
+    mountedGame.mounted.onSessionChange(null);
+
+    assert.equal(runButton.disabled, true);
+    assert.equal(note.textContent, 'Sign in to review your game.');
+
+    mountedGame.mounted.onSessionChange({ handle: 'alice', userId: 'user-1' });
+
+    assert.equal(runButton.disabled, false);
+    assert.equal(note.textContent, 'Review your moves after the game.');
+  } finally {
+    dispose(mountedGame);
+  }
+});
+
 test('sign-out removes a completed private review from the mounted page', async () => {
   const mountedGame = setup();
   try {
