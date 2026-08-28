@@ -2383,7 +2383,7 @@
             }
           },
           "422": {
-            "description": "The game has no moves or exceeds the instant-review limit",
+            "description": "The request carried a body, or the game has no moves or exceeds the instant-review limit",
             "content": {
               "application/json": {
                 "schema": {

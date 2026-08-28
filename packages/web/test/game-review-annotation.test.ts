@@ -37,3 +37,9 @@ test('game review maps every server-owned post-game classification to a visible 
     label: 'Missed win', symbol: '×', tone: 'missed_win',
   });
 });
+
+test('game review keeps rendering when a newer server classification is unknown', () => {
+  assert.deepEqual(gameReviewAnnotation('future_classification'), {
+    label: 'Unrated', symbol: '•', tone: 'neutral',
+  });
+});

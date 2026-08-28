@@ -324,6 +324,12 @@ test('POST /v1/games/:id/review requires a player token and presents only that p
     const hidden = await h.json('POST', `/v1/games/${source.gameId}/review`, { token: spectator.token });
     assert.equal(hidden.status, 404);
 
+    const withBody = await h.json('POST', `/v1/games/${source.gameId}/review`, {
+      token: white.token,
+      body: {},
+    });
+    assert.equal(withBody.status, 422);
+
     const response = await h.json('POST', `/v1/games/${source.gameId}/review`, { token: white.token });
     assert.equal(response.status, 200);
     assert.equal(response.body.playerColor, 'white');

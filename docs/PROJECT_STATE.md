@@ -69,7 +69,7 @@ sign-out during an in-flight review, sign-out after a completed review, request 
 request B, response identity mismatch, and AbortSignal propagation. The recovered server-authoritative
 review contract is unchanged, and Study Partner remains untouched.
 
-## M15 Increment 33 — Completed-game review recovery
+## M15 Increment 33 — Completed-game review recovery (ADR-0136)
 
 The completed-game review work removed from Study Partner PR #1 is restored independently from the
 preserved `8a57548`, `2286a09`, and `5410b1e` commits. Authenticated participants can request a

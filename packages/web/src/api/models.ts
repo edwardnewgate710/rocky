@@ -1247,19 +1247,7 @@ export interface GameReviewResponse {
   readonly result: '1-0' | '0-1' | '1/2-1/2';
   readonly termination: string;
   readonly moves: readonly GameReviewMove[];
-  readonly summary: {
-    readonly brilliant: number;
-    readonly great: number;
-    readonly best: number;
-    readonly excellent: number;
-    readonly good: number;
-    readonly book: number;
-    readonly inaccuracy: number;
-    readonly mistake: number;
-    readonly miss: number;
-    readonly blunder: number;
-    readonly missed_win: number;
-  };
+  readonly summary: Readonly<Record<GameReviewClassification, number>>;
 }
 
 // --- Study Partner v1 -------------------------------------------------------

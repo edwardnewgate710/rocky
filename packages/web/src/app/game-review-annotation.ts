@@ -1,16 +1,16 @@
 import type { GameReviewClassification } from '../api/models.js';
 
 export interface GameReviewAnnotation {
-  readonly label: 'Brilliant' | 'Great' | 'Best move' | 'Excellent' | 'Good move' | 'Book' | 'Inaccuracy' | 'Mistake' | 'Miss' | 'Blunder' | 'Missed win';
-  readonly symbol: '!!' | '!' | '★' | '✓' | '📖' | '?!' | '?' | '×' | '??';
-  readonly tone: GameReviewClassification;
+  readonly label: 'Brilliant' | 'Great' | 'Best move' | 'Excellent' | 'Good move' | 'Book' | 'Inaccuracy' | 'Mistake' | 'Miss' | 'Blunder' | 'Missed win' | 'Unrated';
+  readonly symbol: '!!' | '!' | '★' | '✓' | '📖' | '?!' | '?' | '×' | '??' | '•';
+  readonly tone: GameReviewClassification | 'neutral';
 }
 
 /**
  * The server owns the post-game policy. The browser only translates its closed classification into
  * a readable label and symbol, so one UI release cannot quietly redefine a brilliant move.
  */
-export function gameReviewAnnotation(classification: GameReviewClassification): GameReviewAnnotation {
+export function gameReviewAnnotation(classification: string): GameReviewAnnotation {
   switch (classification) {
     case 'brilliant': return { label: 'Brilliant', symbol: '!!', tone: 'brilliant' };
     case 'great': return { label: 'Great', symbol: '!', tone: 'great' };
@@ -23,5 +23,6 @@ export function gameReviewAnnotation(classification: GameReviewClassification): 
     case 'miss': return { label: 'Miss', symbol: '×', tone: 'miss' };
     case 'blunder': return { label: 'Blunder', symbol: '??', tone: 'blunder' };
     case 'missed_win': return { label: 'Missed win', symbol: '×', tone: 'missed_win' };
+    default: return { label: 'Unrated', symbol: '•', tone: 'neutral' };
   }
 }
