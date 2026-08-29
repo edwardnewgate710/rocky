@@ -727,7 +727,9 @@ is a keyed hash (lookup without storing raw email). No credential is ever logged
   so a Windows working copy neither raises a false immutability error nor
   persists CR into a stored function body. Only the CRLF pair is rewritten:
   indentation, blank lines, a lone CR and a missing trailing newline are content,
-  and changing any of them is still an integrity violation. A ledger written by
+  and changing any of them is still an integrity violation. Decoding is checked
+  to round-trip, so a file that is not valid UTF-8 is rejected rather than having
+  its malformed bytes silently folded into U+FFFD. A ledger written by
   the earlier runner on a Windows checkout holds the CRLF rendering; the runner
   accepts that one legacy form for otherwise-unchanged content and rewrites the
   row to the canonical checksum.

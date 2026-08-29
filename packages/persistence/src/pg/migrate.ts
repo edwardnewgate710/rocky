@@ -63,9 +63,21 @@ export function canonicalizeMigrationSql(raw: string): string {
   return raw.replace(/\r\n/g, '\n');
 }
 
-/** Read a migration file in its canonical form. */
+/**
+ * Read a migration file in its canonical form.
+ *
+ * Decoding is verified to round-trip. Node's UTF-8 decoder silently replaces a
+ * malformed byte with U+FFFD, so `0xFF` and the valid encoding of U+FFFD would
+ * otherwise reduce to the same text and the same checksum — letting one stand in
+ * for the other in an applied migration. Only CRLF may be normalized away.
+ */
 export function readMigrationSql(dir: string, file: string): string {
-  return canonicalizeMigrationSql(readFileSync(join(dir, file), 'utf8'));
+  const bytes = readFileSync(join(dir, file));
+  const text = bytes.toString('utf8');
+  if (!Buffer.from(text, 'utf8').equals(bytes)) {
+    throw new MigrationError(`migration ${file} is not valid UTF-8`);
+  }
+  return canonicalizeMigrationSql(text);
 }
 
 function sha256(text: string): string {

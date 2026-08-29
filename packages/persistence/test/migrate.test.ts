@@ -167,6 +167,36 @@ test('non-ASCII migration content is canonicalized deterministically as UTF-8', 
   );
 });
 
+test('a migration that is not valid UTF-8 is rejected rather than silently repaired', () => {
+  // Node's decoder turns a malformed byte into U+FFFD, so 0xFF and the valid
+  // encoding of U+FFFD would otherwise reduce to identical text and checksum —
+  // one could replace the other in an applied migration undetected.
+  const dir = mkdtempSync(join(tmpdir(), 'migrate-utf8-'));
+  try {
+    const malformed = Buffer.concat([Buffer.from('SELECT '), Buffer.from([0xff]), Buffer.from(';')]);
+    const replacement = Buffer.concat([
+      Buffer.from('SELECT '),
+      Buffer.from([0xef, 0xbf, 0xbd]),
+      Buffer.from(';'),
+    ]);
+    assert.ok(!malformed.equals(replacement), 'the two files must differ as bytes');
+    assert.equal(
+      malformed.toString('utf8'),
+      replacement.toString('utf8'),
+      'and must decode identically, or this proves nothing',
+    );
+
+    writeFileSync(join(dir, '0001_malformed.sql'), malformed);
+    assert.throws(() => readMigrationSql(dir, '0001_malformed.sql'), /is not valid UTF-8/);
+
+    // A genuine U+FFFD round-trips, so it is content and stays readable.
+    writeFileSync(join(dir, '0002_replacement.sql'), replacement);
+    assert.equal(readMigrationSql(dir, '0002_replacement.sql'), replacement.toString('utf8'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('canonicalizing a committed migration loses nothing but the newline encoding', () => {
   // The real check over the migration history. Comparing anything downstream of
   // the canonical reader against itself would be vacuous, so this compares
