@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { Game } from '@chess-platform/game';
 import { createPool } from '../src/pg/pool';
-import { migrate } from '../src/pg/migrate';
+import { migrate, migrationChecksum, readMigrationSql } from '../src/pg/migrate';
 import { PostgresEventStore } from '../src/pg/event-store';
 import { PgGamesRepository, PgSeeksRepository, PgSeekAcceptor, PgGameStarter, PgUsersRepository } from '../src/pg/repositories';
 import { uuidv7 } from '../src/ids';
@@ -55,6 +56,51 @@ test('migrations apply and are idempotent', { skip }, async () => {
     );
     assert.equal(migration.rows[0]?.state, 'applied');
   } finally {
+    await pool.end();
+  }
+});
+
+test('the ledger is portable across checkouts but still rejects edits', { skip }, async () => {
+  const pool = createPool();
+  const dir = join(process.cwd(), 'migrations');
+  const file = '0023_community_pending_join_requests_index.sql';
+  const version = 23;
+  const canonical = migrationChecksum(readMigrationSql(dir, file));
+  const readChecksum = async (): Promise<string | undefined> =>
+    (
+      await pool.query<{ checksum: string }>(
+        'SELECT checksum FROM schema_migrations WHERE version = $1',
+        [version],
+      )
+    ).rows[0]?.checksum;
+  const setChecksum = async (checksum: string): Promise<void> => {
+    await pool.query('UPDATE schema_migrations SET checksum = $2 WHERE version = $1', [
+      version,
+      checksum,
+    ]);
+  };
+
+  try {
+    await migrate(pool, dir);
+    assert.equal(await readChecksum(), canonical, 'a fresh run records the canonical checksum');
+
+    // A ledger written by the pre-canonicalization runner on a Windows checkout
+    // holds the CRLF rendering of this very file. That is the same migration, so
+    // the run must succeed — and converge the row onto the canonical checksum.
+    const legacyCrlf = createHash('sha256')
+      .update(readMigrationSql(dir, file).replace(/\n/g, '\r\n'), 'utf8')
+      .digest('hex');
+    assert.notEqual(legacyCrlf, canonical, 'the CRLF rendering must differ, or this proves nothing');
+
+    await setChecksum(legacyCrlf);
+    assert.equal(await migrate(pool, dir), 0, 'a CRLF-era ledger applies nothing');
+    assert.equal(await readChecksum(), canonical, 'the legacy checksum is healed in place');
+
+    // An actual edit to an applied migration matches neither rendering.
+    await setChecksum(createHash('sha256').update('edited migration', 'utf8').digest('hex'));
+    await assert.rejects(migrate(pool, dir), /changed after being applied; history is immutable/);
+  } finally {
+    await setChecksum(canonical);
     await pool.end();
   }
 });

@@ -718,6 +718,19 @@ is a keyed hash (lookup without storing raw email). No credential is ever logged
   file's checksum changed (immutability of history). Online index migrations are
   recorded as `pending` before execution, so a valid completed index is finalized
   after interruption and an invalid concurrent index is dropped and retried.
+- **Canonical form.** A migration is read as UTF-8 text with LF newlines — the
+  committed Git blob — and that canonical text is what gets hashed, parsed and
+  executed. The repository has no `.gitattributes`, so the bytes on disk depend
+  on each machine's `core.autocrlf`: one commit checks out with LF on Linux and
+  CRLF on Windows. Canonicalizing at read time keeps the ledger checksum and the
+  SQL sent to PostgreSQL properties of the migration rather than of the checkout,
+  so a Windows working copy neither raises a false immutability error nor
+  persists CR into a stored function body. Only the CRLF pair is rewritten:
+  indentation, blank lines, a lone CR and a missing trailing newline are content,
+  and changing any of them is still an integrity violation. A ledger written by
+  the earlier runner on a Windows checkout holds the CRLF rendering; the runner
+  accepts that one legacy form for otherwise-unchanged content and rewrites the
+  row to the canonical checksum.
 - **Runner** is a tiny dependency-light script (`npm run migrate`) usable in CI,
   local dev, and as a K8s init-container/Job later. No heavyweight ORM/migration
   framework — it hides SQL we want to own and review.
