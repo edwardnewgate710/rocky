@@ -43,6 +43,7 @@ function stateView(
     drawOffer: null,
     moves,
     legalMoves,
+    chess960StartId: null,
   };
 }
 

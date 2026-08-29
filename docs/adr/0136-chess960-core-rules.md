@@ -271,6 +271,22 @@ All three published Horde perft vectors are unchanged by this, which is the regr
 counts depend on Black's back rank being full, so a change that altered them would mean the fix had
 reached further than castling.
 
+> **Superseded from here down by [ADR-0137](0137-chess960-production-integration.md), which is
+> authoritative for everything below.** Chess960 is creatable in production; the refusal these two
+> sections describe is gone. Six of the seven Phase B items landed as written; **item 5 did not** —
+> the seek-accept 409 is deliberately kept rather than dropped, for a reason that turned out to have
+> nothing to do with Chess960 (ADR-0137 §6). Item 7 split in two: move *input* needed no client-side
+> Chess960 logic, because the interaction layer is oracle-driven and the server's legal-move map
+> already spells castling king-takes-rook — but move *projection* did, and ADR-0137 §8 records both
+> halves, including the bug the first half's success hid.
+>
+> Everything below is **historical rationale**, kept as written because it is the reasoning that set
+> the bar — not a description of current behaviour.
+>
+> The notice sits here rather than under "Phase B" because the consequence immediately below it
+> asserts the refusal too, and a notice that governs only part of what it follows is worse than none.
+> Raised in the CodeRabbit review of PR #12.
+
 ## Consequences
 
 - Chess960 is genuinely implemented at the rules layer. All 960 arrangements generate, castle, and

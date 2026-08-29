@@ -9,7 +9,17 @@
  * `@chess-platform/core`, never by clients.
  */
 
-import { Position, opposite, parseFen, typeOf, type Color, type Variant, repetitionKey } from '@chess-platform/core';
+import {
+  CHESS960_POSITIONS,
+  Position,
+  chess960Fen,
+  opposite,
+  parseFen,
+  typeOf,
+  type Color,
+  type Variant,
+  repetitionKey,
+} from '@chess-platform/core';
 import {
   charge,
   hasFlagged,
@@ -18,6 +28,7 @@ import {
   type TimeControl,
 } from './clock';
 import type {
+  GameCreatedEvent,
   GameEvent,
   MovePlayedEvent,
   Players,
@@ -65,6 +76,12 @@ export interface GameState {
   readonly drawOffer: Color | null;
   /** Position-key → occurrence count, for threefold-repetition detection. */
   readonly repetition: RepetitionHistory;
+  /**
+   * The Scharnagl id this Chess960 game started from, or `null` for every other variant — and for a
+   * Chess960 game stored before {@link GameCreatedEvent.chess960StartId} existed, whose arrangement
+   * replays exactly but whose *identity* was never recorded and is therefore not knowable.
+   */
+  readonly chess960StartId: number | null;
 }
 
 /** Parameters to create a new game. */
@@ -76,6 +93,19 @@ export interface CreateGameParams {
   readonly players: Players;
   readonly rated?: boolean;
   readonly at: number;
+  /**
+   * The Scharnagl starting-position id (0..959) for a `chess960` game.
+   *
+   * Required for that variant and refused for every other. The caller draws it — this is a rules
+   * boundary, not a source of entropy (ADR-0136 §1) — which is what lets a test name the arrangement
+   * it wants and a tournament derive one reproducibly.
+   */
+  readonly chess960StartId?: number;
+}
+
+/** Whether `id` is a usable Scharnagl starting-position id. */
+function isStartId(id: unknown): id is number {
+  return typeof id === 'number' && Number.isInteger(id) && id >= 0 && id < CHESS960_POSITIONS;
 }
 
 const ONGOING: GameStatus = { over: false };
@@ -89,34 +119,60 @@ export class Game {
   /**
    * Create a new game, returning the aggregate and its `GameCreated` event.
    *
-   * Rejects `chess960`, and does so here rather than only at the API, because this is the one place
-   * every game is born: seek acceptance, the bot route and the tournament launcher all arrive at
-   * this call, and a future fourth caller would inherit the rule instead of having to remember it.
+   * **Chess960 requires `chess960StartId`, and every other variant refuses it.** The rule lives here
+   * rather than only at the API because this is the one place every game is born: seek acceptance,
+   * the bot route and the tournament launcher all arrive at this call, and a fourth caller added
+   * tomorrow inherits the rule instead of having to remember it. That is the same boundary ADR-0123
+   * chose to refuse the variant at; what changed is that there is now something truthful to do.
    *
-   * **The reason for the refusal has changed, and the refusal has not.** It was originally that the
-   * engine could not play the variant at all: `Position.initial('chess960')` returned the standard
-   * array and castling was hardcoded to e1/a1/h1, so the only arrangement that worked was ordinary
-   * chess. ADR-0136 fixed that — all 960 arrangements are generated, castling works from arbitrary
-   * king and rook squares, and both are verified against published perft counts.
+   * ADR-0123 refused creation because the engine could only play one arrangement. ADR-0136 fixed the
+   * rules and kept the refusal, because nothing could yet *say* which arrangement a game used, and
+   * writing `variant: 'chess960'` beside an arrangement nobody chose would put a durable falsehood
+   * into an append-only store. The id closes exactly that gap: it is chosen once, by the server, and
+   * recorded on the creation event.
    *
-   * What is still missing is everything *around* the rules. Creating a Chess960 game means deciding
-   * and recording which of the 960 arrangements it is, and no request schema, event field, or client
-   * carries that yet. Creating one now would write a `variant: 'chess960'` event whose arrangement
-   * nobody chose, into an append-only store — the same durable falsehood ADR-0123 refused, arrived at
-   * from the opposite direction. ADR-0136 §"Phase B" lists what has to exist first.
+   * The id is required rather than defaulted. Defaulting it to 518 would make the traditional array
+   * the silent answer to "which arrangement?", which is the falsehood in its most plausible costume —
+   * a real Chess960 game and a caller that forgot to draw an id would be indistinguishable afterwards.
    *
-   * `chess960` stays in `Variant` throughout, since reading and analysing such a position is
-   * legitimate and only *creating* one is not.
+   * `initialFen` is refused for Chess960 for the same reason: the id already determines the position,
+   * and two ways to state one fact is two facts that can disagree. Every other variant keeps
+   * `initialFen` exactly as before.
    */
   static create(params: CreateGameParams): { game: Game; events: GameEvent[] } {
     const variant = params.variant ?? 'standard';
+    const startId = params.chess960StartId;
+
+    // Narrowed once, here, rather than asserted at each use below. `isStartId` is a type predicate,
+    // so the assignment inside this branch is what carries `number` out to the two places that need
+    // it; the alternative was `startId as number` twice, spending a cast to restate a check the line
+    // above already made.
+    let chess960StartId: number | null = null;
+
     if (variant === 'chess960') {
+      if (!isStartId(startId)) {
+        throw new GameError(
+          `chess960 games need a starting-position id in 0..${CHESS960_POSITIONS - 1}; got ` +
+            `${startId === undefined ? 'none' : JSON.stringify(startId)}. The server draws it at ` +
+            'creation and records it on the GameCreated event. See ADR-0137.',
+        );
+      }
+      if (params.initialFen !== undefined) {
+        throw new GameError(
+          'chess960 games are started by starting-position id, not by initialFen: the id already ' +
+            'determines the position, and accepting both would let them disagree.',
+        );
+      }
+      chess960StartId = startId;
+    } else if (startId !== undefined) {
       throw new GameError(
-        'chess960 games cannot be created: the rules are implemented but there is no way yet to choose ' +
-          'and record which of the 960 starting arrangements the game uses. See ADR-0136.',
+        `a starting-position id is meaningless for '${variant}' and was refused rather than stored; ` +
+          'only chess960 games have one.',
       );
     }
-    const initialFen = params.initialFen ?? Position.initial(variant).fen();
+
+    const initialFen =
+      chess960StartId !== null ? chess960Fen(chess960StartId) : params.initialFen ?? Position.initial(variant).fen();
     const event: GameEvent = {
       type: 'GameCreated',
       gameId: params.gameId,
@@ -126,6 +182,7 @@ export class Game {
       players: params.players,
       rated: params.rated ?? false,
       at: params.at,
+      ...(chess960StartId !== null ? { chess960StartId } : {}),
     };
     return { game: Game.fromEvents([event]), events: [event] };
   }
@@ -360,10 +417,59 @@ export class Game {
     return new Game(state);
   }
 
+  /**
+   * The starting-position id a stored `GameCreated` asserts, validated against the rest of the event.
+   *
+   * This runs on **replay**, not just on creation, because `Game.create` is not the only way an event
+   * reaches the reducer: a stored payload is JSON that was written by some earlier version of this
+   * code, and `Game.fromEvents` is where a game comes back from disk. A creation-time check alone
+   * would leave the store's own contents unchecked, which is the half that matters — the append-only
+   * log is the thing that cannot be corrected afterwards.
+   *
+   * Three ways an event can be wrong, and all three throw rather than resolve to something plausible:
+   *
+   * - **An id on a non-Chess960 game.** Only Chess960 has one; a `standard` event carrying one is
+   *   describing a game that does not exist.
+   * - **An out-of-range or non-integer id.** `-1`, `960` and `3.5` name no arrangement.
+   * - **An id that disagrees with `initialFen`.** Both are stored, so both can be tampered with
+   *   independently; a client that fabricated an initial state would show up here and nowhere else.
+   *   The comparison is exact string equality against `chess960Fen(id)`, which is what `Game.create`
+   *   writes, so agreement is the only thing that can pass.
+   *
+   * A `chess960` event with **no** id is the one case that is not an error: it predates the field.
+   * It replays from `initialFen` exactly as it always did and reports `null` — see
+   * {@link GameCreatedEvent.chess960StartId}.
+   */
+  private static startIdOf(event: GameCreatedEvent): number | null {
+    const id = event.chess960StartId;
+    if (id === undefined) return null;
+    if (event.variant !== 'chess960') {
+      throw new GameError(
+        `GameCreated for '${event.variant}' carries a chess960 starting-position id (${JSON.stringify(id)}); ` +
+          'only chess960 games have one.',
+      );
+    }
+    if (!isStartId(id)) {
+      throw new GameError(
+        `GameCreated carries an invalid chess960 starting-position id: ${JSON.stringify(id)} is not an ` +
+          `integer in 0..${CHESS960_POSITIONS - 1}.`,
+      );
+    }
+    const expected = chess960Fen(id);
+    if (event.initialFen !== expected) {
+      throw new GameError(
+        `GameCreated claims chess960 starting position ${id} but its initialFen is not that position ` +
+          `(expected "${expected}", stored "${event.initialFen}").`,
+      );
+    }
+    return id;
+  }
+
   /** The pure reducer: `(state, event) -> state`. */
   private static reduce(state: GameState | null, event: GameEvent): GameState {
     switch (event.type) {
       case 'GameCreated': {
+        const startId = Game.startIdOf(event);
         const position = Position.fromFen(event.initialFen, event.variant);
         // Seed the repetition history with the initial position (count = 1).
         const rep = new Map<string, number>();
@@ -382,6 +488,7 @@ export class Game {
           status: ONGOING,
           drawOffer: null,
           repetition: rep,
+          chess960StartId: startId,
         };
       }
       case 'MovePlayed': {
