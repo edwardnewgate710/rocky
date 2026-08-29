@@ -73,7 +73,9 @@ test('the ledger is portable across checkouts but still rejects edits', { skip }
         [version],
       )
     ).rows[0]?.checksum;
+  let ledgerMutated = false;
   const setChecksum = async (checksum: string): Promise<void> => {
+    ledgerMutated = true;
     await pool.query('UPDATE schema_migrations SET checksum = $2 WHERE version = $1', [
       version,
       checksum,
@@ -100,10 +102,12 @@ test('the ledger is portable across checkouts but still rejects edits', { skip }
     await setChecksum(createHash('sha256').update('edited migration', 'utf8').digest('hex'));
     await assert.rejects(migrate(pool, dir), /changed after being applied; history is immutable/);
   } finally {
-    // Restore before closing, but never let a failed restore leak the pool —
-    // every later integration file migrates against this same database.
+    // Restore only what this test actually changed: if the first migrate() threw
+    // before schema_migrations existed, an UPDATE here would throw too and bury
+    // the real failure. Never let the restore leak the pool either — every later
+    // integration file migrates against this same database.
     try {
-      await setChecksum(canonical);
+      if (ledgerMutated) await setChecksum(canonical);
     } finally {
       await pool.end();
     }

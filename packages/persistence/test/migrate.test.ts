@@ -180,7 +180,10 @@ test('canonicalizing a committed migration loses nothing but the newline encodin
     const raw = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
     const canonical = readMigrationSql(MIGRATIONS_DIR, file);
 
-    assert.equal(canonical.includes('\r'), false, `${file} still contains CR`);
+    // No CRLF pair may survive canonicalization. A lone CR is content, not a
+    // checkout artifact, so it stays legal — asserting no CR at all here would
+    // reject a migration the policy allows.
+    assert.equal(canonical.includes('\r\n'), false, `${file} still contains CRLF`);
     // A BOM is content, not a checkout artifact, so canonicalization leaves it
     // in place — and PostgreSQL rejects it as a syntax error. Catch it here
     // rather than at migration time.
