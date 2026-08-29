@@ -4,6 +4,14 @@
  * records them in `schema_migrations` with a checksum so history is immutable (a
  * changed, already-applied file is a hard error). Migrations are transactional by
  * default; a narrowly validated directive supports online index creation.
+ *
+ * Migration files are read through a single canonical representation — UTF-8
+ * text with LF newlines, matching the committed Git blob. The repository has no
+ * `.gitattributes`, so the bytes on disk depend on each machine's
+ * `core.autocrlf`: one commit checks out with LF on Linux and CRLF on Windows.
+ * Hashing or executing those bytes directly would make both the ledger checksum
+ * and the SQL sent to PostgreSQL a property of the checkout rather than of the
+ * migration, so canonicalization happens once, at read time.
  */
 
 import { createHash } from 'node:crypto';
@@ -38,6 +46,67 @@ interface OnlineIndexApplication {
 
 /** Advisory-lock key that namespaces the migration runner (arbitrary constant). */
 const MIGRATION_ADVISORY_LOCK_KEY = 4915219603172;
+
+/**
+ * Reduce a migration to its canonical form: the committed LF text.
+ *
+ * Only the CRLF pair is rewritten, because that is the only difference a Git
+ * checkout can introduce. Every other byte — indentation, blank lines, a lone
+ * CR, a missing trailing newline — is migration content and stays untouched, so
+ * canonicalization cannot mask an edit to an applied migration.
+ *
+ * This exactly inverts Git's LF-to-CRLF checkout conversion over the inputs a
+ * checkout can produce. Git does not double-convert — a blob that already holds
+ * CRLF is checked out unchanged rather than as `\r\r\n` — so one pass is enough.
+ */
+export function canonicalizeMigrationSql(raw: string): string {
+  return raw.replace(/\r\n/g, '\n');
+}
+
+/**
+ * Read a migration file in its canonical form.
+ *
+ * Decoding is verified to round-trip. Node's UTF-8 decoder silently replaces a
+ * malformed byte with U+FFFD, so `0xFF` and the valid encoding of U+FFFD would
+ * otherwise reduce to the same text and the same checksum — letting one stand in
+ * for the other in an applied migration. Only CRLF may be normalized away.
+ */
+export function readMigrationSql(dir: string, file: string): string {
+  const bytes = readFileSync(join(dir, file));
+  const text = bytes.toString('utf8');
+  if (!Buffer.from(text, 'utf8').equals(bytes)) {
+    throw new MigrationError(`migration ${file} is not valid UTF-8`);
+  }
+  return canonicalizeMigrationSql(text);
+}
+
+/**
+ * Hex SHA-256 of `text`, encoded as UTF-8.
+ *
+ * The encoding is named rather than left to the default so a ledger checksum
+ * depends only on the characters hashed — the whole point of canonicalizing the
+ * migration first. Callers pass canonical text, or the CRLF rendering of it when
+ * checking a checksum an older runner wrote.
+ */
+function sha256(text: string): string {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+/** Ledger checksum of a migration, derived from its canonical form. */
+export function migrationChecksum(canonicalSql: string): string {
+  return sha256(canonicalSql);
+}
+
+/**
+ * True when a stored checksum was written by the pre-canonicalization runner,
+ * which hashed the checked-out bytes and so recorded the CRLF rendering on
+ * Windows. The content is proven identical apart from newline encoding, so this
+ * is the same migration under the old scheme rather than a history violation.
+ * A real content edit matches neither rendering and still fails.
+ */
+function isLegacyCrlfChecksum(stored: string, canonicalSql: string): boolean {
+  return stored === sha256(canonicalSql.replace(/\n/g, '\r\n'));
+}
 
 /**
  * Parse the optional online-index directive and reject any broader escape from
@@ -126,16 +195,19 @@ async function runMigrations(pool: Pool, dir: string): Promise<number> {
     const match = /^(\d+)_/.exec(file);
     if (!match) throw new MigrationError(`invalid migration filename: ${file}`);
     const version = parseInt(match[1]!, 10);
-    const sql = readFileSync(join(dir, file), 'utf8');
-    const checksum = createHash('sha256').update(sql).digest('hex');
+    const sql = readMigrationSql(dir, file);
+    const checksum = migrationChecksum(sql);
     const migration = parseMigration(sql);
 
     const existing = byVersion.get(version);
     if (existing) {
       if (existing.checksum !== checksum) {
-        throw new MigrationError(
-          `migration ${file} (version ${version}) changed after being applied; history is immutable`,
-        );
+        if (!isLegacyCrlfChecksum(existing.checksum, sql)) {
+          throw new MigrationError(
+            `migration ${file} (version ${version}) changed after being applied; history is immutable`,
+          );
+        }
+        await adoptCanonicalChecksum(pool, version, checksum);
       }
       if (existing.state === 'applied') continue;
       if (migration.kind !== 'online-index') {
@@ -176,6 +248,22 @@ async function runMigrations(pool: Pool, dir: string): Promise<number> {
     }
   }
   return count;
+}
+
+/**
+ * Rewrite a legacy CRLF checksum to the canonical one, so a ledger written by a
+ * Windows checkout converges instead of re-deriving the legacy form on every
+ * run. Runs under the migration advisory lock and touches only the checksum.
+ */
+async function adoptCanonicalChecksum(
+  pool: Pool,
+  version: number,
+  checksum: string,
+): Promise<void> {
+  await pool.query('UPDATE schema_migrations SET checksum = $2 WHERE version = $1', [
+    version,
+    checksum,
+  ]);
 }
 
 async function applyOnlineIndex(
