@@ -76,14 +76,21 @@ test.describe('Leaderboard view', () => {
     const select = page.locator('#leaderboard-variant-select');
     await expect(select).toHaveValue('standard');
 
-    // Every offered variant is listed, Chess960 among them since ADR-0137 made it creatable and so
-    // gave it ratings to rank. The selector renders `OFFERED_VARIANTS` rather than a list of its own,
-    // which is what this asserts — it used to pin Chess960's absence (ADR-0099), a decision that was
-    // never this page's to make.
+    // The whole offered set, in order, rather than a few spot checks: naming three of eight let a
+    // regression that dropped any of the other five pass. Chess960 is among them since ADR-0137 made
+    // it creatable and so gave it ratings to rank; this list used to pin its *absence* (ADR-0099), a
+    // decision that was never this page's to make. Raised in the CodeRabbit review of PR #12.
     const options = await select.locator('option').allInnerTexts();
-    expect(options).toContain('Standard');
-    expect(options).toContain('Chess960');
-    expect(options).toContain('Atomic');
+    expect(options).toEqual([
+      'Standard',
+      'Chess960',
+      'King of the Hill',
+      'Atomic',
+      'Crazyhouse',
+      'Three-check',
+      'Horde',
+      'Racing Kings',
+    ]);
 
     // Wait for results to render
     const results = page.locator('#leaderboard-results');

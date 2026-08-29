@@ -106,3 +106,89 @@ test('AntiCheatAnalysisService: returns null for unfinished game', async () => {
   const whiteReports = await repo.listByPlayer(whiteId);
   assert.equal(whiteReports.length, 0);
 });
+
+/**
+ * A Chess960 game is analysed from the arrangement it started at, and a corrupt one is skipped.
+ *
+ * Both cases arrived with ADR-0137. Before it, every game began at `Position.initial(variant)` and a
+ * stored creation event could not be rejected on replay, so neither path existed.
+ */
+test('a chess960 game is analysed from its own starting position', async () => {
+  const events = new InMemoryEventStore();
+  const gameId = 'c960-game';
+  // Position 700 — RBQKNNBR, king d1, rooks a1/h1 — so a replay that fell back to position 518 would
+  // be scoring a different game.
+  let { game, events: created } = Game.create({
+    gameId,
+    variant: 'chess960',
+    chess960StartId: 700,
+    timeControl: { initialMs: 180_000, incrementMs: 2_000, delayMs: 0, kind: 'increment' as const },
+    players: { white: 'w1', black: 'b1' },
+    rated: true,
+    at: 1000,
+  });
+  const all = [...created];
+  let t = 2000;
+  for (const uci of ['e2e4', 'e7e5', 'f1g3', 'd7d6']) {
+    let next;
+    ({ game, events: next } = game.playMove(uci, t));
+    all.push(...next);
+    t += 1000;
+  }
+  ({ events: created } = game.resign('b', t));
+  all.push(...created);
+  await events.append(gameId, -1, all);
+
+  const seen: string[] = [];
+  const recordingEvaluator: PositionEvaluator = {
+    evaluate: (fen, playedUci) => {
+      seen.push(fen);
+      return { topMoves: [{ uci: playedUci, cp: 30 }], playedCp: 30 };
+    },
+  };
+
+  const service = new AntiCheatAnalysisService(
+    new EventStoreGameSource(events),
+    () => recordingEvaluator,
+    new InMemoryAntiCheatReportRepository(),
+  );
+  const report = await service.analyzeAndStore(gameId);
+
+  assert.ok(report, 'the chess960 game was analysed rather than rejected as illegal');
+  assert.equal(
+    seen[0],
+    'rbqknnbr/pppppppp/8/8/8/8/PPPPPPPP/RBQKNNBR w KQkq - 0 1',
+    'the first position scored is the arrangement the game started from, not position 518',
+  );
+});
+
+test('a stored game whose chess960 metadata is corrupt is skipped, not thrown from', async () => {
+  // `Game.reduce` rejects a creation event whose start id disagrees with its FEN (ADR-0137 §3). That
+  // throw is correct, but an anti-cheat read is not where it should surface: this method's contract is
+  // "the finished game, or null", and an unanalysable game is an absent one. Raised in the CodeRabbit
+  // review of PR #12.
+  const events = new InMemoryEventStore();
+  const gameId = 'c960-corrupt';
+  await events.append(gameId, -1, [
+    {
+      type: 'GameCreated',
+      gameId,
+      variant: 'chess960',
+      // Claims position 700 while carrying the board of 518.
+      chess960StartId: 700,
+      initialFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+      timeControl: { initialMs: 180_000, incrementMs: 2_000, delayMs: 0, kind: 'increment' as const },
+      players: { white: 'w1', black: 'b1' },
+      rated: true,
+      at: 1000,
+    } as never,
+  ]);
+
+  const service = new AntiCheatAnalysisService(
+    new EventStoreGameSource(events),
+    () => fakeEvaluator,
+    new InMemoryAntiCheatReportRepository(),
+  );
+
+  assert.equal(await service.analyzeAndStore(gameId), null, 'skipped rather than raising');
+});

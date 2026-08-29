@@ -33,7 +33,20 @@ export class EventStoreGameSource implements FinishedGameSource {
     // event is `GameCreated`, so this is a read rather than a search.
     const created = events[0];
     if (created?.type !== 'GameCreated') return null;
-    const state = Game.fromEvents(events).snapshot();
+
+    // Replay can now throw on a stream this method would previously have folded without complaint:
+    // ADR-0137 made `Game.reduce` reject a stored Chess960 start id that is out of range, sits on a
+    // non-Chess960 event, or disagrees with the stored FEN. Those throws are the point — a corrupt
+    // creation event must not silently become a board — but an anti-cheat *read* is not the place they
+    // should surface. This method's contract is "the finished game, or null"; an unanalysable game is
+    // an absent one, and letting the error escape would turn a bad row into a failed request on an
+    // endpoint that has nothing to do with it. Raised in the CodeRabbit review of PR #12.
+    let state;
+    try {
+      state = Game.fromEvents(events).snapshot();
+    } catch {
+      return null;
+    }
     if (!state.status.over) return null;
     if (!state.players.white || !state.players.black) return null;
     return {

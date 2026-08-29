@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { chess960Fen } from '@chess-platform/core';
-import { fixedChess960Start } from '../src/ports/chess960';
+import { chess960StartSelector, fixedChess960Start } from '../src/ports/chess960';
 import { startHarness, type Harness } from './helpers';
 
 /**
@@ -122,27 +122,37 @@ test('a chess960 tournament can be created', async () => {
       },
     });
 
-    assert.equal(
-      res.status,
-      201,
-      'the tournament launcher reaches Game.create, so this is a creation boundary too',
-    );
+    // `POST /v1/tournaments` validates the variant and stores the configuration; it does not launch
+    // games, so this asserts the *creation contract* only. Games are launched from
+    // `TournamentService.start`, and the launcher's own start-id derivation is covered in
+    // `chess960-start-selection.test.ts`. The message used to claim this reached `Game.create`, which
+    // it does not — raised in the CodeRabbit review of PR #12.
+    assert.equal(res.status, 201, 'the tournament routes accept the variant');
     assert.equal(res.body.variant, 'chess960');
   } finally {
     await h.close();
   }
 });
 
-test('each chess960 game gets its own draw, and records the one it used', async () => {
-  // The failure this catches is an id drawn once and reused, which every single-game assertion above
-  // would still pass. Runs on the real CSPRNG selector rather than a forced one, so the subject is the
-  // production draw; what is asserted is per-game consistency, never a distribution.
-  const h = await startHarness();
+test('each chess960 game draws again, and records the id that game used', async () => {
+  // The failure this exists to catch is a selector drawn once and reused for every game.
+  //
+  // An earlier version could not catch it: asserting only that each stored id was in range and that
+  // the stored FEN matched it would pass just as happily for a selector that returned 700 forever.
+  // Raised in the CodeRabbit review of PR #12. Driving a *sequence* is what makes the claim exact —
+  // each game must record the id drawn for it, in order — and it stays deterministic, so this is
+  // still not a test about distribution.
+  const expected = [700, 0, 959, 123];
+  let drawn = 0;
+  const sequence = chess960StartSelector(() => expected[drawn++]!);
+
+  const h = await startHarness({}, { chess960Starts: sequence });
   try {
     const creator = await h.makeUser('multi-creator', ['user']);
     const joiner = await h.makeUser('multi-joiner', ['user']);
 
-    for (let i = 0; i < 4; i++) {
+    const recorded: number[] = [];
+    for (let i = 0; i < expected.length; i++) {
       const seekRes = await h.json('POST', '/v1/seeks', {
         token: creator.token,
         body: { variant: 'chess960', timeControl: TC },
@@ -154,16 +164,47 @@ test('each chess960 game gets its own draw, and records the one it used', async 
 
       const created = await storedCreation(h, acceptRes.body.gameId);
       const id = created.chess960StartId;
-      assert.ok(
-        typeof id === 'number' && Number.isInteger(id) && id >= 0 && id < 960,
-        `game ${i} drew a usable id, got ${JSON.stringify(id)}`,
-      );
+      assert.ok(typeof id === 'number', `game ${i} recorded an id`);
+      recorded.push(id as number);
       assert.equal(
         created.initialFen,
-        chess960Fen(id),
+        chess960Fen(id as number),
         `game ${i}: the stored position is the one its stored id names`,
       );
     }
+
+    assert.deepEqual(recorded, expected, 'each game recorded its own draw, in order');
+    assert.equal(drawn, expected.length, 'the selector was consulted exactly once per game');
+  } finally {
+    await h.close();
+  }
+});
+
+test('the production selector draws a usable id for a real seek acceptance', async () => {
+  // The sequence above proves the wiring draws per game; this proves the *default* wiring works at
+  // all, on the CSPRNG selector a deployment actually runs. Asserts only that the id is usable and
+  // agrees with the stored board — never a distribution.
+  const h = await startHarness();
+  try {
+    const creator = await h.makeUser('csprng-creator', ['user']);
+    const joiner = await h.makeUser('csprng-joiner', ['user']);
+
+    const seekRes = await h.json('POST', '/v1/seeks', {
+      token: creator.token,
+      body: { variant: 'chess960', timeControl: TC },
+    });
+    const acceptRes = await h.json('POST', `/v1/seeks/${seekRes.body.id}/accept`, {
+      token: joiner.token,
+    });
+    assert.equal(acceptRes.status, 200);
+
+    const created = await storedCreation(h, acceptRes.body.gameId);
+    const id = created.chess960StartId;
+    assert.ok(
+      typeof id === 'number' && Number.isInteger(id) && id >= 0 && id < 960,
+      `drew a usable id, got ${JSON.stringify(id)}`,
+    );
+    assert.equal(created.initialFen, chess960Fen(id as number));
   } finally {
     await h.close();
   }

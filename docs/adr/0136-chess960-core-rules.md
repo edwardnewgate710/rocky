@@ -283,12 +283,16 @@ reached further than castling.
 
 ## Phase B — what must exist before Chess960 can be created or offered
 
-> **Done.** All seven items landed in [ADR-0137](0137-chess960-production-integration.md); the
-> refusal described below is gone and Chess960 is creatable in production. Item 7 turned out to need
-> no client-side Chess960 logic at all — the interaction layer is oracle-driven and the server's
-> legal-move map already spells castling king-takes-rook — which ADR-0137 §8 records as a finding
-> rather than leaving it looking like an item nobody did. The rest of this section is kept as written
-> because it is the reasoning that set the bar.
+> **Superseded by [ADR-0137](0137-chess960-production-integration.md), which is authoritative for
+> everything below.** The refusal described in this section is gone and Chess960 is creatable in
+> production. Six of the seven items landed as written; **item 5 did not** — the seek-accept 409 is
+> deliberately kept rather than dropped, for a reason that turned out to have nothing to do with
+> Chess960 (ADR-0137 §6). Item 7 needed no client-side Chess960 logic at all, because the interaction
+> layer is oracle-driven and the server's legal-move map already spells castling king-takes-rook;
+> ADR-0137 §8 records that as a finding rather than leaving it looking like an item nobody did.
+>
+> The rest of this section is **historical rationale**, kept as written because it is the reasoning
+> that set the bar — not a description of current behaviour.
 
 The refusal in `packages/game/src/game.ts` stays, and its reason has changed rather than gone away.
 The engine can now play any arrangement, but nothing can *tell* it which one: no creation parameter,
