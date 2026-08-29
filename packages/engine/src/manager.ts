@@ -43,6 +43,31 @@ export interface EngineManagerOptions {
   readonly breaker?: CircuitBreakerOptions;
 }
 
+function waitForCaller<T>(shared: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (signal === undefined) return shared;
+  if (signal.aborted) return Promise.reject(new CancelledError());
+
+  return new Promise<T>((resolve, reject) => {
+    const cleanup = (): void => signal.removeEventListener('abort', onAbort);
+    const onAbort = (): void => {
+      cleanup();
+      reject(new CancelledError());
+    };
+    shared.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        cleanup();
+        reject(error);
+      },
+    );
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+}
+
 export class EngineManager implements AnalysisProvider {
   private readonly options: EngineManagerOptions;
   private readonly clock: Clock;
@@ -97,7 +122,7 @@ export class EngineManager implements AnalysisProvider {
     const multiPv = request.multiPv ?? 1;
     const priority = request.priority ?? JobPriority.LiveAnalysis;
 
-    const caps = await pool.ensureCapabilities();
+    const caps = await waitForCaller(pool.ensureCapabilities(), request.signal);
     const key = {
       fingerprint: analysisCacheFingerprint(caps.fingerprint, this.options.config),
       fen: request.fen,

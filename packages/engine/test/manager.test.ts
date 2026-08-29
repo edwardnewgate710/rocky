@@ -8,12 +8,16 @@ import {
   fairyStockfishPlugin,
   NoEngineForVariantError,
   InvalidFenError,
+  CancelledError,
   ShuttingDownError,
   type EnginePlugin,
   type EngineConfig,
+  type EngineTransport,
+  type ExitListener,
+  type LineListener,
   type AnalysisOrchestrationObserver,
 } from '../src/index.js';
-import { ManualClock, START_FEN } from './helpers.js';
+import { flush, ManualClock, START_FEN } from './helpers.js';
 
 const STOCKFISH_OPTIONS = [
   'option name Threads type spin default 1 min 1 max 512',
@@ -26,6 +30,43 @@ interface ManagerTestOptions {
   readonly cache?: InMemoryLruCache;
   readonly config?: EngineConfig;
   readonly observer?: AnalysisOrchestrationObserver;
+}
+
+class ReadyGateTransport implements EngineTransport {
+  private readonly inner = new FakeEngineTransport({
+    name: 'Stockfish 16',
+    optionLines: STOCKFISH_OPTIONS,
+    go: () => ({ info: ['info depth 10 score cp 20 pv e2e4'], bestmove: 'e2e4' }),
+  });
+  private readyPending = false;
+  private gateNextReady = true;
+
+  send(line: string): void {
+    if (line.trim() === 'isready' && this.gateNextReady) {
+      this.gateNextReady = false;
+      this.readyPending = true;
+      return;
+    }
+    this.inner.send(line);
+  }
+
+  onLine(listener: LineListener): void {
+    this.inner.onLine(listener);
+  }
+
+  onExit(listener: ExitListener): void {
+    this.inner.onExit(listener);
+  }
+
+  kill(signal?: NodeJS.Signals): void {
+    this.inner.kill(signal);
+  }
+
+  releaseReady(): void {
+    if (!this.readyPending) throw new Error('Capability initialization has not reached isready.');
+    this.readyPending = false;
+    this.inner.send('isready');
+  }
 }
 
 function makeManager(
@@ -120,6 +161,47 @@ test('configured engine option values namespace shared cache entries', async () 
   await second.analyze({ fen: START_FEN, variant: 'chess', limits: { depth: 10 } });
 
   assert.equal(goCalls, 2);
+});
+
+test('caller cancellation does not wait for cold capability initialization', async () => {
+  const clock = new ManualClock();
+  let transport: ReadyGateTransport | undefined;
+  const manager = new EngineManager({
+    clock,
+    minWorkers: 0,
+    maxWorkers: 1,
+    transportFactory: () => {
+      transport = new ReadyGateTransport();
+      return transport;
+    },
+  });
+  manager.register(stockfishPlugin);
+  const controller = new AbortController();
+
+  const request = manager.analyze({
+    fen: START_FEN,
+    variant: 'chess',
+    limits: { depth: 10 },
+    signal: controller.signal,
+  });
+  await flush();
+  let cancellation: unknown;
+  void request.catch((error: unknown) => {
+    cancellation = error;
+  });
+  controller.abort();
+  await flush();
+
+  assert.ok(cancellation instanceof CancelledError, 'cancellation settles before shared warmup');
+  await assert.rejects(request, CancelledError);
+  assert.equal(manager.capabilitiesFor('chess'), undefined);
+  assert.ok(transport);
+  transport.releaseReady();
+  await flush();
+
+  const next = await manager.analyze({ fen: START_FEN, variant: 'chess', limits: { depth: 10 } });
+  assert.equal(next[0]?.evaluation.value, 20, 'the shared warmup continues for later callers');
+  await manager.shutdown({ deadlineMs: 100 });
 });
 
 test('rejects an unsupported variant', async () => {

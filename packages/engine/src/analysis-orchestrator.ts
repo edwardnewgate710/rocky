@@ -157,10 +157,6 @@ export class AnalysisOrchestrator {
 
   async analyze(execution: AnalysisExecution): Promise<readonly EngineResult[]> {
     this.rejectCancelled(execution.signal);
-    const cached = await this.readCache(execution);
-    this.rejectCancelled(execution.signal);
-    if (cached !== undefined) return cached;
-
     const identity = flightKey(execution.key, execution.limits);
     const existing = this.inFlight.get(identity);
     if (existing) {
@@ -172,7 +168,7 @@ export class AnalysisOrchestrator {
 
   private start(identity: string, execution: AnalysisExecution): InFlightAnalysis {
     const controller = new AbortController();
-    const promise = Promise.resolve().then(() => this.compute(execution, controller.signal));
+    const promise = Promise.resolve().then(() => this.resolve(execution, controller.signal));
     const flight: InFlightAnalysis = { controller, promise, consumers: 0, settled: false };
     this.inFlight.set(identity, flight);
     const cleanup = (): void => {
@@ -181,6 +177,15 @@ export class AnalysisOrchestrator {
     };
     void promise.then(cleanup, cleanup);
     return flight;
+  }
+
+  private async resolve(
+    execution: AnalysisExecution,
+    signal: AbortSignal,
+  ): Promise<readonly EngineResult[]> {
+    const cached = await this.readCache(execution);
+    this.rejectCancelled(signal);
+    return cached ?? this.compute(execution, signal);
   }
 
   private join(

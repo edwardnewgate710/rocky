@@ -96,11 +96,47 @@ describe('AnalysisOrchestrator single-flight', () => {
     const responses = await Promise.all(requests);
     for (const response of responses) assert.deepEqual(response, ANALYSIS);
     assert.equal(cache.setCalls, 1);
-    assert.equal(observer.count('cache_miss'), 100);
+    assert.equal(observer.count('cache_miss'), 1);
     assert.equal(observer.count('engine_computation_started'), 1);
     assert.equal(observer.count('engine_computation_completed'), 1);
     assert.equal(observer.count('cache_write_completed'), 1);
     assert.equal(observer.count('request_coalesced'), 99);
+  });
+
+  it('shares a cache-read reservation until the corresponding flight retires', async () => {
+    const delayedSnapshot = deferred<void>();
+    let stored: readonly EngineResult[] | undefined;
+    let getCalls = 0;
+    const cache: AnalysisCache = {
+      get: async () => {
+        getCalls += 1;
+        const snapshot = stored;
+        if (getCalls > 1) await delayedSnapshot.promise;
+        return snapshot;
+      },
+      set: async (_key, value) => {
+        stored = value;
+      },
+    };
+    const orchestrator = new AnalysisOrchestrator({ cache });
+    const firstEngine = deferred<readonly EngineResult[]>();
+    let engineCalls = 0;
+    const execute = (): Promise<readonly EngineResult[]> => {
+      engineCalls += 1;
+      return engineCalls === 1 ? firstEngine.promise : Promise.resolve(ANALYSIS);
+    };
+
+    const first = orchestrator.analyze({ key: KEY, limits: LIMITS, execute });
+    await flush();
+    const second = orchestrator.analyze({ key: KEY, limits: LIMITS, execute });
+    await flush();
+
+    firstEngine.resolve(ANALYSIS);
+    assert.deepEqual(await first, ANALYSIS);
+    delayedSnapshot.resolve(undefined);
+    assert.deepEqual(await second, ANALYSIS);
+    assert.equal(getCalls, 1, 'the follower must join before starting a stale snapshot read');
+    assert.equal(engineCalls, 1);
   });
 
   it('runs 50 requests for each of two positions independently', async () => {
@@ -255,7 +291,7 @@ describe('AnalysisOrchestrator cache failures', () => {
     assert.equal(engineCalls, 1);
     engine.resolve(ANALYSIS);
     assert.equal((await Promise.all(requests)).length, 25);
-    assert.equal(observer.count('cache_read_failure'), 25);
+    assert.equal(observer.count('cache_read_failure'), 1);
   });
 
   it('returns valid engine results when the cache write fails', async () => {
