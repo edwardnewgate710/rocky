@@ -84,6 +84,10 @@ export { buildCapabilities, computeFingerprint, extractVersion, compareVersions,
 // Cache seam
 export { NullCache, InMemoryLruCache, limitsSatisfy, cacheKeyString } from './cache.js';
 export type { AnalysisCache, AnalysisKey, CacheMeta } from './cache.js';
+export type {
+  AnalysisOrchestrationEvent,
+  AnalysisOrchestrationObserver,
+} from './analysis-orchestrator.js';
 
 // Scheduler
 export { PriorityScheduler } from './queue.js';

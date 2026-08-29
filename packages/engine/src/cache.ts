@@ -6,7 +6,8 @@
  * future implementations of the same interface — a durable backend touches the approved
  * persistence contract and is gated separately (future ADR-0003).
  */
-import type { AnalysisLimits, EngineResult } from './types.js';
+import { createHash } from 'node:crypto';
+import type { AnalysisLimits, EngineConfig, EngineResult } from './types.js';
 
 export interface AnalysisKey {
   readonly fingerprint: string;
@@ -39,6 +40,25 @@ export function limitsSatisfy(have: AnalysisLimits, want: AnalysisLimits): boole
 
 export function cacheKeyString(key: AnalysisKey): string {
   return JSON.stringify([key.fingerprint, key.variant, key.multiPv, key.fen]);
+}
+
+/** Namespace a build fingerprint by the option values that affect its searches. */
+export function analysisCacheFingerprint(fingerprint: string, config: EngineConfig | undefined): string {
+  const settings: unknown[] = [];
+  if (config?.threads !== undefined) settings.push(['Threads', config.threads]);
+  if (config?.hashMb !== undefined) settings.push(['Hash', config.hashMb]);
+  if (config?.options) {
+    settings.push(
+      ...Object.entries(config.options)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([name, configured]) => [name, configured]),
+    );
+  }
+  if (settings.length === 0) return fingerprint;
+  return createHash('sha256')
+    .update(`${fingerprint}\u0000${JSON.stringify(settings)}`)
+    .digest('hex')
+    .slice(0, 32);
 }
 
 /** No-op cache; the safe default when caching is undesirable (e.g. in tests). */

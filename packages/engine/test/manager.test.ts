@@ -10,6 +10,8 @@ import {
   InvalidFenError,
   ShuttingDownError,
   type EnginePlugin,
+  type EngineConfig,
+  type AnalysisOrchestrationObserver,
 } from '../src/index.js';
 import { ManualClock, START_FEN } from './helpers.js';
 
@@ -20,11 +22,23 @@ const STOCKFISH_OPTIONS = [
   'option name UCI_Chess960 type check default false',
 ];
 
-function makeManager(clock: ManualClock, onGo?: () => void): { manager: EngineManager; cache: InMemoryLruCache } {
-  const cache = new InMemoryLruCache(100);
+interface ManagerTestOptions {
+  readonly cache?: InMemoryLruCache;
+  readonly config?: EngineConfig;
+  readonly observer?: AnalysisOrchestrationObserver;
+}
+
+function makeManager(
+  clock: ManualClock,
+  onGo?: () => void,
+  options: ManagerTestOptions = {},
+): { manager: EngineManager; cache: InMemoryLruCache } {
+  const cache = options.cache ?? new InMemoryLruCache(100);
   const manager = new EngineManager({
     clock,
     cache,
+    ...(options.config !== undefined ? { config: options.config } : {}),
+    ...(options.observer !== undefined ? { observer: options.observer } : {}),
     minWorkers: 1,
     maxWorkers: 2,
     transportFactory: (plugin: EnginePlugin) => {
@@ -76,6 +90,36 @@ test('serves a repeated analysis from cache', async () => {
   const second = await manager.analyze({ fen: START_FEN, variant: 'chess', limits: { depth: 10 } });
   assert.deepEqual(second, first);
   assert.equal(goCalls, 1, 'the second identical analysis was cached');
+});
+
+test('coalesces 100 concurrent manager requests into one engine search', async () => {
+  const clock = new ManualClock();
+  let goCalls = 0;
+  const { manager } = makeManager(clock, () => (goCalls += 1));
+  await manager.warmup();
+
+  const requests = Array.from({ length: 100 }, () =>
+    manager.analyze({ fen: START_FEN, variant: 'chess', limits: { depth: 10 } }),
+  );
+  const responses = await Promise.all(requests);
+
+  assert.equal(goCalls, 1);
+  assert.equal(responses.length, 100);
+  assert.ok(responses.every((response) => response[0]?.evaluation.value === 20));
+});
+
+test('configured engine option values namespace shared cache entries', async () => {
+  const clock = new ManualClock();
+  const cache = new InMemoryLruCache(100);
+  let goCalls = 0;
+  const first = makeManager(clock, () => (goCalls += 1), { cache, config: { hashMb: 32 } }).manager;
+  const second = makeManager(clock, () => (goCalls += 1), { cache, config: { hashMb: 64 } }).manager;
+  await Promise.all([first.warmup(), second.warmup()]);
+
+  await first.analyze({ fen: START_FEN, variant: 'chess', limits: { depth: 10 } });
+  await second.analyze({ fen: START_FEN, variant: 'chess', limits: { depth: 10 } });
+
+  assert.equal(goCalls, 2);
 });
 
 test('rejects an unsupported variant', async () => {
