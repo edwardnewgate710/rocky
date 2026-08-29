@@ -12,13 +12,18 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 
-/** Widths chosen where the layout actually changes, not at round numbers. */
+/**
+ * The two grids have different minimums — 12rem for the fields, 11rem for the actions — so they
+ * reflow at different widths. 420px is in between, and it is there to prove they are independent:
+ * a single shared breakpoint would have to pick one width and be wrong about the other.
+ */
 const VIEWPORTS = [
-  { name: 'wide desktop', width: 1440, height: 900, pairsFields: true },
-  { name: 'laptop', width: 1024, height: 768, pairsFields: true },
-  { name: 'tablet', width: 768, height: 1024, pairsFields: true },
-  { name: 'mobile', width: 390, height: 844, pairsFields: false },
-  { name: 'small mobile', width: 320, height: 640, pairsFields: false },
+  { name: 'wide desktop', width: 1440, height: 900, pairsFields: true, pairsActions: true },
+  { name: 'laptop', width: 1024, height: 768, pairsFields: true, pairsActions: true },
+  { name: 'tablet', width: 768, height: 1024, pairsFields: true, pairsActions: true },
+  { name: 'narrow', width: 420, height: 900, pairsFields: false, pairsActions: true },
+  { name: 'mobile', width: 390, height: 844, pairsFields: false, pairsActions: false },
+  { name: 'small mobile', width: 320, height: 640, pairsFields: false, pairsActions: false },
 ] as const;
 
 const ACTIONS = ['#auth-submit', '#auth-register', '#auth-passkey'] as const;
@@ -51,15 +56,18 @@ for (const viewport of VIEWPORTS) {
     expect(card.x).toBeGreaterThanOrEqual(0);
     expect(card.x + card.width).toBeLessThanOrEqual(viewport.width);
 
-    // Every action is the same width — the property `flex-wrap: wrap` could not give them.
-    const actions = [];
-    for (const selector of ACTIONS) actions.push(await boxOf(page, selector));
-    const [submit, register, passkey] = actions;
+    // The two secondary actions come out the same width — the property `flex-wrap: wrap` could
+    // not give them, because it sizes each button to its own label.
+    const submit = await boxOf(page, '#auth-submit');
+    const register = await boxOf(page, '#auth-register');
+    const passkey = await boxOf(page, '#auth-passkey');
     expect(Math.abs(register.width - passkey.width)).toBeLessThan(1);
 
-    // The default action leads on its own row; the other two pair off beneath it.
+    // The default action takes the whole row, alone, with the other two beneath it.
+    const actionRow = await boxOf(page, '#auth-form .auth-actions');
+    expect(Math.abs(submit.width - actionRow.width)).toBeLessThan(1);
     expect(sameRow(submit, register)).toBe(false);
-    expect(sameRow(register, passkey)).toBe(viewport.pairsFields);
+    expect(sameRow(register, passkey)).toBe(viewport.pairsActions);
 
     // No control is clipped: a wrapped label is fine, a cut-off one is not.
     for (const selector of [...ACTIONS, '#auth-handle', '#auth-password', '#auth-email']) {
@@ -72,11 +80,13 @@ for (const viewport of VIEWPORTS) {
     // Fields pair where two 12rem tracks fit and stack where they do not.
     const handle = await boxOf(page, '.auth-field:has(#auth-handle)');
     const password = await boxOf(page, '.auth-field:has(#auth-password)');
-    const email = await boxOf(page, '.auth-field-full');
     expect(sameRow(handle, password)).toBe(viewport.pairsFields);
-    // The optional recovery email always takes the whole row.
+
+    // The optional recovery email always takes the whole row, never half of one.
+    const email = await boxOf(page, '.auth-field-full');
+    const form = await boxOf(page, '#auth-form');
     expect(sameRow(email, handle)).toBe(false);
-    expect(Math.abs(email.width - (card.width - 2 * (handle.x - card.x)))).toBeLessThan(2);
+    expect(Math.abs(email.width - form.width)).toBeLessThan(1);
   });
 }
 

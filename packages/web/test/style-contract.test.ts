@@ -307,12 +307,12 @@ test('auth fields can shrink below their inputs intrinsic width', () => {
  */
 test('the auth layout makes no physical-direction assumption', () => {
   const namesAuth = /(^|[\s,>+~])[.#]auth/;
-  const physical = /(^|[\s;{])(float|clear|text-align)\s*:|(margin|padding|border)-(left|right)\s*:|(^|[\s;])(left|right)\s*:/;
+  const physicalPlacement = /(^|[\s;{])(float|clear|text-align)\s*:|(margin|padding|border)-(left|right)\s*:|(^|[\s;])(left|right)\s*:/;
   for (const rule of rules()) {
     if (!rule.selectors.some((selector) => namesAuth.test(selector))) continue;
     assert.doesNotMatch(
       rule.body,
-      physical,
+      physicalPlacement,
       '`' + rule.selectors.join(', ') + '` uses a physical direction — use a logical property so RTL mirrors',
     );
   }
