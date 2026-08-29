@@ -28,6 +28,7 @@ const E2E_DIR = resolve(PACKAGE_ROOT, 'e2e');
  */
 const STATIC_SPECS = new Set([
   'app-loads.spec.ts',
+  'auth-responsive.spec.ts',
   'offline-navigation.spec.ts',
   'leaderboard.spec.ts',
   'password-recovery.spec.ts',

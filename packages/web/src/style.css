@@ -538,10 +538,11 @@ button:disabled {
    thing in the product. It gets the lobby's centred column at a form measure, and its controls join
    the treatments that already exist rather than growing their own. */
 .auth {
-  max-width: 360px;
-  margin: 32px auto;
-  padding: 20px;
-  border-radius: 6px;
+  max-width: 480px;
+  margin: clamp(24px, 8vh, 72px) auto;
+  padding: clamp(20px, 4vw, 28px);
+  border: 1px solid var(--panel-strong);
+  border-radius: 8px;
   background: var(--panel);
 }
 .cb-coordinate {
@@ -556,31 +557,69 @@ button:disabled {
 .cb-file { right: 6%; bottom: 4%; text-transform: lowercase; }
 .cb-light .cb-coordinate { color: color-mix(in srgb, var(--dark) 80%, black); }
 .cb-dark .cb-coordinate { color: color-mix(in srgb, var(--light) 86%, white); }
+/* One column by default: the recovery forms carry one and two fields, and a stack is the right
+   shape for both. A grid rather than the flex column it replaces — same rendering, since a grid
+   item stretches its track exactly as a flex item stretches the cross axis — because only a grid
+   lets the sign-in form below widen to two tracks without restating the container. */
 .auth-form {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 12px;
 }
+/* The sign-in form is the only auth form with three fields, and stacked at the old 360px measure
+   it read as a tall ladder of half-empty rows. `auto-fit` sizes the track count from the space
+   actually available instead of a breakpoint someone has to keep in sync with the card's padding:
+   two 12rem tracks need 26rem, which the 480px card affords and a phone does not, so the form
+   pairs Handle with Password on a laptop and stacks everything on a 320px screen with no media
+   query left to drift. */
+#auth-form {
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 16px;
+}
+/* `min-width: 0` because a grid item's automatic minimum is its content, and an input's content
+   minimum comes from the `size` attribute (20 characters) — without it the fields refuse to shrink
+   past roughly 180px each and the card overflows the viewport instead of reflowing. */
 .auth-field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
+  min-width: 0;
 }
+/* The optional recovery email takes the whole row rather than sharing one with a required field:
+   an address is the longest value on the form, and pairing it with Handle would have implied the
+   two belong together. A class rather than `:nth-child`, so reordering the markup cannot silently
+   move the span onto a different field. */
+#auth-form .auth-field-full,
+#auth-form .auth-actions { grid-column: 1 / -1; }
 /* Label typography: the same 0.75rem muted voice the clock's White/Black labels use. */
 .auth-field label {
   font-size: 0.75rem;
   line-height: 1;
   color: var(--muted);
 }
-/* Auth actions share the default button style — hierarchy comes from order and copy,
-   not a primary variant, exactly as the profile's action bar does it. One more step of the spacing
-   scale separates the actions from the fields than separates the fields from each other. The row
-   wraps before shrinking a label at narrow widths. */
+/* Auth actions share the default button style — hierarchy comes from order, copy and weight, not
+   a primary colour variant, exactly as the profile's action bar and `.cg-submit` do it. One more
+   step of the spacing scale separates the actions from the fields than separates the fields from
+   each other.
+   The row was `flex-wrap: wrap`, which does keep a label intact but sizes each button to its own
+   text: "Sign in", "Register" and "Sign in with passkey" rendered as three different widths that
+   broke at whatever point the longest one ran out of room, and that ragged second row was the most
+   visible thing on the app's front door. A grid gives every action the same width. `auto-fit`
+   again rather than a breakpoint, and it is also what keeps the single-button recovery surfaces
+   right: with one child every other track is empty and collapses, so `#password-reset` and
+   `#email-verify` get one full-width control instead of a button stranded in half a row. */
 .auth-actions {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
   gap: 8px;
   margin-top: 4px;
+}
+/* The default action leads on its own row: it is the control most visitors came for, and giving it
+   the width also leaves Register and the passkey path an even pair beneath it rather than a 2-1
+   split. Weight, not colour — a filled accent would have to clear WCAG 1.4.3 against `--sel` in
+   both themes, and the light-theme pairing (`--light-bg` on `--sel-deep`) lands at 4.3:1. */
+.auth-actions #auth-submit {
+  grid-column: 1 / -1;
+  font-weight: 600;
 }
 .auth .error {
   margin: 12px 0 0;

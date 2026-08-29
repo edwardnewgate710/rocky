@@ -207,7 +207,15 @@ test('the promotion tile sizes and centres its piece artwork', () => {
  * some classes are behavioural hooks with nothing to style; growing the list is how a future
  * surface joins the guarantee.
  */
-const STYLED_CLASSES = ['auth', 'auth-form', 'auth-field', 'auth-actions', 'auth-meta', 'passkeys-actions'];
+const STYLED_CLASSES = [
+  'auth',
+  'auth-form',
+  'auth-field',
+  'auth-field-full',
+  'auth-actions',
+  'auth-meta',
+  'passkeys-actions',
+];
 
 test('every class the auth surface carries is matched by a rule', () => {
   const HTML = readFileSync(resolve(PACKAGE_ROOT, 'index.html'), 'utf8');
@@ -231,10 +239,84 @@ test('every class the auth surface carries is matched by a rule', () => {
   }
 });
 
-test('auth actions wrap instead of squeezing button labels on narrow screens', () => {
-  const authActions = rules().find((rule) => rule.selectors.includes('.auth-actions'));
-  assert.ok(authActions, 'could not find the auth actions rule');
-  assert.match(authActions.body, /flex-wrap\s*:\s*wrap/);
+/** The rule carrying exactly this selector, or a failed assertion naming the one that went missing. */
+function authRule(selector: string): Rule {
+  const rule = rules().find((r) => r.selectors.includes(selector));
+  assert.ok(rule, 'could not find the `' + selector + '` rule');
+  return rule;
+}
+
+/**
+ * The auth surface's layout contract, asserted as a property rather than a screenshot.
+ *
+ * The sign-in form and its action row have to reflow from the space they are actually given: a
+ * fixed column count is what makes a layout need a media query, and a media query is what drifts
+ * when the card's padding or measure changes. The minimum track is expressed in `rem` so the
+ * columns collapse when the *text* outgrows them, not at a pixel width that assumes a default font
+ * size.
+ */
+test('the auth grids size themselves from available space, not from a fixed column count', () => {
+  for (const selector of ['#auth-form', '.auth-actions']) {
+    const { body } = authRule(selector);
+    assert.match(
+      body,
+      /grid-template-columns\s*:\s*repeat\(\s*auto-fit\s*,\s*minmax\(\s*[\d.]+rem\s*,\s*1fr\s*\)\s*\)/,
+      selector + ' must size its tracks with auto-fit and a rem minimum, so it reflows without a breakpoint',
+    );
+  }
+});
+
+test('the shared auth form and action row are grids, so a single-control surface fills its row', () => {
+  for (const selector of ['.auth-form', '.auth-actions']) {
+    assert.match(authRule(selector).body, /display\s*:\s*grid/, selector + ' must be a grid');
+  }
+});
+
+/**
+ * The three sign-in buttons were `flex-wrap: wrap`, which sizes each one to its own label: "Sign
+ * in", "Register" and "Sign in with passkey" came out three different widths and broke into a
+ * ragged second row on the app's front door. The grid gives them one width; these are the two spans
+ * that make the arrangement deliberate rather than incidental — the optional recovery email and the
+ * default action each take the whole row, so Register and the passkey path pair off beneath it
+ * instead of leaving a 2-1 split.
+ */
+test('the optional email field and the default action each span the sign-in form', () => {
+  const spanned = rules()
+    .filter((rule) => /grid-column\s*:\s*1\s*\/\s*-1/.test(rule.body))
+    .flatMap((rule) => rule.selectors);
+  for (const selector of ['#auth-form .auth-field-full', '#auth-form .auth-actions', '.auth-actions #auth-submit']) {
+    assert.ok(spanned.includes(selector), '`' + selector + '` must span the full row');
+  }
+});
+
+/**
+ * A grid item's automatic minimum size is its content, and an input's content minimum comes from
+ * the `size` attribute — 20 characters, roughly 180px. Two of those plus a gap exceed a 320px
+ * phone, so without `min-width: 0` the fields refuse to shrink and the card overflows the viewport
+ * horizontally instead of collapsing to one column. Asserted here because nothing catches it until
+ * someone opens the app at 320px.
+ */
+test('auth fields can shrink below their inputs intrinsic width', () => {
+  assert.match(authRule('.auth-field').body, /min-width\s*:\s*0/);
+});
+
+/**
+ * The auth block is laid out for both writing directions. Physical placement (`float`, `left`,
+ * `right`, `margin-left`/`margin-right`) would pin it to LTR; grid line numbers and logical
+ * properties mirror themselves under `dir="rtl"`. `text-align` is in the list because it is the one
+ * that gets added without thinking.
+ */
+test('the auth layout makes no physical-direction assumption', () => {
+  const namesAuth = /(^|[\s,>+~])[.#]auth/;
+  const physicalPlacement = /(^|[\s;{])(float|clear|text-align)\s*:|(margin|padding|border)-(left|right)\s*:|(^|[\s;])(left|right)\s*:/;
+  for (const rule of rules()) {
+    if (!rule.selectors.some((selector) => namesAuth.test(selector))) continue;
+    assert.doesNotMatch(
+      rule.body,
+      physicalPlacement,
+      '`' + rule.selectors.join(', ') + '` uses a physical direction — use a logical property so RTL mirrors',
+    );
+  }
 });
 
 /**
