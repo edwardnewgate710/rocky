@@ -197,6 +197,34 @@ describe('AnalysisOrchestrator single-flight', () => {
     });
   }
 
+  it('does not coalesce requests across scheduler priority classes', async () => {
+    const orchestrator = new AnalysisOrchestrator({ cache: new MissCache() });
+    const engine = deferred<readonly EngineResult[]>();
+    let engineCalls = 0;
+    const execute = (): Promise<readonly EngineResult[]> => {
+      engineCalls += 1;
+      return engine.promise;
+    };
+
+    const background = orchestrator.analyze({
+      key: KEY,
+      limits: LIMITS,
+      priorityClass: 3,
+      execute,
+    });
+    const live = orchestrator.analyze({
+      key: KEY,
+      limits: LIMITS,
+      priorityClass: 1,
+      execute,
+    });
+    await flush();
+
+    assert.equal(engineCalls, 2);
+    engine.resolve(ANALYSIS);
+    await Promise.all([background, live]);
+  });
+
   it('removes a failed flight so the next request retries', async () => {
     const orchestrator = new AnalysisOrchestrator({ cache: new MissCache() });
     const failedEngine = deferred<readonly EngineResult[]>();
@@ -316,9 +344,11 @@ describe('AnalysisOrchestrator cache failures', () => {
 
   const malformedCacheValues: readonly (readonly [string, unknown])[] = [
     ['an empty analysis', []],
+    ['a sparse analysis array', new Array<EngineResult>(1)],
     ['a non-array payload', { multipv: 1 }],
     ['a misordered MultiPV set', [{ ...ANALYSIS[0], multipv: 2 }]],
     ['a negative node count', [{ ...ANALYSIS[0], nodes: -1 }]],
+    ['a sparse principal variation', [{ ...ANALYSIS[0], principalVariation: new Array<string>(1) }]],
   ];
 
   for (const [description, malformed] of malformedCacheValues) {
@@ -418,6 +448,26 @@ describe('AnalysisOrchestrator cache failures', () => {
     assert.equal(cache.setCalls, 1);
     assert.equal(observer.count('inflight_computation_failure'), 1);
   });
+
+  for (const [description, malformed] of [
+    ['a sparse analysis array', new Array<EngineResult>(1)],
+    ['a sparse principal variation', [{ ...ANALYSIS[0], principalVariation: new Array<string>(1) }]],
+  ] as const) {
+    it(`rejects ${description} from the engine without caching it`, async () => {
+      const cache = new MissCache();
+      const orchestrator = new AnalysisOrchestrator({ cache });
+
+      await assert.rejects(
+        orchestrator.analyze({
+          key: KEY,
+          limits: LIMITS,
+          execute: async () => malformed,
+        }),
+        ProtocolError,
+      );
+      assert.equal(cache.setCalls, 0);
+    });
+  }
 });
 
 describe('AnalysisOrchestrator cancellation', () => {

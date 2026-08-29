@@ -36,6 +36,8 @@ export interface AnalysisOrchestratorOptions {
 export interface AnalysisExecution {
   readonly key: AnalysisKey;
   readonly limits: AnalysisLimits;
+  /** Requests in different scheduler classes must not inherit one another's priority. */
+  readonly priorityClass?: number;
   readonly signal?: AbortSignal;
   readonly execute: (signal: AbortSignal) => Promise<readonly EngineResult[]>;
 }
@@ -61,7 +63,7 @@ function limitToken(limit: number | undefined): string {
   return limit === undefined ? 'unset' : String(limit);
 }
 
-function flightKey(key: AnalysisKey, limits: AnalysisLimits): string {
+function flightKey(key: AnalysisKey, limits: AnalysisLimits, priorityClass: number | undefined): string {
   return JSON.stringify([
     key.fingerprint,
     key.variant,
@@ -70,6 +72,7 @@ function flightKey(key: AnalysisKey, limits: AnalysisLimits): string {
     limitToken(limits.depth),
     limitToken(limits.nodes),
     limitToken(limits.timeMs),
+    limitToken(priorityClass),
   ]);
 }
 
@@ -102,7 +105,7 @@ function hasValidBound(line: Record<string, unknown>): boolean {
 
 function hasValidPrincipalVariation(line: Record<string, unknown>): boolean {
   const variation = line['principalVariation'];
-  return Array.isArray(variation) && variation.every((move) => typeof move === 'string');
+  return Array.isArray(variation) && Array.from(variation).every((move) => typeof move === 'string');
 }
 
 function hasValidSearchCounts(line: Record<string, unknown>): boolean {
@@ -132,7 +135,7 @@ function isAnalysisResultSet(candidate: unknown, multiPv: number): candidate is 
     Array.isArray(candidate) &&
     candidate.length > 0 &&
     candidate.length <= multiPv &&
-    candidate.every((line, index) => isAnalysisLine(line, index + 1))
+    Array.from(candidate).every((line, index) => isAnalysisLine(line, index + 1))
   );
 }
 
@@ -157,7 +160,7 @@ export class AnalysisOrchestrator {
 
   async analyze(execution: AnalysisExecution): Promise<readonly EngineResult[]> {
     this.rejectCancelled(execution.signal);
-    const identity = flightKey(execution.key, execution.limits);
+    const identity = flightKey(execution.key, execution.limits, execution.priorityClass);
     const existing = this.inFlight.get(identity);
     if (existing) {
       this.record({ type: 'request_coalesced' });

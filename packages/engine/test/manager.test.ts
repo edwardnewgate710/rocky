@@ -15,6 +15,7 @@ import {
   type EngineTransport,
   type ExitListener,
   type LineListener,
+  type AnalysisOrchestrationEvent,
   type AnalysisOrchestrationObserver,
 } from '../src/index.js';
 import { flush, ManualClock, START_FEN } from './helpers.js';
@@ -40,6 +41,7 @@ class ReadyGateTransport implements EngineTransport {
   });
   private readyPending = false;
   private gateNextReady = true;
+  private quitSent = false;
 
   send(line: string): void {
     if (line.trim() === 'isready' && this.gateNextReady) {
@@ -47,6 +49,7 @@ class ReadyGateTransport implements EngineTransport {
       this.readyPending = true;
       return;
     }
+    if (line.trim() === 'quit') this.quitSent = true;
     this.inner.send(line);
   }
 
@@ -66,6 +69,10 @@ class ReadyGateTransport implements EngineTransport {
     if (!this.readyPending) throw new Error('Capability initialization has not reached isready.');
     this.readyPending = false;
     this.inner.send('isready');
+  }
+
+  get wasQuit(): boolean {
+    return this.quitSent;
   }
 }
 
@@ -165,11 +172,13 @@ test('configured engine option values namespace shared cache entries', async () 
 
 test('caller cancellation does not wait for cold capability initialization', async () => {
   const clock = new ManualClock();
+  const events: AnalysisOrchestrationEvent[] = [];
   let transport: ReadyGateTransport | undefined;
   const manager = new EngineManager({
     clock,
     minWorkers: 0,
     maxWorkers: 1,
+    observer: { record: (event) => events.push(event) },
     transportFactory: () => {
       transport = new ReadyGateTransport();
       return transport;
@@ -192,16 +201,52 @@ test('caller cancellation does not wait for cold capability initialization', asy
   controller.abort();
   await flush();
 
-  assert.ok(cancellation instanceof CancelledError, 'cancellation settles before shared warmup');
-  await assert.rejects(request, CancelledError);
-  assert.equal(manager.capabilitiesFor('chess'), undefined);
+  const settledBeforeWarmup = cancellation instanceof CancelledError;
   assert.ok(transport);
   transport.releaseReady();
   await flush();
 
+  await assert.rejects(request, CancelledError);
+
   const next = await manager.analyze({ fen: START_FEN, variant: 'chess', limits: { depth: 10 } });
   assert.equal(next[0]?.evaluation.value, 20, 'the shared warmup continues for later callers');
   await manager.shutdown({ deadlineMs: 100 });
+  assert.equal(settledBeforeWarmup, true, 'cancellation settles before shared warmup');
+  assert.equal(events.filter((event) => event.type === 'cancellation').length, 1);
+});
+
+test('a cold warmup that finishes after shutdown is disposed instead of joining the pool', async () => {
+  const clock = new ManualClock();
+  let transport: ReadyGateTransport | undefined;
+  const manager = new EngineManager({
+    clock,
+    minWorkers: 0,
+    maxWorkers: 1,
+    transportFactory: () => {
+      transport = new ReadyGateTransport();
+      return transport;
+    },
+  });
+  manager.register(stockfishPlugin);
+  const controller = new AbortController();
+  const request = manager.analyze({
+    fen: START_FEN,
+    variant: 'chess',
+    limits: { depth: 10 },
+    signal: controller.signal,
+  });
+  await flush();
+  controller.abort();
+  await assert.rejects(request, CancelledError);
+  await manager.shutdown({ deadlineMs: 100 });
+
+  assert.ok(transport);
+  transport.releaseReady();
+  await flush();
+  await flush();
+
+  assert.equal(transport.wasQuit, true);
+  assert.equal(manager.health().pools[0]?.workers.length, 0);
 });
 
 test('rejects an unsupported variant', async () => {

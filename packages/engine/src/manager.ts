@@ -43,14 +43,30 @@ export interface EngineManagerOptions {
   readonly breaker?: CircuitBreakerOptions;
 }
 
-function waitForCaller<T>(shared: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+function recordConsumerCancellation(observer: AnalysisOrchestrationObserver | undefined): void {
+  try {
+    observer?.record({ type: 'cancellation', scope: 'consumer' });
+  } catch {
+    // Telemetry cannot become an analysis availability dependency.
+  }
+}
+
+function waitForCaller<T>(
+  shared: Promise<T>,
+  signal: AbortSignal | undefined,
+  observer: AnalysisOrchestrationObserver | undefined,
+): Promise<T> {
   if (signal === undefined) return shared;
-  if (signal.aborted) return Promise.reject(new CancelledError());
+  if (signal.aborted) {
+    recordConsumerCancellation(observer);
+    return Promise.reject(new CancelledError());
+  }
 
   return new Promise<T>((resolve, reject) => {
     const cleanup = (): void => signal.removeEventListener('abort', onAbort);
     const onAbort = (): void => {
       cleanup();
+      recordConsumerCancellation(observer);
       reject(new CancelledError());
     };
     shared.then(
@@ -117,12 +133,15 @@ export class EngineManager implements AnalysisProvider {
 
   async analyze(request: AnalysisRequest): Promise<readonly EngineResult[]> {
     this.fenValidator.validate(request.fen, request.variant);
-    if (request.signal?.aborted) throw new CancelledError();
+    if (request.signal?.aborted) {
+      recordConsumerCancellation(this.options.observer);
+      throw new CancelledError();
+    }
     const pool = this.route(request.variant);
     const multiPv = request.multiPv ?? 1;
     const priority = request.priority ?? JobPriority.LiveAnalysis;
 
-    const caps = await waitForCaller(pool.ensureCapabilities(), request.signal);
+    const caps = await waitForCaller(pool.ensureCapabilities(), request.signal, this.options.observer);
     const key = {
       fingerprint: analysisCacheFingerprint(caps.fingerprint, this.options.config),
       fen: request.fen,
@@ -133,6 +152,7 @@ export class EngineManager implements AnalysisProvider {
     return this.analysis.analyze({
       key,
       limits: request.limits,
+      priorityClass: priority,
       ...(request.signal !== undefined ? { signal: request.signal } : {}),
       execute: (signal) =>
         pool.submitAnalyze({
