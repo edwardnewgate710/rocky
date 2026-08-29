@@ -31,6 +31,13 @@ function whiteBackRank(fen: string): string {
   return [...rank].map((c) => (/\d/.test(c) ? '.'.repeat(Number(c)) : c)).join('');
 }
 
+/**
+ * A `GameCreated` event for position 700, with `over` applied on top.
+ *
+ * Hand-built rather than produced by `Game.create`, which is the point: a stored payload is whatever
+ * some earlier version of this code wrote, and the reducer has to cope with shapes `Game.create`
+ * would refuse to emit. The `as GameEvent` cast is what lets a test express those.
+ */
 function createdEvent(over: Partial<GameCreatedEvent> = {}): GameEvent {
   return {
     type: 'GameCreated',

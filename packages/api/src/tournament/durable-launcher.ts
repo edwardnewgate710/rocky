@@ -48,6 +48,18 @@ function launchDigest(input: LaunchInput): Buffer {
   return createHash('sha256').update(identity).digest();
 }
 
+/**
+ * The game id for a tournament pairing, derived from its identity rather than generated.
+ *
+ * Every API replica computes the same id for the same `(tournamentId, matchId, attempt)` before any
+ * of them has written anything, which is what lets them race to append and have the losers accept the
+ * winner's row. `attempt` is part of the identity so a relaunched pairing gets a fresh game rather
+ * than resolving to the abandoned one.
+ *
+ * Shaped as a UUID because the schema's id columns are `UUID`; the digest is SHA-256 rather than the
+ * SHA-1 a real v5 uuid would use, with the variant and version nibbles forced so the representation
+ * still parses.
+ */
 export function launchGameId(input: LaunchInput): string {
   const bytes = launchDigest(input).subarray(0, 16);
   // RFC 4122 variant + version-5-style marker. The digest is SHA-256 rather

@@ -48,6 +48,12 @@ function whiteBackRank(fen: string): string {
   return [...rank].map((c) => (/[0-9]/.test(c) ? '.'.repeat(Number(c)) : c)).join('');
 }
 
+/**
+ * A board interaction for White, positioned at `fen`, whose oracle answers with `legal`.
+ *
+ * The legal-move map is supplied rather than computed: these tests are about what the client does
+ * with the server's answer, so hand-writing the answer is what keeps them about the client.
+ */
 function interactionOn(fen: string, legal: LegalMoves): BoardInteraction {
   const oracle = new AuthoritativeMoveOracle({ getLegalMoves: () => legal });
   const interaction = new BoardInteraction({ oracle, playerColor: 'white', myTurn: true });

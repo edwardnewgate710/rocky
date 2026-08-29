@@ -22,6 +22,13 @@ const TC: TimeControl = { initialMs: 300_000, incrementMs: 3_000, delayMs: 0, ki
  */
 const SP700 = 700;
 
+/**
+ * Create a game with the fixed time control and players these tests share.
+ *
+ * Both parameters are optional and omitted rather than passed as `undefined`, because `Game.create`
+ * distinguishes "absent" from "present but undefined" for `chess960StartId` — that distinction is
+ * half of what this file tests.
+ */
 const create = (variant?: Variant, chess960StartId?: number) =>
   Game.create({
     gameId: 'g1',

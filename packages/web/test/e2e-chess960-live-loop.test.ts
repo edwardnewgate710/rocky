@@ -46,9 +46,17 @@ function whiteBackRank(fen: string): string {
   return [...rank].map((c) => (/\d/.test(c) ? '.'.repeat(Number(c)) : c)).join('');
 }
 
+/**
+ * A real `GameAuthority` holding one Chess960 game at position 700.
+ *
+ * The clock advances by a fixed step per read so timestamps are deterministic; the authority is the
+ * genuine article rather than a stub, which is what makes the legal-move maps in these tests come
+ * from the perft-verified engine instead of from fixtures.
+ */
 async function createChess960Authority() {
   const pubsub = new InMemoryPubSub();
   let clock = 1_000;
+  /** A deterministic clock: every read advances a fixed step, so event timestamps are reproducible. */
   const now = () => (clock += 10);
   const authority = new GameAuthority(pubsub, now);
   await authority.createGame({
@@ -62,6 +70,11 @@ async function createChess960Authority() {
   return { authority, pubsub };
 }
 
+/**
+ * The client half: a `WsClient` over a fake socket, with `GameSync` joined to the game.
+ *
+ * Reconnect timing is manual and jitter-free so a test controls exactly when the retry fires.
+ */
 function setupClient(token: string) {
   const factory = new FakeSocketFactory();
   const scheduler = new ManualScheduler();
@@ -78,6 +91,7 @@ function setupClient(token: string) {
   return { factory, scheduler, client, sync };
 }
 
+/** Yield the microtask queue so an awaited `authority.apply` has published its broadcast. */
 const flush = () => new Promise((r) => setImmediate(r));
 
 /**

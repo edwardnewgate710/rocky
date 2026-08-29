@@ -20,6 +20,12 @@ import { FakeSocketFactory, ManualScheduler } from './support/fake-socket.js';
 
 const SP700_FEN = 'rbqknnbr/pppppppp/8/8/8/8/PPPPPPPP/RBQKNNBR w KQkq - 0 1';
 
+/**
+ * A controller wired to a fake socket, collecting every metadata projection it emits.
+ *
+ * The scheduler is manual so a reconnect fires exactly when a test says so rather than on a timer,
+ * and the other callbacks are no-ops because these tests assert only on `onMetadata`.
+ */
 function setup() {
   const factory = new FakeSocketFactory();
   const scheduler = new ManualScheduler();
@@ -47,6 +53,12 @@ function setup() {
   return { factory, scheduler, sync, controller, metadatas };
 }
 
+/**
+ * An authoritative snapshot carrying `chess960StartId`, for driving the controller.
+ *
+ * `variant` and the id are separate parameters rather than derived from each other, so a test can
+ * build the disagreeing combinations the client has to survive.
+ */
 function stateView(
   variant: StateView['variant'],
   fen: string,
