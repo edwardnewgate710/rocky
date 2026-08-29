@@ -239,8 +239,15 @@ test('every class the auth surface carries is matched by a rule', () => {
   }
 });
 
+/** The rule carrying exactly this selector, or a failed assertion naming the one that went missing. */
+function authRule(selector: string): Rule {
+  const rule = rules().find((r) => r.selectors.includes(selector));
+  assert.ok(rule, 'could not find the `' + selector + '` rule');
+  return rule;
+}
+
 /**
- * The auth surface's layout contract, asserted as properties rather than a screenshot.
+ * The auth surface's layout contract, asserted as a property rather than a screenshot.
  *
  * The sign-in form and its action row have to reflow from the space they are actually given: a
  * fixed column count is what makes a layout need a media query, and a media query is what drifts
@@ -248,12 +255,6 @@ test('every class the auth surface carries is matched by a rule', () => {
  * columns collapse when the *text* outgrows them, not at a pixel width that assumes a default font
  * size.
  */
-function authRule(selector: string): Rule {
-  const rule = rules().find((r) => r.selectors.includes(selector));
-  assert.ok(rule, 'could not find the `' + selector + '` rule');
-  return rule;
-}
-
 test('the auth grids size themselves from available space, not from a fixed column count', () => {
   for (const selector of ['#auth-form', '.auth-actions']) {
     const { body } = authRule(selector);

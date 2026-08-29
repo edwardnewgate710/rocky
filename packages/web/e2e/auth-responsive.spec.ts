@@ -28,6 +28,7 @@ const VIEWPORTS = [
 
 const ACTIONS = ['#auth-submit', '#auth-register', '#auth-passkey'] as const;
 
+/** The element's rendered bounds, failing loudly rather than returning null the caller would measure. */
 async function boxOf(page: Page, selector: string): Promise<{ x: number; y: number; width: number; height: number }> {
   const box = await page.locator(selector).boundingBox();
   if (box === null) throw new Error(`${selector} has no rendered bounds`);
