@@ -7,11 +7,15 @@ import type { StateView, WsColor } from '../src/net/ws-protocol.js';
 import { FakeSocketFactory, ManualScheduler } from './support/fake-socket.js';
 
 /**
- * The starting-position id reaching the client, and surviving a reconnect.
+ * The starting-position id reaching the client, and surviving a fresh snapshot.
  *
- * The reconnect half is the point. A client learns the id from the authoritative snapshot, and a
- * reconnect delivers a *fresh* snapshot — so the failure worth catching is a game that comes back
- * from a dropped socket describing itself as a different arrangement, or as none. ADR-0137.
+ * A client learns the id from the authoritative snapshot, and every later snapshot — a resync here, a
+ * reconnect elsewhere — carries it again. The failure worth catching is a game that describes itself
+ * as a different arrangement, or as none, once the board has moved on from the start.
+ *
+ * These are unit tests over `GameController`'s metadata projection, driven by hand-built snapshots.
+ * The socket-drop-and-resume path is a different thing and is covered end to end against a real
+ * `GameAuthority` in `e2e-chess960-live-loop.test.ts`. ADR-0137.
  */
 
 const SP700_FEN = 'rbqknnbr/pppppppp/8/8/8/8/PPPPPPPP/RBQKNNBR w KQkq - 0 1';
@@ -100,9 +104,15 @@ test('every other variant reports no starting position', () => {
   sync.stop();
 });
 
-test('a resync snapshot reports the same arrangement', () => {
-  // A reconnect re-delivers state. The board comes from `fen` and the identity from the id, and both
-  // have to still describe the game that was being played.
+test('a fresh snapshot on the live socket reports the same arrangement', () => {
+  // A `state` message on the open socket, which is the resync path — *not* a reconnect: this emits on
+  // the same socket rather than closing it and opening a replacement. The distinction was worth making
+  // rather than blurring, because the two deliver the same message for different reasons and only one
+  // of them is exercised here. The genuine socket-drop-and-resume path is covered end to end against a
+  // real `GameAuthority` in `e2e-chess960-live-loop.test.ts`. Raised in the CodeRabbit review of PR #12.
+  //
+  // What this pins either way: the board comes from `fen` and the identity from the id, and a fresh
+  // snapshot has to still describe the game that was being played.
   const { factory, sync, controller, metadatas } = setup();
   controller.start();
   sync.start();

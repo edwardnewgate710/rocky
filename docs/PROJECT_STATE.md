@@ -30,7 +30,8 @@ The draw goes through a `Chess960StartSelector` port (`crypto.randomInt`, not `M
 **acceptance** — not seek creation, which would mint a position for every abandoned seek and publish
 it in `SeekView` before an opponent decided whether to accept. `DurableGameLauncher` deliberately does
 *not* draw: it derives the id from the same launch-identity digest that fixes the game id, so replicas
-racing to append construct byte-identical events instead of disagreeing about the start.
+racing to append agree on the arrangement instead of each drawing their own. The events are not
+byte-identical — `at` still comes from the clock — and the guarantee is specifically about the start.
 
 `StateView.chess960StartId` carries the id to the board, which shows it beside the variant. The REST
 `GameSummary` is unchanged: it renders no board, and the state view is folded from the creation event

@@ -128,9 +128,15 @@ Its design is that every API replica computes the same `gameId` from a SHA-256 o
 game whose start position they never agreed on.
 
 `launchChess960StartId` reads bytes 16..31 of the same digest (the half the game id does not use) as a
-128-bit integer, modulo 960. Every replica constructs the byte-identical event, so which one wins the
-append stops being a question, and a crashed-and-relaunched pairing resumes the arrangement it started
-with rather than a freshly shuffled one. The modulus biases towards low ids by at most 2⁻¹¹⁸ — a
+128-bit integer, modulo 960. Every replica therefore derives the *same arrangement*, so which one wins
+the append stops mattering for the thing this ADR is about, and a crashed-and-relaunched pairing
+resumes the arrangement it started with rather than a freshly shuffled one.
+
+The events are not byte-identical, and it would be an overclaim to say so: `GameCreated.at` comes from
+`this.clock.now()`, so racing replicas still stamp different creation times. That difference predates
+this change and is harmless — only one event is ever persisted — but the guarantee added here is
+specifically that the *starting position* cannot differ between them. Raised in the CodeRabbit review
+of PR #12. The modulus biases towards low ids by at most 2⁻¹¹⁸ — a
 quantity, not a hand-wave, and far below anything 960 buckets could express. The e2e harness's
 `AuthorityGameLauncher` uses the same derivation for the same reason.
 
