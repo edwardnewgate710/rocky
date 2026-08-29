@@ -2175,6 +2175,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Seek is for a variant this server cannot start a game with",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "security": [

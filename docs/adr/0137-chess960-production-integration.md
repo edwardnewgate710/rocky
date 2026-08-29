@@ -143,13 +143,33 @@ Following ADR-0123's own restoration checklist and ADR-0136 §"Phase B":
 3. `'chess960'` is back in `OFFERED_VARIANTS`;
 4. `packages/api/openapi.json` is regenerated — the three Request schemas derive their enum from
    `CREATABLE_VARIANTS`, and the committed document does not update itself;
-5. the seek-accept **409 is dropped**.
+5. the seek-accept **409 is kept**, against the checklist, with its reason rewritten.
 
-Point 5 deserves its reason. That guard rejected a seek whose stored variant was no longer creatable,
-and it existed only for seeks stranded by ADR-0123. With Chess960 creatable, `CREATABLE_VARIANTS` and
-`VARIANTS` hold the same eight names and the branch is unreachable — and ADR-0136 §6 records what
-unreachable defensive code costs: it absorbs the mutation that should have failed a test, certifying
-coverage that does not exist. If a variant is ever withheld again, the guard comes back with it.
+Point 5 is a deliberate departure from both prior ADRs, so it needs its argument made rather than
+asserted.
+
+ADR-0123 added that guard for `chess960` seeks stranded by its refusal, and ADR-0136 listed removing
+it among the steps to restoring the variant. The case for removal is real: with Chess960 creatable,
+`CREATABLE_VARIANTS` and `VARIANTS` hold the same eight names, so for any value the enum can produce
+the branch is dead — and ADR-0136 §6 records exactly what unreachable defensive code costs, since it
+absorbs the mutation that should have failed a test and certifies coverage that does not exist.
+
+**It was kept because the branch is not unreachable, and the reason it is not is this repository's own
+finding.** `seek.variant` is typed `Variant`, but it is read from a database column, and
+`scripts/check-variant-parity.mjs` exists precisely because *the type system does not span the SQL* —
+that guard was written after a variant present in every TypeScript list and in the `variants` lookup
+table, but missing from one `CHECK`, produced a green build and a production constraint violation. A
+value this build cannot honour therefore arrives at seek acceptance as a well-typed string. Delete the
+check and `Game.create` falls through to `Position.initial`, which returns the standard board for an
+unrecognised variant, and writes a `GameCreated` carrying a variant nothing implements into an
+append-only store. That is the durable falsehood ADR-0123 was written to prevent, reached by a
+different door.
+
+So the guard stays, and its comment now states the rule it actually enforces — a stored variant this
+build cannot start — rather than the chess960 special case that motivated it. Removing it would have
+been following a checklist past the point where its reasoning held.
+`chess960-creation.test.ts` reaches it by writing a seek through the repository, which is the only way
+such a row can exist now that the creation route refuses one.
 
 **`CREATABLE_VARIANTS` and `OFFERED_VARIANTS` stay separate lists even though all three now agree,
 and both stay written out rather than derived from `VARIANTS`.** They answer different questions —

@@ -242,3 +242,43 @@ test('an unknown variant is still refused', async () => {
     await h.close();
   }
 });
+
+test('a stored seek whose variant this server cannot start is refused, not played', async () => {
+  // The guard ADR-0123 added for stranded `chess960` seeks, kept after chess960 became creatable
+  // because the case that motivated it was never the only one it covers. `seek.variant` is typed
+  // `Variant` but read from a database column, and `scripts/check-variant-parity.mjs` exists because
+  // the type system does not span the SQL — so a value this build cannot honour arrives here as a
+  // well-typed string.
+  //
+  // Written through the repository, because that is the only way such a row can exist: the creation
+  // route validates against `CREATABLE_VARIANTS` and would never store one.
+  const h = await startHarness();
+  try {
+    const creator = await h.makeUser('stranded-creator', ['user']);
+    const joiner = await h.makeUser('stranded-joiner', ['user']);
+
+    // With rating limits the acceptor cannot meet, on purpose: both guards apply and the unfixable
+    // one has to win. A 403 would name a condition they might go and fix, for a seek that can never
+    // start a game whatever their rating.
+    const seek = await h.repos.seeks.create({
+      id: 'stranded-seek',
+      creatorId: creator.userId,
+      variant: 'chess961' as never,
+      timeControl: TC,
+      rated: false,
+      minRating: 4000,
+    });
+
+    const res = await h.json('POST', `/v1/seeks/${seek.id}/accept`, { token: joiner.token });
+
+    assert.equal(res.status, 409, 'the unfixable reason wins over the rating limit');
+    assert.match(JSON.stringify(res.body), /chess961/, 'the message names the offending variant');
+
+    // The assertion that matters: no event carrying an unimplementable variant reached the
+    // append-only store.
+    assert.equal(res.body.gameId, undefined, 'no game id was returned');
+    assert.ok(await h.repos.seeks.findById(seek.id), 'the seek was not consumed by the failed accept');
+  } finally {
+    await h.close();
+  }
+});

@@ -16,7 +16,7 @@ import type { RequestMeta } from './auth/service';
 import { EMAIL_ADDRESS_PATTERN } from './email/address.js';
 import type { Repositories } from './deps';
 import { Game, classifySpeed } from '@chess-platform/game';
-import { parseRole, parseSeekColor, parseTimeControl, parseUuid, parseVariant, parseCreatableVariant, VARIANTS, HANDLE_PATTERN, UUID_PATTERN } from './domain';
+import { parseRole, parseSeekColor, parseTimeControl, parseUuid, parseVariant, parseCreatableVariant, VARIANTS, CREATABLE_VARIANTS, HANDLE_PATTERN, UUID_PATTERN } from './domain';
 import { BOT_ACCOUNTS, botAccountByLevel } from './bot/catalogue';
 import { HttpError } from './http/errors';
 import { json, noContent } from './http/context';
@@ -1270,6 +1270,7 @@ export function buildRouter(deps: RouteDeps): Router {
         400: ['Error', 'Cannot accept own seek'],
         403: ['Error', 'Rating requirements not met'],
         404: ['Error', 'Seek not found or already accepted'],
+        409: ['Error', 'Seek is for a variant this server cannot start a game with'],
       },
     }),
     AUTHED,
@@ -1278,6 +1279,32 @@ export function buildRouter(deps: RouteDeps): Router {
       const seek = await repos.seeks.findById(ctx.params['id']!);
       if (!seek || seek.gameId !== null) throw HttpError.notFound('seek not found or already accepted');
       if (seek.creatorId === identity.userId) throw HttpError.badRequest('cannot accept own seek');
+
+      // Before the rating checks, deliberately. This variant comes from a stored row rather than from
+      // the request, so validating seek *creation* does not cover it.
+      //
+      // ADR-0123 added this for `chess960` seeks stranded by its refusal, and ADR-0136 §"Phase B"
+      // listed removing it among the steps to restoring the variant. **Kept, with its reason
+      // rewritten**, because the guard it produced is broader than the case that motivated it and
+      // that case is not the reachable one. `seek.variant` is typed `Variant`, but it is read from a
+      // database column — and `scripts/check-variant-parity.mjs` exists precisely because the type
+      // system does not span the SQL. A value this code cannot honour therefore reaches here as a
+      // well-typed string, and without this check `Game.create` would fall through to the standard
+      // board and write a `GameCreated` carrying a variant nothing implements, into an append-only
+      // store. That is the durable falsehood ADR-0123 was written to prevent, so deleting its guard
+      // on the grounds that chess960 no longer needs it would re-open the hole by a different door.
+      //
+      // Order matters where two guards both apply: a stranded seek can also carry rating limits, and
+      // answering 403 "rating too low" would name a condition the acceptor might go and fix, for a
+      // seek that can never start a game whatever their rating. The unfixable reason has to win.
+      //
+      // 409 rather than 422 because the request is well formed — it is the seek that cannot be
+      // honoured.
+      if (!CREATABLE_VARIANTS.includes(seek.variant)) {
+        throw HttpError.conflict(
+          `this seek is for '${seek.variant}', which cannot start a game; it needs to be cancelled and recreated`,
+        );
+      }
 
       if (seek.minRating !== null || seek.maxRating !== null) {
         const ratingRow = await repos.ratings.get(identity.userId, seek.variant);
