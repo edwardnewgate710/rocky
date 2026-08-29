@@ -239,6 +239,39 @@ king destination: both moves put the king on c1, and only the rook-square spelli
 - **Legacy `chess960` rows, if any exist, still read.** They report an unknown start id. The queries
   in ADR-0123 §Consequences still identify them; nothing here rewrites history.
 
+### 9. Enabling the variant changed what every game *replayer* must know
+
+The part of this increment that was not on anyone's checklist, and the one worth recording.
+
+`Position.initial(variant)` was a safe way to start replaying a stored game for as long as no game
+could start anywhere else. Making Chess960 creatable retired that guarantee everywhere at once, and
+the compiler could not say so: the call sites still type-check, they just describe a different game.
+
+Anti-cheat was where it bit. `EventStoreGameSource` folded the whole event history — so it *had* the
+starting position — and returned only `moves` and `variant`; `extractPlies` then replayed from
+`Position.initial(variant)`, which is position 518. A Chess960 game from any other arrangement would
+either throw on the first move that is illegal there or, worse, silently produce evaluations for
+positions nobody played and attribute them to a player. Found in the Qodo review of PR #12, not by me.
+
+The fix carries `initialFen` through the source and makes `extractPlies` **require** the start
+position rather than defaulting it. Defaulting is what left the trap, and a default that is right for
+seven variants and wrong for the eighth is worse than no default, because it reads as considered.
+
+Every other `Position.initial(` call site was then swept:
+
+- **Bot detection** reads only `by` and `moveTimeMs` and never reconstructs a board — unaffected.
+- **The opening explorer** is gated to `standard` (`OPENING_EXPLORER_VARIANT`), so it refuses Chess960
+  before reading a position and is correct either way. Its `initialFen` field carried a comment
+  justifying itself with "every game this deployment can create starts from `Position.initial(variant)`
+  — no creation route accepts an `initialFen`", which this ADR made false. The comment is rewritten:
+  the gate, not that claim, is what keeps the feature honest, and the field is what would have to
+  become required if the gate ever widened.
+- **`fen-validator.ts`** uses it to compare *piece placement shape*, not to replay a game.
+
+The general lesson is the one ADR-0123 keeps restating from a different angle: a variant is not only a
+rule set, it is a set of assumptions other code has already made about it. Turning one on means going
+to find them.
+
 ## Out of scope
 
 Genuinely deferred, not required for correctness:
