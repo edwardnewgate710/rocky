@@ -159,7 +159,7 @@ export class AnalysisOrchestrator {
   }
 
   async analyze(execution: AnalysisExecution): Promise<readonly EngineResult[]> {
-    this.rejectCancelled(execution.signal);
+    this.rejectCancelled(execution.signal, 'consumer');
     const identity = flightKey(execution.key, execution.limits, execution.priorityClass);
     const existing = this.inFlight.get(identity);
     if (existing) {
@@ -187,7 +187,7 @@ export class AnalysisOrchestrator {
     signal: AbortSignal,
   ): Promise<readonly EngineResult[]> {
     const cached = await this.readCache(execution);
-    this.rejectCancelled(signal);
+    this.rejectCancelled(signal, undefined);
     return cached ?? this.compute(execution, signal);
   }
 
@@ -307,9 +307,9 @@ export class AnalysisOrchestrator {
     }
   }
 
-  private rejectCancelled(signal: AbortSignal | undefined): void {
+  private rejectCancelled(signal: AbortSignal | undefined, scope: 'consumer' | undefined): void {
     if (!signal?.aborted) return;
-    this.record({ type: 'cancellation', scope: 'consumer' });
+    if (scope !== undefined) this.record({ type: 'cancellation', scope });
     throw new CancelledError();
   }
 }

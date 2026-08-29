@@ -632,7 +632,8 @@ describe('AnalysisOrchestrator cancellation', () => {
       get: () => lookup.promise,
       set: async () => undefined,
     };
-    const orchestrator = new AnalysisOrchestrator({ cache });
+    const observer = new RecordingObserver();
+    const orchestrator = new AnalysisOrchestrator({ cache, observer });
     const controller = new AbortController();
     let engineCalls = 0;
     const request = orchestrator.analyze({
@@ -650,6 +651,14 @@ describe('AnalysisOrchestrator cancellation', () => {
 
     await assert.rejects(request, CancelledError);
     assert.equal(engineCalls, 0);
+    assert.deepEqual(
+      observer.events.filter((event) => event.type === 'cancellation'),
+      [
+        { type: 'cancellation', scope: 'consumer' },
+        { type: 'cancellation', scope: 'shared' },
+      ],
+      'the ownerless shared promise must not report a second consumer cancellation',
+    );
   });
 
   it('removes an abandoned flight before an engine that ignores abort settles', async () => {
