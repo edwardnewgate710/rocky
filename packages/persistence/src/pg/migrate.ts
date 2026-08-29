@@ -54,6 +54,10 @@ const MIGRATION_ADVISORY_LOCK_KEY = 4915219603172;
  * checkout can introduce. Every other byte — indentation, blank lines, a lone
  * CR, a missing trailing newline — is migration content and stays untouched, so
  * canonicalization cannot mask an edit to an applied migration.
+ *
+ * This exactly inverts Git's LF-to-CRLF checkout conversion over the inputs a
+ * checkout can produce. Git does not double-convert — a blob that already holds
+ * CRLF is checked out unchanged rather than as `\r\r\n` — so one pass is enough.
  */
 export function canonicalizeMigrationSql(raw: string): string {
   return raw.replace(/\r\n/g, '\n');

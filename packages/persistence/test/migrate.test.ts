@@ -115,8 +115,10 @@ test('canonicalization rewrites the CRLF pair and nothing else', () => {
   assert.equal(canonicalizeMigrationSql('a\r\n\r\n  b  \r\n'), 'a\n\n  b  \n');
   assert.equal(canonicalizeMigrationSql(LF_MIGRATION), LF_MIGRATION);
 
+  // Idempotent over what a checkout can produce. Git does not double-convert a
+  // blob that already holds CRLF, so `\r\r\n` never reaches the runner.
   const once = canonicalizeMigrationSql(asCrlf(LF_MIGRATION));
-  assert.equal(canonicalizeMigrationSql(once), once, 'canonicalization must be idempotent');
+  assert.equal(canonicalizeMigrationSql(once), once);
 });
 
 test('a migration missing its final newline stays distinct from one that has it', () => {
@@ -177,6 +179,10 @@ test('every committed migration hashes identically from either checkout form', (
     const canonical = readMigrationSql(MIGRATIONS_DIR, file);
 
     assert.equal(canonical.includes('\r'), false, `${file} still contains CR`);
+    // A BOM is content, not a checkout artifact, so canonicalization leaves it
+    // in place — and PostgreSQL rejects it as a syntax error. Catch it here
+    // rather than at migration time.
+    assert.equal(canonical.startsWith('﻿'), false, `${file} starts with a UTF-8 BOM`);
     assert.equal(
       migrationChecksum(readAsMigration(asCrlf(canonical), file)),
       migrationChecksum(canonical),
