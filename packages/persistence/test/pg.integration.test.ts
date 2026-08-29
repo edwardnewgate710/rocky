@@ -100,8 +100,13 @@ test('the ledger is portable across checkouts but still rejects edits', { skip }
     await setChecksum(createHash('sha256').update('edited migration', 'utf8').digest('hex'));
     await assert.rejects(migrate(pool, dir), /changed after being applied; history is immutable/);
   } finally {
-    await setChecksum(canonical);
-    await pool.end();
+    // Restore before closing, but never let a failed restore leak the pool —
+    // every later integration file migrates against this same database.
+    try {
+      await setChecksum(canonical);
+    } finally {
+      await pool.end();
+    }
   }
 });
 

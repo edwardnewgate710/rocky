@@ -85,11 +85,9 @@ test('pending join-request lookup is installed as an online index', () => {
 test('canonical migration text carries no CR whatever the checkout did', () => {
   // The assertion above used to fail on a Windows checkout because the working
   // tree holds CRLF; reading canonically is what makes it platform-independent.
-  const raw = readFileSync(join(MIGRATIONS_DIR, PENDING_JOIN_REQUESTS), 'utf8');
   const canonical = readMigrationSql(MIGRATIONS_DIR, PENDING_JOIN_REQUESTS);
 
   assert.equal(canonical.includes('\r'), false);
-  assert.equal(canonical, canonicalizeMigrationSql(raw));
 });
 
 test('a CRLF checkout yields the same canonical text and checksum as an LF one', () => {
@@ -169,13 +167,17 @@ test('non-ASCII migration content is canonicalized deterministically as UTF-8', 
   );
 });
 
-test('every committed migration hashes identically from either checkout form', () => {
-  // Byte-level proof over the real migration history: the ledger checksum a
-  // Linux CI run records is the one a Windows run records.
+test('canonicalizing a committed migration loses nothing but the newline encoding', () => {
+  // The real check over the migration history. Comparing anything downstream of
+  // the canonical reader against itself would be vacuous, so this compares
+  // against the bytes actually on disk: re-rendering the canonical text in this
+  // checkout's own newline encoding must reproduce the file exactly. Dropping a
+  // lone CR, trimming, or collapsing whitespace all break it.
   const files = committedMigrations();
   assert.ok(files.length > 0, 'expected committed migrations');
 
   for (const file of files) {
+    const raw = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
     const canonical = readMigrationSql(MIGRATIONS_DIR, file);
 
     assert.equal(canonical.includes('\r'), false, `${file} still contains CR`);
@@ -183,21 +185,30 @@ test('every committed migration hashes identically from either checkout form', (
     // in place — and PostgreSQL rejects it as a syntax error. Catch it here
     // rather than at migration time.
     assert.equal(canonical.startsWith('﻿'), false, `${file} starts with a UTF-8 BOM`);
-    assert.equal(
-      migrationChecksum(readAsMigration(asCrlf(canonical), file)),
-      migrationChecksum(canonical),
-      `${file} hashes differently from a CRLF checkout`,
+    assert.ok(
+      raw === canonical || raw === asCrlf(canonical),
+      `${file} is not reproducible from its canonical form`,
     );
   }
 });
 
-test('every committed migration parses from either checkout form', () => {
+test('every committed migration parses the same from a CRLF checkout', () => {
+  // Parses the on-disk file as-is against the same file rendered in the other
+  // newline encoding, so the two sides are genuinely different byte sequences.
   for (const file of committedMigrations()) {
-    const canonical = readMigrationSql(MIGRATIONS_DIR, file);
+    const raw = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
+    const flipped = raw.includes('\r\n') ? raw.replace(/\r\n/g, '\n') : asCrlf(raw);
+    assert.notEqual(flipped, raw, `${file} has no newline to flip`);
+
     assert.deepEqual(
-      parseMigration(readAsMigration(asCrlf(canonical), file)),
-      parseMigration(canonical),
+      parseMigration(readAsMigration(flipped, file)),
+      parseMigration(readAsMigration(raw, file)),
       `${file} parses differently from a CRLF checkout`,
+    );
+    assert.equal(
+      migrationChecksum(readAsMigration(flipped, file)),
+      migrationChecksum(readAsMigration(raw, file)),
+      `${file} hashes differently from a CRLF checkout`,
     );
   }
 });
