@@ -57,23 +57,24 @@ test('storage key is stable', () => {
 });
 
 /**
- * Chess960 was selectable in the lobby while nothing behind it existed:
- * `Position.initial('chess960')` returns the standard array rather than one of the 960 arrangements,
- * and castling in `packages/chess-core` is hardcoded to e1/a1/h1, so it works only from the start
- * position that *is* standard chess. Picking it produced an ordinary game with a different label.
+ * Chess960 was selectable in the lobby while nothing behind it existed — ADR-0099 withheld it, and
+ * ADR-0137 offers it again now that the server implements the rules (ADR-0136), draws a
+ * starting-position id at creation, and records it on the `GameCreated` event.
  *
- * The two lists are separate on purpose (ADR-0099). `VARIANTS` mirrors what the server's enum
- * accepts and must keep naming `chess960`, because the API really does take it; `OFFERED_VARIANTS`
- * is what a player may pick.
+ * The two lists stay separate on purpose, even now that they agree. `VARIANTS` mirrors what the
+ * server's enum accepts; `OFFERED_VARIANTS` is what a player may pick. Conflating them is what let a
+ * hollow variant stay on the board, and re-deriving the distinction later is not the same as never
+ * having lost it.
  *
- * The offered set is asserted exactly, not as "everything except chess960". Phrasing it as an
- * exception makes offering the default, so a variant added to `VARIANTS` tomorrow would be
- * selectable the moment it was named — which is how a variant with nothing behind it got on the
- * board to begin with. Written this way, adding one fails here until somebody decides, and the
- * decision is recorded in this list.
+ * The offered set is asserted exactly, not as "everything the contract names". Phrasing it as a
+ * derivation makes offering the default, so a variant added to `VARIANTS` tomorrow would be
+ * selectable the moment it was named — exactly how a variant with nothing behind it got on the board
+ * to begin with. Written this way, adding one fails here until somebody decides, and the decision is
+ * recorded in this list.
  */
 const EXPECTED_OFFERED: readonly Variant[] = [
   'standard',
+  'chess960',
   'kingofthehill',
   'atomic',
   'crazyhouse',
@@ -82,7 +83,7 @@ const EXPECTED_OFFERED: readonly Variant[] = [
   'racingkings',
 ];
 
-test('the lobby offers exactly the variants that work, and the contract still names chess960', () => {
+test('the lobby offers exactly the variants that work, chess960 among them', () => {
   assert.deepEqual(
     [...OFFERED_VARIANTS].sort(),
     [...EXPECTED_OFFERED].sort(),
@@ -94,8 +95,8 @@ test('the lobby offers exactly the variants that work, and the contract still na
   assert.equal(VARIANTS.includes('chess960'), true);
   assert.equal(
     OFFERED_VARIANTS.includes('chess960'),
-    false,
-    'chess960 must not be selectable while Position.initial returns the standard array',
+    true,
+    'chess960 is selectable now that the server chooses and records a starting position',
   );
 
   // Nothing offered may be absent from the contract: a typo here would render an option the server

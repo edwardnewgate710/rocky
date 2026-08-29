@@ -457,7 +457,7 @@ test('renderLeaderboard renders empty state when entries list is empty', () => {
   assert.ok(fakeContainer.textContent.includes('No leaderboard entries'));
 });
 
-test('renderVariantSelector renders options for OFFERED_VARIANTS omitting chess960', () => {
+test('renderVariantSelector renders one option per OFFERED_VARIANTS entry', () => {
   const doc = createFakeDoc();
   const select = doc.createElement('select') as unknown as HTMLSelectElement;
 
@@ -469,7 +469,11 @@ test('renderVariantSelector renders options for OFFERED_VARIANTS omitting chess9
 
   const values = options.map((opt) => opt.getAttribute('value'));
   assert.deepEqual(values, OFFERED_VARIANTS);
-  assert.equal(values.includes('chess960'), false, 'OFFERED_VARIANTS omits chess960');
+  // Chess960 ratings were always readable and are now earnable too (ADR-0137), so the leaderboard
+  // offers the same list the lobby does. What this pins is that the selector renders whatever
+  // `OFFERED_VARIANTS` holds rather than a second copy of it — the omission it used to assert was
+  // never this module's decision to make.
+  assert.equal(values.includes('chess960'), true, 'the selector follows OFFERED_VARIANTS');
 
   const selectedOpt = options.find((opt) => opt.selected);
   assert.equal(selectedOpt?.getAttribute('value'), 'atomic');

@@ -282,6 +282,7 @@ const BASE_STATE: StateView = {
   drawOffer: null,
   moves: [],
   legalMoves: {},
+  chess960StartId: null,
 } satisfies StateView;
 
 // ── extractGameId ───────────────────────────────────────────────────────
