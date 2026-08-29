@@ -11,56 +11,25 @@ import type { EngineTransport } from './transport.js';
 import type { EnginePlugin } from './plugin.js';
 import { EnginePool, type CircuitBreakerOptions } from './pool.js';
 import type { AnalysisProvider, AnalysisRequest, PlayRequest, PlayResult } from './provider.js';
-import type { AnalysisLimits, EngineCapabilities, EngineConfig, EngineResult, ManagerHealth, Health } from './types.js';
+import type { EngineCapabilities, EngineConfig, EngineResult, ManagerHealth, Health } from './types.js';
 import { JobPriority } from './types.js';
 import type { AnalysisCache } from './cache.js';
-import { NullCache } from './cache.js';
+import { analysisCacheFingerprint, NullCache } from './cache.js';
+import {
+  AnalysisOrchestrator,
+  type AnalysisOrchestrationObserver,
+} from './analysis-orchestrator.js';
 import type { FenValidator } from './fen.js';
 import { structuralFenValidator } from './fen.js';
-import { NoEngineForVariantError } from './errors.js';
-
-/**
- * What a finished search actually reached, which is not what it was asked for.
- *
- * `CacheMeta.limits` is documented as "the limits the cached search actually achieved", and
- * `limitsSatisfy` relies on that to decide whether an entry can serve a later request. Storing the
- * *requested* limits instead made every entry claim whatever was asked for: a `depth: 20` request
- * that a `movetime` ceiling cut short at depth 8 was filed as depth 20, and the next `depth: 20`
- * request was served the depth-8 lines.
- *
- * The harm is not that the first caller got depth 8 — a search under that time budget was always
- * going to. It is that quality then becomes a function of when the first identical request happened
- * to run: one issued while the box was loaded poisons the entry for everyone after it, including
- * callers whose own search would have gone deeper. Raised in the Qodo review of PR #132, against
- * the first consumer to enable a real cache.
- *
- * `depth` and `nodes` are taken from the results, at the *minimum* across lines, because a multi-PV
- * entry is only as good as its shallowest line. `timeMs` keeps the requested value: time is the
- * budget spent, not a measure of what was reached, and storing the elapsed figure would make an
- * entry miss a later request for the same budget it already served.
- */
-function achievedLimits(results: readonly EngineResult[], requested: AnalysisLimits): AnalysisLimits {
-  if (results.length === 0) return requested;
-
-  let depth = Number.POSITIVE_INFINITY;
-  let nodes = Number.POSITIVE_INFINITY;
-  for (const result of results) {
-    depth = Math.min(depth, result.depth);
-    nodes = Math.min(nodes, result.nodes);
-  }
-
-  return {
-    depth,
-    nodes,
-    ...(requested.timeMs !== undefined ? { timeMs: requested.timeMs } : {}),
-  };
-}
+import { CancelledError, NoEngineForVariantError } from './errors.js';
 
 export interface EngineManagerOptions {
   /** Creates a transport for a worker of `plugin`. The isolation seam for I/O. */
   readonly transportFactory: (plugin: EnginePlugin) => EngineTransport;
   readonly clock?: Clock;
   readonly cache?: AnalysisCache;
+  /** Low-cardinality engine events; adapter-internal absorbed faults use that adapter's hook. */
+  readonly observer?: AnalysisOrchestrationObserver;
   readonly fenValidator?: FenValidator;
   readonly config?: EngineConfig;
   readonly minWorkers?: number;
@@ -74,17 +43,62 @@ export interface EngineManagerOptions {
   readonly breaker?: CircuitBreakerOptions;
 }
 
+function recordConsumerCancellation(observer: AnalysisOrchestrationObserver | undefined): void {
+  try {
+    observer?.record({ type: 'cancellation', scope: 'consumer' });
+  } catch {
+    // Telemetry cannot become an analysis availability dependency.
+  }
+}
+
+function waitForCaller<T>(
+  shared: Promise<T>,
+  signal: AbortSignal | undefined,
+  observer: AnalysisOrchestrationObserver | undefined,
+): Promise<T> {
+  if (signal === undefined) return shared;
+  if (signal.aborted) {
+    recordConsumerCancellation(observer);
+    return Promise.reject(new CancelledError());
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    const cleanup = (): void => signal.removeEventListener('abort', onAbort);
+    const onAbort = (): void => {
+      cleanup();
+      recordConsumerCancellation(observer);
+      reject(new CancelledError());
+    };
+    shared.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        cleanup();
+        reject(error);
+      },
+    );
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+}
+
 export class EngineManager implements AnalysisProvider {
   private readonly options: EngineManagerOptions;
   private readonly clock: Clock;
-  private readonly cache: AnalysisCache;
+  private readonly analysis: AnalysisOrchestrator;
   private readonly fenValidator: FenValidator;
   private readonly pools: EnginePool[] = [];
 
   constructor(options: EngineManagerOptions) {
     this.options = options;
     this.clock = options.clock ?? new SystemClock();
-    this.cache = options.cache ?? new NullCache();
+    this.analysis = new AnalysisOrchestrator({
+      cache: options.cache ?? new NullCache(),
+      clock: this.clock,
+      ...(options.observer !== undefined ? { observer: options.observer } : {}),
+    });
     this.fenValidator = options.fenValidator ?? structuralFenValidator;
   }
 
@@ -119,26 +133,37 @@ export class EngineManager implements AnalysisProvider {
 
   async analyze(request: AnalysisRequest): Promise<readonly EngineResult[]> {
     this.fenValidator.validate(request.fen, request.variant);
+    if (request.signal?.aborted) {
+      recordConsumerCancellation(this.options.observer);
+      throw new CancelledError();
+    }
     const pool = this.route(request.variant);
     const multiPv = request.multiPv ?? 1;
     const priority = request.priority ?? JobPriority.LiveAnalysis;
 
-    const caps = await pool.ensureCapabilities();
-    const key = { fingerprint: caps.fingerprint, fen: request.fen, variant: request.variant, multiPv };
-
-    const cached = await this.cache.get(key, request.limits);
-    if (cached) return cached;
-
-    const results = await pool.submitAnalyze({
+    const caps = await waitForCaller(pool.ensureCapabilities(), request.signal, this.options.observer);
+    const key = {
+      fingerprint: analysisCacheFingerprint(caps.fingerprint, this.options.config),
       fen: request.fen,
       variant: request.variant,
-      limits: request.limits,
       multiPv,
-      priority,
+    };
+
+    return this.analysis.analyze({
+      key,
+      limits: request.limits,
+      priorityClass: priority,
       ...(request.signal !== undefined ? { signal: request.signal } : {}),
+      execute: (signal) =>
+        pool.submitAnalyze({
+          fen: request.fen,
+          variant: request.variant,
+          limits: request.limits,
+          multiPv,
+          priority,
+          signal,
+        }),
     });
-    await this.cache.set(key, results, { limits: achievedLimits(results, request.limits) });
-    return results;
   }
 
   async play(request: PlayRequest): Promise<PlayResult> {

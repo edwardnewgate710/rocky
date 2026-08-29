@@ -347,12 +347,16 @@ export class EnginePool {
       });
       instance.onDead((info) => this.handleDead(instance, info));
       const caps = await instance.init();
+      if (this.draining) {
+        await instance.dispose().catch(() => undefined);
+        throw new ShuttingDownError();
+      }
       this.instances.push(instance);
       this.capabilitiesValue ??= caps;
       this.onSpawnSuccess();
       return instance;
     } catch (error) {
-      this.recordFailure();
+      if (!(this.draining && error instanceof ShuttingDownError)) this.recordFailure();
       throw error;
     } finally {
       this.spawning -= 1;

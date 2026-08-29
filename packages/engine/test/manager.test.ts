@@ -8,10 +8,17 @@ import {
   fairyStockfishPlugin,
   NoEngineForVariantError,
   InvalidFenError,
+  CancelledError,
   ShuttingDownError,
   type EnginePlugin,
+  type EngineConfig,
+  type EngineTransport,
+  type ExitListener,
+  type LineListener,
+  type AnalysisOrchestrationEvent,
+  type AnalysisOrchestrationObserver,
 } from '../src/index.js';
-import { ManualClock, START_FEN } from './helpers.js';
+import { flush, ManualClock, START_FEN } from './helpers.js';
 
 const STOCKFISH_OPTIONS = [
   'option name Threads type spin default 1 min 1 max 512',
@@ -20,11 +27,66 @@ const STOCKFISH_OPTIONS = [
   'option name UCI_Chess960 type check default false',
 ];
 
-function makeManager(clock: ManualClock, onGo?: () => void): { manager: EngineManager; cache: InMemoryLruCache } {
-  const cache = new InMemoryLruCache(100);
+interface ManagerTestOptions {
+  readonly cache?: InMemoryLruCache;
+  readonly config?: EngineConfig;
+  readonly observer?: AnalysisOrchestrationObserver;
+}
+
+class ReadyGateTransport implements EngineTransport {
+  private readonly inner = new FakeEngineTransport({
+    name: 'Stockfish 16',
+    optionLines: STOCKFISH_OPTIONS,
+    go: () => ({ info: ['info depth 10 score cp 20 pv e2e4'], bestmove: 'e2e4' }),
+  });
+  private readyPending = false;
+  private gateNextReady = true;
+  private quitSent = false;
+
+  send(line: string): void {
+    if (line.trim() === 'isready' && this.gateNextReady) {
+      this.gateNextReady = false;
+      this.readyPending = true;
+      return;
+    }
+    if (line.trim() === 'quit') this.quitSent = true;
+    this.inner.send(line);
+  }
+
+  onLine(listener: LineListener): void {
+    this.inner.onLine(listener);
+  }
+
+  onExit(listener: ExitListener): void {
+    this.inner.onExit(listener);
+  }
+
+  kill(signal?: NodeJS.Signals): void {
+    this.inner.kill(signal);
+  }
+
+  releaseReady(): void {
+    if (!this.readyPending) throw new Error('Capability initialization has not reached isready.');
+    this.readyPending = false;
+    this.inner.send('isready');
+  }
+
+  get wasQuit(): boolean {
+    return this.quitSent;
+  }
+}
+
+function makeManager(
+  clock: ManualClock,
+  onGo?: () => void,
+  options: ManagerTestOptions = {},
+): { manager: EngineManager; cache: InMemoryLruCache } {
+  const cache = options.cache ?? new InMemoryLruCache(100);
   const manager = new EngineManager({
     clock,
     cache,
+    ...(options.config !== undefined ? { config: options.config } : {}),
+    ...(options.observer !== undefined ? { observer: options.observer } : {}),
     minWorkers: 1,
     maxWorkers: 2,
     transportFactory: (plugin: EnginePlugin) => {
@@ -76,6 +138,115 @@ test('serves a repeated analysis from cache', async () => {
   const second = await manager.analyze({ fen: START_FEN, variant: 'chess', limits: { depth: 10 } });
   assert.deepEqual(second, first);
   assert.equal(goCalls, 1, 'the second identical analysis was cached');
+});
+
+test('coalesces 100 concurrent manager requests into one engine search', async () => {
+  const clock = new ManualClock();
+  let goCalls = 0;
+  const { manager } = makeManager(clock, () => (goCalls += 1));
+  await manager.warmup();
+
+  const requests = Array.from({ length: 100 }, () =>
+    manager.analyze({ fen: START_FEN, variant: 'chess', limits: { depth: 10 } }),
+  );
+  const responses = await Promise.all(requests);
+
+  assert.equal(goCalls, 1);
+  assert.equal(responses.length, 100);
+  assert.ok(responses.every((response) => response[0]?.evaluation.value === 20));
+});
+
+test('configured engine option values namespace shared cache entries', async () => {
+  const clock = new ManualClock();
+  const cache = new InMemoryLruCache(100);
+  let goCalls = 0;
+  const first = makeManager(clock, () => (goCalls += 1), { cache, config: { hashMb: 32 } }).manager;
+  const second = makeManager(clock, () => (goCalls += 1), { cache, config: { hashMb: 64 } }).manager;
+  await Promise.all([first.warmup(), second.warmup()]);
+
+  await first.analyze({ fen: START_FEN, variant: 'chess', limits: { depth: 10 } });
+  await second.analyze({ fen: START_FEN, variant: 'chess', limits: { depth: 10 } });
+
+  assert.equal(goCalls, 2);
+});
+
+test('caller cancellation does not wait for cold capability initialization', async () => {
+  const clock = new ManualClock();
+  const events: AnalysisOrchestrationEvent[] = [];
+  let transport: ReadyGateTransport | undefined;
+  const manager = new EngineManager({
+    clock,
+    minWorkers: 0,
+    maxWorkers: 1,
+    observer: { record: (event) => events.push(event) },
+    transportFactory: () => {
+      transport = new ReadyGateTransport();
+      return transport;
+    },
+  });
+  manager.register(stockfishPlugin);
+  const controller = new AbortController();
+
+  const request = manager.analyze({
+    fen: START_FEN,
+    variant: 'chess',
+    limits: { depth: 10 },
+    signal: controller.signal,
+  });
+  await flush();
+  let cancellation: unknown;
+  void request.catch((error: unknown) => {
+    cancellation = error;
+  });
+  controller.abort();
+  await flush();
+
+  const settledBeforeWarmup = cancellation instanceof CancelledError;
+  assert.ok(transport);
+  transport.releaseReady();
+  await flush();
+
+  await assert.rejects(request, CancelledError);
+
+  const next = await manager.analyze({ fen: START_FEN, variant: 'chess', limits: { depth: 10 } });
+  assert.equal(next[0]?.evaluation.value, 20, 'the shared warmup continues for later callers');
+  await manager.shutdown({ deadlineMs: 100 });
+  assert.equal(settledBeforeWarmup, true, 'cancellation settles before shared warmup');
+  assert.equal(events.filter((event) => event.type === 'cancellation').length, 1);
+});
+
+test('a cold warmup that finishes after shutdown is disposed instead of joining the pool', async () => {
+  const clock = new ManualClock();
+  let transport: ReadyGateTransport | undefined;
+  const manager = new EngineManager({
+    clock,
+    minWorkers: 0,
+    maxWorkers: 1,
+    transportFactory: () => {
+      transport = new ReadyGateTransport();
+      return transport;
+    },
+  });
+  manager.register(stockfishPlugin);
+  const controller = new AbortController();
+  const request = manager.analyze({
+    fen: START_FEN,
+    variant: 'chess',
+    limits: { depth: 10 },
+    signal: controller.signal,
+  });
+  await flush();
+  controller.abort();
+  await assert.rejects(request, CancelledError);
+  await manager.shutdown({ deadlineMs: 100 });
+
+  assert.ok(transport);
+  transport.releaseReady();
+  await flush();
+  await flush();
+
+  assert.equal(transport.wasQuit, true);
+  assert.equal(manager.health().pools[0]?.workers.length, 0);
 });
 
 test('rejects an unsupported variant', async () => {

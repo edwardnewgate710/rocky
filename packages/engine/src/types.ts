@@ -84,7 +84,7 @@ export interface EngineCapabilities {
   readonly engineName: string;
   readonly engineAuthor: string;
   readonly version: string;
-  /** `sha256(name + version + sortedOptionNames)` — namespaces the analysis cache. */
+  /** Stable digest of the engine name, version, and advertised option contracts. */
   readonly fingerprint: string;
   readonly variants: ReadonlySet<string>;
   readonly options: ReadonlyMap<string, UciOptionSpec>;

@@ -49,6 +49,42 @@ test('fingerprint is stable and version-sensitive', () => {
   assert.notEqual(a, c, 'a different build must change the fingerprint');
 });
 
+test('fingerprint changes when an advertised option contract changes', () => {
+  const first = buildCapabilities(
+    'Stockfish 16',
+    'the devs',
+    specs(['option name EvalFile type string default nn-a.nnue']),
+  );
+  const second = buildCapabilities(
+    'Stockfish 16',
+    'the devs',
+    specs(['option name EvalFile type string default nn-b.nnue']),
+  );
+
+  assert.notEqual(first.fingerprint, second.fingerprint);
+});
+
+test('capability fingerprint is stable across semantically irrelevant option ordering', () => {
+  const first = buildCapabilities(
+    'Fairy-Stockfish 14',
+    'fairy',
+    specs([
+      'option name Hash type spin default 16 min 1 max 1024',
+      'option name UCI_Variant type combo default chess var chess var atomic var crazyhouse',
+    ]),
+  );
+  const second = buildCapabilities(
+    'Fairy-Stockfish 14',
+    'fairy',
+    specs([
+      'option name UCI_Variant type combo default chess var crazyhouse var atomic var chess',
+      'option name Hash type spin default 16 min 1 max 1024',
+    ]),
+  );
+
+  assert.equal(first.fingerprint, second.fingerprint);
+});
+
 test('compareVersions orders correctly', () => {
   assert.equal(compareVersions('16', '15'), 1);
   assert.equal(compareVersions('16.1', '16.1'), 0);
