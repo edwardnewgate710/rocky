@@ -1,6 +1,7 @@
 import type { Variant } from '@chess-platform/core';
 import type { EventStore } from '@chess-platform/persistence';
 import { Game } from '@chess-platform/game';
+import { NullLogger, type Logger } from '../ports/logger';
 
 export interface FinishedGame {
   readonly moves: readonly string[];
@@ -22,7 +23,15 @@ export interface FinishedGameSource {
 }
 
 export class EventStoreGameSource implements FinishedGameSource {
-  constructor(private readonly events: EventStore) {}
+  /**
+   * `logger` defaults to silence so every existing construction site keeps working, and is supplied in
+   * `bootstrap` where a real one exists. It is used for exactly one thing: saying out loud that a
+   * stored event stream could not be replayed.
+   */
+  constructor(
+    private readonly events: EventStore,
+    private readonly logger: Logger = new NullLogger(),
+  ) {}
 
   async load(gameId: string): Promise<FinishedGame | null> {
     const stored = await this.events.load(gameId);
@@ -41,10 +50,24 @@ export class EventStoreGameSource implements FinishedGameSource {
     // should surface. This method's contract is "the finished game, or null"; an unanalysable game is
     // an absent one, and letting the error escape would turn a bad row into a failed request on an
     // endpoint that has nothing to do with it. Raised in the CodeRabbit review of PR #12.
+    //
+    // **Contained, not swallowed.** Returning a bare `null` made a corrupt stream indistinguishable
+    // from an ordinary miss: the moderation route maps `null` to a 404 "no finished game", and
+    // `AntiCheatAutoAnalyzer` only reports *rejected* promises, so nothing anywhere would have said a
+    // durable row is unreadable. A log line is the difference between a contained failure and an
+    // invisible one. Raised in the Qodo review of PR #12.
     let state;
     try {
       state = Game.fromEvents(events).snapshot();
-    } catch {
+    } catch (err) {
+      this.logger.error('anti-cheat: stored game could not be replayed', {
+        gameId,
+        variant: created.variant,
+        // The message only — `GameError` reports which invariant failed and the ids involved, and a
+        // stack here would be this file's own. No board state and no player ids: this is an operator
+        // signal, not a dump of the row.
+        reason: (err as Error).message,
+      });
       return null;
     }
     if (!state.status.over) return null;

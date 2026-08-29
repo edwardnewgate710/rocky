@@ -192,3 +192,46 @@ test('a stored game whose chess960 metadata is corrupt is skipped, not thrown fr
 
   assert.equal(await service.analyzeAndStore(gameId), null, 'skipped rather than raising');
 });
+
+test('a corrupt stored game is logged, so containment is not the same as silence', async () => {
+  // Returning a bare `null` made a corrupt stream indistinguishable from an ordinary miss: the
+  // moderation route maps `null` to a 404 "no finished game", and `AntiCheatAutoAnalyzer` reports only
+  // *rejected* promises — so nothing would ever have said a durable row is unreadable. Raised in the
+  // Qodo review of PR #12, against the containment added for CodeRabbit's finding in the same round.
+  const events = new InMemoryEventStore();
+  const gameId = 'c960-corrupt-logged';
+  await events.append(gameId, -1, [
+    {
+      type: 'GameCreated',
+      gameId,
+      variant: 'chess960',
+      chess960StartId: 9999,
+      initialFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+      timeControl: { initialMs: 180_000, incrementMs: 2_000, delayMs: 0, kind: 'increment' as const },
+      players: { white: 'w1', black: 'b1' },
+      rated: true,
+      at: 1000,
+    } as never,
+  ]);
+
+  const records: { msg: string; fields?: Record<string, unknown> }[] = [];
+  const capturing = {
+    debug() {}, info() {}, warn() {},
+    error(msg: string, fields?: Record<string, unknown>) {
+      records.push({ msg, ...(fields ? { fields } : {}) });
+    },
+    child() { return capturing; },
+  };
+
+  const service = new AntiCheatAnalysisService(
+    new EventStoreGameSource(events, capturing as never),
+    () => fakeEvaluator,
+    new InMemoryAntiCheatReportRepository(),
+  );
+
+  assert.equal(await service.analyzeAndStore(gameId), null);
+  assert.equal(records.length, 1, 'the unreadable row produced exactly one operator signal');
+  assert.match(records[0]!.msg, /could not be replayed/);
+  assert.equal(records[0]!.fields?.['gameId'], gameId, 'and names the game an operator has to go find');
+  assert.match(String(records[0]!.fields?.['reason']), /9999/, 'and why it failed');
+});

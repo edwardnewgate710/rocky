@@ -227,12 +227,17 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
   });
   const rateLimiter = options.rateLimiter ?? new PgRateLimiter(pool);
   const tournamentRepo = options.tournamentRepo ?? new PgTournamentsRepository(pool);
+  // Declared here rather than beside the tracer below, because the anti-cheat source now takes it:
+  // a stored game that cannot be replayed is contained rather than thrown, and containment without a
+  // log is indistinguishable from an ordinary miss (ADR-0137 §9).
+  const logger = options.logger ?? new JsonLogger({ service: 'api' }, { level: resolveLogLevel() });
+
   const eventStore = new PostgresEventStore(pool);
   const gameLauncher = options.gameLauncher ?? new DurableGameLauncher(eventStore, clock);
   const repos = createPgRepositories(pool, ids);
   const antiCheatAnalysis = options.analysisProvider
     ? new AntiCheatAnalysisService(
-        new EventStoreGameSource(eventStore),
+        new EventStoreGameSource(eventStore, logger),
         (variant) => new EngineBackedEvaluator(options.analysisProvider!, variant),
         repos.antiCheat,
       )
@@ -374,7 +379,6 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ? (options.graphql ?? { introspection: process.env['GRAPHQL_INTROSPECTION'] === '1' })
     : undefined;
 
-  const logger = options.logger ?? new JsonLogger({ service: 'api' }, { level: resolveLogLevel() });
   const logExporter = new LoggingSpanExporter(logger);
   const otlpTracesUrl = resolveOtlpTracesEndpoint(
     process.env['OTEL_EXPORTER_OTLP_TRACES_ENDPOINT'],
