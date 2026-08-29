@@ -143,6 +143,12 @@ export class Game {
     const variant = params.variant ?? 'standard';
     const startId = params.chess960StartId;
 
+    // Narrowed once, here, rather than asserted at each use below. `isStartId` is a type predicate,
+    // so the assignment inside this branch is what carries `number` out to the two places that need
+    // it; the alternative was `startId as number` twice, spending a cast to restate a check the line
+    // above already made.
+    let chess960StartId: number | null = null;
+
     if (variant === 'chess960') {
       if (!isStartId(startId)) {
         throw new GameError(
@@ -157,6 +163,7 @@ export class Game {
             'determines the position, and accepting both would let them disagree.',
         );
       }
+      chess960StartId = startId;
     } else if (startId !== undefined) {
       throw new GameError(
         `a starting-position id is meaningless for '${variant}' and was refused rather than stored; ` +
@@ -165,7 +172,7 @@ export class Game {
     }
 
     const initialFen =
-      variant === 'chess960' ? chess960Fen(startId as number) : params.initialFen ?? Position.initial(variant).fen();
+      chess960StartId !== null ? chess960Fen(chess960StartId) : params.initialFen ?? Position.initial(variant).fen();
     const event: GameEvent = {
       type: 'GameCreated',
       gameId: params.gameId,
@@ -175,7 +182,7 @@ export class Game {
       players: params.players,
       rated: params.rated ?? false,
       at: params.at,
-      ...(variant === 'chess960' ? { chess960StartId: startId as number } : {}),
+      ...(chess960StartId !== null ? { chess960StartId } : {}),
     };
     return { game: Game.fromEvents([event]), events: [event] };
   }
