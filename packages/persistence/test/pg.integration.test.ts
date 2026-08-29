@@ -66,6 +66,7 @@ test('the ledger is portable across checkouts but still rejects edits', { skip }
   const file = '0023_community_pending_join_requests_index.sql';
   const version = 23;
   const canonical = migrationChecksum(readMigrationSql(dir, file));
+  /** The checksum recorded for this migration, or undefined if it has no row. */
   const readChecksum = async (): Promise<string | undefined> =>
     (
       await pool.query<{ checksum: string }>(
@@ -73,12 +74,19 @@ test('the ledger is portable across checkouts but still rejects edits', { skip }
         [version],
       )
     ).rows[0]?.checksum;
-  // This test briefly writes a checksum the runner must reject, so nothing else
-  // may migrate against this database meanwhile. The suite guarantees that with
-  // `node --test --test-concurrency=1`, which runs test files one at a time.
-  // Holding the runner's own advisory lock here instead would deadlock: migrate()
-  // acquires that same key on its own connection and would wait on this one.
+
   let ledgerMutated = false;
+  /**
+   * Overwrite this migration's recorded checksum, and remember that the ledger
+   * now needs restoring — cleanup keys off that flag so a failed write is not
+   * followed by a doomed restore that would bury the real error.
+   *
+   * This briefly leaves a checksum the runner must reject, so nothing else may
+   * migrate against the database meanwhile. The suite guarantees that with
+   * `node --test --test-concurrency=1`, which runs test files one at a time.
+   * Taking the runner's own advisory lock here instead would deadlock: migrate()
+   * acquires that same key on its own connection and would wait on this one.
+   */
   const setChecksum = async (checksum: string): Promise<void> => {
     await pool.query('UPDATE schema_migrations SET checksum = $2 WHERE version = $1', [
       version,

@@ -33,6 +33,12 @@ function readAsMigration(content: string, file = '0001_fixture.sql'): string {
   }
 }
 
+/**
+ * The committed migrations, selected and ordered exactly as the runner does it:
+ * `*.sql` only, sorted lexicographically, which for `NNNN_` prefixes is apply
+ * order. Tests that sweep the migration history have to see the same set and the
+ * same order as `runMigrations`, or they would vouch for files it never reads.
+ */
 function committedMigrations(): string[] {
   return readdirSync(MIGRATIONS_DIR)
     .filter((f) => f.endsWith('.sql'))

@@ -80,6 +80,14 @@ export function readMigrationSql(dir: string, file: string): string {
   return canonicalizeMigrationSql(text);
 }
 
+/**
+ * Hex SHA-256 of `text`, encoded as UTF-8.
+ *
+ * The encoding is named rather than left to the default so a ledger checksum
+ * depends only on the characters hashed — the whole point of canonicalizing the
+ * migration first. Callers pass canonical text, or the CRLF rendering of it when
+ * checking a checksum an older runner wrote.
+ */
 function sha256(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
