@@ -146,8 +146,8 @@ export class GameAuthority {
     }
     const at = params.at ?? this.now();
     // Wrapped for the same reason the persist below is: this function's contract is that a refused
-    // creation surfaces as `AuthorityError`, and `Game.create` refuses some of them itself — it
-    // rejects `chess960` outright, because the variant has no start position of its own (ADR-0123).
+    // creation surfaces as `AuthorityError`, and `Game.create` refuses some of them itself — a
+    // `chess960` game without a starting-position id, or any other variant carrying one (ADR-0137).
     // `codeOf` in `gateway.ts` does fall back to `invalid_command` for an unrecognised error, so an
     // escaping `GameError` would already reach the client as the right reject code; this makes that
     // a stated guarantee rather than a lucky default, and keeps the two failure paths in this one
@@ -440,6 +440,7 @@ export class GameAuthority {
       drawOffer: snap.drawOffer,
       moves: snap.moves.map((m) => ({ ply: m.ply, uci: m.uci, san: m.san, by: m.by })),
       legalMoves: snap.status.over ? {} : legalMovesOf(snap.position),
+      chess960StartId: snap.chess960StartId,
     };
   }
 

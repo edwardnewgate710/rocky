@@ -39,6 +39,26 @@ export interface GameCreatedEvent {
   readonly players: Players;
   readonly rated: boolean;
   readonly at: number;
+  /**
+   * For a `chess960` game, the Scharnagl id (0..959) of the arrangement it started from.
+   *
+   * `initialFen` already pins the *position*, so replay never needed this field to reconstruct the
+   * board. What it records is the arrangement's **identity** — which of the 960 a game is — and that
+   * is not recoverable from anywhere else once the first move is played: the FEN then describes the
+   * position, not the start. A player asking "which one was this?" is asking a question about durable
+   * history, so history is where the answer has to live.
+   *
+   * Optional, and deliberately not versioned. A new field on a payload that is stored as JSON is
+   * readable by the existing decoder — `upcast` passes `CURRENT_EVENT_VERSION` rows through as-is —
+   * so no upcaster and no version bump are needed, and every stored event keeps decoding. Absent on
+   * every non-Chess960 game, which is why it is not required: fabricating an id for a variant that
+   * has none would be the same durable falsehood ADR-0123 refused.
+   *
+   * A stored `chess960` event without it is a game created before this field existed. It replays
+   * from `initialFen` exactly as it always did and reports its start id as `null` — genuinely
+   * unknown. It is never filled in with 518, which would be a guess wearing the shape of a fact.
+   */
+  readonly chess960StartId?: number;
 }
 
 export interface MovePlayedEvent {

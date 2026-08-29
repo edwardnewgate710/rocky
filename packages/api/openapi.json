@@ -2175,16 +2175,6 @@
                 }
               }
             }
-          },
-          "409": {
-            "description": "Seek is for a variant that can no longer start a game (ADR-0123)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
           }
         },
         "security": [
@@ -14244,6 +14234,7 @@
             "type": "string",
             "enum": [
               "standard",
+              "chess960",
               "kingofthehill",
               "atomic",
               "crazyhouse",
@@ -14304,6 +14295,7 @@
             "type": "string",
             "enum": [
               "standard",
+              "chess960",
               "kingofthehill",
               "atomic",
               "crazyhouse",
@@ -14372,6 +14364,7 @@
             "type": "string",
             "enum": [
               "standard",
+              "chess960",
               "kingofthehill",
               "atomic",
               "crazyhouse",

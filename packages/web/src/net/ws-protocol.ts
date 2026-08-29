@@ -102,6 +102,15 @@ export interface StateView {
   readonly moves: readonly MoveView[];
   /** Legal destinations for the side to move (authoritative; empty once over). */
   readonly legalMoves: LegalMoves;
+  /**
+   * For a `chess960` game, the Scharnagl id (0..959) of the arrangement it started from; `null` for
+   * every other variant, and for a Chess960 game whose id was never recorded (ADR-0137).
+   *
+   * The client displays it and does nothing else with it. It is **not** used to build a board:
+   * `fen` is the authoritative position and stays the only thing the board renders, so the browser
+   * never becomes a second opinion on what position 348 looks like.
+   */
+  readonly chess960StartId: number | null;
 }
 
 // ─── Client → Server ─────────────────────────────────────────────────────────

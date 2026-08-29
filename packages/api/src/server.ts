@@ -17,6 +17,7 @@ import type { Identity } from './http/context';
 import { Router } from './http/router';
 import { withSecurity } from './http/security';
 import { buildRouter, type RouteDeps } from './routes';
+import { cryptoChess960Start } from './ports/chess960';
 import { NullLogger } from './ports/logger';
 import { InMemoryMetrics } from './ports/metrics';
 import { NullTracer } from './ports/tracer';
@@ -147,6 +148,7 @@ export function createApiServer(deps: ApiDependencies, options: ApiServerOptions
     repos: deps.repos,
     clock: deps.clock,
     ids: deps.ids,
+    chess960Starts: deps.chess960Starts,
     config: deps.config,
     rateLimiter: deps.rateLimiter,
     tournamentRepo: deps.tournamentRepo,
@@ -183,12 +185,13 @@ export function createApiServer(deps: ApiDependencies, options: ApiServerOptions
     // The router builds neither of these, and the bundle carries neither.
     auth,
     info,
-    // These two follow the spread so the resolved values win over the raw ones `forwarded` carries:
-    // the router requires both, and the bundle leaves both optional. Ordering is load-bearing —
+    // These follow the spread so the resolved values win over the raw ones `forwarded` carries:
+    // the router requires them, and the bundle leaves them optional. Ordering is load-bearing —
     // above the spread they would be overwritten by the `undefined` this defaults away, and the
     // compiler says so, because `RouteDeps` declares them required.
     metrics,
     readiness: deps.readiness ?? (() => Promise.resolve()),
+    chess960Starts: deps.chess960Starts ?? cryptoChess960Start,
   });
 
   const authenticate = (authorization: string | undefined): Identity | null => {

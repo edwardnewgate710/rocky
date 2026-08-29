@@ -24,27 +24,31 @@ export const VARIANTS: readonly Variant[] = [
 ];
 
 /**
- * The variants a *new game* may be created with, which is deliberately not `VARIANTS`.
+ * The variants a *new game* may be created with.
  *
- * `VARIANTS` is what the enum can name, and analysis, ratings and stored games all legitimately
- * read `chess960` — so it stays there. What may be *created* is a narrower question, and the two
- * are not the same list: `Position.initial('chess960')` returns the standard array and castling is
- * hardcoded to e1/a1/h1, so creating one produces an ordinary game wearing a different label and
- * persists that mismatch to an append-only store. ADR-0123.
+ * As of ADR-0137 this is every variant, because Chess960 — the one entry ADR-0123 withheld — can now
+ * be created truthfully: the server draws a starting-position id and records it on the `GameCreated`
+ * event, so a stored `chess960` game says which of the 960 arrangements it actually used.
  *
- * `Game.create` enforces this too and is the authoritative boundary — nothing reaches a game
- * without passing through it. This list exists so the refusal arrives as the validation error the
- * rest of the API speaks, naming the field and listing what is allowed, rather than as the 500 an
- * unmapped `GameError` would produce.
+ * **It stays a separate list from `VARIANTS` even while the two agree.** They answer different
+ * questions — what the enum can *name* versus what may be *created* — and they were last equal
+ * before a variant with nothing behind it turned out to be creatable. Collapsing them now would
+ * delete the distinction that caught that, and re-deriving it later is not the same as never having
+ * lost it.
  *
- * Written out rather than derived as `VARIANTS.filter(v => v !== 'chess960')`, for the same reason
- * `OFFERED_VARIANTS` is in the web client: subtracting from the contract list makes *allowing*
- * creation the default, so a variant added to `VARIANTS` tomorrow becomes creatable the moment it
- * is named — which is exactly how a variant with nothing behind it became playable in the first
- * place. Naming what is creatable means a new one has to be let in deliberately.
+ * Written out rather than derived as `[...VARIANTS]`, for the same reason `OFFERED_VARIANTS` is in
+ * the web client: a variant added to `VARIANTS` tomorrow would otherwise become creatable the moment
+ * it is named, which is exactly how a hollow variant became playable in the first place. Naming what
+ * is creatable means a new one has to be let in deliberately.
+ *
+ * `Game.create` enforces creatability too and is the authoritative boundary — nothing reaches a game
+ * without passing through it. This list exists so a refusal arrives as the validation error the rest
+ * of the API speaks, naming the field and listing what is allowed, rather than as the 500 an unmapped
+ * `GameError` would produce.
  */
 export const CREATABLE_VARIANTS: readonly Variant[] = [
   'standard',
+  'chess960',
   'kingofthehill',
   'atomic',
   'crazyhouse',

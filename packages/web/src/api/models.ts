@@ -35,27 +35,28 @@ export const VARIANTS = [
 export type Variant = (typeof VARIANTS)[number];
 
 /**
- * The variants the lobby offers, which is deliberately not the same list.
+ * The variants the lobby offers, which is deliberately kept a separate list from `VARIANTS`.
  *
- * `VARIANTS` mirrors what the server's enum accepts and must keep doing so — the API really does
- * take `chess960`, and a client that could not name it would be wrong about the contract. What a
- * player may *pick* is a separate question, and conflating the two is why a variant with no
- * implementation behind it was selectable for so long.
+ * `chess960` was withheld by ADR-0099 because the variant was a name with nothing behind it, and is
+ * offered again as of ADR-0137: the rules are real (ADR-0136), the server draws and records a
+ * starting-position id at creation, and a game selected here starts from the arrangement the server
+ * chose. The board renders whatever FEN the server sends, so nothing here needs to know what the 960
+ * arrangements are — which is what makes offering it a one-line change rather than a feature.
  *
- * `chess960` is withheld: `Position.initial('chess960')` returns the standard array rather than one
- * of the 960 arrangements, and castling is hardcoded to e1/a1/h1 in `packages/chess-core`, so it
- * only works from the one start position that is standard chess. Choosing it produced an ordinary
- * game wearing a different label. See ADR-0099; restore it here once the variant is real.
+ * The two lists stay separate even now that they agree. `VARIANTS` mirrors what the server's enum
+ * accepts; this names what a player may *pick*. Conflating them is why a variant with no
+ * implementation behind it was selectable for so long, and re-deriving the distinction later is not
+ * the same as never having lost it.
  *
- * Written out rather than derived as `VARIANTS.filter(v => v !== 'chess960')`. Subtracting from the
- * contract list makes offering the default and withholding the exception, so a variant added to
- * `VARIANTS` tomorrow becomes selectable the moment it is named — which is precisely how a variant
- * with nothing behind it came to be on the board in the first place. Naming what is offered means a
- * new variant has to be let in deliberately, and the test in `create-game-prefs.test.ts` fails until
+ * Written out rather than derived as `[...VARIANTS]`. Subtracting from the contract list makes
+ * offering the default, so a variant added to `VARIANTS` tomorrow becomes selectable the moment it is
+ * named — precisely how a hollow variant came to be on the board. Naming what is offered means a new
+ * variant has to be let in deliberately, and the test in `create-game-prefs.test.ts` fails until
  * someone does.
  */
 export const OFFERED_VARIANTS: readonly Variant[] = [
   'standard',
+  'chess960',
   'kingofthehill',
   'atomic',
   'crazyhouse',

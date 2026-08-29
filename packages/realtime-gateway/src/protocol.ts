@@ -87,6 +87,19 @@ export interface StateView {
   readonly moves: readonly MoveView[];
   /** Legal destinations for the side to move (authoritative; empty once over). */
   readonly legalMoves: LegalMoves;
+  /**
+   * For a `chess960` game, the Scharnagl id (0..959) of the arrangement it started from; `null` for
+   * every other variant, and for a Chess960 game stored before the id was recorded (ADR-0137).
+   *
+   * On this view rather than only in the event log, because the client cannot derive it: `fen` is the
+   * *current* position, so after the first move nothing on the wire says which of the 960 the game
+   * began as — and "position 348" is how Chess960 players name the game they are playing.
+   *
+   * Carried here rather than duplicated into the REST `GameSummary`, which lists games and renders no
+   * board. This view is folded from the creation event on every send, so it cannot drift from the log
+   * that owns the fact; a summary column would be a second copy that could.
+   */
+  readonly chess960StartId: number | null;
 }
 
 // ─── Client → Server ────────────────────────────────────────────────────────

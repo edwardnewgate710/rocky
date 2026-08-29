@@ -16,7 +16,7 @@ import type { RequestMeta } from './auth/service';
 import { EMAIL_ADDRESS_PATTERN } from './email/address.js';
 import type { Repositories } from './deps';
 import { Game, classifySpeed } from '@chess-platform/game';
-import { parseRole, parseSeekColor, parseTimeControl, parseUuid, parseVariant, parseCreatableVariant, VARIANTS, CREATABLE_VARIANTS, HANDLE_PATTERN, UUID_PATTERN } from './domain';
+import { parseRole, parseSeekColor, parseTimeControl, parseUuid, parseVariant, parseCreatableVariant, VARIANTS, HANDLE_PATTERN, UUID_PATTERN } from './domain';
 import { BOT_ACCOUNTS, botAccountByLevel } from './bot/catalogue';
 import { HttpError } from './http/errors';
 import { json, noContent } from './http/context';
@@ -33,6 +33,7 @@ import { strictObject, oneOf, optBoolean, optInt, optString, parseLimit, reqBool
 import type { RateLimiter, RateLimitRequest } from './ports/rate-limiter';
 import type { Metrics } from './ports/metrics';
 import type { ApiConfig } from './config';
+import type { Chess960StartSelector } from './ports/chess960';
 import type { Clock } from './ports/clock';
 import type { IdGenerator } from './ports/ids';
 import { aggregatePlayer, BotDetectionService } from '@chess-platform/anti-cheat';
@@ -146,6 +147,8 @@ export interface RouteDeps {
   readonly repos: Repositories;
   readonly clock: Clock;
   readonly ids: IdGenerator;
+  /** Draws the starting arrangement for a new Chess960 game (ADR-0137). */
+  readonly chess960Starts: Chess960StartSelector;
   readonly info: OpenApiInfo;
   readonly rateLimiter: RateLimiter;
   readonly config: ApiConfig;
@@ -227,7 +230,7 @@ const MAX_SEARCH_LIMIT = 100;
 /** Build the fully-wired router. */
 export function buildRouter(deps: RouteDeps): Router {
   const router = new Router();
-  const { auth, repos, clock, ids, info, rateLimiter, config } = deps;
+  const { auth, repos, clock, ids, chess960Starts, info, rateLimiter, config } = deps;
   const botService = new BotDetectionService(repos.botReports);
   const botAnalysis = deps.botTimingSource
     ? new BotAnalysisService(deps.botTimingSource, repos.botReports)
@@ -1262,12 +1265,11 @@ export function buildRouter(deps: RouteDeps): Router {
       tags: ['seeks'],
       security: 'bearer',
       params: [pathParam('id', 'Seek id')],
-      responses: { 
+      responses: {
         200: ['SeekView', 'Seek matched and game created'],
         400: ['Error', 'Cannot accept own seek'],
         403: ['Error', 'Rating requirements not met'],
         404: ['Error', 'Seek not found or already accepted'],
-        409: ['Error', 'Seek is for a variant that can no longer start a game (ADR-0123)'],
       },
     }),
     AUTHED,
@@ -1276,26 +1278,6 @@ export function buildRouter(deps: RouteDeps): Router {
       const seek = await repos.seeks.findById(ctx.params['id']!);
       if (!seek || seek.gameId !== null) throw HttpError.notFound('seek not found or already accepted');
       if (seek.creatorId === identity.userId) throw HttpError.badRequest('cannot accept own seek');
-
-      // Before the rating checks, deliberately. This variant comes from a stored row rather than
-      // from the request, so validating seek *creation* does not cover it: a `chess960` seek
-      // written before ADR-0123 is still in the table and would reach `Game.create`, which now
-      // refuses it — and `GameError` maps to no status, so the acceptor would get a 500 for a seek
-      // they did not create and cannot fix.
-      //
-      // Order matters for the reason it always does with guards that both apply. A legacy seek can
-      // also carry rating limits, and answering 403 "rating too low" would name a condition the
-      // acceptor might go and fix, for a seek that can never start a game whatever their rating.
-      // The unfixable reason has to win. It also spares a ratings lookup for a variant the acceptor
-      // will never be rated in. Raised in the CodeRabbit review of PR #145.
-      //
-      // 409 rather than 422 because the request is well formed — it is the seek that can no longer
-      // be honoured.
-      if (!CREATABLE_VARIANTS.includes(seek.variant)) {
-        throw HttpError.conflict(
-          `this seek is for '${seek.variant}', which can no longer start a game; it needs to be cancelled and recreated`,
-        );
-      }
 
       if (seek.minRating !== null || seek.maxRating !== null) {
         const ratingRow = await repos.ratings.get(identity.userId, seek.variant);
@@ -1328,6 +1310,17 @@ export function buildRouter(deps: RouteDeps): Router {
 
       const gameId = ids.next();
       const startedAt = clock.now();
+      // The arrangement is drawn *here*, at acceptance, and not when the seek was posted.
+      //
+      // A seek is an offer that may never be taken up, and most are not; drawing at creation would
+      // mint a start position for every abandoned seek and, worse, publish it in `SeekView` where an
+      // opponent could see the board before deciding to accept. Acceptance is the first moment a
+      // game certainly exists, which makes it the moment the game's start is decided.
+      //
+      // Exactly once per game, including under a concurrent accept: `seekAcceptor.accept` claims the
+      // seek row and writes the events in one transaction, so a loser's draw is discarded along with
+      // the rest of its attempt rather than reaching the log. Two acceptors cannot produce two starts
+      // for one game because they cannot produce one game between them.
       const { events } = Game.create({
         gameId,
         variant: seek.variant,
@@ -1335,6 +1328,7 @@ export function buildRouter(deps: RouteDeps): Router {
         players: { white: whiteId, black: blackId },
         rated: seek.rated,
         at: startedAt,
+        ...(seek.variant === 'chess960' ? { chess960StartId: chess960Starts.next() } : {}),
       });
 
       const updatedSeek = await repos.seekAcceptor.accept(seek.id, gameId, events, {
@@ -1415,6 +1409,7 @@ export function buildRouter(deps: RouteDeps): Router {
         players: { white: whiteId, black: blackId },
         rated,
         at: startedAt,
+        ...(variant === 'chess960' ? { chess960StartId: chess960Starts.next() } : {}),
       });
 
       const started = await repos.gameStarter.start(gameId, events, {

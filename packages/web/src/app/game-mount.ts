@@ -1202,7 +1202,14 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
         }
 
         if (metaVariantEl && state.variant) {
-          metaVariantEl.textContent = state.variant.charAt(0).toUpperCase() + state.variant.slice(1);
+          const label = state.variant.charAt(0).toUpperCase() + state.variant.slice(1);
+          // The starting position is part of what the variant *is* for this game: "Chess960" alone
+          // does not say which of the 960 arrangements is on the board, and once the first move is
+          // played the FEN no longer says either. Appended to the metadata field that already exists
+          // rather than given a row of its own — it is one short qualifier on a label already there,
+          // and a dedicated row would sit empty for every other variant.
+          metaVariantEl.textContent =
+            state.chess960StartId === null ? label : `${label} · #${state.chess960StartId}`;
         }
         if (metaTimeEl && state.timeControl) {
           metaTimeEl.textContent = formatTimeControl(state.timeControl);

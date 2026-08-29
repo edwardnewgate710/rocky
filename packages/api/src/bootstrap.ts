@@ -64,6 +64,7 @@ import { resolveConfig } from './config';
 import type { ApiConfigInput } from './config';
 import type { ApiDependencies, OptionalDependencies, Repositories } from './deps';
 import type { AuditEntry, AuditRepository } from './ports/audit';
+import { cryptoChess960Start } from './ports/chess960';
 import { systemClock } from './ports/clock';
 import type { Clock } from './ports/clock';
 import { uuidv7Generator } from './ports/ids';
@@ -419,6 +420,10 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
   const optional: OptionalDependencies = {
     antiCheatAnalysis,
     botTimingSource: new EventStoreBotTimingSource(eventStore),
+    // The production draw for a new Chess960 game's arrangement (ADR-0137). Named explicitly rather
+    // than left to `createApiServer`'s default, so the deployed entropy source is visible here beside
+    // every other composed dependency instead of only in the fallback.
+    chess960Starts: cryptoChess960Start,
     searchRepository,
     semanticSearchRepository,
     embeddingProvider,
