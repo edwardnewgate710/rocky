@@ -157,3 +157,36 @@ test('a changed starting-position id is reported rather than swallowed', () => {
   controller.stop();
   sync.stop();
 });
+
+test('a snapshot with no chess960StartId at all normalises to null', () => {
+  // `decodeServer` validates the message discriminator and casts the rest, so a frame from an older
+  // server — or any path that does not populate the field — can carry no `chess960StartId` despite the
+  // type declaring it. The controller is where that becomes `null` (`?? null`), and this pins it,
+  // because the consumer downstream renders the plain variant label on `null` and would otherwise
+  // print "Chess960 · #undefined".
+  //
+  // Pinned here rather than guarded again in `game-mount`: normalising once, at the boundary where the
+  // wire becomes a typed projection, is what makes every consumer's `=== null` correct. A second check
+  // downstream would be a guard with nothing left to catch. Raised in the Qodo review of PR #12.
+  const { factory, sync, controller, metadatas } = setup();
+  controller.start();
+  sync.start();
+  factory.last.open();
+
+  const withoutField = { ...stateView('chess960', SP700_FEN, 700) } as Record<string, unknown>;
+  delete withoutField['chess960StartId'];
+
+  factory.last.emit({
+    t: 'joined', gameId: 'g1', role: 'white',
+    state: withoutField as unknown as StateView,
+  });
+
+  assert.equal(metadatas.at(-1)?.variant, 'chess960');
+  assert.equal(
+    metadatas.at(-1)?.chess960StartId,
+    null,
+    'absent on the wire becomes null, never undefined',
+  );
+  controller.stop();
+  sync.stop();
+});
