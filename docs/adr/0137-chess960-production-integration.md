@@ -211,12 +211,36 @@ The expectation going in was that Chess960 castling input would be the hard part
 UCI boundary spells a castle king-takes-rook (`d1a1`, not `d1c1`), and the obvious way to build that
 in a client is a special case.
 
-None was needed, and the reason is worth recording because it is load-bearing rather than lucky.
-`BoardInteraction` contains no chess rules: it asks a `LegalMoveOracle` for a square's destinations
-and returns whichever the user picked. The oracle is fed the server's `legalMoves` map, which
-`GameAuthority` builds with `position.toUci(move)` — already the king-takes-rook spelling in Chess960
-and already `e1g1` in standard chess. So selecting the king highlights the rook's square, and tapping
-or dragging onto it submits `d1a1`.
+**Move *input* needed none. Move *projection* did, and I got that wrong first.** The two halves are
+worth separating, because the first half is the interesting finding and the second is the bug it hid.
+
+**Input.** `BoardInteraction` contains no chess rules: it asks a `LegalMoveOracle` for a square's
+destinations and returns whichever the user picked. The oracle is fed the server's `legalMoves` map,
+which `GameAuthority` builds with `position.toUci(move)` — already the king-takes-rook spelling in
+Chess960 and already `e1g1` in standard chess. So selecting the king highlights the rook's square, and
+tapping or dragging onto it submits `d1a1`, with no variant knowledge anywhere in the client.
+
+**Projection.** A `MoveBroadcast` carries `fenHash`, not a FEN, so between full snapshots the client
+advances its own board with `applyMove` — and *that* is a place the client does its own chess. It
+recognised castling only when the king moved exactly two files, which is true in standard chess and
+false for king-takes-rook at one file (`g1h1`), three (`d1a1`) or exactly two (`d1f1`, the worst case,
+since the old rule fired and resolved through the wrong rook). Measured before fixing:
+
+```text
+server    : 2KRNNBR   king c1, rook d1
+projected : K3NNBR    king a1, rook deleted
+```
+
+`applyMove` now treats a king landing on a **friendly rook** as a castle — king to g or c, rook to f
+or d, kingside when the rook starts outside the king — checked before the two-file rule. Still no
+variant flag, because the board settles it: a king can never capture its own piece. That keeps the
+function a view-only projector rather than a second rules engine.
+
+**Why this was missed, which is the part worth keeping.** The first end-to-end test resynced the
+interaction from `authority.getState(...).fen` after every move. That exercised the oracle and
+resynced *past* the projection every single time, so the whole projection path was untested while the
+test looked like an end-to-end proof. Found in the CodeRabbit review of PR #12, not by me. The e2e now
+reads the projected board back through `GameSync` and compares it with the authority's.
 
 The one line this rests on is in `BoardInteraction.attempt`: a tap on a square holding one of your own
 pieces reselects it *unless* it is a legal target, and legality is checked first. A rook is one of your

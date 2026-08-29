@@ -10,7 +10,11 @@ import { VARIANT_LABELS } from '../src/app/variant-labels.js';
 /**
  * Chess960 move input in the browser.
  *
- * The claim under test is that the client needs **no Chess960 knowledge at all**. `BoardInteraction`
+ * The claim under test is that **move input** needs no Chess960 knowledge in the client — which is not
+ * the same as the client needing none at all, since `applyMove` projects broadcasts onto its own board
+ * and does need to understand king-takes-rook (see the projection tests at the end of this file).
+ *
+ * For input: `BoardInteraction`
  * contains no chess rules: it asks an oracle for a square's legal destinations and returns whatever
  * the user picked. The oracle is fed the server's authoritative `legalMoves` map, which the gateway
  * builds with `position.toUci(move)` — and in Chess960 that spells castling king-takes-rook

@@ -35,15 +35,22 @@ byte-identical — `at` still comes from the clock — and the guarantee is spec
 
 `StateView.chess960StartId` carries the id to the board, which shows it beside the variant. The REST
 `GameSummary` is unchanged: it renders no board, and the state view is folded from the creation event
-on every send, so there is no second copy that could drift. The browser needed no Chess960 logic at
-all — `BoardInteraction` is oracle-driven and the server's legal-move map already spells castling
-king-takes-rook, so selecting the king offers the rook's square.
+on every send, so there is no second copy that could drift.
 
-14 deliberate defects were injected one at a time and all 14 were caught by tests: the drawn id
+Move *input* needed no Chess960 logic in the browser — `BoardInteraction` is oracle-driven and the
+server's legal-move map already spells castling king-takes-rook, so selecting the king offers the
+rook's square. Move *projection* did: a broadcast carries `fenHash` rather than a FEN, so between
+snapshots the client advances its own board, and `applyMove` recognised castling only at exactly two
+files — projecting `d1a1` as a king on a1 with the rook deleted. It now treats a king landing on a
+friendly rook as a castle, which needs no variant flag because a king can never capture its own piece.
+The first e2e test could not have caught it: it resynced from the authority after every move, so it
+exercised the oracle and never the projection.
+
+15 deliberate defects were injected one at a time and all 15 were caught by tests: the drawn id
 replaced by 518, the id dropped from the event, replay resolving a missing id to 518, the
-id/FEN cross-check disabled, an off-by-one on the range bound, each creation route ceasing to draw,
-the variant guard removed, the launcher drawing entropy, and the castling spelling swapped in both
-directions. The harness proves each mutation reached the artifact under test — a Chess960 test in the
+id/FEN cross-check disabled, an off-by-one on the range bound, a start id accepted on a non-Chess960
+game, each creation route ceasing to draw, the variant guard removed, the seek-accept guard neutered,
+the launcher drawing entropy, and the castling spelling swapped in both directions. The harness proves each mutation reached the artifact under test — a Chess960 test in the
 web package links the *built* `chess-core`, so mutating its source without recompiling reports a false
 "survived" just as a non-applying substitution reports a false "caught".
 

@@ -275,10 +275,10 @@ reached further than castling.
 > authoritative for everything below.** Chess960 is creatable in production; the refusal these two
 > sections describe is gone. Six of the seven Phase B items landed as written; **item 5 did not** —
 > the seek-accept 409 is deliberately kept rather than dropped, for a reason that turned out to have
-> nothing to do with Chess960 (ADR-0137 §6). Item 7 needed no client-side Chess960 logic at all,
-> because the interaction layer is oracle-driven and the server's legal-move map already spells
-> castling king-takes-rook; ADR-0137 §8 records that as a finding rather than leaving it looking like
-> an item nobody did.
+> nothing to do with Chess960 (ADR-0137 §6). Item 7 split in two: move *input* needed no client-side
+> Chess960 logic, because the interaction layer is oracle-driven and the server's legal-move map
+> already spells castling king-takes-rook — but move *projection* did, and ADR-0137 §8 records both
+> halves, including the bug the first half's success hid.
 >
 > Everything below is **historical rationale**, kept as written because it is the reasoning that set
 > the bar — not a description of current behaviour.
