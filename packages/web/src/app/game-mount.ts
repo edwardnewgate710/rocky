@@ -1208,8 +1208,17 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
           // played the FEN no longer says either. Appended to the metadata field that already exists
           // rather than given a row of its own — it is one short qualifier on a label already there,
           // and a dedicated row would sit empty for every other variant.
+          //
+          // Written as "is there a number?" rather than "is it null?". `GameMetadataState` declares
+          // `number | null` and `GameController` is its only writer (`?? null` on the snapshot), so the
+          // two forms are equivalent for every value the type permits — but this is the same single
+          // check in its positive form, not a second guard, and it degrades to the plain label for
+          // anything the type does not permit rather than rendering "#undefined". Raised in the Qodo
+          // review of PR #12; the normalisation itself is pinned by chess960-metadata.test.ts.
           metaVariantEl.textContent =
-            state.chess960StartId === null ? label : `${label} · #${state.chess960StartId}`;
+            typeof state.chess960StartId === 'number'
+              ? `${label} · #${state.chess960StartId}`
+              : label;
         }
         if (metaTimeEl && state.timeControl) {
           metaTimeEl.textContent = formatTimeControl(state.timeControl);
