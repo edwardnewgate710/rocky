@@ -46,13 +46,29 @@ friendly rook as a castle, which needs no variant flag because a king can never 
 The first e2e test could not have caught it: it resynced from the authority after every move, so it
 exercised the oracle and never the projection.
 
-15 deliberate defects were injected one at a time and all 15 were caught by tests: the drawn id
-replaced by 518, the id dropped from the event, replay resolving a missing id to 518, the
-id/FEN cross-check disabled, an off-by-one on the range bound, a start id accepted on a non-Chess960
-game, each creation route ceasing to draw, the variant guard removed, the seek-accept guard neutered,
-the launcher drawing entropy, and the castling spelling swapped in both directions. The harness proves each mutation reached the artifact under test — a Chess960 test in the
-web package links the *built* `chess-core`, so mutating its source without recompiling reports a false
-"survived" just as a non-applying substitution reports a false "caught".
+15 deliberate defects were injected one at a time and all 15 were caught by tests. Enumerated rather
+than summarised, because a count that does not match its own list is exactly the kind of claim these
+notes exist to avoid:
+
+1. the drawn id replaced by 518;
+2. the id dropped from the `GameCreated` event;
+3. replay resolving a missing id to 518 instead of `null`;
+4. the stored id/FEN cross-check disabled;
+5. creation accepting an out-of-range id;
+6. an off-by-one on the range bound, admitting 960;
+7. a start id accepted on a non-Chess960 game;
+8. the entropy port ceasing to validate its draw;
+9. seek acceptance ceasing to draw an id;
+10. the bot route ceasing to draw an id;
+11. `chess960` dropped from `CREATABLE_VARIANTS`;
+12. the seek-accept stored-variant guard neutered;
+13. the tournament launcher drawing entropy instead of deriving from the launch identity;
+14. Chess960 castling emitted as the king's destination rather than the rook square;
+15. standard castling adopting the king-takes-rook spelling.
+
+The harness proves each mutation reached the artifact under test — a Chess960 test in the web package
+links the *built* `chess-core`, so mutating its source without recompiling reports a false "survived"
+just as a non-applying substitution reports a false "caught".
 
 ## M15 Increment 40 — Game Review presentation invalidation and review-gate closure (ADR-0136)
 
