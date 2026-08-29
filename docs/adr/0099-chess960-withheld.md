@@ -2,7 +2,7 @@
 
 | Field      | Value                                      |
 |------------|--------------------------------------------|
-| **Status** | Accepted; the server-contract half amended by [ADR-0123](0123-chess960-not-creatable.md) |
+| **Status** | Superseded by [ADR-0137](0137-chess960-production-integration.md) — the withholding is lifted; the *reason* it was written out rather than derived still stands. Earlier: the server-contract half was amended by [ADR-0123](0123-chess960-not-creatable.md) |
 | **Date**   | 2026-08-06                                 |
 | **Scope**  | `packages/web`, `packages/chess-core` (findings only) |
 

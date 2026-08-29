@@ -2,7 +2,7 @@
 
 | Field      | Value                                                          |
 |------------|----------------------------------------------------------------|
-| **Status** | Accepted                                                       |
+| **Status** | Superseded by [ADR-0137](0137-chess960-production-integration.md), which lifts the refusal by supplying what it was waiting for: a starting-position id chosen by the server and recorded on `GameCreated`. The five-step restoration checklist below was followed in full |
 | **Date**   | 2026-08-21                                                     |
 | **Scope**  | `packages/game`, `packages/api`                                 |
 | **Amends** | [ADR-0099](0099-chess960-withheld.md), which deliberately left the server contract open |

@@ -4,7 +4,47 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-28 — M15 Increment 40: Game Review presentation invalidation and review-gate closure (ADR-0136)._
+_Last updated: 2026-08-29 — M15 Increment 41: Chess960 production integration (ADR-0137)._
+
+## M15 Increment 41 — Chess960 production integration (ADR-0137)
+
+Chess960 is creatable, seekable, acceptable, playable, reconnectable and replayable. The refusals in
+`Game.create` (ADR-0123) and `OFFERED_VARIANTS` (ADR-0099) are lifted, and lifted by supplying what
+they were waiting for rather than by deletion: a starting-position id that the server chooses once
+and records on the creation event.
+
+`GameCreatedEvent.chess960StartId` is a new **optional** field — events are stored as JSON and pass
+through `upcast` unchanged at `CURRENT_EVENT_VERSION`, so no upcaster, version bump or migration was
+needed and every stored event still decodes. `Game.create` requires it for `chess960`, refuses it for
+every other variant, and refuses `initialFen` for `chess960` because the id already determines the
+position. `initialFen` was always sufficient to replay the *board*; what the id adds is the
+arrangement's identity, which is unrecoverable once the first move is played.
+
+`Game.reduce` validates the stored pair on **every replay**, not only at creation — range, variant
+agreement, and exact FEN equality with `chess960Fen(id)` — because `Game.fromEvents` is where a game
+comes back from a store this code cannot correct. A `chess960` event with no id predates the field: it
+replays from its FEN and reports `null`, never 518, which is precisely the guess that would look
+plausible.
+
+The draw goes through a `Chess960StartSelector` port (`crypto.randomInt`, not `Math.random`) at seek
+**acceptance** — not seek creation, which would mint a position for every abandoned seek and publish
+it in `SeekView` before an opponent decided whether to accept. `DurableGameLauncher` deliberately does
+*not* draw: it derives the id from the same launch-identity digest that fixes the game id, so replicas
+racing to append construct byte-identical events instead of disagreeing about the start.
+
+`StateView.chess960StartId` carries the id to the board, which shows it beside the variant. The REST
+`GameSummary` is unchanged: it renders no board, and the state view is folded from the creation event
+on every send, so there is no second copy that could drift. The browser needed no Chess960 logic at
+all — `BoardInteraction` is oracle-driven and the server's legal-move map already spells castling
+king-takes-rook, so selecting the king offers the rook's square.
+
+14 deliberate defects were injected one at a time and all 14 were caught by tests: the drawn id
+replaced by 518, the id dropped from the event, replay resolving a missing id to 518, the
+id/FEN cross-check disabled, an off-by-one on the range bound, each creation route ceasing to draw,
+the variant guard removed, the launcher drawing entropy, and the castling spelling swapped in both
+directions. The harness proves each mutation reached the artifact under test — a Chess960 test in the
+web package links the *built* `chess-core`, so mutating its source without recompiling reports a false
+"survived" just as a non-applying substitution reports a false "caught".
 
 ## M15 Increment 40 — Game Review presentation invalidation and review-gate closure (ADR-0136)
 
@@ -880,9 +920,11 @@ conversion below needs no change here when someone makes it.
 
 Two lists are deliberately **not** checked, because they are not independent copies:
 `packages/api/openapi.json` is generated (`enum: [...VARIANTS]`) and already pinned by
-`openapi-nullability.test.ts`; `OFFERED_VARIANTS` in the web client is a deliberate subset
-(ADR-0099 withholds `chess960`) pinned by `create-game-prefs.test.ts`. Requiring equality of
-either would fight a decision already made.
+`openapi-nullability.test.ts`; `OFFERED_VARIANTS` in the web client is a deliberately
+hand-maintained list, pinned by `create-game-prefs.test.ts`. It withheld `chess960` under ADR-0099
+and offers it again under ADR-0137, so it currently *happens* to match — but requiring equality here
+would delete the distinction rather than record it, and the reason for naming what is offered is
+that a variant added to `VARIANTS` tomorrow must not become selectable the moment it is named.
 
 ### Decided and not done: `studies.variant` stays a CHECK, for now
 
