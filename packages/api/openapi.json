@@ -2177,7 +2177,7 @@
             }
           },
           "409": {
-            "description": "Seek is for a variant that can no longer start a game (ADR-0123)",
+            "description": "Seek is for a variant this server cannot start a game with",
             "content": {
               "application/json": {
                 "schema": {
@@ -14244,6 +14244,7 @@
             "type": "string",
             "enum": [
               "standard",
+              "chess960",
               "kingofthehill",
               "atomic",
               "crazyhouse",
@@ -14304,6 +14305,7 @@
             "type": "string",
             "enum": [
               "standard",
+              "chess960",
               "kingofthehill",
               "atomic",
               "crazyhouse",
@@ -14372,6 +14374,7 @@
             "type": "string",
             "enum": [
               "standard",
+              "chess960",
               "kingofthehill",
               "atomic",
               "crazyhouse",

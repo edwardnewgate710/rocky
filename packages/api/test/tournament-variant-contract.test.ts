@@ -106,12 +106,23 @@ describe('tournament variant contract', () => {
     }
   });
 
-  it('chess960 is still refused, and not by this type', async () => {
-    // Widening the command type must not have reopened what Increment 14 closed. The refusal is
-    // ADR-0123's, at the creation boundary — this only confirms the wider type did not undo it.
+  it('chess960 is creatable here, and arrives through the shared set rather than a special case', async () => {
+    // ADR-0123 refused it and ADR-0137 restores it. What this pins is that it arrives the same way
+    // every other variant does: through `CREATABLE_VARIANTS`, which the loop above already drives, so
+    // there is no chess960-shaped branch on the tournament command interface to go stale.
     assert.ok(
-      !CREATABLE_VARIANTS.includes('chess960'),
-      'chess960 is absent from the creatable set, so no route can accept it for a tournament',
+      CREATABLE_VARIANTS.includes('chess960'),
+      'chess960 is in the creatable set, so the tournament routes accept it like any other variant',
     );
+
+    const rig = makeRig();
+    await rig.arenaService.create({
+      id: 'arena-960',
+      name: 'chess960',
+      variant: 'chess960',
+      timeControl: TC,
+      durationMs: 3_600_000,
+    });
+    assert.equal((await rig.repo.findById('arena-960'))?.snapshot.config.variant, 'chess960');
   });
 });

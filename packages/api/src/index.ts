@@ -44,6 +44,7 @@ export * from './auth/tokens';
 export * from './auth/refresh';
 export * from './auth/service';
 
+export * from './ports/chess960';
 export * from './ports/clock';
 export * from './ports/ids';
 export * from './ports/audit';

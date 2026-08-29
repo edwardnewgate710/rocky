@@ -291,6 +291,7 @@ export function makeState(
     drawOffer: null,
     moves,
     legalMoves: {},
+    chess960StartId: null,
   };
 }
 

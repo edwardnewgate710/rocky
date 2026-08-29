@@ -1202,7 +1202,23 @@ export function mountGame(deps: GameMountDependencies): MountedGame {
         }
 
         if (metaVariantEl && state.variant) {
-          metaVariantEl.textContent = state.variant.charAt(0).toUpperCase() + state.variant.slice(1);
+          const label = state.variant.charAt(0).toUpperCase() + state.variant.slice(1);
+          // The starting position is part of what the variant *is* for this game: "Chess960" alone
+          // does not say which of the 960 arrangements is on the board, and once the first move is
+          // played the FEN no longer says either. Appended to the metadata field that already exists
+          // rather than given a row of its own — it is one short qualifier on a label already there,
+          // and a dedicated row would sit empty for every other variant.
+          //
+          // Written as "is there a number?" rather than "is it null?". `GameMetadataState` declares
+          // `number | null` and `GameController` is its only writer (`?? null` on the snapshot), so the
+          // two forms are equivalent for every value the type permits — but this is the same single
+          // check in its positive form, not a second guard, and it degrades to the plain label for
+          // anything the type does not permit rather than rendering "#undefined". Raised in the Qodo
+          // review of PR #12; the normalisation itself is pinned by chess960-metadata.test.ts.
+          metaVariantEl.textContent =
+            typeof state.chess960StartId === 'number'
+              ? `${label} · #${state.chess960StartId}`
+              : label;
         }
         if (metaTimeEl && state.timeControl) {
           metaTimeEl.textContent = formatTimeControl(state.timeControl);

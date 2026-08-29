@@ -102,12 +102,27 @@ export class EngineBackedEvaluator implements PositionEvaluator {
   }
 }
 
+/**
+ * Replay a game's UCI moves into the per-ply positions the evaluator scores.
+ *
+ * `startFen` is **required, and deliberately has no default**. It used to begin at
+ * `Position.initial(variant)`, which was true for every game that could exist — until Chess960
+ * became creatable (ADR-0137), at which point a game starting from one of the other 959 arrangements
+ * would have been replayed from position 518. That fails loudly if the first move happens to be
+ * illegal there and, far worse, silently scores a player against positions from a game nobody played
+ * when it does not. Raised in the Qodo review of PR #12.
+ *
+ * Defaulting it would leave the same trap for the next caller, so the position is asked for rather
+ * than assumed: a caller holding a finished game always has its `initialFen`, and one that cannot
+ * name a start position has no business replaying the moves.
+ */
 export function extractPlies(
   moves: readonly string[],
   variant: Variant,
+  startFen: string,
   isBook: (plyIndex: number) => boolean = () => false,
 ): AnalyzedPly[] {
-  let pos = Position.initial(variant);
+  let pos = Position.fromFen(startFen, variant);
   const plies: AnalyzedPly[] = [];
 
   for (let i = 0; i < moves.length; i++) {

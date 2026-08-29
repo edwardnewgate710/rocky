@@ -33,6 +33,7 @@ import { strictObject, oneOf, optBoolean, optInt, optString, parseLimit, reqBool
 import type { RateLimiter, RateLimitRequest } from './ports/rate-limiter';
 import type { Metrics } from './ports/metrics';
 import type { ApiConfig } from './config';
+import type { Chess960StartSelector } from './ports/chess960';
 import type { Clock } from './ports/clock';
 import type { IdGenerator } from './ports/ids';
 import { aggregatePlayer, BotDetectionService } from '@chess-platform/anti-cheat';
@@ -146,6 +147,8 @@ export interface RouteDeps {
   readonly repos: Repositories;
   readonly clock: Clock;
   readonly ids: IdGenerator;
+  /** Draws the starting arrangement for a new Chess960 game (ADR-0137). */
+  readonly chess960Starts: Chess960StartSelector;
   readonly info: OpenApiInfo;
   readonly rateLimiter: RateLimiter;
   readonly config: ApiConfig;
@@ -227,7 +230,7 @@ const MAX_SEARCH_LIMIT = 100;
 /** Build the fully-wired router. */
 export function buildRouter(deps: RouteDeps): Router {
   const router = new Router();
-  const { auth, repos, clock, ids, info, rateLimiter, config } = deps;
+  const { auth, repos, clock, ids, chess960Starts, info, rateLimiter, config } = deps;
   const botService = new BotDetectionService(repos.botReports);
   const botAnalysis = deps.botTimingSource
     ? new BotAnalysisService(deps.botTimingSource, repos.botReports)
@@ -1262,12 +1265,12 @@ export function buildRouter(deps: RouteDeps): Router {
       tags: ['seeks'],
       security: 'bearer',
       params: [pathParam('id', 'Seek id')],
-      responses: { 
+      responses: {
         200: ['SeekView', 'Seek matched and game created'],
         400: ['Error', 'Cannot accept own seek'],
         403: ['Error', 'Rating requirements not met'],
         404: ['Error', 'Seek not found or already accepted'],
-        409: ['Error', 'Seek is for a variant that can no longer start a game (ADR-0123)'],
+        409: ['Error', 'Seek is for a variant this server cannot start a game with'],
       },
     }),
     AUTHED,
@@ -1277,23 +1280,29 @@ export function buildRouter(deps: RouteDeps): Router {
       if (!seek || seek.gameId !== null) throw HttpError.notFound('seek not found or already accepted');
       if (seek.creatorId === identity.userId) throw HttpError.badRequest('cannot accept own seek');
 
-      // Before the rating checks, deliberately. This variant comes from a stored row rather than
-      // from the request, so validating seek *creation* does not cover it: a `chess960` seek
-      // written before ADR-0123 is still in the table and would reach `Game.create`, which now
-      // refuses it — and `GameError` maps to no status, so the acceptor would get a 500 for a seek
-      // they did not create and cannot fix.
+      // Before the rating checks, deliberately. This variant comes from a stored row rather than from
+      // the request, so validating seek *creation* does not cover it.
       //
-      // Order matters for the reason it always does with guards that both apply. A legacy seek can
-      // also carry rating limits, and answering 403 "rating too low" would name a condition the
-      // acceptor might go and fix, for a seek that can never start a game whatever their rating.
-      // The unfixable reason has to win. It also spares a ratings lookup for a variant the acceptor
-      // will never be rated in. Raised in the CodeRabbit review of PR #145.
+      // ADR-0123 added this for `chess960` seeks stranded by its refusal, and ADR-0136 §"Phase B"
+      // listed removing it among the steps to restoring the variant. **Kept, with its reason
+      // rewritten**, because the guard it produced is broader than the case that motivated it and
+      // that case is not the reachable one. `seek.variant` is typed `Variant`, but it is read from a
+      // database column — and `scripts/check-variant-parity.mjs` exists precisely because the type
+      // system does not span the SQL. A value this code cannot honour therefore reaches here as a
+      // well-typed string, and without this check `Game.create` would fall through to the standard
+      // board and write a `GameCreated` carrying a variant nothing implements, into an append-only
+      // store. That is the durable falsehood ADR-0123 was written to prevent, so deleting its guard
+      // on the grounds that chess960 no longer needs it would re-open the hole by a different door.
       //
-      // 409 rather than 422 because the request is well formed — it is the seek that can no longer
-      // be honoured.
+      // Order matters where two guards both apply: a stranded seek can also carry rating limits, and
+      // answering 403 "rating too low" would name a condition the acceptor might go and fix, for a
+      // seek that can never start a game whatever their rating. The unfixable reason has to win.
+      //
+      // 409 rather than 422 because the request is well formed — it is the seek that cannot be
+      // honoured.
       if (!CREATABLE_VARIANTS.includes(seek.variant)) {
         throw HttpError.conflict(
-          `this seek is for '${seek.variant}', which can no longer start a game; it needs to be cancelled and recreated`,
+          `this seek is for '${seek.variant}', which cannot start a game; it needs to be cancelled and recreated`,
         );
       }
 
@@ -1328,6 +1337,17 @@ export function buildRouter(deps: RouteDeps): Router {
 
       const gameId = ids.next();
       const startedAt = clock.now();
+      // The arrangement is drawn *here*, at acceptance, and not when the seek was posted.
+      //
+      // A seek is an offer that may never be taken up, and most are not; drawing at creation would
+      // mint a start position for every abandoned seek and, worse, publish it in `SeekView` where an
+      // opponent could see the board before deciding to accept. Acceptance is the first moment a
+      // game certainly exists, which makes it the moment the game's start is decided.
+      //
+      // Exactly once per game, including under a concurrent accept: `seekAcceptor.accept` claims the
+      // seek row and writes the events in one transaction, so a loser's draw is discarded along with
+      // the rest of its attempt rather than reaching the log. Two acceptors cannot produce two starts
+      // for one game because they cannot produce one game between them.
       const { events } = Game.create({
         gameId,
         variant: seek.variant,
@@ -1335,6 +1355,7 @@ export function buildRouter(deps: RouteDeps): Router {
         players: { white: whiteId, black: blackId },
         rated: seek.rated,
         at: startedAt,
+        ...(seek.variant === 'chess960' ? { chess960StartId: chess960Starts.next() } : {}),
       });
 
       const updatedSeek = await repos.seekAcceptor.accept(seek.id, gameId, events, {
@@ -1415,6 +1436,7 @@ export function buildRouter(deps: RouteDeps): Router {
         players: { white: whiteId, black: blackId },
         rated,
         at: startedAt,
+        ...(variant === 'chess960' ? { chess960StartId: chess960Starts.next() } : {}),
       });
 
       const started = await repos.gameStarter.start(gameId, events, {

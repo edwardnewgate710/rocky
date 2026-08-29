@@ -64,6 +64,7 @@ import { resolveConfig } from './config';
 import type { ApiConfigInput } from './config';
 import type { ApiDependencies, OptionalDependencies, Repositories } from './deps';
 import type { AuditEntry, AuditRepository } from './ports/audit';
+import { cryptoChess960Start } from './ports/chess960';
 import { systemClock } from './ports/clock';
 import type { Clock } from './ports/clock';
 import { uuidv7Generator } from './ports/ids';
@@ -226,12 +227,17 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
   });
   const rateLimiter = options.rateLimiter ?? new PgRateLimiter(pool);
   const tournamentRepo = options.tournamentRepo ?? new PgTournamentsRepository(pool);
+  // Declared here rather than beside the tracer below, because the anti-cheat source now takes it:
+  // a stored game that cannot be replayed is contained rather than thrown, and containment without a
+  // log is indistinguishable from an ordinary miss (ADR-0137 §9).
+  const logger = options.logger ?? new JsonLogger({ service: 'api' }, { level: resolveLogLevel() });
+
   const eventStore = new PostgresEventStore(pool);
   const gameLauncher = options.gameLauncher ?? new DurableGameLauncher(eventStore, clock);
   const repos = createPgRepositories(pool, ids);
   const antiCheatAnalysis = options.analysisProvider
     ? new AntiCheatAnalysisService(
-        new EventStoreGameSource(eventStore),
+        new EventStoreGameSource(eventStore, logger),
         (variant) => new EngineBackedEvaluator(options.analysisProvider!, variant),
         repos.antiCheat,
       )
@@ -373,7 +379,6 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     ? (options.graphql ?? { introspection: process.env['GRAPHQL_INTROSPECTION'] === '1' })
     : undefined;
 
-  const logger = options.logger ?? new JsonLogger({ service: 'api' }, { level: resolveLogLevel() });
   const logExporter = new LoggingSpanExporter(logger);
   const otlpTracesUrl = resolveOtlpTracesEndpoint(
     process.env['OTEL_EXPORTER_OTLP_TRACES_ENDPOINT'],
@@ -419,6 +424,10 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
   const optional: OptionalDependencies = {
     antiCheatAnalysis,
     botTimingSource: new EventStoreBotTimingSource(eventStore),
+    // The production draw for a new Chess960 game's arrangement (ADR-0137). Named explicitly rather
+    // than left to `createApiServer`'s default, so the deployed entropy source is visible here beside
+    // every other composed dependency instead of only in the fallback.
+    chess960Starts: cryptoChess960Start,
     searchRepository,
     semanticSearchRepository,
     embeddingProvider,

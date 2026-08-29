@@ -56,12 +56,18 @@ export interface OpeningExplorationInput {
   /**
    * The position the sequence starts from, when the caller knows it.
    *
-   * Optional because the browser cannot supply it: the gateway's `StateView` carries `variant` but
-   * no start position, and adding one is a protocol change rather than part of this feature. Every
-   * game this deployment can create starts from `Position.initial(variant)` — no creation route
-   * accepts an `initialFen` — so omitting it is accurate today. The field exists so that the day a
-   * custom-start game becomes creatable, a caller that passes it through gets a refusal instead of
-   * an opening name for moves that were never played from this position.
+   * Optional because a caller may not have it, and harmless here because this feature answers for
+   * `standard` alone (see {@link OPENING_EXPLORER_VARIANT}) and a standard game always starts from
+   * `Position.initial('standard')`.
+   *
+   * **The day this comment anticipated has arrived, for one variant.** It used to say that every game
+   * this deployment can create starts from `Position.initial(variant)`. Since ADR-0137 that is false
+   * for `chess960`, whose games start from whichever of the 960 arrangements the server drew — and
+   * the gateway's `StateView` now does carry `chess960StartId`, so a client could supply one. The
+   * variant gate is what keeps this feature correct regardless: Chess960 is refused before any
+   * position is read, because the bundled dataset is standard opening theory and naming an ECO code
+   * for a shuffled back rank would be the falsehood ADR-0123 refused. If the gate is ever widened,
+   * this field is the thing that has to become required rather than optional.
    */
   readonly initialFen?: string | undefined;
 }

@@ -24,6 +24,7 @@ import type {
 import type { PasswordHasher } from './auth/password';
 import type { AccessTokenService } from './auth/tokens';
 import type { AuditRepository } from './ports/audit';
+import type { Chess960StartSelector } from './ports/chess960';
 import type { Clock } from './ports/clock';
 import type { IdGenerator } from './ports/ids';
 import type { RateLimiter } from './ports/rate-limiter';
@@ -68,6 +69,11 @@ export interface ApiDependencies {
   readonly tokens: AccessTokenService;
   readonly clock: Clock;
   readonly ids: IdGenerator;
+  /**
+   * Draws the starting arrangement for a new Chess960 game (ADR-0137). Optional so every existing
+   * caller keeps compiling; `createApiServer` falls back to the CSPRNG-backed selector.
+   */
+  readonly chess960Starts?: Chess960StartSelector;
   readonly config: ApiConfig;
   readonly rateLimiter: RateLimiter;
   readonly tournamentRepo: TournamentsRepository;

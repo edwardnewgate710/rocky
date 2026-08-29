@@ -1084,6 +1084,12 @@ export function capabilitiesView(
  *   `packages/web/src/api/graphql.ts` latches `available` from the first 503 and returns `null`
  *   thereafter, so callers fall back to `shortId` and no control is offered that cannot work. That
  *   is the same fail-closed outcome a flag would buy, reached without one.
+ * - `chess960Starts` is optional to the *bundle*, not to the deployment: `createApiServer` defaults
+ *   it to the CSPRNG selector, so it is never absent at runtime and there is no state in which
+ *   Chess960 creation is unavailable for want of it. A flag would publish `true` unconditionally,
+ *   which tells a client nothing and invites the belief that it might one day be `false`. What a
+ *   client should read to learn whether Chess960 can be created is the `variant` enum on the creation
+ *   requests, which already says so.
  */
 export type NotAPublishedCapability =
   | 'logger'
@@ -1092,7 +1098,8 @@ export type NotAPublishedCapability =
   | 'readiness'
   | 'antiCheatAnalysis'
   | 'botTimingSource'
-  | 'graphql';
+  | 'graphql'
+  | 'chess960Starts';
 
 /**
  * Every optional dependency is either a published capability or explicitly not one.

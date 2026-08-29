@@ -37,6 +37,14 @@ export interface GameMetadataState {
   readonly role: Role | null;
   readonly myColor: WsColor | null;
   readonly variant: Variant | null;
+  /**
+   * The Chess960 starting-position id this game began from, or `null` — for every other variant, for
+   * a Chess960 game whose id predates the field, and before the first snapshot arrives.
+   *
+   * Carried alongside `variant` because it is the same kind of fact: fixed at creation, unchanging
+   * for the life of the game, and shown in the metadata strip rather than acted on.
+   */
+  readonly chess960StartId: number | null;
   readonly timeControl: TimeControl | null;
   readonly presence: PresenceInfo | null;
 }
@@ -463,6 +471,7 @@ export class GameController {
       || this.currentMetadataState.role !== state.role
       || this.currentMetadataState.myColor !== state.myColor
       || this.currentMetadataState.variant !== (state.snapshot?.variant ?? null)
+      || this.currentMetadataState.chess960StartId !== (state.snapshot?.chess960StartId ?? null)
       || timeControlChanged
       || this.currentMetadataState.presence?.white !== state.presence?.white
       || this.currentMetadataState.presence?.black !== state.presence?.black
@@ -474,6 +483,7 @@ export class GameController {
         role: state.role,
         myColor: state.myColor,
         variant: state.snapshot?.variant ?? null,
+        chess960StartId: state.snapshot?.chess960StartId ?? null,
         timeControl: state.snapshot?.timeControl ?? null,
         presence: state.presence ? { ...state.presence } : null,
       };

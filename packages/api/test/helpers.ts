@@ -14,6 +14,7 @@ import type { ApiConfigInput } from '../src/config';
 import { createInMemoryRepositories, InMemoryTournamentsRepository } from '../src/fakes';
 import type { InMemoryRepositories } from '../src/fakes';
 import { StudyPartnerService } from '../src/study-partner/service';
+import type { Chess960StartSelector } from '../src/ports/chess960';
 import { ManualClock } from '../src/ports/clock';
 import { uuidv7Generator } from '../src/ports/ids';
 import { InMemoryRateLimiter } from '../src/ports/in-memory-rate-limiter';
@@ -96,6 +97,14 @@ export interface Harness {
 export interface HarnessOptions {
   /** Override outbound email delivery while retaining the in-memory sender for token inspection. */
   readonly emailSender?: EmailSender;
+  /**
+   * Force the Chess960 arrangement new games start from, instead of drawing one.
+   *
+   * Without this a Chess960 test can only assert that *some* id came back, which passes just as
+   * happily when the id is ignored and the board is the traditional array. Naming the id is what lets
+   * a test assert the exact board the server built.
+   */
+  readonly chess960Starts?: Chess960StartSelector;
   /** Readiness probe backing `/v1/ready`; default resolves (healthy). */
   readonly readiness?: () => Promise<void>;
   /** Structured logger; inject a capturing one to assert on log output. */
@@ -313,6 +322,7 @@ export async function startHarness(
     ...(harnessOptions.tournamentCommentary
       ? { tournamentCommentary: harnessOptions.tournamentCommentary }
       : {}),
+    ...(harnessOptions.chess960Starts ? { chess960Starts: harnessOptions.chess960Starts } : {}),
     ...(harnessOptions.readiness ? { readiness: harnessOptions.readiness } : {}),
     ...(harnessOptions.logger ? { logger: harnessOptions.logger } : {}),
     ...(harnessOptions.tracer ? { tracer: harnessOptions.tracer } : {}),

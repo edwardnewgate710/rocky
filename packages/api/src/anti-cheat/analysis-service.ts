@@ -23,7 +23,7 @@ export class AntiCheatAnalysisService {
   ): Promise<GameCorrelationReport | null> {
     const g = await this.source.load(gameId);
     if (!g) return null;
-    const plies = extractPlies(g.moves, g.variant);
+    const plies = extractPlies(g.moves, g.variant, g.initialFen);
     const service = new AntiCheatService(this.makeEvaluator(g.variant), this.repository);
     return service.analyzeAndStore({
       gameId,

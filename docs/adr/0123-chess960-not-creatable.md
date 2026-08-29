@@ -2,7 +2,7 @@
 
 | Field      | Value                                                          |
 |------------|----------------------------------------------------------------|
-| **Status** | Accepted                                                       |
+| **Status** | Superseded by [ADR-0137](0137-chess960-production-integration.md), which lifts the refusal by supplying what it was waiting for: a starting-position id chosen by the server and recorded on `GameCreated`. Four of the five restoration steps below were followed; **step 5 was not** — the seek-accept 409 is deliberately kept, because it guards a stored value the type system cannot reach, and ADR-0137 §6 explains that decision in full |
 | **Date**   | 2026-08-21                                                     |
 | **Scope**  | `packages/game`, `packages/api`                                 |
 | **Amends** | [ADR-0099](0099-chess960-withheld.md), which deliberately left the server contract open |

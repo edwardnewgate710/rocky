@@ -1,8 +1,12 @@
 import test from 'node:test';
 import * as assert from 'node:assert/strict';
+import { Position, chess960Fen } from '@chess-platform/core';
 import { extractPlies, EngineBackedEvaluator } from '../src/engine';
 import type { AnalysisProvider, AnalysisRequest, EngineResult, PlayRequest, PlayResult, EngineCapabilities } from '@chess-platform/engine';
 import { MATE_ENCODING } from '../src/analyzer';
+
+/** The standard opening position, spelled once so the replay tests below say what they start from. */
+const STANDARD_START = Position.initial('standard').fen();
 
 class FakeAnalysisProvider implements AnalysisProvider {
   public stubs: Record<string, EngineResult[]> = {};
@@ -25,7 +29,7 @@ test('extractPlies round-trips a short game', () => {
   // Scholar's mate
   const moves = ['e2e4', 'e7e5', 'f1c4', 'b8c6', 'd1h5', 'g8f6', 'h5f7'];
   
-  const plies = extractPlies(moves, 'standard', (i) => i < 2);
+  const plies = extractPlies(moves, 'standard', STANDARD_START, (i) => i < 2);
   
   assert.equal(plies.length, 7);
   
@@ -53,7 +57,45 @@ test('extractPlies round-trips a short game', () => {
 });
 
 test('extractPlies throws on illegal move', () => {
-  assert.throws(() => extractPlies(['e2e5'], 'standard'), /illegal move 'e2e5'/);
+  assert.throws(() => extractPlies(['e2e5'], 'standard', STANDARD_START), /illegal move 'e2e5'/);
+});
+
+/**
+ * A Chess960 game is replayed from the arrangement it actually started at.
+ *
+ * Before ADR-0137 made the variant creatable, `extractPlies` began at `Position.initial(variant)` —
+ * position 518 for Chess960 — which was harmless only because no other arrangement could reach it.
+ * With real games arriving, replaying position 700 from 518 scores a player against a game nobody
+ * played. Position 700 is `RBQKNNBR`: king d1, rooks a1/h1, so the two boards are visibly different
+ * and 518 could not stand in for it. Raised in the Qodo review of PR #12.
+ */
+test('extractPlies replays a chess960 game from its own starting position', () => {
+  const startFen = chess960Fen(700);
+  const moves = ['e2e4', 'e7e5', 'f1g3'];
+
+  const plies = extractPlies(moves, 'chess960', startFen);
+
+  assert.equal(plies.length, 3);
+  assert.equal(plies[0].fen, startFen, "the first ply is scored from the game's own start");
+  assert.notEqual(startFen, Position.initial('chess960').fen(), 'and that start is not position 518');
+
+  // Every ply's FEN is the position that move was actually played from.
+  let pos = Position.fromFen(startFen, 'chess960');
+  for (let i = 0; i < moves.length; i++) {
+    assert.equal(plies[i].fen, pos.fen(), `ply ${i} is scored from the right board`);
+    pos = pos.play(moves[i]);
+  }
+});
+
+test('extractPlies replaying a chess960 game from the wrong start is refused, not scored', () => {
+  // The failure mode this guards. `f1g3` is a knight move in position 700 and illegal from 518, so
+  // replaying that game from the default throws rather than quietly scoring the wrong positions.
+  // A silent wrong answer is the outcome worth making impossible; this shows the old default would
+  // not have produced one silently *here*, while the test above is what pins the positions.
+  assert.throws(
+    () => extractPlies(['e2e4', 'e7e5', 'f1g3'], 'chess960', Position.initial('chess960').fen()),
+    /illegal move 'f1g3'/,
+  );
 });
 
 test('evaluate returns top moves and playedCp when move is in top N', async () => {
