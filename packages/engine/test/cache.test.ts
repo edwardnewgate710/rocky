@@ -34,6 +34,26 @@ test('cache is namespaced by fingerprint', async () => {
   assert.equal(await cache.get(otherBuild, { depth: 10 }), undefined);
 });
 
+test('cache key components cannot collide through delimiter placement', async () => {
+  const cache = new InMemoryLruCache(10);
+  const first: AnalysisKey = { fingerprint: 'build|one', fen: 'position', variant: 'chess', multiPv: 1 };
+  const second: AnalysisKey = { fingerprint: 'build', fen: 'position', variant: 'one|chess', multiPv: 1 };
+
+  await cache.set(first, result, { limits: { depth: 20 } });
+
+  assert.equal(await cache.get(second, { depth: 20 }), undefined);
+});
+
+test('a weaker late write cannot replace a stronger cached analysis', async () => {
+  const cache = new InMemoryLruCache(10);
+  const shallow = result.map((line) => ({ ...line, depth: 10 }));
+
+  await cache.set(key, result, { limits: { depth: 20 } });
+  await cache.set(key, shallow, { limits: { depth: 10 } });
+
+  assert.deepEqual(await cache.get(key, { depth: 20 }), result);
+});
+
 test('LRU evicts the least-recently-used entry', async () => {
   const cache = new InMemoryLruCache(2);
   const k = (fen: string): AnalysisKey => ({ fingerprint: 'fp', fen, variant: 'chess', multiPv: 1 });

@@ -38,7 +38,7 @@ export function limitsSatisfy(have: AnalysisLimits, want: AnalysisLimits): boole
 }
 
 export function cacheKeyString(key: AnalysisKey): string {
-  return `${key.fingerprint}|${key.variant}|${key.multiPv}|${key.fen}`;
+  return JSON.stringify([key.fingerprint, key.variant, key.multiPv, key.fen]);
 }
 
 /** No-op cache; the safe default when caching is undesirable (e.g. in tests). */
@@ -83,6 +83,8 @@ export class InMemoryLruCache implements AnalysisCache {
 
   async set(key: AnalysisKey, value: readonly EngineResult[], meta: CacheMeta): Promise<void> {
     const keyString = cacheKeyString(key);
+    const current = this.entries.get(keyString);
+    if (current && !limitsSatisfy(meta.limits, current.limits)) return;
     this.entries.delete(keyString);
     this.entries.set(keyString, { value, limits: meta.limits });
     while (this.entries.size > this.maxEntries) {
