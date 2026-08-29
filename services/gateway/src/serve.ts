@@ -322,7 +322,12 @@ async function main(): Promise<void> {
       if (!engine) {
         logger.warn('ANTICHEAT_AUTO_ANALYZE requires an engine binary (set STOCKFISH_PATH)');
       } else {
-        const source = new api.EventStoreGameSource(eventStore);
+        // The logger matters here more than anywhere: this is the *automatic* path, so a game whose
+        // stored events cannot be replayed is skipped with nobody watching. `AntiCheatAutoAnalyzer`
+        // reports only rejected promises, and a contained failure resolves to `null`. Raised in the
+        // Qodo review of PR #12, against a fix that had wired the logger in `bootstrap` and missed
+        // this second production construction site.
+        const source = new api.EventStoreGameSource(eventStore, logger);
         const repo = new PgAntiCheatReportRepository(pgPool);
         const service = api.createEngineBackedAnalysisService(source, engine, repo);
         const worker = new api.AntiCheatAutoAnalyzer(pubsub, service);

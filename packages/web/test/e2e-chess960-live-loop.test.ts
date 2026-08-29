@@ -24,6 +24,7 @@ import { WsClient } from '../src/net/ws-client.js';
 import { GameSync } from '../src/net/game-sync.js';
 import { AuthoritativeMoveOracle } from '../src/net/authoritative-oracle.js';
 import { BoardInteraction } from '../src/core/interaction.js';
+import { applyMove } from '../src/core/mover.js';
 import { FakeSocketFactory, ManualScheduler } from './support/fake-socket.js';
 
 import {
@@ -78,6 +79,25 @@ function setupClient(token: string) {
 }
 
 const flush = () => new Promise((r) => setImmediate(r));
+
+/**
+ * The board the client would be showing: the last authoritative snapshot with every later broadcast
+ * projected onto it, exactly as `GameController.handleState` does it.
+ *
+ * Written out here rather than reusing the controller so the assertion is about the projection alone,
+ * with no clock, callbacks or DOM in the way.
+ */
+function projectedFen(sync: GameSync): string {
+  const state = sync.getState();
+  const snapshot = state.snapshot;
+  if (snapshot === null) throw new Error('no snapshot yet');
+  let fen = snapshot.fen;
+  for (const move of state.moves) {
+    if (move.ply <= snapshot.ply) continue;
+    fen = applyMove(fen, { from: move.uci.slice(0, 2), to: move.uci.slice(2, 4) });
+  }
+  return fen;
+}
 
 test('e2e chess960: the server-chosen arrangement reaches the client and is played on', async () => {
   const { authority, pubsub } = await createChess960Authority();
@@ -227,4 +247,50 @@ test('e2e chess960: the game rebuilds from its durable log after eviction', asyn
   assert.equal(after.chess960StartId, SP700, 'rebuilt from the log with the arrangement intact');
   assert.equal(after.fen, before.fen, 'and at exactly the position it was at');
   assert.equal(after.variant, 'chess960');
+});
+
+test('e2e chess960: the client projects a live castle broadcast to the server board', async () => {
+  // The gap the first version of this file had. Every move above resyncs the interaction from
+  // `authority.getState(...).fen`, which exercises the *oracle* and never the client's own projection
+  // — and a broadcast carries `fenHash`, not a FEN, so between snapshots the projection is the board.
+  //
+  // Driving `GameSync` through the encoded wire and reading back `projectedFen` is what closes it:
+  // this fails if `applyMove` mishandles king-takes-rook, which it did until the CodeRabbit review of
+  // PR #12 (`d1a1` put the king on a1 and deleted the rook).
+  const { authority, pubsub } = await createChess960Authority();
+  const { factory, sync } = setupClient('token-alice');
+
+  pubsub.subscribe('game:g960', (msg: Broadcast) => {
+    factory.last.emit(JSON.parse(encode(msg as ServerMessage)));
+  });
+
+  sync.start();
+  factory.last.open();
+  factory.last.emit({ t: 'joined', gameId: 'g960', role: 'white', state: authority.getState('g960') });
+
+  // Clear the queenside, then castle. The joined snapshot is at ply 0, so every one of these arrives
+  // as a broadcast the client has to project itself.
+  for (const [uci, who] of [
+    ['c2c4', 'alice'], ['h7h6', 'bob'],
+    ['c1c3', 'alice'], ['g7g6', 'bob'],
+    ['b1c2', 'alice'], ['a7a6', 'bob'],
+    ['d1a1', 'alice'],
+  ] as const) {
+    await authority.apply('g960', who, { kind: 'move', uci });
+    await flush();
+  }
+
+  const projected = projectedFen(sync);
+  assert.equal(
+    whiteBackRank(projected),
+    '..KRNNBR',
+    'the client projected the castle as king c1 / rook d1',
+  );
+  assert.equal(
+    whiteBackRank(projected),
+    whiteBackRank(authority.getState('g960').fen),
+    'and agrees with the board the server actually has',
+  );
+
+  sync.stop();
 });

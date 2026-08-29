@@ -63,7 +63,35 @@ export function applyMove(fen: string, move: Premove): string {
     pieces.delete(toSquare(toFile, capturedRank) as Square);
   }
 
-  // Castling: king moves two files -> transfer the rook.
+  // Chess960 castling: the king "moves onto" its own rook.
+  //
+  // Checked before the two-file rule below, and it has to be. Chess960 spells a castle king-takes-rook
+  // (ADR-0136 §4), and that spelling can span any distance — `g1h1` is one file, `d1a1` is three, and
+  // `d1f1` is exactly two, which the rule below would have read as an ordinary kingside castle and
+  // resolved through the wrong rook.
+  //
+  // No variant flag is needed, because the board already settles it: a king can never capture its own
+  // piece, so a king landing on a friendly rook is a castle and nothing else. That keeps this function
+  // what it is — a view-only projector with no rules engine behind it.
+  //
+  // Destinations are the canonical ones: king to g or c, rook to f or d, kingside when the rook starts
+  // outside the king. Both pieces are placed here and the function returns early, because the shared
+  // `pieces.set(move.to, …)` below would otherwise park the king on the rook's square — which is
+  // exactly the bug this replaces. Raised in the CodeRabbit review of PR #12; the client used to
+  // project `d1a1` as a king on a1 with the rook gone, so the board went visibly wrong after a live
+  // castle broadcast until the next full snapshot.
+  const target = pieces.get(move.to);
+  if (piece.role === 'k' && target?.role === 'r' && target.color === piece.color) {
+    const rank = rankIndex(move.from);
+    const kingside = toFile > fromFile;
+    pieces.delete(move.to);
+    pieces.set(toSquare(kingside ? 6 : 2, rank) as Square, piece);
+    pieces.set(toSquare(kingside ? 5 : 3, rank) as Square, target);
+    const flipped = side === 'w' ? 'b' : 'w';
+    return `${serializePlacement(pieces)} ${flipped} - - 0 1`;
+  }
+
+  // Standard castling: king moves two files onto an empty square -> transfer the rook.
   if (piece.role === 'k' && Math.abs(toFile - fromFile) === 2) {
     const rank = rankIndex(move.from);
     if (toFile === 6) {

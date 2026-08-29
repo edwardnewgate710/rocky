@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BoardInteraction } from '../src/core/interaction.js';
 import { AuthoritativeMoveOracle } from '../src/net/authoritative-oracle.js';
+import { applyMove } from '../src/core/mover.js';
 import type { LegalMoves } from '../src/net/ws-protocol.js';
 import { OFFERED_VARIANTS } from '../src/api/models.js';
 import { VARIANT_LABELS } from '../src/app/variant-labels.js';
@@ -36,6 +37,12 @@ const SP700_LEGAL: LegalMoves = {
   c4: ['c5'],
   b2: ['b3', 'b4'],
 };
+
+/** White's back rank as eight characters, file a first, `.` for empty. FEN run-length-encodes. */
+function whiteBackRank(fen: string): string {
+  const rank = fen.split(' ')[0]!.split('/')[7]!;
+  return [...rank].map((c) => (/[0-9]/.test(c) ? '.'.repeat(Number(c)) : c)).join('');
+}
 
 function interactionOn(fen: string, legal: LegalMoves): BoardInteraction {
   const oracle = new AuthoritativeMoveOracle({ getLegalMoves: () => legal });
@@ -137,4 +144,66 @@ test('a non-standard back rank renders from the FEN like any other position', ()
 test('chess960 is offered in the lobby and has a label to render', () => {
   assert.ok(OFFERED_VARIANTS.includes('chess960'), 'the variant selector will render it');
   assert.equal(VARIANT_LABELS['chess960'], 'Chess960', 'and it has a human label, not a raw code');
+});
+
+// --- Local projection of a live castle broadcast -----------------------------
+
+/**
+ * A move broadcast carries `fenHash`, not a FEN, so the client projects the move onto its own board
+ * with `applyMove` and only resyncs on the next full snapshot. That projection has to agree with the
+ * server, or the board goes visibly wrong — king and rook both — until a snapshot arrives.
+ *
+ * This is the gap the PR's first round of tests missed: the end-to-end test resynced from the
+ * authority after every move, so it exercised the *oracle* and never the projection. Raised in the
+ * CodeRabbit review of PR #12, which found `d1a1` projecting to a king on a1 with the rook deleted.
+ */
+test('a chess960 castle projects to the same board the server has', () => {
+  const before = 'rbqknnbr/1ppppp2/p5pp/8/2P5/2Q5/PPBPPPPP/R2KNNBR w KQkq - 0 4';
+  const after = applyMove(before, { from: 'd1', to: 'a1' });
+
+  assert.equal(
+    whiteBackRank(after),
+    '..KRNNBR',
+    'king to c1 and rook to d1 — not the king parked on the rook square',
+  );
+});
+
+test('chess960 castling projects correctly whichever side, and however far the spelling reaches', () => {
+  // The distance is the trap. King-takes-rook spans one file when the king already stands on its
+  // destination, three here, and can be exactly two — which the old two-file rule would have read as
+  // an ordinary kingside castle and resolved through the wrong rook.
+  const cases: readonly (readonly [string, string, string, string])[] = [
+    // king d1, rooks a1/h1 — queenside spans three files
+    ['R2KNNBR', 'd1', 'a1', '..KRNNBR'],
+    // the same king castling the other way, on a cleared rank so the case is about the spelling
+    // rather than about pieces this projector would happily overwrite (it has no legality, by design)
+    ['3K3R', 'd1', 'h1', '.....RK.'],
+    // king g1, rook h1 — kingside spans one file and the king ends where it began
+    ['6KR', 'g1', 'h1', '.....RK.'],
+    // king d1, rook f1 — exactly two files, and it is a *kingside* castle
+    ['3K1R2', 'd1', 'f1', '.....RK.'],
+  ];
+
+  for (const [back, from, to, expected] of cases) {
+    const fen = `8/8/8/8/8/8/8/${back} w - - 0 1`;
+    assert.equal(
+      whiteBackRank(applyMove(fen, { from, to })),
+      expected,
+      `${back}: ${from}${to}`,
+    );
+  }
+});
+
+test('standard castling and ordinary king moves project exactly as before', () => {
+  const std = 'r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1';
+  assert.equal(whiteBackRank(applyMove(std, { from: 'e1', to: 'g1' })), 'R....RK.');
+  assert.equal(whiteBackRank(applyMove(std, { from: 'e1', to: 'c1' })), '..KR...R');
+
+  // A king stepping one square is not a castle, even onto a square a castle could also reach.
+  const sp700 = 'rbqknnbr/1ppppp2/p5pp/8/2P5/2Q5/PPBPPPPP/R2KNNBR w KQkq - 0 4';
+  assert.equal(
+    whiteBackRank(applyMove(sp700, { from: 'd1', to: 'c1' })),
+    'R.K.NNBR',
+    'the rook stays on a1',
+  );
 });
