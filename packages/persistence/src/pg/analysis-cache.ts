@@ -96,6 +96,38 @@ const UPSERT_SQL = `
           OR (EXCLUDED.achieved_time_ms IS NOT NULL
               AND EXCLUDED.achieved_time_ms >= engine_analysis_cache.achieved_time_ms))`;
 
+/**
+ * Delete a bounded batch of the oldest expired rows.
+ *
+ * `updated_at` moves only when a dominating search replaces the row, so the predicate measures age
+ * since the entry last got stronger — not since it was last read. Touching rows on read would turn
+ * every cache hit into a row-locking write on the platform's hottest positions, which is a far worse
+ * trade than the single recomputation an expiring hot entry costs.
+ *
+ * `FOR UPDATE SKIP LOCKED` does two separate jobs. It makes concurrent sweepers take disjoint
+ * batches instead of contending, and — because a locked row is re-checked against its committed
+ * version rather than the snapshot the scan started from — it is what stops a row that a stronger
+ * write refreshed mid-statement from being deleted anyway. An unlocked subquery would delete it.
+ *
+ * The batch is bounded so one tick cannot hold a large delete open, and it is a single statement, so
+ * a failure leaves no transaction behind and no rows half-removed.
+ */
+const DELETE_EXPIRED_SQL = `
+  WITH expired AS (
+    SELECT fingerprint, variant, multi_pv, fen
+      FROM engine_analysis_cache
+     WHERE updated_at < $1
+     ORDER BY updated_at
+     LIMIT $2
+     FOR UPDATE SKIP LOCKED
+  )
+  DELETE FROM engine_analysis_cache c
+   USING expired e
+   WHERE c.fingerprint = e.fingerprint
+     AND c.variant     = e.variant
+     AND c.multi_pv    = e.multi_pv
+     AND c.fen         = e.fen`;
+
 interface CachedRow {
   payload_version: number;
   results: unknown;
@@ -179,5 +211,23 @@ export class PgAnalysisCache implements AnalysisCache {
     } catch (error) {
       this.onError('write', error);
     }
+  }
+
+  /**
+   * Delete up to `limit` rows last updated before `before`, returning how many went.
+   *
+   * Unlike {@link PgAnalysisCache.get} and {@link PgAnalysisCache.set} this **throws**. Those two
+   * absorb because `EngineManager.analyze` calls them unguarded on the request path, where a throw
+   * would turn a database blip into a failed analysis. Retention has no such caller: it runs on a
+   * background timer no request awaits, so its owner can afford to see the failure — and needs to,
+   * because a sweep that quietly reported "nothing deleted" forever is indistinguishable from a
+   * clean table while the table grows without bound.
+   */
+  async deleteExpired(before: Date, limit: number): Promise<number> {
+    if (!Number.isSafeInteger(limit) || limit < 1) {
+      throw new RangeError('deleteExpired: limit must be a positive integer');
+    }
+    const result = await this.pool.query(DELETE_EXPIRED_SQL, [before, limit]);
+    return result.rowCount ?? 0;
   }
 }

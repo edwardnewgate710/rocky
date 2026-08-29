@@ -7,6 +7,8 @@
  */
 
 import type {
+  AnalysisCache,
+  AnalysisOrchestrationObserver,
   CreateEngineManagerOptions,
   EngineManager,
   EnginePlugin,
@@ -66,6 +68,45 @@ export function analysisSettingsFromEnv(
     cacheEntries: parsePositiveInt(env['ANALYSIS_CACHE_ENTRIES'], 500),
     threadsPerWorker: parsePositiveInt(env['ANALYSIS_ENGINE_THREADS'], 1),
     hashMbPerWorker: parsePositiveInt(env['ANALYSIS_ENGINE_HASH_MB'], 16),
+  };
+}
+
+/** Days a cache row survives without a stronger search replacing it, and the ceiling on that. */
+const DEFAULT_CACHE_TTL_DAYS = 30;
+const MAX_CACHE_TTL_DAYS = 365;
+const MS_PER_DAY = 86_400_000;
+
+export interface AnalysisCacheSettings {
+  /** Whether the durable tier is composed at all. Off means the in-process cache, not no cache. */
+  readonly durable: boolean;
+  /** Retention window, from the last time a stronger search replaced the row. */
+  readonly ttlMs: number;
+}
+
+/**
+ * Read the two settings the durable cache exposes, and no more.
+ *
+ * Everything else it needs — statement timeout, pool size, sweep interval and batch size — is a
+ * hardcoded constant in `durable-cache.ts`, derived from bounds this codebase already states. They
+ * are deliberately not configurable: each one is a safety bound whose only interesting values are
+ * the derived one and a wrong one, and an operator raising the statement timeout "to reduce misses"
+ * would be trading the guarantee the timeout exists to provide.
+ *
+ * The kill switch follows `SEARCH_ENABLED`'s `!== '0'` shape rather than inventing a second
+ * convention, so an unset variable means on. The TTL is clamped rather than validated: this file
+ * already resolves a bad number to the default everywhere else, and a retention window is not worth
+ * refusing to boot over.
+ */
+export function analysisCacheSettingsFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): AnalysisCacheSettings {
+  const days = Math.min(
+    parsePositiveInt(env['ANALYSIS_CACHE_TTL_DAYS'], DEFAULT_CACHE_TTL_DAYS),
+    MAX_CACHE_TTL_DAYS,
+  );
+  return {
+    durable: env['ANALYSIS_CACHE_DURABLE'] !== '0',
+    ttlMs: days * MS_PER_DAY,
   };
 }
 
@@ -161,6 +202,20 @@ export function createAnalysisEngine(
 }
 
 /**
+ * The cache tier behind the engine, and the handle that releases whatever it owns.
+ *
+ * Declared here rather than beside its only implementation so this module can accept a durable tier
+ * without importing one — which is what keeps it free of the `pg` driver and testable with no
+ * database. `analysis/durable-cache.ts` builds the Postgres tier that satisfies it.
+ */
+export interface AnalysisCacheComposition {
+  /** Absent means "keep the in-process cache", not "cache nothing". */
+  readonly cache: AnalysisCache | undefined;
+  readonly observer: AnalysisOrchestrationObserver;
+  shutdown(): Promise<void>;
+}
+
+/**
  * The analysis subsystem as the composition root has to hold it: the service to serve requests
  * with, and the handle that stops the subprocesses behind it.
  *
@@ -184,12 +239,19 @@ export interface AnalysisComposition {
  */
 export function createAnalysisFromEnv(
   env: NodeJS.ProcessEnv = process.env,
+  cacheTier?: () => AnalysisCacheComposition,
 ): AnalysisComposition | undefined {
   // Any configured engine will do, not `STOCKFISH_PATH` specifically: a deployment that installs
   // only Fairy-Stockfish is a working analysis deployment, and gating on the wrong variable would
   // report the capability off while a usable engine sat there.
   if (configuredPlugins(env).length === 0) return undefined;
-  const engine = createAnalysisEngine(env);
+  // Called only past that guard, so a deployment with no engine binary opens no connection pool and
+  // starts no sweeper for a cache nothing would ever read.
+  const tier = cacheTier?.();
+  const engine = createAnalysisEngine(env, {
+    ...(tier?.cache !== undefined ? { cache: tier.cache } : {}),
+    ...(tier !== undefined ? { observer: tier.observer } : {}),
+  });
   const policy = analysisLimitsPolicyFromEnv(env);
   const service = new AnalysisService({
     provider: engine,
@@ -201,7 +263,13 @@ export function createAnalysisFromEnv(
   });
   return {
     service,
-    shutdown: (options = {}) => engine.shutdown(options),
+    // The engine drains first. Its in-flight searches still write their results through the cache,
+    // so releasing the tier before the pools are empty would turn every one of those final writes
+    // into an absorbed fault — losing exactly the deep results a graceful shutdown is trying to keep.
+    shutdown: async (options = {}) => {
+      await engine.shutdown(options);
+      await tier?.shutdown();
+    },
   };
 }
 

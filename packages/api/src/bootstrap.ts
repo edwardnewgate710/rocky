@@ -89,7 +89,13 @@ import {
 import type { AnalysisProvider } from '@chess-platform/engine';
 import { EngineBackedEvaluator } from '@chess-platform/anti-cheat/engine';
 import { AntiCheatAnalysisService } from './anti-cheat/analysis-service';
-import { createAnalysisFromEnv, createMistakePrediction, createPuzzleGeneration } from './analysis/composition';
+import {
+  analysisCacheSettingsFromEnv,
+  createAnalysisFromEnv,
+  createMistakePrediction,
+  createPuzzleGeneration,
+} from './analysis/composition';
+import { createAnalysisCacheComposition } from './analysis/durable-cache';
 import { createOpeningExploration } from './openings/composition';
 import { createAiFromEnv, createMoveExplanation } from './ai/composition';
 import { createEndgameTraining } from './endgames/composition';
@@ -247,7 +253,25 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
   // above — that one backs anti-cheat evaluation and is a different workload with different limits.
   // Composes only when an engine binary is configured; otherwise `deps.analysis` stays undefined,
   // `GET /v1/capabilities` reports `analysis: false`, and the route answers 503.
-  const analysisComposition = options.analysis ?? createAnalysisFromEnv();
+  //
+  // The cache tier (ADR-0138) is passed as a factory, not a value, so it is built only on the branch
+  // where an engine exists — a deployment without one opens no cache pool and starts no sweeper. It
+  // resolves its connection string the same way the main pool above did, which is what makes durable
+  // caching unreachable-by-construction in exactly the cases the main pool could not have connected
+  // either: a caller that injected its own `pool` without a connection string, meaning a test.
+  const cacheConnectionString = options.connectionString ?? process.env['DATABASE_URL'];
+  const analysisComposition =
+    options.analysis ??
+    createAnalysisFromEnv(process.env, () =>
+      createAnalysisCacheComposition({
+        settings: analysisCacheSettingsFromEnv(process.env),
+        logger,
+        metrics,
+        ...(cacheConnectionString !== undefined
+          ? { connectionString: cacheConnectionString }
+          : {}),
+      }),
+    );
 
   // Move Explanation (ADR-0115) needs *both* halves: an AI provider to write the prose and the
   // analysis subsystem above to ground it. Either one missing composes nothing, which is the point

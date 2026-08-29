@@ -46,6 +46,29 @@ Metrics are exposed in standard Prometheus text format (`v0.0.4`) at `GET /v1/me
 - `http_request_duration_seconds` (histogram): Request latency in seconds bucketed across standard intervals (`0.005s` to `10s`), labeled by `route`.
 - Gateway counters: `gateway_connections_opened_total`, `gateway_messages_received_total`, `gateway_auth_failures_total`.
 
+#### Analysis cache (ADR-0138)
+
+Two sources report, and they answer different questions — neither can be derived from the other.
+
+- `analysis_cache_events_total` (counter), labeled `event`: what the **request** did, straight from the
+  engine's orchestration events (`cache_hit`, `cache_miss`, `request_coalesced`,
+  `engine_computation_started`, `cancellation`, and the rest).
+- `analysis_cache_lookup_seconds` (histogram), labeled `outcome` (`hit`, `miss`, `read_failure`):
+  lookup latency.
+- `analysis_cache_faults_total` (counter), labeled `fault` (`read`, `write`, `payload`, `retention`):
+  whether the **database** misbehaved.
+- `analysis_cache_retention_deleted_total` (counter): rows removed by the retention sweep.
+
+**Do not infer cache health from the event counters alone.** The Postgres adapter absorbs every fault
+and returns normally, so a failed read is recorded as `cache_miss` and — the sharp case — a failed
+write is recorded as `cache_write_completed`, because `set` resolved. During a total database outage
+the event counters describe a healthy cache with a poor hit rate. `analysis_cache_faults_total` is the
+only series that distinguishes a cold cache from a broken one.
+
+Every label above is a closed enum from a union type in the engine or the persistence adapter, so the
+series count is fixed at build time. The signals carry no FEN, cache key, game, user or request id —
+those fields do not exist on them.
+
 ### Span Export Pipeline
 When OTLP export is enabled, `BatchSpanProcessor` self-instruments by emitting unlabelled Prometheus counters to the metrics registry:
 - `span_export_received_total` (counter): Spans accepted into the pipeline.
