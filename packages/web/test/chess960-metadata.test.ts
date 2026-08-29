@@ -190,3 +190,47 @@ test('a snapshot with no chess960StartId at all normalises to null', () => {
   controller.stop();
   sync.stop();
 });
+
+test('a reconnect rehydrates the same arrangement', () => {
+  // A genuine socket drop and replacement, not a resync on the live socket: close the first socket,
+  // let the scheduler fire the reconnect, open the replacement, and deliver *its* `joined` snapshot.
+  //
+  // Added alongside the resync case above rather than replacing it — the two deliver the same message
+  // for different reasons, and CodeRabbit's point on PR #12 was that only one of them was covered
+  // here. The equivalent path against a real `GameAuthority`, including the client emitting its own
+  // `resume`, is in `e2e-chess960-live-loop.test.ts`.
+  const { factory, scheduler, sync, controller, metadatas } = setup();
+  controller.start();
+  sync.start();
+  factory.last.open();
+  factory.last.emit({
+    t: 'joined', gameId: 'g1', role: 'white',
+    state: stateView('chess960', SP700_FEN, 700),
+  });
+  assert.equal(metadatas.at(-1)?.chess960StartId, 700);
+
+  // Drop the socket and let the client reconnect.
+  assert.equal(factory.sockets.length, 1, 'one socket so far');
+  factory.last.serverClose(1006, '', false);
+  scheduler.runNext();
+  // Asserted, not assumed: without a genuine reconnect `factory.last` would still be the *first*
+  // socket and the emit below would succeed anyway, so the test would pass while proving nothing.
+  assert.equal(factory.sockets.length, 2, 'the client opened a replacement socket');
+  factory.last.open();
+
+  // The replacement socket's own snapshot, at a later ply.
+  const movedOn = 'rbqknnbr/pppppp1p/6p1/8/4P3/8/PPPP1PPP/RBQKNNBR w KQkq - 0 2';
+  factory.last.emit({
+    t: 'joined', gameId: 'g1', role: 'white',
+    state: stateView('chess960', movedOn, 700, 2),
+  });
+
+  assert.equal(metadatas.at(-1)?.variant, 'chess960');
+  assert.equal(
+    metadatas.at(-1)?.chess960StartId,
+    700,
+    'the game came back from a dropped socket describing the same arrangement',
+  );
+  controller.stop();
+  sync.stop();
+});

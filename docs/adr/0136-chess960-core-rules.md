@@ -271,6 +271,22 @@ All three published Horde perft vectors are unchanged by this, which is the regr
 counts depend on Black's back rank being full, so a change that altered them would mean the fix had
 reached further than castling.
 
+> **Superseded from here down by [ADR-0137](0137-chess960-production-integration.md), which is
+> authoritative for everything below.** Chess960 is creatable in production; the refusal these two
+> sections describe is gone. Six of the seven Phase B items landed as written; **item 5 did not** —
+> the seek-accept 409 is deliberately kept rather than dropped, for a reason that turned out to have
+> nothing to do with Chess960 (ADR-0137 §6). Item 7 needed no client-side Chess960 logic at all,
+> because the interaction layer is oracle-driven and the server's legal-move map already spells
+> castling king-takes-rook; ADR-0137 §8 records that as a finding rather than leaving it looking like
+> an item nobody did.
+>
+> Everything below is **historical rationale**, kept as written because it is the reasoning that set
+> the bar — not a description of current behaviour.
+>
+> The notice sits here rather than under "Phase B" because the consequence immediately below it
+> asserts the refusal too, and a notice that governs only part of what it follows is worse than none.
+> Raised in the CodeRabbit review of PR #12.
+
 ## Consequences
 
 - Chess960 is genuinely implemented at the rules layer. All 960 arrangements generate, castle, and
@@ -282,17 +298,6 @@ reached further than castling.
   `packages/chess-core/test/snapshot.test.ts` enforces by enumerating the state's fields.
 
 ## Phase B — what must exist before Chess960 can be created or offered
-
-> **Superseded by [ADR-0137](0137-chess960-production-integration.md), which is authoritative for
-> everything below.** The refusal described in this section is gone and Chess960 is creatable in
-> production. Six of the seven items landed as written; **item 5 did not** — the seek-accept 409 is
-> deliberately kept rather than dropped, for a reason that turned out to have nothing to do with
-> Chess960 (ADR-0137 §6). Item 7 needed no client-side Chess960 logic at all, because the interaction
-> layer is oracle-driven and the server's legal-move map already spells castling king-takes-rook;
-> ADR-0137 §8 records that as a finding rather than leaving it looking like an item nobody did.
->
-> The rest of this section is **historical rationale**, kept as written because it is the reasoning
-> that set the bar — not a description of current behaviour.
 
 The refusal in `packages/game/src/game.ts` stays, and its reason has changed rather than gone away.
 The engine can now play any arrangement, but nothing can *tell* it which one: no creation parameter,
