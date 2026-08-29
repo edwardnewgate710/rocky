@@ -73,13 +73,18 @@ test('the ledger is portable across checkouts but still rejects edits', { skip }
         [version],
       )
     ).rows[0]?.checksum;
+  // This test briefly writes a checksum the runner must reject, so nothing else
+  // may migrate against this database meanwhile. The suite guarantees that with
+  // `node --test --test-concurrency=1`, which runs test files one at a time.
+  // Holding the runner's own advisory lock here instead would deadlock: migrate()
+  // acquires that same key on its own connection and would wait on this one.
   let ledgerMutated = false;
   const setChecksum = async (checksum: string): Promise<void> => {
-    ledgerMutated = true;
     await pool.query('UPDATE schema_migrations SET checksum = $2 WHERE version = $1', [
       version,
       checksum,
     ]);
+    ledgerMutated = true;
   };
 
   try {
