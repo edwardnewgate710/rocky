@@ -14,12 +14,11 @@ export function extractVersion(engineName: string): string {
 }
 
 /**
- * A stable identity for an engine *build*: `sha256(name + version + sorted option names)`.
- * Attached to every result and used to namespace the analysis cache so results from two
- * different builds can never silently mix.
+ * A stable digest primitive for an engine build. Callers supply sorted option descriptors,
+ * so changes to advertised defaults or bounds namespace analysis separately.
  */
-export function computeFingerprint(name: string, version: string, optionNames: readonly string[]): string {
-  const canonical = `${name}\u0000${version}\u0000${[...optionNames].sort().join(',')}`;
+export function computeFingerprint(name: string, version: string, optionDescriptors: readonly string[]): string {
+  const canonical = `${name}\u0000${version}\u0000${[...optionDescriptors].sort().join(',')}`;
   return createHash('sha256').update(canonical).digest('hex').slice(0, 32);
 }
 
@@ -32,7 +31,7 @@ export function buildCapabilities(
   for (const spec of specs) options.set(spec.name, spec);
 
   const version = extractVersion(idName);
-  const fingerprint = computeFingerprint(idName, version, [...options.keys()]);
+  const fingerprint = computeFingerprint(idName, version, [...options.values()].map(optionDescriptor));
 
   const variants = new Set<string>();
   const variantOption = options.get('UCI_Variant');
@@ -60,6 +59,17 @@ export function buildCapabilities(
     ...(threads?.max !== undefined ? { maxThreads: threads.max } : {}),
     ...(hash?.max !== undefined ? { maxHashMb: hash.max } : {}),
   };
+}
+
+function optionDescriptor(spec: UciOptionSpec): string {
+  return JSON.stringify([
+    spec.name,
+    spec.type,
+    spec.default ?? null,
+    spec.min ?? null,
+    spec.max ?? null,
+    spec.vars ? [...spec.vars].sort() : [],
+  ]);
 }
 
 function normalize(part: number | undefined): number {

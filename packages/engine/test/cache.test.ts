@@ -1,6 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { InMemoryLruCache, NullCache, limitsSatisfy, type AnalysisKey, type EngineResult } from '../src/index.js';
+import { createHash } from 'node:crypto';
+import {
+  analysisCacheFingerprint,
+  InMemoryLruCache,
+  NullCache,
+  limitsSatisfy,
+  type AnalysisKey,
+} from '../src/cache.js';
+import type { EngineResult } from '../src/types.js';
 
 const result: EngineResult[] = [
   { multipv: 1, evaluation: { type: 'cp', value: 20 }, principalVariation: ['e2e4'], depth: 20, nodes: 1000, nps: 5000, timeMs: 100 },
@@ -32,6 +40,35 @@ test('cache is namespaced by fingerprint', async () => {
   await cache.set(key, result, { limits: { depth: 20 } });
   const otherBuild: AnalysisKey = { ...key, fingerprint: 'fp2' };
   assert.equal(await cache.get(otherBuild, { depth: 10 }), undefined);
+});
+
+test('cache key components cannot collide through delimiter placement', async () => {
+  const cache = new InMemoryLruCache(10);
+  const first: AnalysisKey = { fingerprint: 'build|one', fen: 'position', variant: 'chess', multiPv: 1 };
+  const second: AnalysisKey = { fingerprint: 'build', fen: 'position', variant: 'one|chess', multiPv: 1 };
+
+  await cache.set(first, result, { limits: { depth: 20 } });
+
+  assert.equal(await cache.get(second, { depth: 20 }), undefined);
+});
+
+test('configured option fingerprint uses locale-independent code-point ordering', () => {
+  const expected = createHash('sha256')
+    .update(`build\u0000${JSON.stringify([['Z', 2], ['a', 1]])}`)
+    .digest('hex')
+    .slice(0, 32);
+
+  assert.equal(analysisCacheFingerprint('build', { options: { a: 1, Z: 2 } }), expected);
+});
+
+test('a weaker late write cannot replace a stronger cached analysis', async () => {
+  const cache = new InMemoryLruCache(10);
+  const shallow = result.map((line) => ({ ...line, depth: 10 }));
+
+  await cache.set(key, result, { limits: { depth: 20 } });
+  await cache.set(key, shallow, { limits: { depth: 10 } });
+
+  assert.deepEqual(await cache.get(key, { depth: 20 }), result);
 });
 
 test('LRU evicts the least-recently-used entry', async () => {
