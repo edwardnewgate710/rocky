@@ -71,12 +71,18 @@ how many series it writes.)
 **`cache_hit` no longer means "PostgreSQL answered".** Since ADR-0139 a process-local hot tier sits in
 front of the durable cache behind the same port, so the orchestrator — which holds one cache and
 cannot see inside it — records `cache_hit` whether the answer came from this process's memory or from
-a round trip. `analysis_cache_hot_total` is what separates them. Exactly one of `hit` or `miss` is recorded per
+a round trip. `analysis_cache_hot_total` is what separates them, and its five outcomes are two different kinds of
+signal rather than one breakdown.
+
+`hit`, `miss` and `durable_hit` describe **lookups**. Exactly one of `hit` or `miss` is recorded per
 lookup, so `hit + miss` is the lookup count and `hit / (hit + miss)` is the hot tier's own hit rate;
-`durable_hit` and `expired` refine `miss` rather than adding to it. `expired` against `evicted` says
-whether a rising miss rate is entries ageing out at the sixty-second deadline or capacity pressure
-against `ANALYSIS_CACHE_ENTRIES`; those two call for different responses, and no other series
-distinguishes them.
+`durable_hit` refines `miss` rather than adding to it, being the share of misses PostgreSQL answered.
+
+`expired` and `evicted` describe **entries leaving memory**, and are not part of that decomposition —
+they are recorded on writes and evictions as well as on reads, so they neither sum to the lookup
+count nor sit inside `miss`. Read them against each other, not against the lookup series: `expired`
+rising means entries are ageing out at the sixty-second deadline, `evicted` rising means capacity
+pressure against `ANALYSIS_CACHE_ENTRIES`, and those call for different responses.
 
 The bridge back to the orchestrator's own counters is exact, but it is not one-to-one, because
 `readCache` has two early returns that record neither `cache_hit` nor `cache_miss`:
