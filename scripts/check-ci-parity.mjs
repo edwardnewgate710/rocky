@@ -33,7 +33,7 @@ const NOT_RUNNABLE_LOCALLY = new Map([
   ['npm install -g lighthouse@11.4.0', 'a global install; the a11y audit stays a CI-only job'],
   [
     'npm run test:analysis-smoke --workspace @chess-platform/api',
-    'needs a real Stockfish binary at STOCKFISH_PATH, which CI installs from a pinned, checksummed Stockfish release archive (ADR-0121); the test self-skips without one, so running it locally would report a pass having proven nothing',
+    'needs a real Stockfish binary at STOCKFISH_PATH and a real Fairy-Stockfish at FAIRY_STOCKFISH_PATH, which CI installs from pinned, checksummed release assets (ADR-0121), and — since ADR-0138 — a PostgreSQL server at DATABASE_URL for the real-stack proof; every file in it self-skips without its dependency, so running it locally would report a pass having proven nothing',
   ],
 ]);
 
