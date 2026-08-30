@@ -523,6 +523,28 @@ test('clear releases everything the tier holds', async () => {
   assert.equal(await hot.get(key(), { depth: 10 }), undefined, 'a cleared tier answers nothing');
 });
 
+test('a lookup parked on the durable tier cannot repopulate after clear', async () => {
+  // The orchestrator awaits this tier's `get` before it ever reaches the engine, so a lookup can be
+  // sitting on `delegate.get` when shutdown runs. Resuming into `store` would leave entries in a
+  // tier that had already reported itself released.
+  let release!: (value: readonly EngineResult[]) => void;
+  const parked = new Promise<readonly EngineResult[]>((resolve) => {
+    release = resolve;
+  });
+  const delegate: AnalysisCache = {
+    get: () => parked,
+    set: async () => {},
+  };
+  const hot = new HotAnalysisCache({ delegate, maxEntries: 10 });
+
+  const lookup = hot.get(key(), { depth: 10 });
+  hot.clear();
+  release(results(10));
+  await lookup;
+
+  assert.equal(hot.size, 0, 'the parked read must not put an entry back');
+});
+
 test('the tier starts no timer and holds no handle', async () => {
   // The whole resource list, not just timers: a handle of any kind is a thing that could outlive
   // shutdown, and naming only the one this design was most tempted to create would prove the least.

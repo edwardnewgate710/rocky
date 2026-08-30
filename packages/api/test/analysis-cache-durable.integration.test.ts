@@ -351,7 +351,12 @@ test('a hot entry outlives the row it came from, by a bounded amount', { skip },
     await analyze(node, fen);
     assert.equal(node.searches(), 1);
 
-    await pool.query('DELETE FROM engine_analysis_cache WHERE fen = $1', [fen]);
+    // Asserted, because a zero-row delete would make the rest of this test vacuous: if the durable
+    // write had never landed, the hot tier would answer for the ordinary reason and the fresh
+    // instance would recompute for the ordinary reason, and nothing about staleness would have been
+    // shown. Raised in the CodeRabbit review of PR #19.
+    const removed = await pool.query('DELETE FROM engine_analysis_cache WHERE fen = $1', [fen]);
+    assert.equal(removed.rowCount, 1, 'the durable row must have existed for its loss to mean anything');
 
     await analyze(node, fen);
     assert.equal(node.searches(), 1, 'memory answers without consulting the table it no longer needs');

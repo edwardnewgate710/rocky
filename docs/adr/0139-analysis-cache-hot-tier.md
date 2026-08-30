@@ -73,7 +73,10 @@ process serve an analysis the retention policy meant to retire.
 
 This is deliberately **not** a second, contradictory TTL policy. The invariant that makes the two
 coherent is that the hot deadline is strictly shorter than any retention window, so the hot tier can
-only ever be a bounded-staleness view of what the durable tier would have returned at insertion. A
+only ever hold an entry for `HOT_CACHE_TTL_MS`, whatever that entry is. Note that "what the durable
+tier would return" is not the claim — Decision 5 puts hot population *before* the durable write and
+independent of it, so during a database outage this tier legitimately holds validated engine results
+that never reached a row. The bound is on how long an entry lives, not on where it came from. A
 test asserts the two orders of magnitude directly, so the relationship cannot silently invert.
 
 **The deadline is measured on a monotonic clock**, which is the one place this subsystem departs from
@@ -163,10 +166,13 @@ request id to leak.
 - A repeated analysis costs a `Map` lookup instead of a pooled round trip against a table whose reads
   are already bounded at 250ms. The saving is largest exactly where the pool is most contended.
 - **The tier can serve a value up to `HOT_CACHE_TTL_MS` after the durable row that produced it was
-  deleted or superseded.** This is a missed optimization, not a correctness problem: analysis is
-  deterministic for a given identity, a superseding row is a *stronger* search of the same position,
-  and the weaker answer this tier may briefly keep serving is one the durable tier itself served
-  moments earlier. The bound is absolute and does not grow with traffic.
+  deleted or superseded — and, during a database outage, a value that has no durable row at all.**
+  Neither is a correctness problem. Analysis is deterministic for a given identity; a superseding row
+  is a *stronger* search of the same position, so the weaker answer this tier may briefly keep
+  serving is one the durable tier itself served moments earlier; and an entry written while the
+  database was unreachable is a validated engine result that simply has not been persisted yet, which
+  is exactly what Decision 5 trades for. The bound is absolute, applies to every entry however it
+  arrived, and does not grow with traffic.
 - Cross-process single-flight still does not exist, and this ADR does not add it. Two replicas racing
   a cold position still both compute it; ADR-0138 §6 stated that and it remains true. A hot tier is
   per-process by definition and makes the duplication no worse.

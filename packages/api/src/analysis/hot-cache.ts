@@ -146,6 +146,8 @@ export class HotAnalysisCache implements AnalysisCache {
   private readonly entries = new Map<string, HotEntry>();
   private readonly delegate: AnalysisCache;
   private readonly maxEntries: number;
+  /** Set by {@link HotAnalysisCache.clear}; after it, nothing may be stored again. */
+  private closed = false;
   private readonly now: () => number;
   private readonly observer: HotAnalysisCacheObserver | undefined;
 
@@ -237,14 +239,21 @@ export class HotAnalysisCache implements AnalysisCache {
   }
 
   /**
-   * Drop everything held.
+   * Drop everything held, permanently.
    *
    * Called when the tier shuts down, so "the cache is released" means the same thing for both
    * halves. Without it a hot entry would go on answering out of a tier whose pool has been closed —
    * which is not a wrong answer, but it is a cache still serving after its owner said it had stopped,
    * and that is the kind of difference between the two tiers that makes an outage hard to read.
+   *
+   * **Terminal, not a reset**, and that is what `closed` is for. `AnalysisOrchestrator.resolve`
+   * awaits this tier's `get` before it ever reaches the engine, so a lookup can be parked on
+   * `delegate.get` while shutdown runs; without the flag it would resume afterwards and repopulate
+   * the map through `store`, leaving entries in a tier that had already reported itself released.
+   * Raised in the CodeRabbit review of PR #19.
    */
   clear(): void {
+    this.closed = true;
     this.entries.clear();
   }
 
@@ -271,7 +280,7 @@ export class HotAnalysisCache implements AnalysisCache {
     // in both directions at the durable boundary, so nothing upstream can act on it. Storing it
     // would hold a slot that answers nothing until its deadline. Neither production path can produce
     // one — this is the guard that keeps that a property of the tier rather than of its callers.
-    if (value.length === 0) return;
+    if (this.closed || value.length === 0) return;
     // Snapshot rather than alias. `get` is handed the caller's own `AnalysisLimits` — the
     // orchestrator passes `execution.limits` straight through — and a hot entry outlives the call
     // that made it. Keeping the reference would let a caller mutate `{ depth: 10 }` into
