@@ -46,18 +46,55 @@ Metrics are exposed in standard Prometheus text format (`v0.0.4`) at `GET /v1/me
 - `http_request_duration_seconds` (histogram): Request latency in seconds bucketed across standard intervals (`0.005s` to `10s`), labeled by `route`.
 - Gateway counters: `gateway_connections_opened_total`, `gateway_messages_received_total`, `gateway_auth_failures_total`.
 
-#### Analysis cache (ADR-0138)
+#### Analysis cache (ADR-0138, ADR-0139)
 
-Two sources report, and they answer different questions — neither can be derived from the other.
+Three *reporters* feed the series below — the engine's orchestration observer, the process-local hot
+tier, and the durable adapter's fault hook — and they answer different questions, so none can be
+derived from the others. (Three reporters, five metric families: a reporter is who is talking, not
+how many series it writes.)
 
 - `analysis_cache_events_total` (counter), labeled `event`: what the **request** did, straight from the
   engine's orchestration events (`cache_hit`, `cache_miss`, `request_coalesced`,
   `engine_computation_started`, `cancellation`, and the rest).
 - `analysis_cache_lookup_seconds` (histogram), labeled `outcome` (`hit`, `miss`, `read_failure`):
   lookup latency.
+- `analysis_cache_hot_total` (counter), labeled `outcome` (`hit`, `miss`, `durable_hit`, `expired`,
+  `evicted`): which **tier** answered, and why an entry left memory. `expired` means "left because
+  its deadline had passed", counted wherever that happens — a read that finds it dead, an eviction
+  that gives it up first, or a write that replaces it — while `evicted` is reserved for a *live*
+  entry given up to make room. That is what keeps the two a clean split between TTL pressure and
+  capacity pressure.
 - `analysis_cache_faults_total` (counter), labeled `fault` (`read`, `write`, `payload`, `retention`):
   whether the **database** misbehaved.
 - `analysis_cache_retention_deleted_total` (counter): rows removed by the retention sweep.
+
+**`cache_hit` no longer means "PostgreSQL answered".** Since ADR-0139 a process-local hot tier sits in
+front of the durable cache behind the same port, so the orchestrator — which holds one cache and
+cannot see inside it — records `cache_hit` whether the answer came from this process's memory or from
+a round trip. `analysis_cache_hot_total` is what separates them, and its five outcomes are two different kinds of
+signal rather than one breakdown.
+
+`hit`, `miss` and `durable_hit` describe **lookups**. Exactly one of `hit` or `miss` is recorded per
+lookup, so `hit + miss` is the lookup count and `hit / (hit + miss)` is the hot tier's own hit rate;
+`durable_hit` refines `miss` rather than adding to it, being the share of misses PostgreSQL answered.
+
+`expired` and `evicted` describe **entries leaving memory**, and are not part of that decomposition —
+they are recorded on writes and evictions as well as on reads, so they neither sum to the lookup
+count nor sit inside `miss`. Read them against each other, not against the lookup series: `expired`
+rising means entries are ageing out at the sixty-second deadline, `evicted` rising means capacity
+pressure against `ANALYSIS_CACHE_ENTRIES`, and those call for different responses.
+
+The bridge back to the orchestrator's own counters is exact, but it is not one-to-one, because
+`readCache` has two early returns that record neither `cache_hit` nor `cache_miss`:
+
+```text
+hit + durable_hit  ==  cache_hit  + cache_result_rejected
+miss - durable_hit ==  cache_miss + cache_read_failure
+```
+
+Both correction terms are normally zero — a rejected payload means a tier returned something
+unusable, and a read failure means the cache threw rather than missing — so a persistent gap between
+the two sides is itself the signal that one of those is happening.
 
 A read that times out is absorbed too, so its latency lands in `analysis_cache_lookup_seconds{outcome="miss"}` and the `read_failure` series stays empty for a Postgres-backed cache. Miss latency percentiles therefore include absorbed database timeouts; `analysis_cache_faults_total{fault="read"}` is what says how many.
 

@@ -110,7 +110,7 @@ function compose(): Node_ {
   const logger = new JsonLogger({}, { level: 'error', sink: () => {} });
   const composition = createAnalysisFromEnv(process.env, () =>
     createAnalysisCacheComposition({
-      settings: { durable: true, ttlMs: 30 * 86_400_000 },
+      settings: { durable: true, ttlMs: 30 * 86_400_000, hotEntries: 500 },
       logger,
       metrics,
       // Guarded by `skip`: this test does not run without one.
