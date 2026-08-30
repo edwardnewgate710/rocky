@@ -291,6 +291,26 @@ test('the deadline holds even when the clock reading moves backwards', async () 
   assert.equal(hot.size, 0);
 });
 
+test('a cached entry does not follow the caller\u2019s limits object if it later changes', async () => {
+  // The orchestrator hands `get` the request's own limits object, and a hot entry outlives the call.
+  // Aliasing it would let this depth-10 analysis answer a depth-20 lookup — the one direction the
+  // tier must never claim.
+  const delegate = new CountingDelegate(results(10));
+  const hot = new HotAnalysisCache({ delegate, maxEntries: 10 });
+
+  const requested: { depth: number } = { depth: 10 };
+  await hot.get(key(), requested);
+  requested.depth = 20;
+
+  delegate.answer = undefined;
+  assert.equal(
+    await hot.get(key(), { depth: 20 }),
+    undefined,
+    'the entry must still claim only the depth it was stored under',
+  );
+  assert.equal((await hot.get(key(), { depth: 10 }))?.[0]?.depth, 10, 'and must still answer depth 10');
+});
+
 test('a stronger request misses without discarding the weaker entry it could not use', async () => {
   const delegate = new CountingDelegate();
   const hot = new HotAnalysisCache({ delegate, maxEntries: 10 });

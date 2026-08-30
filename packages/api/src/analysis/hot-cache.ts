@@ -274,16 +274,27 @@ export class HotAnalysisCache implements AnalysisCache {
     // would hold a slot that answers nothing until its deadline. Neither production path can produce
     // one — this is the guard that keeps that a property of the tier rather than of its callers.
     if (value.length === 0) return;
+    // Snapshot rather than alias. `get` is handed the caller's own `AnalysisLimits` — the
+    // orchestrator passes `execution.limits` straight through — and a hot entry outlives the call
+    // that made it. Keeping the reference would let a caller mutate `{ depth: 10 }` into
+    // `{ depth: 20 }` afterwards and have this depth-10 analysis answer a depth-20 lookup, which is
+    // the one direction this tier must never claim. Same reasoning as `freezeResults`: what is
+    // shared cannot be borrowed. Raised in the CodeRabbit review of PR #19.
+    const stored: AnalysisLimits = { ...limits };
     const now = this.now();
     const current = this.entries.get(keyString);
-    if (current !== undefined && now < current.expiresAt && !limitsSatisfy(limits, current.limits)) {
+    if (current !== undefined && now < current.expiresAt && !limitsSatisfy(stored, current.limits)) {
       return;
     }
     // Delete before set so a replacement lands at the tail rather than keeping the old entry's
     // position — an update must not leave a logically-replaced entry looking least recently used,
     // and `Map.set` on an existing key would do exactly that.
     this.entries.delete(keyString);
-    this.entries.set(keyString, { value: freezeResults(value), limits, expiresAt: now + this.ttlMs });
+    this.entries.set(keyString, {
+      value: freezeResults(value),
+      limits: stored,
+      expiresAt: now + this.ttlMs,
+    });
     this.evict();
   }
 

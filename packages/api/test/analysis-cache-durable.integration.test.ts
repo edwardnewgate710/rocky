@@ -391,8 +391,12 @@ test('the retention sweep runs against the composed cache without disturbing it'
     // Swept through the adapter, which is exactly what `AnalysisCacheRetention` holds in production:
     // the durable half of the tier, not the hot cache in front of it (ADR-0139 §2). `deleteExpired`
     // is the adapter's own and never was part of the `AnalysisCache` port.
+    // At least one, not exactly one. Nothing else *writes* a row this old, but a previous run that
+    // died between the back-dating above and its cleanup below would leave one, and then an exact
+    // count would be a property of the database rather than of the sweep. That this row in
+    // particular went is proven below, by a process that has to reach the table to find out.
     const durable = new PgAnalysisCache(pool);
-    assert.equal(await durable.deleteExpired(new Date('2000-01-01T00:00:00Z'), 100), 1);
+    assert.ok((await durable.deleteExpired(new Date('2000-01-01T00:00:00Z'), 100)) >= 1);
 
     // The identity is gone from the table, so a process that never cached it recomputes — an expired
     // entry costs one search, and the cache heals itself. It is asked on a *fresh* instance because
