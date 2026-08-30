@@ -99,7 +99,7 @@ export function createAnalysisCacheComposition(
     logger: options.logger,
   });
 
-  if (!options.settings.durable || options.connectionString === undefined) {
+  if (!options.settings.durable || !options.connectionString) {
     options.logger.info('analysis cache: durable tier off, using the in-process cache', {
       reason: options.settings.durable ? 'no connection string' : 'disabled by configuration',
     });

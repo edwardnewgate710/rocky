@@ -260,8 +260,16 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
   // an injected `pool` is the caller taking over connection management: reaching past it to
   // `DATABASE_URL` would open a second, real pool underneath a caller that supplied its own — which
   // in a test suite means connecting to whatever database happens to be configured.
+  // An empty string is "not supplied", exactly as the main pool above reads it. `??` alone would
+  // keep it, so the pool would fall back to `DATABASE_URL` and connect while the cache pool threw
+  // on a blank DSN — turning a bootstrap that used to work into a startup failure. The cache must
+  // not be stricter about its connection string than the pool it sits beside.
+  const suppliedConnectionString =
+    options.connectionString !== undefined && options.connectionString !== ''
+      ? options.connectionString
+      : undefined;
   const cacheConnectionString =
-    options.connectionString ?? (options.pool === undefined ? process.env['DATABASE_URL'] : undefined);
+    suppliedConnectionString ?? (options.pool === undefined ? process.env['DATABASE_URL'] : undefined);
   const analysisComposition =
     options.analysis ??
     createAnalysisFromEnv(process.env, () =>

@@ -164,6 +164,10 @@ export class AnalysisCacheObservability implements AnalysisOrchestrationObserver
     return counter;
   }
 
+  /**
+   * The latency series for one lookup outcome, created once and reused. Only the three outcomes in
+   * {@link LOOKUP_OUTCOME} ever reach here, which is what keeps this map from growing.
+   */
   private histogramFor(outcome: LookupOutcome): Histogram {
     const existing = this.lookups.get(outcome);
     if (existing) return existing;

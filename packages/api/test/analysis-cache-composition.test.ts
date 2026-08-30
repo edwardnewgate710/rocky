@@ -45,6 +45,7 @@ function capturingLogger(): { logger: JsonLogger; records: Captured[] } {
   return { logger, records };
 }
 
+/** Telemetry wired to a real registry and a capturing logger, so both can be asserted together. */
 function observability(): {
   telemetry: AnalysisCacheObservability;
   metrics: InMemoryMetrics;
@@ -71,6 +72,7 @@ test('createAnalysisFromEnv hands the tier\u2019s cache and observer to the engi
   const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.ES2022, true);
 
   let body: string | undefined;
+  /** Walk the file for the one declaration this test is about. */
   const visit = (node: ts.Node): void => {
     if (ts.isFunctionDeclaration(node) && node.name?.text === 'createAnalysisFromEnv') {
       body = node.body?.getText(source);
@@ -289,6 +291,7 @@ function fakeStore(pages: number[], failAfter = Number.POSITIVE_INFINITY) {
   };
 }
 
+/** A sweeper over a test double, with production-shaped bounds unless a test overrides them. */
 function retention(
   store: { deleteExpired(before: Date, limit: number): Promise<number> },
   telemetry: AnalysisCacheObservability,
@@ -504,6 +507,34 @@ test('the batch size backs off after a failure and is restored by a clean sweep'
   await sweeper.sweep();
   assert.equal(asked[3], 50, 'the recovering sweep still uses the reduced size');
   assert.equal(asked[4], 400, 'and a clean sweep restores the configured one');
+});
+
+/**
+ * Backing off must never send *larger* statements than the configuration allows.
+ *
+ * The floor was a bare constant, so a caller configuring a batch below it had the first failure
+ * raise the batch instead of lowering it — the failure path making the next attempt heavier than the
+ * one that just failed. Found by CodeRabbit on the first review of this PR.
+ */
+test('a batch already smaller than the floor is never raised by a failure', async () => {
+  const { telemetry } = observability();
+  const asked: number[] = [];
+  const store = {
+    async deleteExpired(_before: Date, limit: number): Promise<number> {
+      asked.push(limit);
+      throw new Error('statement timeout');
+    },
+  };
+  const sweeper = retention(store, telemetry, { batchSize: 10 });
+
+  await sweeper.sweep();
+  await sweeper.sweep();
+  await sweeper.sweep();
+
+  assert.ok(
+    asked.every((n) => n <= 10),
+    `backoff must never exceed the configured batch (asked ${asked.join(', ')})`,
+  );
 });
 
 test('the batch size never backs off to nothing', async () => {

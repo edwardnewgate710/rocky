@@ -81,6 +81,7 @@ async function boot(
 
 const UNUSED_DSN = 'postgres://unused:unused@127.0.0.1:1/none';
 
+/** Just the cache tier's own log lines, which are the composition root's only visible output here. */
 const cacheLines = (records: Record_[]): Record_[] =>
   records.filter((r) => r.msg.startsWith('analysis cache:'));
 
@@ -143,6 +144,36 @@ test('createPgDependencies: says why the durable tier is absent instead of leavi
 
   assert.match(String(cacheLines(records)[0]?.msg), /durable tier off/);
   assert.equal(cacheLines(records)[0]?.reason, 'no connection string');
+});
+
+/**
+ * An explicitly blank connection string means "not supplied", exactly as the main pool reads it.
+ *
+ * `??` alone kept the empty string, so the main pool fell back to `DATABASE_URL` and connected while
+ * the cache pool threw on a blank DSN — a bootstrap configuration that used to work became a startup
+ * failure. Raised by Qodo and CodeRabbit on the first review of this PR.
+ */
+test('createPgDependencies: an empty connection string falls back to DATABASE_URL, as the pool does', async () => {
+  const records: Record_[] = [];
+  const logger = new JsonLogger(
+    {},
+    { level: 'debug', sink: (line) => records.push(JSON.parse(line) as Record_) },
+  );
+
+  // No injected pool, so this is the production shape: both pools resolve their own connection
+  // string. Neither connects — `pg.Pool` is lazy — so nothing here reaches a database.
+  const { pool, shutdownAnalysis } = withEnv(
+    { STOCKFISH_PATH: '/usr/local/bin/stockfish', DATABASE_URL: UNUSED_DSN },
+    () => createPgDependencies({ connectionString: '', logger }),
+  );
+  await shutdownAnalysis();
+  await pool.end();
+
+  assert.match(
+    String(cacheLines(records)[0]?.msg),
+    /durable tier composed/,
+    'a blank DSN must not be stricter for the cache than it is for the pool beside it',
+  );
 });
 
 /**

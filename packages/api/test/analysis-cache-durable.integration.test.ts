@@ -109,10 +109,17 @@ function instance(options: { engineName?: string; connectionString?: string } = 
   };
 }
 
+/** One analysis request, with the limits every test here shares so results stay comparable. */
 async function analyze(node: Instance, fen: string): Promise<readonly EngineResult[]> {
   return node.manager.analyze({ fen, variant: 'standard', limits: { depth: 10 } });
 }
 
+/**
+ * Read one counter out of the rendered Prometheus text.
+ *
+ * Rendering rather than reaching into the registry keeps these assertions honest about what an
+ * operator would actually scrape, including the label set.
+ */
 function counter(metrics: InMemoryMetrics, series: string): number {
   const match = new RegExp(`^${series} (\\d+(?:\\.\\d+)?)$`, 'm').exec(metrics.render());
   return match ? Number(match[1]) : 0;
@@ -334,15 +341,18 @@ test('the retention sweep runs against the composed cache without disturbing it'
     await analyze(node, fen);
     assert.equal(node.searches(), 1);
 
-    // Age the row past any plausible window, then sweep through the same adapter production uses.
+    // File the row in the last century and sweep with a cutoff at the millennium. The sweep is
+    // deliberately table-wide, so a cutoff of "a day ago" would also match anything an earlier run
+    // left behind and the exact count below would be a property of the database rather than of the
+    // sweep. Nothing else ever writes a row this old.
     await pool.query(
-      `UPDATE engine_analysis_cache SET updated_at = now() - interval '400 days' WHERE fen = $1`,
+      `UPDATE engine_analysis_cache SET updated_at = TIMESTAMPTZ '1999-01-01' WHERE fen = $1`,
       [fen],
     );
     const cache = node.tier.cache as unknown as {
       deleteExpired(before: Date, limit: number): Promise<number>;
     };
-    assert.equal(await cache.deleteExpired(new Date(Date.now() - 86_400_000), 100), 1);
+    assert.equal(await cache.deleteExpired(new Date('2000-01-01T00:00:00Z'), 100), 1);
 
     // The identity is gone, so the next request recomputes and stores it again — an expired entry
     // costs one search, and the cache heals itself.

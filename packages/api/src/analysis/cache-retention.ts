@@ -28,9 +28,13 @@ export interface ExpiringAnalysisCache {
 }
 
 /**
- * The floor the adaptive batch size backs off to. Small enough that a single delete of this many
- * keyed rows fits inside any plausible statement timeout, so backing off always converges on a size
+ * The floor the adaptive batch size backs off towards. Small enough that a single delete of this
+ * many keyed rows fits inside any plausible statement timeout, so backing off converges on a size
  * that works rather than shrinking forever.
+ *
+ * It is a ceiling on the floor, never a floor on its own: a caller that configures a batch smaller
+ * than this means it, and backing "off" to something larger would make a failure send bigger
+ * statements than the configuration allows.
  */
 const MINIMUM_BATCH_SIZE = 25;
 
@@ -140,6 +144,11 @@ export class AnalysisCacheRetention {
     }
   }
 
+  /**
+   * The sweep itself, separated from {@link sweep} so the overlap guard has a single promise to
+   * hold: `sweep` records what is in flight, this does the work. Resolves rather than rejecting on
+   * failure, reporting through observability, because a timer has nowhere to put a rejection.
+   */
   private async runSweep(): Promise<number> {
     const before = new Date(this.now() - this.options.ttlMs);
     let deleted = 0;
@@ -158,7 +167,8 @@ export class AnalysisCacheRetention {
       return deleted;
     } catch (error) {
       this.consecutiveFailures += 1;
-      this.batchSize = Math.max(MINIMUM_BATCH_SIZE, Math.floor(this.batchSize / 2));
+      const floor = Math.min(MINIMUM_BATCH_SIZE, this.options.batchSize);
+      this.batchSize = Math.max(floor, Math.floor(this.batchSize / 2));
       this.options.observability.reportRetentionFailure(error, this.consecutiveFailures);
       // Whatever earlier batches deleted is already committed; the next tick continues from there.
       return deleted;

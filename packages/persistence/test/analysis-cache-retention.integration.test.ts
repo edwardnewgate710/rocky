@@ -37,6 +37,7 @@ const ANCIENT = '1999-01-01T00:00:00Z';
 const CUTOFF = new Date('2000-01-01T00:00:00Z');
 const ANCIENT_ROWS = `updated_at < TIMESTAMPTZ '2000-01-01'`;
 
+/** One analysis line, distinctive enough that a round trip cannot pass by accident. */
 function line(): EngineResult {
   return {
     multipv: 1,
@@ -56,6 +57,10 @@ function freshKey(): AnalysisKey {
 
 let migrated = false;
 
+/**
+ * Apply migrations once for the whole file rather than once per test. The runner holds an advisory
+ * lock so either is safe, but re-walking every migration per test only slows the Postgres CI job.
+ */
 async function ensureMigrated(pool: Pool): Promise<void> {
   if (migrated) return;
   await migrate(pool, join(process.cwd(), 'migrations'));
@@ -72,6 +77,10 @@ interface Fixture {
   surviving(): Promise<number>;
 }
 
+/**
+ * Run one test against a freshly namespaced set of cache rows, and remove them afterwards whether
+ * or not it passed — these suites share a database with every other integration file.
+ */
 async function withCache(run: (f: Fixture) => Promise<void>): Promise<void> {
   // A small pool per test: these suites share a server with every other integration file, and the
   // default of ten connections each is pressure none of them needs. Three, not two, because the
