@@ -161,6 +161,33 @@ test('insertion evicts the least recently used entry, and counts it', async () =
   assert.equal(await hot.get(key({ fen: 'a' }), { depth: 10 }), undefined, 'the oldest entry went first');
 });
 
+test('eviction gives up an expired entry before a live one', async () => {
+  // Deadlines are absolute but promotion is not, so the two orders diverge: a hit moves an entry to
+  // the tail without renewing it, and it can expire there while a newer live entry sits at the head.
+  // Evicting the head blindly would discard the entry that could still answer.
+  const clock = new ManualClock();
+  const delegate = new CountingDelegate();
+  const { observer, seen } = outcomes();
+  const hot = new HotAnalysisCache({ delegate, maxEntries: 2, ttlMs: 60_000, now: clock.now, observer });
+
+  await hot.set(key({ fen: 'old' }), results(10), { limits: { depth: 10 } }); // deadline t+60s
+  clock.advance(50_000);
+  await hot.set(key({ fen: 'new' }), results(10), { limits: { depth: 10 } }); // deadline t+110s
+  await hot.get(key({ fen: 'old' }), { depth: 10 }); // still live; promoted past 'new'
+
+  clock.advance(15_000); // 'old' is now expired; 'new' is not
+  await hot.set(key({ fen: 'third' }), results(10), { limits: { depth: 10 } });
+
+  assert.equal(hot.size, 2);
+  assert.notEqual(
+    await hot.get(key({ fen: 'new' }), { depth: 10 }),
+    undefined,
+    'the live entry must survive; only the expired one was dead weight',
+  );
+  assert.equal(seen.filter((o) => o === 'evicted').length, 0, 'this was expiry, not capacity pressure');
+  assert.equal(seen.filter((o) => o === 'expired').length, 1);
+});
+
 test('capacity cannot be exceeded, by writes or by durable-hit population', async () => {
   const delegate = new CountingDelegate(results(10));
   const hot = new HotAnalysisCache({ delegate, maxEntries: 3 });

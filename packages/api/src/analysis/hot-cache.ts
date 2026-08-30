@@ -290,13 +290,33 @@ export class HotAnalysisCache implements AnalysisCache {
   /**
    * Trim to capacity. Runs after every insertion — both the one in `set` and the durable-hit
    * population in `get` — because a bound only one write path enforces is not a bound.
+   *
+   * **An entry past its deadline is given up before a live one.** Deadlines are absolute and
+   * promotion is not, so the two orders diverge: a hit moves an entry to the tail without renewing
+   * it, and that entry can expire there while a newer, still-useful entry sits at the head. Evicting
+   * the head blindly would then discard the one that could still answer and leave dead weight
+   * resident — and would report the whole thing as `evicted`, overstating capacity pressure in
+   * exactly the counter `docs/OBSERVABILITY.md` offers for telling it apart from entries ageing out.
+   *
+   * The scan is O(n) and runs only while the tier is actually over its bound. At the 5,000-entry
+   * ceiling that is tens of microseconds, against a lookup whose alternative is a round trip bounded
+   * at 250ms — not worth a second index to avoid. Raised in the Qodo review of PR #19.
    */
   private evict(): void {
     while (this.entries.size > this.maxEntries) {
-      const oldest = this.entries.keys().next().value;
-      if (oldest === undefined) break;
-      this.entries.delete(oldest);
-      this.observe('evicted');
+      const now = this.now();
+      let victim: string | undefined;
+      for (const [candidate, entry] of this.entries) {
+        if (now >= entry.expiresAt) {
+          victim = candidate;
+          break;
+        }
+      }
+      const expired = victim !== undefined;
+      victim ??= this.entries.keys().next().value;
+      if (victim === undefined) break;
+      this.entries.delete(victim);
+      this.observe(expired ? 'expired' : 'evicted');
     }
   }
 
