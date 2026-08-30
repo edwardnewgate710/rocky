@@ -64,6 +64,13 @@ export class BoardView {
   private readonly onClick = (e: MouseEvent): void => this.handleClick(e);
   private readonly onPointerDown = (e: PointerEvent): void => this.handlePointerDown(e);
   private readonly onKeyDown = (e: KeyboardEvent): void => this.handleKeyDown(e);
+  /** Keep promotion dismissal available while focus is anywhere in the owning document. */
+  private readonly onPromotionKeyDown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape' || !this.overlay) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.cancelPromotion();
+  };
 
   constructor(root: HTMLElement, options: BoardViewOptions) {
     this.root = root;
@@ -88,6 +95,7 @@ export class BoardView {
    * anything rendered into markup that `bootstrap` re-runs over — must call this before remounting.
    */
   destroy(): void {
+    this.closeOverlay();
     this.root.removeEventListener('click', this.onClick);
     this.root.removeEventListener('pointerdown', this.onPointerDown);
     this.root.removeEventListener('keydown', this.onKeyDown);
@@ -95,9 +103,13 @@ export class BoardView {
 
   /** Set the position: updates both the rendered pieces and the interaction. */
   setPosition(fen: string): void {
-    this.pieces = parsePlacement(fen);
+    const nextPieces = parsePlacement(fen);
+    const restorePromotionFocus = this.overlay !== null;
+    this.closeOverlay();
+    this.pieces = nextPieces;
     this.interaction.setPosition(fen);
     this.render();
+    if (restorePromotionFocus) this.focusCurrentSquare();
   }
 
   /** Replace the last-move highlight, or clear it when the game has no last move. */
@@ -290,6 +302,7 @@ export class BoardView {
 
   private showPromotion(to: Square): void {
     this.closeOverlay();
+    this.focusedSquare = to;
     const color: Piece['color'] = rankIndex(to) === 7 ? 'w' : 'b';
     const overlay = document.createElement('div');
     overlay.className = 'cb-promotion';
@@ -314,19 +327,35 @@ export class BoardView {
     cancel.setAttribute('aria-label', 'Cancel promotion');
     cancel.addEventListener('click', (e) => {
       e.stopPropagation();
-      this.interaction.cancelPromotion();
-      this.closeOverlay();
-      this.render();
+      this.cancelPromotion();
     });
     overlay.appendChild(cancel);
     this.root.appendChild(overlay);
     this.overlay = overlay;
+    this.root.ownerDocument.addEventListener('keydown', this.onPromotionKeyDown, true);
     const first = overlay.querySelector('button');
     if (first instanceof HTMLElement) first.focus();
   }
 
+  /** Cancel the pending promotion and return keyboard focus to its destination square. */
+  private cancelPromotion(): void {
+    this.interaction.cancelPromotion();
+    this.closeOverlay();
+    this.render();
+    this.focusCurrentSquare();
+  }
+
+  /** Return focus to the board's current roving-focus square. */
+  private focusCurrentSquare(): void {
+    if (this.focusedSquare) {
+      this.root.querySelector<HTMLElement>(`[data-square="${this.focusedSquare}"]`)?.focus();
+    }
+  }
+
   private closeOverlay(): void {
-    this.overlay?.remove();
+    if (!this.overlay) return;
+    this.root.ownerDocument.removeEventListener('keydown', this.onPromotionKeyDown, true);
+    this.overlay.remove();
     this.overlay = null;
   }
 
