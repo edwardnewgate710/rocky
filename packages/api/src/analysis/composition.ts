@@ -20,6 +20,7 @@ import {
 } from '@chess-platform/engine';
 import { DEFAULT_MISTAKE_THRESHOLDS, MistakePredictor } from '@chess-platform/ai-features';
 import { coreFenValidator } from './fen-validator.js';
+import { MAX_HOT_CACHE_ENTRIES } from './hot-cache.js';
 import type { AnalysisLimitsPolicy } from './limits.js';
 import { DEFAULT_ANALYSIS_LIMITS } from './limits.js';
 import { AnalysisService } from './service.js';
@@ -65,11 +66,19 @@ export function analysisSettingsFromEnv(
   return {
     maxWorkers: parsePositiveInt(env['ANALYSIS_ENGINE_MAX_WORKERS'], 2),
     queueCapacity: parsePositiveInt(env['ANALYSIS_ENGINE_QUEUE_CAPACITY'], 32),
-    cacheEntries: parsePositiveInt(env['ANALYSIS_CACHE_ENTRIES'], 500),
+    cacheEntries: parsePositiveInt(env['ANALYSIS_CACHE_ENTRIES'], DEFAULT_CACHE_ENTRIES),
     threadsPerWorker: parsePositiveInt(env['ANALYSIS_ENGINE_THREADS'], 1),
     hashMbPerWorker: parsePositiveInt(env['ANALYSIS_ENGINE_HASH_MB'], 16),
   };
 }
+
+/**
+ * Analyses one process keeps in memory, shared by the engine's fallback LRU and the hot tier.
+ *
+ * Named once rather than repeated at the two call sites that read `ANALYSIS_CACHE_ENTRIES`, so the
+ * two tiers cannot drift into disagreeing about what an unset variable means.
+ */
+const DEFAULT_CACHE_ENTRIES = 500;
 
 /** Days a cache row survives without a stronger search replacing it, and the ceiling on that. */
 const DEFAULT_CACHE_TTL_DAYS = 30;
@@ -81,21 +90,33 @@ export interface AnalysisCacheSettings {
   readonly durable: boolean;
   /** Retention window, from the last time a stronger search replaced the row. */
   readonly ttlMs: number;
+  /**
+   * Entries the process-local hot tier may hold in front of the durable cache (ADR-0139).
+   *
+   * Read from `ANALYSIS_CACHE_ENTRIES`, the same variable {@link analysisSettingsFromEnv} reads for
+   * the engine's fallback LRU, because it is the same question: how many analyses this process keeps
+   * in memory. Only one of the two is ever live — the fallback exists when there is no durable
+   * cache, the hot tier exists when there is — so a deployment that tuned the number gets the number
+   * it tuned, whichever tier it lands on.
+   */
+  readonly hotEntries: number;
 }
 
 /**
- * Read the two settings the durable cache exposes, and no more.
+ * Read the settings the cache tier exposes, and no more.
  *
- * Everything else it needs — statement timeout, pool size, sweep interval and batch size — is a
- * hardcoded constant in `durable-cache.ts`, derived from bounds this codebase already states. They
- * are deliberately not configurable: each one is a safety bound whose only interesting values are
- * the derived one and a wrong one, and an operator raising the statement timeout "to reduce misses"
- * would be trading the guarantee the timeout exists to provide.
+ * Everything else it needs — statement timeout, pool size, sweep interval and batch size, and the
+ * hot tier's own TTL — is a hardcoded constant in `durable-cache.ts` or `hot-cache.ts`, derived from
+ * bounds this codebase already states. They are deliberately not configurable: each one is a safety
+ * bound whose only interesting values are the derived one and a wrong one, and an operator raising
+ * the statement timeout "to reduce misses" would be trading the guarantee the timeout exists to
+ * provide. The hot TTL is the same kind of number, and for a sharper reason — raising it is the one
+ * change that could let this process serve an analysis the retention policy meant to retire.
  *
  * The kill switch follows `SEARCH_ENABLED`'s `!== '0'` shape rather than inventing a second
- * convention, so an unset variable means on. The TTL is clamped rather than validated: this file
- * already resolves a bad number to the default everywhere else, and a retention window is not worth
- * refusing to boot over.
+ * convention, so an unset variable means on. Both numbers are clamped rather than validated: this
+ * file already resolves a bad number to the default everywhere else, and neither a retention window
+ * nor a cache size is worth refusing to boot over.
  */
 export function analysisCacheSettingsFromEnv(
   env: NodeJS.ProcessEnv = process.env,
@@ -107,6 +128,10 @@ export function analysisCacheSettingsFromEnv(
   return {
     durable: env['ANALYSIS_CACHE_DURABLE'] !== '0',
     ttlMs: days * MS_PER_DAY,
+    hotEntries: Math.min(
+      parsePositiveInt(env['ANALYSIS_CACHE_ENTRIES'], DEFAULT_CACHE_ENTRIES),
+      MAX_HOT_CACHE_ENTRIES,
+    ),
   };
 }
 

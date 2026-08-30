@@ -46,18 +46,40 @@ Metrics are exposed in standard Prometheus text format (`v0.0.4`) at `GET /v1/me
 - `http_request_duration_seconds` (histogram): Request latency in seconds bucketed across standard intervals (`0.005s` to `10s`), labeled by `route`.
 - Gateway counters: `gateway_connections_opened_total`, `gateway_messages_received_total`, `gateway_auth_failures_total`.
 
-#### Analysis cache (ADR-0138)
+#### Analysis cache (ADR-0138, ADR-0139)
 
-Two sources report, and they answer different questions — neither can be derived from the other.
+Three sources report, and they answer different questions — none can be derived from the others.
 
 - `analysis_cache_events_total` (counter), labeled `event`: what the **request** did, straight from the
   engine's orchestration events (`cache_hit`, `cache_miss`, `request_coalesced`,
   `engine_computation_started`, `cancellation`, and the rest).
 - `analysis_cache_lookup_seconds` (histogram), labeled `outcome` (`hit`, `miss`, `read_failure`):
   lookup latency.
+- `analysis_cache_hot_total` (counter), labeled `outcome` (`hit`, `miss`, `durable_hit`, `expired`,
+  `evicted`): which **tier** answered, and why an entry left memory.
 - `analysis_cache_faults_total` (counter), labeled `fault` (`read`, `write`, `payload`, `retention`):
   whether the **database** misbehaved.
 - `analysis_cache_retention_deleted_total` (counter): rows removed by the retention sweep.
+
+**`cache_hit` no longer means "PostgreSQL answered".** Since ADR-0139 a process-local hot tier sits in
+front of the durable cache behind the same port, so the orchestrator — which holds one cache and
+cannot see inside it — records `cache_hit` whether the answer came from this process's memory or from
+a round trip. `analysis_cache_hot_total` is what separates them. Exactly one of `hit` or `miss` is recorded per
+lookup, so `hit + miss` is the lookup count and `hit / (hit + miss)` is the hot tier's own hit rate;
+`durable_hit` and `expired` refine `miss` rather than adding to it.
+
+The bridge back to the orchestrator's own counters is exact, but it is not one-to-one, because
+`readCache` has two early returns that record neither `cache_hit` nor `cache_miss`:
+
+    hit + durable_hit  ==  cache_hit  + cache_result_rejected
+    miss - durable_hit ==  cache_miss + cache_read_failure
+
+Both correction terms are normally zero — a rejected payload means a tier returned something
+unusable, and a read failure means the cache threw rather than missing — so a persistent gap between
+the two sides is itself the signal that one of those is happening.
+`expired` against `evicted` says whether a rising miss rate is entries ageing out at the sixty-second
+deadline or capacity pressure against `ANALYSIS_CACHE_ENTRIES`; those two call for different
+responses, and no other series distinguishes them.
 
 A read that times out is absorbed too, so its latency lands in `analysis_cache_lookup_seconds{outcome="miss"}` and the `read_failure` series stays empty for a Postgres-backed cache. Miss latency percentiles therefore include absorbed database timeouts; `analysis_cache_faults_total{fault="read"}` is what says how many.
 

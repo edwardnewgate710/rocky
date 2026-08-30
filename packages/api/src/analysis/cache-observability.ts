@@ -32,6 +32,7 @@ import type {
 import type { AnalysisCacheFault } from '@chess-platform/persistence/pg';
 import type { Logger } from '../ports/logger';
 import type { Counter, Histogram, Metrics } from '../ports/metrics';
+import type { HotAnalysisCacheObserver, HotCacheOutcome } from './hot-cache';
 
 /** Consecutive failed sweeps before the retention log level rises from warn to error. */
 export const RETENTION_FAILURE_ESCALATION = 3;
@@ -50,6 +51,21 @@ const LOOKUP_OUTCOME: Partial<Record<AnalysisOrchestrationEvent['type'], LookupO
 
 /** What the fault counter is labelled with. `retention` is this layer's own, not the adapter's. */
 type FaultLabel = AnalysisCacheFault | 'retention';
+
+/**
+ * A third source, and the reason it needs its own series rather than a label on an existing one.
+ *
+ * With the hot tier in front of the durable one (ADR-0139), the orchestrator's `cache_hit` stops
+ * distinguishing "answered from this process's memory" from "answered by PostgreSQL" — both reach
+ * `record` as the same event, because the orchestrator holds one `AnalysisCache` and cannot see
+ * inside it. That single number is now the average of two very different things, and the operational
+ * questions worth asking are exactly the ones it can no longer answer: is the hot tier earning its
+ * memory, and is a rising miss rate capacity pressure or entries ageing out?
+ *
+ * `HotCacheOutcome` is a closed union declared beside the implementation, so this label set is fixed
+ * at build time in the same way every other label here is, and the signal carries no key, FEN,
+ * fingerprint, user or request id to leak.
+ */
 
 /**
  * Reduce an arbitrary thrown value to bounded, loggable primitives.
@@ -82,9 +98,12 @@ export interface AnalysisCacheObservabilityOptions {
  * resolves a series by name and labels on every call, and `record` is the hottest telemetry call in
  * the analysis path — one or more per request.
  */
-export class AnalysisCacheObservability implements AnalysisOrchestrationObserver {
+export class AnalysisCacheObservability
+  implements AnalysisOrchestrationObserver, HotAnalysisCacheObserver
+{
   private readonly events = new Map<string, Counter>();
   private readonly faults = new Map<string, Counter>();
+  private readonly hot = new Map<HotCacheOutcome, Counter>();
   private readonly lookups = new Map<LookupOutcome, Histogram>();
   private readonly retentionDeleted: Counter;
   private readonly logger: Logger;
@@ -122,6 +141,24 @@ export class AnalysisCacheObservability implements AnalysisOrchestrationObserver
     } else {
       this.logger.warn('analysis cache operation failed; serving without it', fields);
     }
+  }
+
+  /**
+   * Record one hot-tier outcome.
+   *
+   * Counted and never logged. This fires at least once per analysis request — more often than
+   * anything else in this class — so a log line here would be the noisiest in the process while
+   * saying nothing an operator could act on that the counter does not say better.
+   */
+  recordHotCache(outcome: HotCacheOutcome): void {
+    const existing = this.hot.get(outcome);
+    if (existing !== undefined) {
+      existing.inc();
+      return;
+    }
+    const counter = this.metrics.counter('analysis_cache_hot_total', { outcome });
+    this.hot.set(outcome, counter);
+    counter.inc();
   }
 
   /** Record a completed sweep. Debug, because a routine sweep is not news either. */

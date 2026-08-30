@@ -24,7 +24,7 @@ import {
   stockfishPlugin,
   type EngineResult,
 } from '@chess-platform/engine';
-import { createPool } from '@chess-platform/persistence/pg';
+import { createPool, PgAnalysisCache } from '@chess-platform/persistence/pg';
 import { createAnalysisCacheComposition } from '../src/analysis/durable-cache';
 import type { AnalysisCacheComposition } from '../src/analysis/composition';
 import { JsonLogger } from '../src/ports/logger';
@@ -71,7 +71,7 @@ function instance(options: { engineName?: string; connectionString?: string } = 
   const metrics = new InMemoryMetrics();
   const logger = new JsonLogger({}, { level: 'error', sink: () => {} });
   const tier = createAnalysisCacheComposition({
-    settings: { durable: true, ttlMs: 30 * 86_400_000 },
+    settings: { durable: true, ttlMs: 30 * 86_400_000, hotEntries: 500 },
     logger,
     metrics,
     connectionString: options.connectionString ?? DATABASE_URL,
@@ -333,6 +333,45 @@ test('a lookup that would hang is bounded by the pool the factory built', { skip
   }
 });
 
+/**
+ * The one thing the hot tier changes about durable behaviour, asserted rather than merely documented
+ * (ADR-0139 §3 and Consequences).
+ *
+ * A process that has cached a position answers from memory for up to `HOT_CACHE_TTL_MS` after the
+ * row behind it is gone. That is the whole of the staleness this tier can introduce: it is bounded,
+ * it does not grow with traffic, and it does not reach any other replica. Deleting the row outright
+ * is the strongest available form of "the durable tier no longer has this" — stronger than letting
+ * retention expire it — so if the bound ever stopped holding, this is where it would show.
+ */
+test('a hot entry outlives the row it came from, by a bounded amount', { skip }, async () => {
+  const node = instance();
+  const fen = freshFen();
+  const pool = createPool({ max: 1 });
+  try {
+    await analyze(node, fen);
+    assert.equal(node.searches(), 1);
+
+    await pool.query('DELETE FROM engine_analysis_cache WHERE fen = $1', [fen]);
+
+    await analyze(node, fen);
+    assert.equal(node.searches(), 1, 'memory answers without consulting the table it no longer needs');
+
+    // A process that never cached it sees the truth at once, so the staleness is this one process's
+    // memory and nothing wider — no other replica can inherit it.
+    const cold = instance();
+    try {
+      await analyze(cold, fen);
+      assert.equal(cold.searches(), 1, 'the row really is gone everywhere else');
+    } finally {
+      await cold.shutdown();
+    }
+  } finally {
+    await pool.query('DELETE FROM engine_analysis_cache WHERE fen = $1', [fen]).catch(() => {});
+    await pool.end();
+    await node.shutdown();
+  }
+});
+
 test('the retention sweep runs against the composed cache without disturbing it', { skip }, async () => {
   const node = instance();
   const fen = freshFen();
@@ -349,17 +388,34 @@ test('the retention sweep runs against the composed cache without disturbing it'
       `UPDATE engine_analysis_cache SET updated_at = TIMESTAMPTZ '1999-01-01' WHERE fen = $1`,
       [fen],
     );
-    const cache = node.tier.cache as unknown as {
-      deleteExpired(before: Date, limit: number): Promise<number>;
-    };
-    assert.equal(await cache.deleteExpired(new Date('2000-01-01T00:00:00Z'), 100), 1);
+    // Swept through the adapter, which is exactly what `AnalysisCacheRetention` holds in production:
+    // the durable half of the tier, not the hot cache in front of it (ADR-0139 §2). `deleteExpired`
+    // is the adapter's own and never was part of the `AnalysisCache` port.
+    const durable = new PgAnalysisCache(pool);
+    assert.equal(await durable.deleteExpired(new Date('2000-01-01T00:00:00Z'), 100), 1);
 
-    // The identity is gone, so the next request recomputes and stores it again — an expired entry
-    // costs one search, and the cache heals itself.
-    await analyze(node, fen);
-    assert.equal(node.searches(), 2, 'an expired row must not still answer');
-    await analyze(node, fen);
-    assert.equal(node.searches(), 2, 'and the recomputed row must be cached again');
+    // The identity is gone from the table, so a process that never cached it recomputes — an expired
+    // entry costs one search, and the cache heals itself. It is asked on a *fresh* instance because
+    // `node` still holds the position in its own hot tier; that entry outliving the row it came from
+    // is ADR-0139's bounded staleness, and the test below is where that is pinned.
+    const cold = instance();
+    try {
+      await analyze(cold, fen);
+      assert.equal(cold.searches(), 1, 'an expired row must not still answer');
+    } finally {
+      await cold.shutdown();
+    }
+
+    // And the recomputation really did land in the table, rather than only in the process that made
+    // it — which a second lookup on `cold` could not have shown, because its own hot tier would have
+    // answered before PostgreSQL was ever asked.
+    const reader = instance();
+    try {
+      await analyze(reader, fen);
+      assert.equal(reader.searches(), 0, 'the recomputed row must be durable, not merely in memory');
+    } finally {
+      await reader.shutdown();
+    }
   } finally {
     await pool.query('DELETE FROM engine_analysis_cache WHERE fen = $1', [fen]).catch(() => {});
     await pool.end();

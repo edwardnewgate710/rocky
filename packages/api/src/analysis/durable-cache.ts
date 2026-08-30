@@ -14,6 +14,7 @@ import type { Metrics } from '../ports/metrics';
 import { AnalysisCacheObservability } from './cache-observability';
 import { AnalysisCacheRetention } from './cache-retention';
 import type { AnalysisCacheComposition, AnalysisCacheSettings } from './composition';
+import { HOT_CACHE_TTL_MS, HotAnalysisCache } from './hot-cache';
 
 /**
  * Server-side bound on every cache statement, and on waiting for a connection to send one.
@@ -110,11 +111,21 @@ export function createAnalysisCacheComposition(
     connectionString: options.connectionString,
     ...ANALYSIS_CACHE_POOL_CONFIG,
   });
-  const cache = new PgAnalysisCache(pool, {
+  const durable = new PgAnalysisCache(pool, {
     onError: (fault, error) => observability.reportFault(fault, error),
   });
+  // The hot tier wraps the durable one and takes its place as the engine's cache, so every lookup
+  // tries memory before PostgreSQL (ADR-0139). Retention keeps hold of `durable` rather than the
+  // composite: `deleteExpired` is the adapter's own, off the request path, and belongs to the tier
+  // that actually owns rows. Routing it through the front tier would be asking a cache with no
+  // storage to sweep a table.
+  const cache = new HotAnalysisCache({
+    delegate: durable,
+    maxEntries: options.settings.hotEntries,
+    observer: observability,
+  });
   const retention = new AnalysisCacheRetention({
-    cache,
+    cache: durable,
     observability,
     ttlMs: options.settings.ttlMs,
     intervalMs: RETENTION_INTERVAL_MS,
@@ -125,6 +136,8 @@ export function createAnalysisCacheComposition(
   options.logger.info('analysis cache: durable tier composed', {
     ttlMs: options.settings.ttlMs,
     statementTimeoutMs: STATEMENT_TIMEOUT_MS,
+    hotEntries: options.settings.hotEntries,
+    hotTtlMs: HOT_CACHE_TTL_MS,
   });
 
   return {
@@ -137,6 +150,11 @@ export function createAnalysisCacheComposition(
       // the time this runs, or the last searches' writes would meet a closed pool — which is why
       // this hangs off the analysis shutdown handle rather than the process's pool teardown.
       await retention.stop();
+      // Dropped first, and synchronously, so "the cache tier is released" is true of both halves at
+      // the same instant. A hot entry outliving the pool would go on answering out of a tier whose
+      // durable half is gone — harmless to correctness, and exactly the sort of thing that makes an
+      // outage hard to read. The tier owns no timer and no handle, so this is the whole of it.
+      cache.clear();
       await pool.end();
     },
   };
