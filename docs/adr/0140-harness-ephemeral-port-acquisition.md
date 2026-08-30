@@ -104,6 +104,10 @@ listener is closed on the way out without masking the reason.
 
 - Both binding sites share one implementation; the duplicated set and loop in
   `auth-signin-schema.integration.test.ts` are gone.
+- `ApiServer.listen` now rejects on a failed bind. This is the one production
+  change here, and it is what makes the bounded, diagnosable failure above
+  actually true: the retry can only report a bind error if the listener it is
+  given rejects, and this one never did. See §5.
 - `startHarness` keeps its signature. No caller changes, and no test needs a
   workaround.
 - No fixed port is introduced anywhere in the harness path. The two cases that
@@ -169,12 +173,38 @@ Hypotheses examined and **refuted** with evidence:
 The leading unrefuted hypothesis is a process-level fault in the test child
 after module load and before the first test reports — a keep-alive socket to a
 closed harness erroring inside undici's pool, or an uncaught `'error'` event on
-an `http.Server`, which `packages/api/src/server.ts` does not listen for. That
-last one is a genuine latent fault: `ApiServer.listen` registers no `'error'`
-handler, so a failed bind both leaves its promise forever pending and raises an
-uncaught event. It is production code and outside this increment's scope, and it
-is recorded in `docs/ROADMAP.md` rather than changed here.
+an `http.Server`. **One instance of that second shape has now been fixed** (§5),
+and it produces exactly this signature when it fires: with the fix reverted, the
+regression test for it fails through an uncaught `ERR_UNHANDLED_ERROR` rather
+than an assertion. That makes it a plausible contributor, but not a
+demonstrated cause — signature B was reproduced on files doing no failing bind,
+and it was never observed to coincide with one. It stays open.
 
 Nothing above is strong enough to justify a fix, and a fix that cannot be shown
 to remove a reproduction is indistinguishable from a coincidence. Signature B
 stays open.
+
+## 5. `ApiServer.listen` rejects on a failed bind
+
+Raised by the Qodo review of PR #21 and **valid**. `packages/api/src/server.ts`
+built its promise as `new Promise((resolve) => …)` — no reject path — and
+attached no `'error'` listener to the server. A bind that fails asynchronously
+(`EADDRINUSE`, `EMFILE`) therefore did two bad things at once: the promise never
+settled, and the `'error'` event, having no handler anywhere, was re-raised as an
+uncaught exception.
+
+That is a defect on its own, and it also made §2's contract false. Retrying can
+only be bounded and diagnosable if the listener it is handed reports failure;
+`listenOnFetchablePort` would otherwise sit forever inside `await listen(...)`,
+never reaching its own attempt ceiling.
+
+The fix attaches a one-shot `'error'` listener that rejects, and removes it once
+the server is listening. Removing it matters: leaving it attached would let a
+`reject` on an already-settled promise silently swallow later server errors,
+which would be a quieter regression than the one being fixed. Post-listen errors
+therefore keep exactly the semantics they had before.
+
+This is a production change in an increment otherwise scoped to test helpers.
+It is included rather than deferred because the contract this ADR publishes is
+not true without it, it is three lines, and it strictly strengthens behaviour —
+before, a failed bind hung and crashed; after, it rejects.

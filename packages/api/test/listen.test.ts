@@ -13,7 +13,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
-import { connect } from 'node:net';
+import { connect, type AddressInfo } from 'node:net';
 import {
   DEFAULT_MAX_LISTEN_ATTEMPTS,
   FETCH_BLOCKED_PORTS,
@@ -339,6 +339,39 @@ test('concurrent harnesses never share a port', async () => {
     assert.deepEqual(statuses, [200, 200, 200]);
   } finally {
     await Promise.all(harnesses.map((h) => h.close()));
+  }
+});
+
+test('a bind that fails rejects, rather than hanging the acquisition it feeds', async () => {
+  // `listenOnFetchablePort` promises a bounded, diagnosable failure, and it can
+  // only keep that promise if the listener it is given rejects. `ApiServer.listen`
+  // reported a bind failure as an unhandled `error` event on the server and left
+  // its promise pending forever, so an EADDRINUSE or EMFILE hung the harness and
+  // took the process down instead. Raised by the Qodo review of PR #21.
+  const harness = await startHarness();
+  const blocker = createServer();
+  await new Promise<void>((resolve) => blocker.listen(0, HOST, resolve));
+  const taken = (blocker.address() as AddressInfo).port;
+
+  try {
+    // Raced against a deadline rather than simply awaited: the defect is a
+    // promise that never settles, and awaiting one of those hangs the whole run
+    // instead of reporting it. The timer is a reporting guard, not the thing
+    // under test — the assertion below still demands a real EADDRINUSE.
+    const HUNG = Symbol('hung');
+    const outcome = await Promise.race([
+      harness.server.listen(taken, HOST).then(
+        () => new Error('bind unexpectedly succeeded on a port already in use'),
+        (error: unknown) => error,
+      ),
+      new Promise<typeof HUNG>((resolve) => setTimeout(() => resolve(HUNG), 5000).unref()),
+    ]);
+
+    assert.notEqual(outcome, HUNG, 'a failed bind must settle the promise, not hang it');
+    assert.equal((outcome as NodeJS.ErrnoException).code, 'EADDRINUSE');
+  } finally {
+    await closeServer(blocker);
+    await harness.close();
   }
 });
 
