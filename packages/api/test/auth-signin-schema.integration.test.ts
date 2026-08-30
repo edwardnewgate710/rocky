@@ -39,7 +39,7 @@ import {
   migrate,
   migrationFiles,
   missingMigrations,
-  MIGRATIONS_DIR,
+  migrationsDir,
 } from '@chess-platform/persistence/pg';
 import type { Pool } from 'pg';
 import { createPgApiServer } from '../src/bootstrap';
@@ -80,8 +80,8 @@ const closeServer = (server: Server): Promise<void> =>
  */
 function migrationsThrough(count: number): { dir: string; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), 'signin-migrations-'));
-  for (const { file } of migrationFiles(MIGRATIONS_DIR).slice(0, count)) {
-    copyFileSync(join(MIGRATIONS_DIR, file), join(dir, file));
+  for (const { file } of migrationFiles(migrationsDir()).slice(0, count)) {
+    copyFileSync(join(migrationsDir(), file), join(dir, file));
   }
   return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
@@ -106,11 +106,16 @@ function databaseUrlFor(name: string): string {
  * for the test and dropped after it.
  */
 async function withSchema(run: (fixture: Fixture) => Promise<void>): Promise<void> {
-  const admin = createPool({ connectionString: DATABASE_URL });
+  // Both pools are capped well below `pg`'s default of ten. This file runs inside a suite that
+  // already holds a great many connections against one server, and a test that quietly opened twenty
+  // more would push the next file over `max_connections` — which surfaces as that file failing, not
+  // this one. Two is the floor rather than one: `migrate` holds the advisory lock on a dedicated
+  // client and runs its statements on another, so a single-connection pool deadlocks against itself.
+  const admin = createPool({ connectionString: DATABASE_URL, max: 2 });
   const database = `signin_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e9).toString(36)}`;
   await admin.query(`CREATE DATABASE "${database}"`);
 
-  const pool = createPool({ connectionString: databaseUrlFor(database) });
+  const pool = createPool({ connectionString: databaseUrlFor(database), max: 4 });
   // Errors only: a deliberately broken database is about to be exercised, and the point of these
   // tests is the status codes, not a wall of expected failure logging.
   const logger = new JsonLogger({}, { level: 'error', sink: () => {} });
@@ -175,7 +180,7 @@ test('an un-migrated database: sign-in is a server fault, and readiness admits i
   await withSchema(async ({ baseUrl, pool }) => {
     assert.equal(
       (await missingMigrations(pool)).length,
-      migrationFiles(MIGRATIONS_DIR).length,
+      migrationFiles(migrationsDir()).length,
       'nothing is applied yet, so every shipped migration is missing',
     );
 
@@ -241,8 +246,8 @@ test('a partially migrated database is not ready either', { skip }, async () => 
  */
 test('a migration still building its index concurrently does not make the API unready', { skip }, async () => {
   await withSchema(async ({ baseUrl, pool, migrateTo }) => {
-    await migrateTo(MIGRATIONS_DIR);
-    const latest = migrationFiles(MIGRATIONS_DIR).at(-1)?.version;
+    await migrateTo(migrationsDir());
+    const latest = migrationFiles(migrationsDir()).at(-1)?.version;
     assert.ok(latest !== undefined);
 
     await pool.query("UPDATE schema_migrations SET state = 'pending' WHERE version = $1", [latest]);
@@ -258,7 +263,7 @@ test('a migration still building its index concurrently does not make the API un
  */
 test('a fully migrated database is ready, and signs in', { skip }, async () => {
   await withSchema(async ({ baseUrl, pool, migrateTo }) => {
-    await migrateTo(MIGRATIONS_DIR);
+    await migrateTo(migrationsDir());
     assert.deepEqual(await missingMigrations(pool), []);
 
     assert.equal((await fetch(`${baseUrl}/v1/ready`)).status, 200);

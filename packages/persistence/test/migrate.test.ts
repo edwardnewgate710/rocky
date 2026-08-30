@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import {
   canonicalizeMigrationSql,
   migrationChecksum,
+  migrationFiles,
+  migrationsDir,
   parseMigration,
   readMigrationSql,
 } from '../src/pg/migrate';
@@ -249,5 +251,34 @@ test('every committed migration parses the same from a CRLF checkout', () => {
       migrationChecksum(readAsMigration(raw, file)),
       `${file} hashes differently from a CRLF checkout`,
     );
+  }
+});
+
+/**
+ * Locating the migrations directory is something you ask for, never something importing this module
+ * does to you.
+ *
+ * The distinction is a production crash, not a style preference. The `pg` barrel re-exports this
+ * module, and the gateway imports that barrel for `createPool` and `PostgresEventStore` while its
+ * image copies this package's `dist` without its `migrations` — so a module-level resolution that
+ * throws would have taken the gateway down before its server started, over a directory it has no use
+ * for. Raised by Qodo on the PR that added the resolver.
+ */
+test('the migrations directory is resolved on demand, not at import', () => {
+  // Importing this module already happened, at the top of the file, and did not throw — which is the
+  // property under test. Asked directly, the resolver still answers.
+  assert.ok(migrationFiles(migrationsDir()).length > 0);
+});
+
+test('a tree with no migrations directory reports that, rather than resolving to something wrong', () => {
+  const empty = mkdtempSync(join(tmpdir(), 'no-migrations-'));
+  try {
+    assert.throws(
+      () => migrationsDir(empty),
+      /cannot locate the migrations directory/,
+      'a wrong answer here would point the runner at the wrong SQL',
+    );
+  } finally {
+    rmSync(empty, { recursive: true, force: true });
   }
 });

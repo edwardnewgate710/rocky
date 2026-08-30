@@ -78,6 +78,8 @@ export function migrationFiles(dir: string): readonly { readonly file: string; r
     });
 }
 
+let resolvedMigrationsDir: string | undefined;
+
 /**
  * The `migrations/` directory shipped alongside this package.
  *
@@ -86,18 +88,36 @@ export function migrationFiles(dir: string): readonly { readonly file: string; r
  * `/app`, `npm run migrate` runs from `packages/persistence`, and the test build sits one level
  * deeper again under `dist-test/`. Anchoring on the compiled file's own location is the one thing
  * true in all three.
+ *
+ * **A function, and not a module-level constant.** Resolving this at import time would throw inside
+ * the `pg` barrel, and the barrel is imported by things that never migrate anything: the gateway
+ * loads it for `createPool` and `PostgresEventStore`, and its image copies this package's `dist`
+ * without its `migrations`. A constant would therefore have turned a missing directory the gateway
+ * has no use for into a crash before its server ever started. Resolution is memoized on success
+ * only, so the repeated calls a readiness probe makes cost one `existsSync` walk in total, while a
+ * failure stays a failure rather than being cached as one.
+ *
+ * Raised by Qodo on this PR.
+ *
+ * `from` exists so the walk can be exercised against a tree that has no migrations, and only the
+ * default resolution is memoized — a cache that answered for an explicitly supplied root would make
+ * the argument a lie, and did, until this test caught it.
  */
-export const MIGRATIONS_DIR: string = (() => {
-  let dir = __dirname;
+export function migrationsDir(from?: string): string {
+  if (from === undefined && resolvedMigrationsDir !== undefined) return resolvedMigrationsDir;
+  let dir = from ?? __dirname;
   for (let up = 0; up < 6; up++) {
     const candidate = join(dir, 'migrations');
-    if (existsSync(join(candidate, '0001_init.sql'))) return candidate;
+    if (existsSync(join(candidate, '0001_init.sql'))) {
+      if (from === undefined) resolvedMigrationsDir = candidate;
+      return candidate;
+    }
     const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
   throw new MigrationError('cannot locate the migrations directory shipped with this package');
-})();
+}
 
 /**
  * Which shipped migrations the database has no record of.
@@ -119,7 +139,7 @@ export const MIGRATIONS_DIR: string = (() => {
  */
 export async function missingMigrations(
   pool: Pool,
-  dir: string = MIGRATIONS_DIR,
+  dir: string = migrationsDir(),
 ): Promise<readonly number[]> {
   const shipped = migrationFiles(dir).map((m) => m.version);
   const ledger = await pool.query<{ present: boolean }>(
