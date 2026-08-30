@@ -57,6 +57,12 @@ export interface HotAnalysisCacheObserver {
  * It is a constant rather than a setting for the reason `durable-cache.ts` gives about the statement
  * timeout: this is a safety bound, and its only interesting values are the derived one and a wrong
  * one. An operator raising it "to improve the hit rate" would be trading away the guarantee.
+ *
+ * There is deliberately no constructor override either — not even a test seam. A seam here would be
+ * a way for any caller to set a deadline longer than the retention window, which is the one thing
+ * this bound exists to prevent, and "no production caller passes it" is a convention rather than a
+ * guarantee. Tests drive expiry through the injected clock instead, which reaches every case an
+ * adjustable TTL would. Raised in the CodeRabbit review of PR #19.
  */
 export const HOT_CACHE_TTL_MS = 60_000;
 
@@ -108,8 +114,6 @@ export interface HotAnalysisCacheOptions {
   /** The durable tier. Every miss goes here, and every write still reaches it. */
   readonly delegate: AnalysisCache;
   readonly maxEntries: number;
-  /** Seam for tests; production uses {@link HOT_CACHE_TTL_MS}. */
-  readonly ttlMs?: number;
   /**
    * Elapsed-time source. Seam for tests; production uses a monotonic clock — see the note on
    * {@link HotAnalysisCache} for why this one does not follow `SystemClock` in using the wall clock.
@@ -142,7 +146,6 @@ export class HotAnalysisCache implements AnalysisCache {
   private readonly entries = new Map<string, HotEntry>();
   private readonly delegate: AnalysisCache;
   private readonly maxEntries: number;
-  private readonly ttlMs: number;
   private readonly now: () => number;
   private readonly observer: HotAnalysisCacheObserver | undefined;
 
@@ -150,13 +153,8 @@ export class HotAnalysisCache implements AnalysisCache {
     if (!Number.isSafeInteger(options.maxEntries) || options.maxEntries < 1) {
       throw new RangeError('maxEntries must be a positive integer');
     }
-    const ttlMs = options.ttlMs ?? HOT_CACHE_TTL_MS;
-    if (!Number.isSafeInteger(ttlMs) || ttlMs < 1) {
-      throw new RangeError('ttlMs must be a positive integer');
-    }
     this.delegate = options.delegate;
     this.maxEntries = options.maxEntries;
-    this.ttlMs = ttlMs;
     this.now = options.now ?? (() => performance.now());
     this.observer = options.observer;
   }
@@ -299,7 +297,7 @@ export class HotAnalysisCache implements AnalysisCache {
     this.entries.set(keyString, {
       value: freezeResults(value),
       limits: stored,
-      expiresAt: now + this.ttlMs,
+      expiresAt: now + HOT_CACHE_TTL_MS,
     });
     this.evict();
   }

@@ -96,8 +96,13 @@ export interface AnalysisCacheSettings {
    * Read from `ANALYSIS_CACHE_ENTRIES`, the same variable {@link analysisSettingsFromEnv} reads for
    * the engine's fallback LRU, because it is the same question: how many analyses this process keeps
    * in memory. Only one of the two is ever live — the fallback exists when there is no durable
-   * cache, the hot tier exists when there is — so a deployment that tuned the number gets the number
-   * it tuned, whichever tier it lands on.
+   * cache, the hot tier exists when there is.
+   *
+   * The two do not resolve it identically, and the difference is worth stating: the fallback takes
+   * the configured number as given, while this one is `min(configured, MAX_HOT_CACHE_ENTRIES)`. The
+   * hot tier sits in a process that is also holding engine workers and a connection pool, so it is
+   * the one that gets a ceiling. A deployment below that ceiling — which is every plausible one —
+   * sees the number it tuned on both paths.
    */
   readonly hotEntries: number;
 }

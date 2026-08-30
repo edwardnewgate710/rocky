@@ -168,7 +168,7 @@ test('eviction gives up an expired entry before a live one', async () => {
   const clock = new ManualClock();
   const delegate = new CountingDelegate();
   const { observer, seen } = outcomes();
-  const hot = new HotAnalysisCache({ delegate, maxEntries: 2, ttlMs: 60_000, now: clock.now, observer });
+  const hot = new HotAnalysisCache({ delegate, maxEntries: 2, now: clock.now, observer });
 
   await hot.set(key({ fen: 'old' }), results(10), { limits: { depth: 10 } }); // deadline t+60s
   clock.advance(50_000);
@@ -209,7 +209,6 @@ test('an entry stops answering once its deadline passes, and is not returned', a
   const hot = new HotAnalysisCache({
     delegate,
     maxEntries: 10,
-    ttlMs: 60_000,
     now: clock.now,
     observer,
   });
@@ -234,7 +233,7 @@ test('an entry stops answering once its deadline passes, and is not returned', a
 test('the deadline is absolute: reading an entry a thousand times does not extend it', async () => {
   const clock = new ManualClock();
   const delegate = new CountingDelegate(results(10));
-  const hot = new HotAnalysisCache({ delegate, maxEntries: 10, ttlMs: 60_000, now: clock.now });
+  const hot = new HotAnalysisCache({ delegate, maxEntries: 10, now: clock.now });
 
   await hot.get(key(), { depth: 10 });
   // The durable tier goes quiet, so nothing can refill the entry and every later answer must have
@@ -279,7 +278,7 @@ test('the deadline holds even when the clock reading moves backwards', async () 
   // what pins the production clock itself.
   const clock = new ManualClock();
   const delegate = new CountingDelegate(results(10));
-  const hot = new HotAnalysisCache({ delegate, maxEntries: 10, ttlMs: 60_000, now: clock.now });
+  const hot = new HotAnalysisCache({ delegate, maxEntries: 10, now: clock.now });
 
   await hot.get(key(), { depth: 10 });
   delegate.answer = undefined;
@@ -349,7 +348,6 @@ test('an expired incumbent does not block its replacement, and is counted as exp
   const hot = new HotAnalysisCache({
     delegate: new CountingDelegate(),
     maxEntries: 10,
-    ttlMs: 60_000,
     now: clock.now,
     observer,
   });
@@ -495,11 +493,23 @@ test('a throwing observer cannot take the cache down with it', async () => {
   assert.deepEqual(await hot.get(key(), { depth: 10 }), results(10));
 });
 
-test('the tier refuses a capacity or deadline it cannot honour', () => {
+test('the tier refuses a capacity it cannot honour', () => {
   const delegate = new CountingDelegate();
   assert.throws(() => new HotAnalysisCache({ delegate, maxEntries: 0 }), RangeError);
   assert.throws(() => new HotAnalysisCache({ delegate, maxEntries: 1.5 }), RangeError);
-  assert.throws(() => new HotAnalysisCache({ delegate, maxEntries: 10, ttlMs: 0 }), RangeError);
+});
+
+/**
+ * There is no way to lengthen the deadline, which is the point: a constructor override would be a
+ * route to a hot entry outliving the retention window, and "no production caller passes it" is a
+ * convention rather than a guarantee. Asserted at the source, because a re-added option that nothing
+ * happens to pass would leave every behavioural test green.
+ */
+test('the deadline cannot be overridden by a caller', () => {
+  const source = readFileSync(resolve(__dirname, '..', '..', 'src/analysis/hot-cache.ts'), 'utf8');
+  // The knob, not the word: line 50 names the durable tier's `ttlMs` in prose, which is fine.
+  assert.doesNotMatch(source, /readonly ttlMs|this\.ttlMs|options\.ttlMs/, 'no TTL knob may exist');
+  assert.match(source, /expiresAt: now \+ HOT_CACHE_TTL_MS/, 'the deadline comes from the constant');
 });
 
 test('clear releases everything the tier holds', async () => {
