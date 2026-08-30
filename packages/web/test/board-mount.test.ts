@@ -123,6 +123,7 @@ class FakePromotionElement {
   }
 }
 
+/** Build the smallest DOM seam needed to exercise promotion focus through the public board mount. */
 function promotionBoardHarness() {
   const listeners = new Map<string, Set<(event: never) => void>>();
   const focusedSquares = new Map<string, FakePromotionElement>();

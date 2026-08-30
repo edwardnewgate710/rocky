@@ -330,6 +330,7 @@ export class BoardView {
     if (first instanceof HTMLElement) first.focus();
   }
 
+  /** Cancel the pending promotion and return keyboard focus to its destination square. */
   private cancelPromotion(): void {
     this.interaction.cancelPromotion();
     this.closeOverlay();
