@@ -101,6 +101,18 @@ await server.listen(Number(process.env.PORT ?? 8080));
 
 Or run the bundled entrypoint: `npm run serve`.
 
+**Migrate first.** Neither of these applies migrations — only the container image does, from
+`Dockerfile.api`'s `CMD`, and Kubernetes from the chart's `migrate` init container. Started by hand
+against a database that has never been migrated, the API boots and answers `GET /v1/health`, and
+then every request that touches the schema fails: `POST /v1/auth/login` rate-limits before it
+authenticates, so it dies on `rate_limit_buckets` (migration 0004) with a 500 that says nothing
+about the cause. `GET /v1/ready` is the one that will tell you — it returns 503 until the schema
+matches this build. Run the canonical runner first:
+
+```bash
+DATABASE_URL=... npm run migrate --workspace @chess-platform/persistence
+```
+
 ## Build, test, publish spec
 
 ```bash

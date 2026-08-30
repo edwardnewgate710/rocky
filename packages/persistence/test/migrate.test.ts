@@ -1,11 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   canonicalizeMigrationSql,
   migrationChecksum,
+  migrationFiles,
+  migrationsDir,
   parseMigration,
   readMigrationSql,
 } from '../src/pg/migrate';
@@ -249,5 +261,102 @@ test('every committed migration parses the same from a CRLF checkout', () => {
       migrationChecksum(readAsMigration(raw, file)),
       `${file} hashes differently from a CRLF checkout`,
     );
+  }
+});
+
+/**
+ * Locating the migrations directory is something you ask for, never something importing this module
+ * does to you.
+ *
+ * The distinction is a production crash, not a style preference. The `pg` barrel re-exports this
+ * module, and the gateway imports that barrel for `createPool` and `PostgresEventStore` while its
+ * image copies this package's `dist` without its `migrations` — so a module-level resolution that
+ * throws would have taken the gateway down before its server started, over a directory it has no use
+ * for. Raised by Qodo on the PR that added the resolver.
+ *
+ * Asserting this from inside this suite proves nothing: the walk starts at the module and would find
+ * the real `migrations/` from here whether it ran at import or on demand, so an eager version would
+ * pass too. That was the first version of this test, and CodeRabbit was right to reject it. So the
+ * compiled module is copied — with the one sibling it requires, and nothing else, because it imports
+ * `pg` only as a type — into a tree that has no `migrations/` above it, and loaded in a separate
+ * process. That tree is the gateway image, in miniature.
+ *
+ * The copy is taken from `dist-test/src`, the output this file's own compile produces, rather than
+ * from `dist`. `npm test --workspace @chess-platform/persistence` builds only `dist-test`, so
+ * reading `dist` made the documented package test command fail on a clean checkout, and passed only
+ * because CI happens to run a full build first. Raised by Qodo on this PR.
+ */
+test('the migrations directory is resolved on demand, not at import', () => {
+  const compiled = join(__dirname, '..', 'src');
+  assert.ok(
+    existsSync(join(compiled, 'pg', 'migrate.js')),
+    `this test reads its own compiled output, which npm test produces`,
+  );
+
+  const tree = mkdtempSync(join(tmpdir(), 'gateway-shaped-'));
+  try {
+    mkdirSync(join(tree, 'pg'));
+    copyFileSync(join(compiled, 'errors.js'), join(tree, 'errors.js'));
+    copyFileSync(join(compiled, 'pg', 'migrate.js'), join(tree, 'pg', 'migrate.js'));
+
+    const probe = [
+      'const m = require(process.argv[1]);',
+      "process.stdout.write('IMPORTED;');",
+      'try { m.migrationsDir(); process.stdout.write("RESOLVED:" + m.migrationsDir()); }',
+      'catch (error) { process.stdout.write("THREW:" + error.message); }',
+    ].join('');
+    const out = execFileSync(process.execPath, ['-e', probe, join(tree, 'pg', 'migrate.js')], {
+      encoding: 'utf8',
+    });
+
+    assert.match(out, /^IMPORTED;/, 'loading the module must not depend on a migrations directory');
+    assert.match(
+      out,
+      /THREW:cannot locate the migrations directory/,
+      'and asking for one that is not there must say so, rather than resolving to something wrong',
+    );
+  } finally {
+    rmSync(tree, { recursive: true, force: true });
+  }
+});
+
+test('the resolver finds the directory this package ships', () => {
+  assert.ok(migrationFiles(migrationsDir()).length > 0);
+});
+
+test('a tree with no migrations directory reports that, rather than resolving to something wrong', () => {
+  const empty = mkdtempSync(join(tmpdir(), 'no-migrations-'));
+  try {
+    assert.throws(
+      () => migrationsDir(empty),
+      /cannot locate the migrations directory/,
+      'a wrong answer here would point the runner at the wrong SQL',
+    );
+  } finally {
+    rmSync(empty, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Two files cannot both be migration 4.
+ *
+ * The version is the ledger's primary key and the only thing `missingMigrations` compares, so a
+ * duplicate would let one applied row answer for two files: the second would never run and readiness
+ * would still call the schema complete. Rejected where the list is built, rather than left for the
+ * runner to report as a checksum violation of an unrelated file. Raised by CodeRabbit.
+ */
+test('two migrations cannot claim the same version', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'duplicate-version-'));
+  try {
+    writeFileSync(join(dir, '0004_rate_limit.sql'), 'CREATE TABLE a (id INT);\n');
+    writeFileSync(join(dir, '0004_extra.sql'), 'CREATE TABLE b (id INT);\n');
+
+    assert.throws(
+      () => migrationFiles(dir),
+      /duplicate migration version 4/,
+      'a second file numbered 4 would otherwise be reported as applied without ever running',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

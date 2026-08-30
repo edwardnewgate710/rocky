@@ -35,6 +35,7 @@ import {
   PgStudiesRepository,
   PgLearningRepository,
   PgStudyPartnerRepository,
+  missingMigrations,
 } from '@chess-platform/persistence/pg';
 import { HashingEmbeddingProvider, SEARCH_EMBEDDING_DIMENSIONS } from '@chess-platform/search';
 import type { EmbeddingProvider, SearchRepository, SemanticSearchRepository } from '@chess-platform/search';
@@ -487,8 +488,35 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
     logger,
     metrics,
     tracer,
+    /**
+     * Ready means the database can answer, and that it holds the schema this build was written
+     * against. `SELECT 1` alone proved only the first.
+     *
+     * The difference is not academic — it is the sign-in 500 this check was added for. A reachable
+     * but un-migrated database has no `rate_limit_buckets` (migration 0004), so `POST /v1/auth/login`
+     * dies with `undefined_table` in the rate limiter before it ever reaches a credential, and every
+     * other rate-limited route with it. Under `SELECT 1` the probe called that instance ready:
+     * measured against a real server, `GET /v1/ready` returned 200 on a database with no schema at
+     * all and on one migrated to 3 of 27. That answer is what admits traffic to a Kubernetes pod and
+     * what releases the gateway's and the search indexer's `wait-for-api` init containers, and the
+     * chart's migrate init container is behind a toggle — so nothing else was standing between a
+     * skipped migration and a fleet serving 500s.
+     *
+     * Failing here is deliberately the *safer* direction. A pod that stays NotReady keeps traffic on
+     * whichever pods can serve it and stalls a bad rollout into a rollback; the alternative is
+     * admitting traffic that is certain to fail. The reason is logged rather than returned, because
+     * `/v1/ready` is public and how far behind a deployment's schema is, is not a stranger's business.
+     */
     readiness: async () => {
       await pool.query('SELECT 1');
+      const missing = await missingMigrations(pool);
+      if (missing.length > 0) {
+        logger.error('database schema is behind this build', {
+          missingCount: missing.length,
+          firstMissingVersion: missing[0],
+        });
+        throw new Error('database schema is not migrated');
+      }
     },
   };
 

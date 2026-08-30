@@ -15,8 +15,8 @@
  */
 
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { Pool, PoolClient } from 'pg';
 import { MigrationError } from '../errors';
 
@@ -59,6 +59,117 @@ const MIGRATION_ADVISORY_LOCK_KEY = 4915219603172;
  * checkout can produce. Git does not double-convert — a blob that already holds
  * CRLF is checked out unchanged rather than as `\r\r\n` — so one pass is enough.
  */
+/**
+ * The migrations this package ships, ordered, with the version each filename declares.
+ *
+ * The `NNNN_` prefix is the only thing that orders a migration and the only thing that identifies
+ * it in the ledger, so it is parsed in exactly one place. {@link runMigrations} and
+ * {@link missingMigrations} both read the directory, and a second copy of this rule is how the
+ * runner and the readiness check would come to disagree about what "migration 4" means.
+ */
+export function migrationFiles(dir: string): readonly { readonly file: string; readonly version: number }[] {
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith('.sql'))
+    .sort()
+    .map((file) => {
+      const match = /^(\d+)_/.exec(file);
+      if (!match) throw new MigrationError(`invalid migration filename: ${file}`);
+      return { file, version: parseInt(match[1]!, 10) };
+    });
+
+  // The version is the migration's identity — it is the ledger's primary key and the only thing
+  // {@link missingMigrations} compares. Two files claiming the same number would make one ledger row
+  // answer for both, so a migration that never ran would read as applied and readiness would say the
+  // schema is complete. The runner reaches the same conclusion by a stranger route, reporting the
+  // second file as a checksum violation of the first, which describes the symptom rather than the
+  // mistake. Raised by CodeRabbit on this PR.
+  const seen = new Map<number, string>();
+  for (const { file, version } of files) {
+    const first = seen.get(version);
+    if (first !== undefined) {
+      throw new MigrationError(
+        `duplicate migration version ${version}: ${first} and ${file} cannot both be migration ${version}`,
+      );
+    }
+    seen.set(version, file);
+  }
+  return files;
+}
+
+let resolvedMigrationsDir: string | undefined;
+
+/**
+ * The `migrations/` directory shipped alongside this package.
+ *
+ * Found by walking up from this module rather than from `process.cwd()`, because the callers do not
+ * agree on a working directory: the API image runs `node packages/api/dist/scripts/serve.js` from
+ * `/app`, `npm run migrate` runs from `packages/persistence`, and the test build sits one level
+ * deeper again under `dist-test/`. Anchoring on the compiled file's own location is the one thing
+ * true in all three.
+ *
+ * **A function, and not a module-level constant.** Resolving this at import time would throw inside
+ * the `pg` barrel, and the barrel is imported by things that never migrate anything: the gateway
+ * loads it for `createPool` and `PostgresEventStore`, and its image copies this package's `dist`
+ * without its `migrations`. A constant would therefore have turned a missing directory the gateway
+ * has no use for into a crash before its server ever started. Resolution is memoized on success
+ * only, so the repeated calls a readiness probe makes cost one `existsSync` walk in total, while a
+ * failure stays a failure rather than being cached as one.
+ *
+ * Raised by Qodo on this PR.
+ *
+ * `from` exists so the walk can be exercised against a tree that has no migrations, and only the
+ * default resolution is memoized — a cache that answered for an explicitly supplied root would make
+ * the argument a lie, and did, until this test caught it.
+ */
+export function migrationsDir(from?: string): string {
+  if (from === undefined && resolvedMigrationsDir !== undefined) return resolvedMigrationsDir;
+  let dir = from ?? __dirname;
+  for (let up = 0; up < 6; up++) {
+    const candidate = join(dir, 'migrations');
+    if (existsSync(join(candidate, '0001_init.sql'))) {
+      if (from === undefined) resolvedMigrationsDir = candidate;
+      return candidate;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  throw new MigrationError('cannot locate the migrations directory shipped with this package');
+}
+
+/**
+ * Which shipped migrations the database has no record of.
+ *
+ * This is the question a readiness probe needs answered and `SELECT 1` cannot answer: the server can
+ * be reachable, authenticated and completely empty. A database missing migration 4 has no
+ * `rate_limit_buckets`, so every rate-limited route — sign-in first among them — fails with
+ * `undefined_table` the moment it is asked for.
+ *
+ * **Presence, not state, and not checksums.** A row in `pending` counts as present: that state
+ * belongs to an online index whose table already exists and whose `CREATE INDEX CONCURRENTLY` may
+ * legitimately run for an hour, and refusing traffic for that hour would defeat the point of
+ * building it concurrently. Checksums are deliberately not compared either — {@link migrate} already
+ * owns immutability, and it rewrites legacy checksums in place, so a probe that compared them would
+ * refuse a database that is correct but has not been re-migrated since that fix.
+ *
+ * A missing `schema_migrations` table means nothing has been applied, which is reported as every
+ * version missing rather than as an error, because "not migrated" is exactly what it is.
+ */
+export async function missingMigrations(
+  pool: Pool,
+  dir: string = migrationsDir(),
+): Promise<readonly number[]> {
+  const shipped = migrationFiles(dir).map((m) => m.version);
+  const ledger = await pool.query<{ present: boolean }>(
+    "SELECT to_regclass('schema_migrations') IS NOT NULL AS present",
+  );
+  if (ledger.rows[0]?.present !== true) return shipped;
+
+  const applied = await pool.query<{ version: number }>('SELECT version FROM schema_migrations');
+  const recorded = new Set(applied.rows.map((row) => row.version));
+  return shipped.filter((version) => !recorded.has(version));
+}
+
 export function canonicalizeMigrationSql(raw: string): string {
   return raw.replace(/\r\n/g, '\n');
 }
@@ -166,6 +277,15 @@ export async function migrate(pool: Pool, dir: string): Promise<number> {
   }
 }
 
+/**
+ * The walk itself: ensure the ledger exists, then apply every file the database has no record of.
+ *
+ * Separated from {@link migrate} because the advisory lock is that function's whole job — this one
+ * assumes it is already held and may therefore read `schema_migrations`, decide what is outstanding,
+ * and write to it without racing another booting instance. The ledger is created here rather than in
+ * a migration because it is the thing that records migrations, and the `ADD COLUMN IF NOT EXISTS`
+ * below is how a ledger written before online indexes existed acquires the `state` column.
+ */
 async function runMigrations(pool: Pool, dir: string): Promise<number> {
   await pool.query(
     `CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -181,9 +301,7 @@ async function runMigrations(pool: Pool, dir: string): Promise<number> {
        ADD COLUMN IF NOT EXISTS state TEXT NOT NULL DEFAULT 'applied'`,
   );
 
-  const files = readdirSync(dir)
-    .filter((f) => f.endsWith('.sql'))
-    .sort();
+  const files = migrationFiles(dir);
 
   const applied = await pool.query<AppliedRow>(
     'SELECT version, name, checksum, state FROM schema_migrations',
@@ -191,10 +309,7 @@ async function runMigrations(pool: Pool, dir: string): Promise<number> {
   const byVersion = new Map<number, AppliedRow>(applied.rows.map((r) => [r.version, r]));
 
   let count = 0;
-  for (const file of files) {
-    const match = /^(\d+)_/.exec(file);
-    if (!match) throw new MigrationError(`invalid migration filename: ${file}`);
-    const version = parseInt(match[1]!, 10);
+  for (const { file, version } of files) {
     const sql = readMigrationSql(dir, file);
     const checksum = migrationChecksum(sql);
     const migration = parseMigration(sql);
