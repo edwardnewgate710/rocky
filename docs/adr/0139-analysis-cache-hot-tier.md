@@ -76,6 +76,15 @@ coherent is that the hot deadline is strictly shorter than any retention window,
 only ever be a bounded-staleness view of what the durable tier would have returned at insertion. A
 test asserts the two orders of magnitude directly, so the relationship cannot silently invert.
 
+**The deadline is measured on a monotonic clock**, which is the one place this subsystem departs from
+`SystemClock`. The engine's `Clock` documents "wall clock is fine", and for a watchdog it is — a
+backward step makes a timeout fire late and the next tick corrects it. Here the deadline is not a
+timeout but the bound this whole section rests on, so a wall clock that steps back an hour would hold
+entries an hour past a deadline this ADR calls absolute. `performance.now()` counts from process
+start and no NTP correction moves it. Nothing in this tier compares against a stored timestamp — the
+durable tier's `updated_at` comparison stays on the wall clock where it belongs, because that one
+really is comparing against a recorded time. Raised in the CodeRabbit review of PR #19.
+
 ### 4. Capacity reuses `ANALYSIS_CACHE_ENTRIES`, clamped
 
 The hot tier holds at most `settings.hotEntries`, read from the same `ANALYSIS_CACHE_ENTRIES` the

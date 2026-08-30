@@ -20,6 +20,8 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   EngineManager,
   FakeEngineTransport,
@@ -89,6 +91,7 @@ class CountingDelegate implements AnalysisCache {
 class ManualClock {
   private value = 1_000;
   readonly now = (): number => this.value;
+  /** Signed, so a test can drive the seam backwards the way an NTP step would a wall clock. */
   advance(ms: number): void {
     this.value += ms;
   }
@@ -221,6 +224,43 @@ test('the deadline is absolute: reading an entry a thousand times does not exten
 
   // Reads land at 1s..120s after insertion; the entry answers exactly those inside the 60s window.
   assert.equal(served, 59, 'constant traffic cannot make an entry immortal');
+  assert.equal(hot.size, 0);
+});
+
+/**
+ * The production clock is monotonic, and that fact has no behavioural assertion available: every
+ * test here injects `now`, so swapping `performance.now()` back to `Date.now()` would leave all of
+ * them green while quietly making this ADR's "absolute" deadline depend on NTP. The repository
+ * already guards this class of invisible change the same way, in `analysis-cache-composition.test.ts`.
+ */
+test('the production deadline is measured on a monotonic clock', () => {
+  const source = readFileSync(
+    resolve(__dirname, '..', '..', 'src/analysis/hot-cache.ts'),
+    'utf8',
+  );
+  assert.match(
+    source,
+    /this\.now\s*=\s*options\.now\s*\?\?\s*\(\(\)\s*=>\s*performance\.now\(\)\)/,
+    'the default clock must be monotonic, or a backward wall-clock step extends every live entry',
+  );
+  assert.doesNotMatch(source, /Date\.now\(\)/, 'no wall-clock reading may reach this tier');
+});
+
+test('the deadline holds even when the clock reading moves backwards', async () => {
+  // Drives the seam the way an NTP step would drive a wall clock. This is about the expiry
+  // comparison being against a fixed deadline rather than an accumulated delta; the test above is
+  // what pins the production clock itself.
+  const clock = new ManualClock();
+  const delegate = new CountingDelegate(results(10));
+  const hot = new HotAnalysisCache({ delegate, maxEntries: 10, ttlMs: 60_000, now: clock.now });
+
+  await hot.get(key(), { depth: 10 });
+  delegate.answer = undefined;
+
+  clock.advance(-3_600_000); // an hour backwards, mid-life
+  clock.advance(3_600_000 + 60_000); // and forward again, past the deadline
+
+  assert.equal(await hot.get(key(), { depth: 10 }), undefined, 'the deadline still lands');
   assert.equal(hot.size, 0);
 });
 

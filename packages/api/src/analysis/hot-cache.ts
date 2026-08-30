@@ -16,6 +16,7 @@
  * which tier answered — which is the property that makes the tier safe to add.
  */
 
+import { performance } from 'node:perf_hooks';
 import type {
   AnalysisCache,
   AnalysisKey,
@@ -109,13 +110,25 @@ export interface HotAnalysisCacheOptions {
   readonly maxEntries: number;
   /** Seam for tests; production uses {@link HOT_CACHE_TTL_MS}. */
   readonly ttlMs?: number;
-  /** Seam for tests; production uses the wall clock. */
+  /**
+   * Elapsed-time source. Seam for tests; production uses a monotonic clock — see the note on
+   * {@link HotAnalysisCache} for why this one does not follow `SystemClock` in using the wall clock.
+   */
   readonly now?: () => number;
   readonly observer?: HotAnalysisCacheObserver;
 }
 
 /**
  * A bounded, process-local LRU in front of a durable {@link AnalysisCache}.
+ *
+ * **Time is measured monotonically, which is the one place this class departs from `SystemClock`.**
+ * The engine's `Clock` says "wall clock is fine", and for a watchdog it is: a backward step makes a
+ * timeout fire late and the next tick corrects it. Here a backward step does something worse. This
+ * tier's deadline is not a timeout, it is the bound that makes a short in-memory TTL coherent with a
+ * thirty-day retention window — so a clock that jumps back an hour would hold entries an hour past
+ * the deadline the ADR argues is absolute. `performance.now()` counts from process start and no
+ * NTP correction can move it, which makes the bound true rather than merely intended. Nothing here
+ * compares against a stored timestamp, so there is nothing a monotonic reading could disagree with.
  *
  * **Failure semantics: this tier adds no catch of its own, deliberately.** Everything it does is a
  * `Map` operation on plain data, so it has no failure mode a caller could recover from — and
@@ -144,7 +157,7 @@ export class HotAnalysisCache implements AnalysisCache {
     this.delegate = options.delegate;
     this.maxEntries = options.maxEntries;
     this.ttlMs = ttlMs;
-    this.now = options.now ?? (() => Date.now());
+    this.now = options.now ?? (() => performance.now());
     this.observer = options.observer;
   }
 

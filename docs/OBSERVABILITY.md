@@ -66,20 +66,22 @@ front of the durable cache behind the same port, so the orchestrator — which h
 cannot see inside it — records `cache_hit` whether the answer came from this process's memory or from
 a round trip. `analysis_cache_hot_total` is what separates them. Exactly one of `hit` or `miss` is recorded per
 lookup, so `hit + miss` is the lookup count and `hit / (hit + miss)` is the hot tier's own hit rate;
-`durable_hit` and `expired` refine `miss` rather than adding to it.
+`durable_hit` and `expired` refine `miss` rather than adding to it. `expired` against `evicted` says
+whether a rising miss rate is entries ageing out at the sixty-second deadline or capacity pressure
+against `ANALYSIS_CACHE_ENTRIES`; those two call for different responses, and no other series
+distinguishes them.
 
 The bridge back to the orchestrator's own counters is exact, but it is not one-to-one, because
 `readCache` has two early returns that record neither `cache_hit` nor `cache_miss`:
 
-    hit + durable_hit  ==  cache_hit  + cache_result_rejected
-    miss - durable_hit ==  cache_miss + cache_read_failure
+```text
+hit + durable_hit  ==  cache_hit  + cache_result_rejected
+miss - durable_hit ==  cache_miss + cache_read_failure
+```
 
 Both correction terms are normally zero — a rejected payload means a tier returned something
 unusable, and a read failure means the cache threw rather than missing — so a persistent gap between
 the two sides is itself the signal that one of those is happening.
-`expired` against `evicted` says whether a rising miss rate is entries ageing out at the sixty-second
-deadline or capacity pressure against `ANALYSIS_CACHE_ENTRIES`; those two call for different
-responses, and no other series distinguishes them.
 
 A read that times out is absorbed too, so its latency lands in `analysis_cache_lookup_seconds{outcome="miss"}` and the `read_failure` series stays empty for a Postgres-backed cache. Miss latency percentiles therefore include absorbed database timeouts; `analysis_cache_faults_total{fault="read"}` is what says how many.
 
