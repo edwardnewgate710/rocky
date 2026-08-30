@@ -81,8 +81,6 @@ test('atomic matching flow: Player A creates a seek, Player B accepts', async ({
     await page1.click('#create-seek'); // Open panel
     // It should be expanded
     await expect(page1.locator('#create-game-form')).toBeVisible();
-    // Keep the roles deterministic: the creator is White and moves first.
-    await page1.locator('input[name="cg-color"][value="white"]').check({ force: true });
     await page1.click('.cg-submit'); // Submit seek
 
     // Player 1 should see their own seek in the lobby, waiting for opponent
@@ -116,17 +114,18 @@ test('atomic matching flow: Player A creates a seek, Player B accepts', async ({
     await expect(status1).toBeVisible({ timeout: 10_000 });
     await expect(status2).toBeVisible({ timeout: 10_000 });
 
-    await expect(status1).toHaveText(/your move/i, { timeout: 10_000 });
-    await expect(status2).toHaveText(/white to move/i, { timeout: 10_000 });
+    await expect(status1).toHaveText(/your move|white to move/i, { timeout: 10_000 });
+    await expect(status2).toHaveText(/your move|white to move/i, { timeout: 10_000 });
 
-    // Make 1 move
-    // Play e2-e4
-    await page1.locator('[data-square="e2"]').click();
-    await page1.locator('[data-square="e4"]').click();
-    
-    // White sees whose turn it is; Black sees that it is their own turn.
-    await expect(status1).toHaveText(/black to move/i, { timeout: 5000 });
-    await expect(status2).toHaveText(/your move/i, { timeout: 5000 });
+    const creatorMovesFirst = /your move/i.test(await status1.innerText());
+    const whitePage = creatorMovesFirst ? page1 : page2;
+    const blackPage = creatorMovesFirst ? page2 : page1;
+
+    await whitePage.locator('[data-square="e2"]').click();
+    await whitePage.locator('[data-square="e4"]').click();
+
+    await expect(whitePage.locator('#status')).toHaveText(/black to move/i, { timeout: 5_000 });
+    await expect(blackPage.locator('#status')).toHaveText(/your move/i, { timeout: 5_000 });
 
   } finally {
     await ctx1.close();

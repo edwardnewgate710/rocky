@@ -91,6 +91,7 @@ interface LobbyMountDependencies {
 /** The result of mounting the lobby view. */
 interface MountedLobby {
   readonly lobby: LobbyController;
+  readonly setCreateGameAuthenticated: (authenticated: boolean) => void;
   readonly setPlayBotAuthenticated: (authenticated: boolean) => void;
 }
 
@@ -206,8 +207,11 @@ export function mountLobby(deps: LobbyMountDependencies): MountedLobby {
 
   return {
     lobby,
-    // Bootstrap retains ownership of the persistent create-seek trigger. The dialog also owns
-    // open-state cleanup, so it needs this narrow session-change seam after asynchronous restore.
+    // The components own their open-state cleanup, so session changes flow through their narrow
+    // authentication seams after asynchronous restore or sign-out.
+    setCreateGameAuthenticated: (authenticated) => {
+      if (routeActive) panel?.setAuthenticated(authenticated);
+    },
     setPlayBotAuthenticated: (authenticated) => {
       if (routeActive) playBotDialog?.setAuthenticated(authenticated);
     },
