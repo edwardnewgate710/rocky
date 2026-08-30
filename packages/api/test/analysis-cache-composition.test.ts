@@ -97,6 +97,46 @@ test('createAnalysisFromEnv hands the tier\u2019s cache and observer to the engi
 });
 
 /**
+ * The real-stack proof is in the script CI runs, and CI gives that script a database.
+ *
+ * `analysis-real-stack.test.ts` is the only thing anywhere that runs a real engine, a real database
+ * and this composition together, and it self-skips without all three. Both halves of its wiring fail
+ * silently: dropped from the smoke script it simply never runs, and left in the script but denied a
+ * `DATABASE_URL` it reports a skip that a green job does not distinguish from a pass. Neither is
+ * visible in any other test, so both are asserted here — in the file that exists because a
+ * composition-root omission passed every unit test in the repository.
+ *
+ * The workflow's own `test -n "${DATABASE_URL}"` step is the other half of this: that one fails the
+ * job when the service is gone, this one fails the ordinary suite when the wiring is.
+ */
+test('CI runs the real-stack proof, with a database under it', () => {
+  const manifest = JSON.parse(readFileSync(resolve(PACKAGE_ROOT, 'package.json'), 'utf8')) as {
+    scripts: Record<string, string>;
+  };
+  assert.match(
+    manifest.scripts['test:analysis-smoke'] ?? '',
+    /analysis-real-stack\.test\.js/,
+    'the smoke script CI runs must name the real-stack proof, or it never executes',
+  );
+
+  const workflow = readFileSync(resolve(PACKAGE_ROOT, '..', '..', '.github/workflows/ci.yml'), 'utf8');
+  const smokeJob = workflow.slice(workflow.indexOf('  analysis-smoke:'), workflow.indexOf('  gateway-service:'));
+  assert.ok(smokeJob.length > 0, 'the analysis-smoke job must still be there to be checked');
+  assert.match(
+    smokeJob,
+    /npm run test:analysis-smoke --workspace @chess-platform\/api/,
+    'and the job must still run that script, not some other one',
+  );
+  assert.match(smokeJob, /image: pgvector\/pgvector:pg16/, 'the database the proof reads and writes');
+  assert.match(smokeJob, /DATABASE_URL: postgres:\/\//, 'reachable through the variable the tier resolves');
+  assert.match(
+    smokeJob,
+    /test -n "\$\{DATABASE_URL}"/,
+    'and asserted present before the tests run, since a skipped proof and a passing one look identical',
+  );
+});
+
+/**
  * Both halves of the bound are actually on the pool.
  *
  * Neither is visible in behaviour until something goes wrong, which is exactly why they need an

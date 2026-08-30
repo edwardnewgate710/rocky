@@ -409,11 +409,42 @@ jobs:
   # platform-to-engine variant mapping — proven by nothing. ADR-0102 is the record of what that
   # costs: fifty green engine tests while `standard` failed against a real binary in production.
   # Installing Stockfish here rather than in build-test keeps that dependency off every other job.
+  #
+  # It is also the only job with both an engine binary and a database (ADR-0138). The durable
+  # analysis cache is composed from two halves proven separately — the orchestrator against fake
+  # caches, the adapter against a real PostgreSQL server — and until this job gained a database
+  # nothing anywhere ran the two together with a real search between them. That left the one claim
+  # the feature exists to make, "a replica that never ran this search still answers it", resting on
+  # a `FakeEngineTransport`. The database is added HERE rather than the engine being added to
+  # `postgres-integration` for two reasons: the Stockfish pin stays written down once in this file
+  # (`scripts/check-engine-pin-parity.mjs` treats this workflow as one location), and every job that
+  # spawns a real engine stays this one. The cost is a service container on a job that had none;
+  # see ADR-0138 for the measurement.
   analysis-smoke:
-    name: analysis smoke (real Stockfish + Fairy-Stockfish)
+    name: analysis smoke (real Stockfish + Fairy-Stockfish + PostgreSQL)
     runs-on: ubuntu-latest
-    # A healthy run of this job is 72 seconds, of which the build is 41. Fifteen minutes is about
-    # twelve times that, so a cold npm cache or a slow runner cannot trip it, while an
+    services:
+      # The same image `postgres-integration` uses, and for the same reason: migration 0014 needs
+      # `CREATE EXTENSION vector`, and the canonical runner applies every migration or none, so
+      # plain `postgres:16` would fail before reaching 0026/0027.
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: chess
+          POSTGRES_PASSWORD: chess
+          POSTGRES_DB: chess_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U chess"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://chess:chess@localhost:5432/chess_test
+    # A healthy run of this job was 37-71 seconds before it gained a database, of which the build is
+    # 41. Waiting for the service container and running the real-stack test add to that, and the
+    # ceiling is unchanged because it was never sized against the median: fifteen minutes is many
+    # times either figure, so a cold npm cache or a slow runner cannot trip it, while an
     # infrastructure stall is capped at fifteen minutes instead of the six-hour default. That
     # default is what let one stalled run burn 34 minutes before a human noticed and cancelled it
     # during the Increment 9 post-merge check.
@@ -493,18 +524,22 @@ jobs:
       # one more: it is a downloaded binary now rather than a distribution package, so this is also
       # where a missing shared library or an incompatible architecture surfaces - as a failure here,
       # naming the step, rather than as a confusing spawn error inside the test run.
-      - name: Verify the engine binaries exist
+      - name: Verify the engine binaries and the database are present
         run: |
           set -euo pipefail
           test -x /tmp/stockfish
           test -x /tmp/fairy-stockfish
+          # The real-stack test self-skips without a database exactly as the other two self-skip
+          # without a binary, so the database needs the same assertion or the job goes green having
+          # silently dropped the one proof it was extended to carry.
+          test -n "${DATABASE_URL}"
           printf "uci\nquit\n" | /tmp/stockfish | tee /tmp/stockfish-uci.txt > /dev/null
           grep -q "id name Stockfish 16" /tmp/stockfish-uci.txt
           printf "uci\nquit\n" | /tmp/fairy-stockfish | tee /tmp/fairy-uci.txt > /dev/null
           grep -q "id name Fairy-Stockfish 14" /tmp/fairy-uci.txt
           grep -q "var 3check" /tmp/fairy-uci.txt
 
-      - name: Analysis smoke test against real engines
+      - name: Analysis smoke test against real engines and a real database
         run: npm run test:analysis-smoke --workspace @chess-platform/api
         env:
           STOCKFISH_PATH: /tmp/stockfish
