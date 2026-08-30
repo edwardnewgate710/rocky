@@ -189,11 +189,40 @@ asserted by a test rather than merely described, so the claim cannot quietly bec
   see it.
 - Retention deletes generate dead tuples; standard autovacuum settings are assumed. A deployment that
   turns autovacuum off for this table would see it bloat regardless of the sweep.
-- No CI job currently has both an engine binary and a database: `analysis-smoke` installs Stockfish
-  without `DATABASE_URL`, and `postgres-integration` has a database and no engine. The composed path
-  is therefore proven with the engine package's own `FakeEngineTransport` against a real PostgreSQL
-  server, which exercises every line of the wiring except the UCI subprocess. Closing that last gap
-  needs a workflow change and is out of this ADR's scope.
+- **The real-stack gap this ADR shipped with is closed.** It read: no CI job had both an engine
+  binary and a database, so the composed path was proven with the engine package's own
+  `FakeEngineTransport` against a real PostgreSQL server — every line of the wiring except the UCI
+  subprocess. The `analysis-smoke` job now carries a `pgvector/pgvector:pg16` service and a
+  `DATABASE_URL`, and `packages/api/test/analysis-real-stack.test.ts` runs there. What CI now proves,
+  in one process: `createAnalysisFromEnv` composed with the durable tier, a cold request answered by
+  a real search through a real binary and stored in PostgreSQL by the canonical migration's schema,
+  that composition shut down, and a second composition — its own pool, its own workers, sharing only
+  the database — answering the same request with `analysis_cache_events_total{event="cache_hit"}` and
+  `analysis_cache_events_total{event="engine_computation_started"}` at zero. Both engine families are
+  covered: `standard` through Stockfish 16 and `threecheck` through Fairy-Stockfish 14, the latter
+  also proving that the Three-Check FEN `engineFenFor` canonicalises is what round-trips as the cache
+  key. Note what the second composition still does do: it spawns both binaries, because the
+  fingerprint comes from the UCI handshake and is needed before a lookup — so it crosses the
+  subprocess boundary and then does not search.
+- **What the proof costs.** It reuses `analysis-smoke` rather than adding a job, because that job
+  already installs both pinned binaries and already pays for the checkout, `npm ci` and build that
+  dominate a job of this size — roughly 41 of its 37-71 seconds on recent runs of `main`. Extending
+  `postgres-integration` instead would have been comparably cheap but would have put a second copy
+  of the Stockfish download and its digest in the same workflow file, and made a second job spawn a
+  real engine; a dedicated job would have repeated the whole 41-second prefix to run a one-second
+  test. What this adds to `analysis-smoke` is a service container and one test. The test is not on
+  the critical path: `node --test` runs the three smoke files in parallel and the Fairy file is the
+  longest, so measured locally against a real PostgreSQL and both real binaries the script takes
+  4.68s and 4.68s without it and 4.43s and 4.64s with it — the new file's own 0.9-1.0s fits inside a
+  window that was already being waited on. The service container is therefore the whole of the added
+  cost, and it is bounded by the health check the job copies from `postgres-integration`.
+- What that proof still does not cover, stated so the claim above is not read as more than it is: both
+  compositions are sequential and in one process, so cross-process concurrency is untested here (§6
+  says there is nothing to test — no distributed lock exists); the request enters at
+  `AnalysisService`, not over HTTP; only `multiPv: 1` at `depth: 2` is exercised, so neither
+  multi-line persistence nor a stronger search replacing a weaker incumbent is proven against a real
+  engine; and the runner's OS is not the API image. Each of those is covered by a hermetic or
+  single-tier suite instead, which is the trade this job's runtime is worth.
 - ADR-0135 §7's three preconditions are discharged; that section is superseded by this ADR rather
   than edited, in the same way ADR-0135 superseded ADR-0002's "no change to the persistence
   contract".
