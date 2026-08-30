@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -263,10 +273,49 @@ test('every committed migration parses the same from a CRLF checkout', () => {
  * image copies this package's `dist` without its `migrations` — so a module-level resolution that
  * throws would have taken the gateway down before its server started, over a directory it has no use
  * for. Raised by Qodo on the PR that added the resolver.
+ *
+ * Asserting this from inside this suite proves nothing: the walk starts at the module and would find
+ * the real `migrations/` from here whether it ran at import or on demand, so an eager version would
+ * pass too. That was the first version of this test, and CodeRabbit was right to reject it. So the
+ * compiled module is copied — with the one sibling it requires, and nothing else, because it imports
+ * `pg` only as a type — into a tree that has no `migrations/` above it, and loaded in a separate
+ * process. That tree is the gateway image, in miniature.
  */
 test('the migrations directory is resolved on demand, not at import', () => {
-  // Importing this module already happened, at the top of the file, and did not throw — which is the
-  // property under test. Asked directly, the resolver still answers.
+  const dist = join(process.cwd(), 'dist');
+  assert.ok(
+    existsSync(join(dist, 'pg', 'migrate.js')),
+    'this test reads the compiled output, so the package must have been built',
+  );
+
+  const tree = mkdtempSync(join(tmpdir(), 'gateway-shaped-'));
+  try {
+    mkdirSync(join(tree, 'pg'));
+    copyFileSync(join(dist, 'errors.js'), join(tree, 'errors.js'));
+    copyFileSync(join(dist, 'pg', 'migrate.js'), join(tree, 'pg', 'migrate.js'));
+
+    const probe = [
+      'const m = require(process.argv[1]);',
+      "process.stdout.write('IMPORTED;');",
+      'try { m.migrationsDir(); process.stdout.write("RESOLVED:" + m.migrationsDir()); }',
+      'catch (error) { process.stdout.write("THREW:" + error.message); }',
+    ].join('');
+    const out = execFileSync(process.execPath, ['-e', probe, join(tree, 'pg', 'migrate.js')], {
+      encoding: 'utf8',
+    });
+
+    assert.match(out, /^IMPORTED;/, 'loading the module must not depend on a migrations directory');
+    assert.match(
+      out,
+      /THREW:cannot locate the migrations directory/,
+      'and asking for one that is not there must say so, rather than resolving to something wrong',
+    );
+  } finally {
+    rmSync(tree, { recursive: true, force: true });
+  }
+});
+
+test('the resolver finds the directory this package ships', () => {
   assert.ok(migrationFiles(migrationsDir()).length > 0);
 });
 

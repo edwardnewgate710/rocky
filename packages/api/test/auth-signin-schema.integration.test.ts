@@ -176,7 +176,7 @@ const login = (baseUrl: string, body: unknown): Promise<Response> =>
  * quietly turns it into a 200 (or into a 401, which would be worse: a broken database reported as a
  * bad password) has to argue with a test.
  */
-test('an un-migrated database: sign-in is a server fault, and readiness admits it', { skip }, async () => {
+test('an un-migrated database: sign-in is a server fault, and readiness reports it unready', { skip }, async () => {
   await withSchema(async ({ baseUrl, pool }) => {
     assert.equal(
       (await missingMigrations(pool)).length,
