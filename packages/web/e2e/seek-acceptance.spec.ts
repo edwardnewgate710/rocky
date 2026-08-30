@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 
 test.skip(!process.env['GAMBIT_E2E_BACKEND'], 'requires running backend — M6 acceptance gate');
 
-test('atomic matching flow: Player A creates a seek, Player B accepts', async ({ browser, request }) => {
+test('atomic matching flow: Player A creates a seek, Player B accepts', async ({ browser }) => {
   const ctx1 = await browser.newContext();
   const ctx2 = await browser.newContext();
   const page1 = await ctx1.newPage(); // creator
@@ -28,7 +28,7 @@ test('atomic matching flow: Player A creates a seek, Player B accepts', async ({
     const handle2 = `e2e-seek2-${suffix}`;
     const password = 'test-password-123';
 
-    const reg1 = await request.post('/v1/auth/register', {
+    const reg1 = await page1.request.post('/v1/auth/register', {
       data: { handle: handle1, password },
     });
     if (!reg1.ok()) {
@@ -36,10 +36,9 @@ test('atomic matching flow: Player A creates a seek, Player B accepts', async ({
     }
     expect(reg1.ok()).toBeTruthy();
     const auth1 = await reg1.json();
-    const refresh1 = auth1.tokens.refreshToken;
     const userId1 = auth1.user.id;
 
-    const reg2 = await request.post('/v1/auth/register', {
+    const reg2 = await page2.request.post('/v1/auth/register', {
       data: { handle: handle2, password },
     });
     if (!reg2.ok()) {
@@ -47,21 +46,10 @@ test('atomic matching flow: Player A creates a seek, Player B accepts', async ({
     }
     expect(reg2.ok()).toBeTruthy();
     const auth2 = await reg2.json();
-    const refresh2 = auth2.tokens.refreshToken;
     const userId2 = auth2.user.id;
 
-    // Seed each context
-    const refreshCookie = (value: string) => ({
-      name: 'gambit_refresh',
-      value,
-      domain: 'localhost',
-      path: '/v1/auth',
-      httpOnly: true,
-      secure: false,
-      sameSite: 'Strict' as const,
-    });
-    await ctx1.addCookies([refreshCookie(refresh1)]);
-    await ctx2.addCookies([refreshCookie(refresh2)]);
+    // Registration through each page-owned request context preserves the server-issued
+    // HttpOnly refresh cookie in the corresponding browser context.
     await page1.addInitScript(({ handle: h, uid }) => {
       localStorage.setItem('gambit-session', JSON.stringify({ handle: h, userId: uid }));
     }, { handle: handle1, uid: userId1 });
