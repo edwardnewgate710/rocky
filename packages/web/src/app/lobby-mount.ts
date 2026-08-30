@@ -205,15 +205,19 @@ export function mountLobby(deps: LobbyMountDependencies): MountedLobby {
 
   lobby.start();
 
+  /** Forward session state only while this lobby route still owns its create-game panel. */
+  function setCreateGameAuthenticated(authenticated: boolean): void {
+    if (routeActive) panel?.setAuthenticated(authenticated);
+  }
+
+  /** Forward session state only while this lobby route still owns its bot-game dialog. */
+  function setPlayBotAuthenticated(authenticated: boolean): void {
+    if (routeActive) playBotDialog?.setAuthenticated(authenticated);
+  }
+
   return {
     lobby,
-    // The components own their open-state cleanup, so session changes flow through their narrow
-    // authentication seams after asynchronous restore or sign-out.
-    setCreateGameAuthenticated: (authenticated) => {
-      if (routeActive) panel?.setAuthenticated(authenticated);
-    },
-    setPlayBotAuthenticated: (authenticated) => {
-      if (routeActive) playBotDialog?.setAuthenticated(authenticated);
-    },
+    setCreateGameAuthenticated,
+    setPlayBotAuthenticated,
   };
 }
