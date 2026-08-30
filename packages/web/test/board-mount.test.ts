@@ -191,7 +191,7 @@ function promotionBoardHarness() {
   };
 }
 
-test('Escape cancels promotion after focus leaves it and cleans up its document listener', () => {
+test('promotion cancellation stays lifecycle-safe across Escape, position sync, and destroy', () => {
   const previousDocument = globalThis.document;
   const previousHTMLElement = globalThis.HTMLElement;
   const fen = '4k3/4P3/8/8/8/8/8/4K3 w - - 0 1';
@@ -256,6 +256,10 @@ test('Escape cancels promotion after focus leaves it and cleans up its document 
     const reopenedOverlay = board.overlay();
     assert.ok(reopenedOverlay);
     assert.equal(board.doc.listenerCount('keydown'), 1);
+
+    assert.throws(() => mounted.setPosition('invalid'), /FEN placement must have 8 ranks/);
+    assert.equal(reopenedOverlay.removed, false, 'invalid position leaves the active dialog intact');
+    assert.equal(board.doc.listenerCount('keydown'), 1, 'invalid position leaves Escape cancellation active');
 
     const promotionDestination = board.focusedSquare('e8');
     assert.ok(promotionDestination);

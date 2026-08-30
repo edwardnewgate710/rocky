@@ -103,9 +103,10 @@ export class BoardView {
 
   /** Set the position: updates both the rendered pieces and the interaction. */
   setPosition(fen: string): void {
+    const nextPieces = parsePlacement(fen);
     const restorePromotionFocus = this.overlay !== null;
     this.closeOverlay();
-    this.pieces = parsePlacement(fen);
+    this.pieces = nextPieces;
     this.interaction.setPosition(fen);
     this.render();
     if (restorePromotionFocus) this.focusCurrentSquare();
