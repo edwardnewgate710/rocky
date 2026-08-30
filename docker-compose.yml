@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gambit_dev}
       POSTGRES_DB: gambit
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -20,7 +20,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redisdata:/data
     healthcheck:
@@ -55,6 +55,9 @@ services:
       # Helm deployments require Resend and fail startup when its configuration is missing.
       NODE_ENV: development
       EMAIL_PROVIDER: console
+      # The Compose stack is served over localhost HTTP. The API otherwise defaults to Secure and
+      # rejects this opt-out unless NODE_ENV is exactly development.
+      REFRESH_COOKIE_SECURE: "false"
       # Engine analysis (ADR-0113). The image installs Stockfish and sets STOCKFISH_PATH, so the
       # analysis pool is available; these only tighten it. The pool is deliberately small and its
       # queue short — analysis is a CPU-amplification surface, so saturation should be refused
@@ -63,7 +66,7 @@ services:
       ANALYSIS_ENGINE_MAX_WORKERS: ${ANALYSIS_ENGINE_MAX_WORKERS:-2}
       ANALYSIS_ENGINE_QUEUE_CAPACITY: ${ANALYSIS_ENGINE_QUEUE_CAPACITY:-32}
     ports:
-      - "${PORT:-8080}:8080"
+      - "127.0.0.1:${PORT:-8080}:8080"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:8080/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
@@ -106,7 +109,7 @@ services:
       # sets that path. Without this the lobby offers the mode and the opponent never moves.
       ENGINE_BOT: ${ENGINE_BOT:-1}
     ports:
-      - "${GATEWAY_PORT:-4175}:4175"
+      - "127.0.0.1:${GATEWAY_PORT:-4175}:4175"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:4176/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
@@ -124,7 +127,7 @@ services:
       gateway:
         condition: service_healthy
     ports:
-      - "${WEB_PORT:-3000}:8080"
+      - "127.0.0.1:${WEB_PORT:-3000}:8080"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1"]
       interval: 10s

@@ -170,7 +170,9 @@ test('logout clears the cookie', async () => {
     const { attrs } = parseSetCookie(clearRaw!);
     assert.equal(attrs['max-age'], '0');
     assert.ok(attrs['httponly']);
+    assert.equal(attrs['samesite'], 'Strict');
     assert.equal(attrs['path'], REFRESH_COOKIE_PATH);
+    assert.equal(attrs['secure'], undefined);
   } finally {
     await h.close();
   }
@@ -188,7 +190,7 @@ test('refresh without cookie or body token is 400', async () => {
   }
 });
 
-test('Secure flag reflects config (cookieSecure: true)', async () => {
+test('Secure policy applies compatibly when setting and clearing the cookie', async () => {
   const h = await startHarness({ cookieSecure: true });
   try {
     const res = await h.json('POST', '/v1/auth/register', {
@@ -197,8 +199,26 @@ test('Secure flag reflects config (cookieSecure: true)', async () => {
     assert.equal(res.status, 201);
     const raw = getSetCookie(res.headers);
     assert.ok(raw);
-    const { attrs } = parseSetCookie(raw!);
+    const { value, attrs } = parseSetCookie(raw!);
     assert.ok(attrs['secure'], 'Secure must be present when cookieSecure is true');
+    assert.ok(attrs['httponly']);
+    assert.equal(attrs['samesite'], 'Strict');
+    assert.equal(attrs['path'], REFRESH_COOKIE_PATH);
+
+    const logout = await h.json('POST', '/v1/auth/logout', {
+      token: res.body.tokens.accessToken,
+      headers: { cookie: `${REFRESH_COOKIE_NAME}=${value}` },
+    });
+    assert.equal(logout.status, 204);
+
+    const clearRaw = getSetCookie(logout.headers);
+    assert.ok(clearRaw);
+    const { attrs: clearAttrs } = parseSetCookie(clearRaw!);
+    assert.equal(clearAttrs['max-age'], '0');
+    assert.ok(clearAttrs['secure']);
+    assert.ok(clearAttrs['httponly']);
+    assert.equal(clearAttrs['samesite'], 'Strict');
+    assert.equal(clearAttrs['path'], REFRESH_COOKIE_PATH);
   } finally {
     await h.close();
   }

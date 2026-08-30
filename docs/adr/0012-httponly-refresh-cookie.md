@@ -33,7 +33,7 @@ the API on login/refresh. The short-lived access token stays **in memory only**
 |-----------|-------|-----------|
 | `HttpOnly` | yes | **XSS mitigation:** JavaScript cannot read the cookie, so an injected script cannot exfiltrate the refresh token. |
 | `SameSite=Strict` | yes | **CSRF mitigation:** the cookie is not sent on cross-site requests (top-level navigations or embedded subrequests). Combined with the credentials-aware CORS allowlist from ADR-0011 (never `*`), this provides defense-in-depth against CSRF. |
-| `Secure` | configurable | Default `true` (production). Set `false` via `ApiConfig.cookieSecure` for local/dev over plain HTTP so the browser accepts the cookie. |
+| `Secure` | configurable | Default `true` (production). Trusted compositions may set `ApiConfig.cookieSecure=false`; the runtime accepts `REFRESH_COOKIE_SECURE=false` only with `NODE_ENV=development` for local HTTP. |
 | `Path=/v1/auth` | yes | **CSRF surface reduction:** the cookie is scoped to auth routes only, so it is not sent on other API requests (e.g. game moves, seek creation). |
 | `Max-Age=<ttl>` | refresh-token TTL | Matches the refresh-token lifetime (default 30 days). |
 
@@ -125,7 +125,10 @@ The cookie is preferred when both are present.
 - Cookie helpers: `packages/api/src/http/cookie.ts` (dependency-free, Node
   built-ins only).
 - Config: `ApiConfig.cookieSecure` (default `true`, resolved in
-  `resolveConfig`).
+  `resolveConfig`). The production entrypoint also accepts the exact environment
+  strings `REFRESH_COOKIE_SECURE=true|false`; `false` fails startup unless
+  `NODE_ENV=development`. The local Compose stack additionally binds all published
+  ports to `127.0.0.1`, so its non-Secure development cookie is not exposed off-host.
 - Routes: `packages/api/src/routes.ts` (set/read/clear cookie on auth routes).
 - Web: `packages/web/src/net/session.ts` (removed `WebStorageTokenStore`),
   `packages/web/src/app/composition.ts` (always uses `MemoryTokenStore`),
