@@ -67,6 +67,21 @@ const FETCH_BLOCKED_PORTS = new Set([
  * leave the port held while the next case tries to bind, which is the kind of flake that only shows
  * up under `--test-concurrency`.
  */
+/** SQLSTATE 57P01 — `admin_shutdown`: the backend was terminated by `pg_terminate_backend`. */
+const ADMIN_SHUTDOWN = '57P01';
+
+/**
+ * Absorb the one failure a forced database drop is expected to cause, and nothing else.
+ *
+ * Re-throwing restores the previous behaviour for every other error — an uncaught exception that
+ * stops the run — which is what an unexpected connection failure in these tests deserves.
+ */
+function rethrowUnlessForcedTermination(error: Error): void {
+  if ((error as { code?: string }).code === ADMIN_SHUTDOWN) return;
+  if (error.message.includes('terminating connection due to administrator command')) return;
+  throw error;
+}
+
 const closeServer = (server: Server): Promise<void> =>
   new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
 
@@ -121,11 +136,14 @@ async function withSchema(run: (fixture: Fixture) => Promise<void>): Promise<voi
   // `pg` pool with no `error` listener re-emits that as an *uncaught exception* — which node:test
   // attributes to whichever test happens to be running, not to the teardown that caused it. That is
   // exactly how this arrived: "terminating connection due to administrator command", surfacing in CI
-  // as a failure of the next test along, while three local runs never raced. Both pools are being
-  // torn down on purpose here, so a connection dying underneath them is the expected end of its life
-  // rather than something to report.
-  pool.on('error', () => {});
-  admin.on('error', () => {});
+  // as a failure of the next test along, while three local runs never raced.
+  //
+  // Only that one error is absorbed. A listener that swallowed everything would also hide a real
+  // connection failure in these tests, which is the opposite of what they are for — so anything else
+  // is re-thrown and stays as loud as it was before. The SQLSTATE is the test rather than the
+  // message, because `lc_messages` can translate the text and cannot translate `57P01`.
+  pool.on('error', rethrowUnlessForcedTermination);
+  admin.on('error', rethrowUnlessForcedTermination);
   // Errors only: a deliberately broken database is about to be exercised, and the point of these
   // tests is the status codes, not a wall of expected failure logging.
   const logger = new JsonLogger({}, { level: 'error', sink: () => {} });

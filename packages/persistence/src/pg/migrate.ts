@@ -68,7 +68,7 @@ const MIGRATION_ADVISORY_LOCK_KEY = 4915219603172;
  * runner and the readiness check would come to disagree about what "migration 4" means.
  */
 export function migrationFiles(dir: string): readonly { readonly file: string; readonly version: number }[] {
-  return readdirSync(dir)
+  const files = readdirSync(dir)
     .filter((f) => f.endsWith('.sql'))
     .sort()
     .map((file) => {
@@ -76,6 +76,24 @@ export function migrationFiles(dir: string): readonly { readonly file: string; r
       if (!match) throw new MigrationError(`invalid migration filename: ${file}`);
       return { file, version: parseInt(match[1]!, 10) };
     });
+
+  // The version is the migration's identity — it is the ledger's primary key and the only thing
+  // {@link missingMigrations} compares. Two files claiming the same number would make one ledger row
+  // answer for both, so a migration that never ran would read as applied and readiness would say the
+  // schema is complete. The runner reaches the same conclusion by a stranger route, reporting the
+  // second file as a checksum violation of the first, which describes the symptom rather than the
+  // mistake. Raised by CodeRabbit on this PR.
+  const seen = new Map<number, string>();
+  for (const { file, version } of files) {
+    const first = seen.get(version);
+    if (first !== undefined) {
+      throw new MigrationError(
+        `duplicate migration version ${version}: ${first} and ${file} cannot both be migration ${version}`,
+      );
+    }
+    seen.set(version, file);
+  }
+  return files;
 }
 
 let resolvedMigrationsDir: string | undefined;

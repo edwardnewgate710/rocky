@@ -336,3 +336,27 @@ test('a tree with no migrations directory reports that, rather than resolving to
     rmSync(empty, { recursive: true, force: true });
   }
 });
+
+/**
+ * Two files cannot both be migration 4.
+ *
+ * The version is the ledger's primary key and the only thing `missingMigrations` compares, so a
+ * duplicate would let one applied row answer for two files: the second would never run and readiness
+ * would still call the schema complete. Rejected where the list is built, rather than left for the
+ * runner to report as a checksum violation of an unrelated file. Raised by CodeRabbit.
+ */
+test('two migrations cannot claim the same version', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'duplicate-version-'));
+  try {
+    writeFileSync(join(dir, '0004_rate_limit.sql'), 'CREATE TABLE a (id INT);\n');
+    writeFileSync(join(dir, '0004_extra.sql'), 'CREATE TABLE b (id INT);\n');
+
+    assert.throws(
+      () => migrationFiles(dir),
+      /duplicate migration version 4/,
+      'a second file numbered 4 would otherwise be reported as applied without ever running',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
