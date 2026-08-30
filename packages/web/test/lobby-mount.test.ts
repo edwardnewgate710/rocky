@@ -342,6 +342,7 @@ function makeFakeGameSummary(id: string): GameSummary {
   };
 }
 
+/** Build a typed lobby client seam and capture every create/accept/cancel call. */
 function makeFakeClient(opts: {
   seeks?: SeekView[];
   createSeekResult?: SeekView;
@@ -415,6 +416,7 @@ function submit(form: FakeDOMElement): void {
   } as unknown as Event);
 }
 
+/** Select exactly one radio in the fake DOM's named group. */
 function selectRadio(form: FakeDOMElement, name: string, value: string): void {
   const radios = form.querySelectorAll<FakeDOMElement>(`input[name="${name}"]`);
   for (const radio of radios) radio.checked = radio.value === value;

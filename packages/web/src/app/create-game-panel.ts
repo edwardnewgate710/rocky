@@ -81,6 +81,7 @@ export class CreateGamePanel {
     this.setAuthenticated(opts.initialAuthenticated ?? false);
   }
 
+  /** Build the collapsed entry point that owns the form disclosure state. */
   private createTrigger(): HTMLButtonElement {
     const trigger = el(this.doc, 'button', {
       id: 'create-seek',
@@ -93,6 +94,7 @@ export class CreateGamePanel {
     return trigger;
   }
 
+  /** Build the V1 time-control radio group with one guaranteed initial choice. */
   private createTimeField(initialTimeId: string): HTMLFieldSetElement {
     const presets = el(this.doc, 'div', { class: 'cg-presets' });
     for (const preset of CREATE_GAME_PRESETS) {
@@ -107,6 +109,7 @@ export class CreateGamePanel {
     );
   }
 
+  /** Build the mutually exclusive Casual/Rated radio group and its explanation. */
   private createModeField(initialMode: SeekMode): HTMLFieldSetElement {
     const modeHint = el(
       this.doc,
@@ -135,6 +138,7 @@ export class CreateGamePanel {
     return modeField;
   }
 
+  /** Bind disclosure, cancellation, submission, and Escape behavior once. */
   private bindEvents(cancelBtn: HTMLButtonElement): void {
     this.trigger.addEventListener('click', () => this.setExpanded(true));
     cancelBtn.addEventListener('click', () => this.setExpanded(false));
@@ -149,6 +153,7 @@ export class CreateGamePanel {
     });
   }
 
+  /** Create a native radio wrapped by the visual chip or segmented-control label. */
   private radio(
     name: 'cg-time' | 'cg-mode',
     value: string,
@@ -167,10 +172,12 @@ export class CreateGamePanel {
     );
   }
 
+  /** Read the selected value from a named native radio group. */
   private readChecked(name: string): string | null {
     return this.form.querySelector<HTMLInputElement>(`input[name="${name}"]:checked`)?.value ?? null;
   }
 
+  /** Convert the current V1 selections into the exact existing seek request contract. */
   private gather(): CreateGameParams {
     const selected = this.readChecked('cg-time');
     const preset =
@@ -184,6 +191,7 @@ export class CreateGamePanel {
     };
   }
 
+  /** Read only preferences that still belong to the approved V1 choice set. */
   private readPrefs(): CreateGamePrefs | null {
     if (!this.storage) return null;
     try {
@@ -193,6 +201,7 @@ export class CreateGamePanel {
     }
   }
 
+  /** Persist the successful V1 choices without making storage a creation dependency. */
   private savePrefs(): void {
     if (!this.storage) return;
     const selected = this.readChecked('cg-time');
@@ -208,6 +217,7 @@ export class CreateGamePanel {
     }
   }
 
+  /** Run one creation attempt, preserving selections and retryability on failure. */
   private async submit(): Promise<void> {
     if (this.pending) return;
     this.callbacks.onError(null);
@@ -225,6 +235,7 @@ export class CreateGamePanel {
     }
   }
 
+  /** Keep disclosure state, focus, and error clearing synchronized. */
   private setExpanded(expanded: boolean): void {
     this.expanded = expanded;
     this.trigger.setAttribute('aria-expanded', String(expanded));
@@ -238,12 +249,14 @@ export class CreateGamePanel {
     }
   }
 
+  /** Gate the entire flow and collapse it immediately when authentication is lost. */
   setAuthenticated(authenticated: boolean): void {
     this.trigger.disabled = !authenticated;
     this.trigger.title = authenticated ? '' : 'Sign in to create a seek';
     if (!authenticated && this.expanded) this.setExpanded(false);
   }
 
+  /** Reflect the controller's in-flight state while preventing duplicate submission. */
   setPending(pending: boolean): void {
     this.pending = pending;
     this.submitBtn.disabled = pending;
