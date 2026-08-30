@@ -62,6 +62,8 @@ composition root. Config is entirely via environment variables:
 - `DATABASE_URL` — Postgres connection string
 - `ACCESS_TOKEN_SECRET` — HMAC signing secret (shared with the gateway)
 - `PORT` — listen port (default 8080)
+- `REFRESH_COOKIE_SECURE` — defaults to `true`; the local Compose stack explicitly sets `false`
+  with `NODE_ENV=development` so browsers can use the refresh cookie over localhost HTTP
 
 Health check: `GET /v1/health` returns `{ status: "ok" }`.
 
@@ -168,6 +170,7 @@ The script:
 | `EMAIL_FROM` | none | Production | One plain sender address |
 | `PUBLIC_WEB_ORIGIN` | none | Production | Trusted HTTPS origin for reset/verification fragment links |
 | `EMAIL_TIMEOUT_MS` | `5000` | No | Provider timeout, integer 100–30000 ms |
+| `REFRESH_COOKIE_SECURE` | `true` (`false` in Compose) | No | Exact boolean string controlling the refresh cookie's `Secure` attribute. `false` is accepted only with `NODE_ENV=development`. |
 
 
 **Never commit real secrets.** The `.env.example` has development defaults only.

@@ -268,12 +268,43 @@ function validateCors(cors: CorsConfig): void {
 }
 
 /**
+ * Resolve the runtime refresh-cookie transport policy.
+ *
+ * Insecure cookies require two explicit signals: the cookie setting itself and
+ * the established development environment. This keeps a missing setting safe
+ * and turns a production typo into a startup failure instead of a downgrade.
+ * Programmatic `ApiConfigInput.cookieSecure` remains authoritative for trusted
+ * compositions such as the in-memory test harness.
+ */
+function resolveRefreshCookieSecure(
+  configured: boolean | undefined,
+  env: NodeJS.ProcessEnv,
+): boolean {
+  if (configured !== undefined) return configured;
+
+  const setting = env['REFRESH_COOKIE_SECURE'];
+  if (setting === undefined || setting === 'true') return true;
+  if (setting !== 'false') {
+    throw new Error('resolveConfig: REFRESH_COOKIE_SECURE must be either "true" or "false"');
+  }
+  if (env['NODE_ENV'] !== 'development') {
+    throw new Error(
+      'resolveConfig: REFRESH_COOKIE_SECURE=false is allowed only when NODE_ENV=development',
+    );
+  }
+  return false;
+}
+
+/**
  * Resolve a full {@link ApiConfig} from partial input, applying defaults. The
  * access-token secret falls back to `ACCESS_TOKEN_SECRET` in the environment.
  * Throws if no secret can be resolved or the CORS config is invalid.
  */
-export function resolveConfig(input: ApiConfigInput = {}): ApiConfig {
-  const accessTokenSecret = input.accessTokenSecret ?? process.env['ACCESS_TOKEN_SECRET'] ?? '';
+export function resolveConfig(
+  input: ApiConfigInput = {},
+  env: NodeJS.ProcessEnv = process.env,
+): ApiConfig {
+  const accessTokenSecret = input.accessTokenSecret ?? env['ACCESS_TOKEN_SECRET'] ?? '';
   if (!accessTokenSecret) {
     throw new Error(
       'resolveConfig: accessTokenSecret is required (set it directly or via ACCESS_TOKEN_SECRET)',
@@ -289,11 +320,11 @@ export function resolveConfig(input: ApiConfigInput = {}): ApiConfig {
     trustProxy: input.trustProxy ?? false,
     cors,
     enableHsts: input.enableHsts ?? true,
-    cookieSecure: input.cookieSecure ?? true,
+    cookieSecure: resolveRefreshCookieSecure(input.cookieSecure, env),
     rateLimit: input.rateLimit ?? DEFAULT_RATE_LIMIT,
     webauthn: input.webauthn ?? {
-      rpId: process.env['WEBAUTHN_RP_ID'] ?? 'localhost',
-      origins: (process.env['WEBAUTHN_ORIGINS'] ?? 'http://localhost:3000').split(','),
+      rpId: env['WEBAUTHN_RP_ID'] ?? 'localhost',
+      origins: (env['WEBAUTHN_ORIGINS'] ?? 'http://localhost:3000').split(','),
     },
   };
 }

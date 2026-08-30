@@ -55,6 +55,9 @@ services:
       # Helm deployments require Resend and fail startup when its configuration is missing.
       NODE_ENV: development
       EMAIL_PROVIDER: console
+      # The Compose stack is served over localhost HTTP. The API otherwise defaults to Secure and
+      # rejects this opt-out unless NODE_ENV is exactly development.
+      REFRESH_COOKIE_SECURE: "false"
       # Engine analysis (ADR-0113). The image installs Stockfish and sets STOCKFISH_PATH, so the
       # analysis pool is available; these only tighten it. The pool is deliberately small and its
       # queue short — analysis is a CPU-amplification surface, so saturation should be refused

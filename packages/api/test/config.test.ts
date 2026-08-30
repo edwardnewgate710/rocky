@@ -53,12 +53,55 @@ describe('resolveConfig CORS validation', () => {
 
 describe('resolveConfig cookieSecure', () => {
   it('defaults cookieSecure to true', () => {
-    const cfg = resolveConfig({ accessTokenSecret: SECRET });
+    const cfg = resolveConfig({ accessTokenSecret: SECRET }, {});
     assert.equal(cfg.cookieSecure, true);
   });
 
   it('accepts cookieSecure: false for local/dev over HTTP', () => {
     const cfg = resolveConfig({ accessTokenSecret: SECRET, cookieSecure: false });
     assert.equal(cfg.cookieSecure, false);
+  });
+
+  it('keeps cookies Secure when local runtime configuration is missing', () => {
+    const cfg = resolveConfig({ accessTokenSecret: SECRET }, { NODE_ENV: 'development' });
+    assert.equal(cfg.cookieSecure, true);
+  });
+
+  it('accepts an explicit insecure-cookie policy only in local development', () => {
+    const cfg = resolveConfig(
+      { accessTokenSecret: SECRET },
+      { NODE_ENV: 'development', REFRESH_COOKIE_SECURE: 'false' },
+    );
+    assert.equal(cfg.cookieSecure, false);
+  });
+
+  it('accepts an explicit Secure cookie policy in production', () => {
+    const cfg = resolveConfig(
+      { accessTokenSecret: SECRET },
+      { NODE_ENV: 'production', REFRESH_COOKIE_SECURE: 'true' },
+    );
+    assert.equal(cfg.cookieSecure, true);
+  });
+
+  it('rejects insecure-cookie environment configuration outside development', () => {
+    assert.throws(
+      () =>
+        resolveConfig(
+          { accessTokenSecret: SECRET },
+          { NODE_ENV: 'production', REFRESH_COOKIE_SECURE: 'false' },
+        ),
+      /REFRESH_COOKIE_SECURE=false is allowed only when NODE_ENV=development/,
+    );
+  });
+
+  it('rejects invalid cookie security configuration', () => {
+    assert.throws(
+      () =>
+        resolveConfig(
+          { accessTokenSecret: SECRET },
+          { NODE_ENV: 'development', REFRESH_COOKIE_SECURE: 'off' },
+        ),
+      /REFRESH_COOKIE_SECURE must be either "true" or "false"/,
+    );
   });
 });
