@@ -280,19 +280,24 @@ test('every committed migration parses the same from a CRLF checkout', () => {
  * compiled module is copied — with the one sibling it requires, and nothing else, because it imports
  * `pg` only as a type — into a tree that has no `migrations/` above it, and loaded in a separate
  * process. That tree is the gateway image, in miniature.
+ *
+ * The copy is taken from `dist-test/src`, the output this file's own compile produces, rather than
+ * from `dist`. `npm test --workspace @chess-platform/persistence` builds only `dist-test`, so
+ * reading `dist` made the documented package test command fail on a clean checkout, and passed only
+ * because CI happens to run a full build first. Raised by Qodo on this PR.
  */
 test('the migrations directory is resolved on demand, not at import', () => {
-  const dist = join(process.cwd(), 'dist');
+  const compiled = join(__dirname, '..', 'src');
   assert.ok(
-    existsSync(join(dist, 'pg', 'migrate.js')),
-    'this test reads the compiled output, so the package must have been built',
+    existsSync(join(compiled, 'pg', 'migrate.js')),
+    `this test reads its own compiled output, which npm test produces`,
   );
 
   const tree = mkdtempSync(join(tmpdir(), 'gateway-shaped-'));
   try {
     mkdirSync(join(tree, 'pg'));
-    copyFileSync(join(dist, 'errors.js'), join(tree, 'errors.js'));
-    copyFileSync(join(dist, 'pg', 'migrate.js'), join(tree, 'pg', 'migrate.js'));
+    copyFileSync(join(compiled, 'errors.js'), join(tree, 'errors.js'));
+    copyFileSync(join(compiled, 'pg', 'migrate.js'), join(tree, 'pg', 'migrate.js'));
 
     const probe = [
       'const m = require(process.argv[1]);',
