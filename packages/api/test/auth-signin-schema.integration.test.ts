@@ -116,6 +116,16 @@ async function withSchema(run: (fixture: Fixture) => Promise<void>): Promise<voi
   await admin.query(`CREATE DATABASE "${database}"`);
 
   const pool = createPool({ connectionString: databaseUrlFor(database), max: 4 });
+
+  // Dropping a database WITH (FORCE) terminates whatever backends are still attached to it, and a
+  // `pg` pool with no `error` listener re-emits that as an *uncaught exception* — which node:test
+  // attributes to whichever test happens to be running, not to the teardown that caused it. That is
+  // exactly how this arrived: "terminating connection due to administrator command", surfacing in CI
+  // as a failure of the next test along, while three local runs never raced. Both pools are being
+  // torn down on purpose here, so a connection dying underneath them is the expected end of its life
+  // rather than something to report.
+  pool.on('error', () => {});
+  admin.on('error', () => {});
   // Errors only: a deliberately broken database is about to be exercised, and the point of these
   // tests is the status codes, not a wall of expected failure logging.
   const logger = new JsonLogger({}, { level: 'error', sink: () => {} });
