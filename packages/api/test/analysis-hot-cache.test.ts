@@ -507,7 +507,7 @@ test('the tier refuses a capacity it cannot honour', () => {
  */
 test('the deadline cannot be overridden by a caller', () => {
   const source = readFileSync(resolve(__dirname, '..', '..', 'src/analysis/hot-cache.ts'), 'utf8');
-  // The knob, not the word: line 50 names the durable tier's `ttlMs` in prose, which is fine.
+  // The knob, not the word — a docblock may still discuss the durable tier's own retention setting.
   assert.doesNotMatch(source, /readonly ttlMs|this\.ttlMs|options\.ttlMs/, 'no TTL knob may exist');
   assert.match(source, /expiresAt: now \+ HOT_CACHE_TTL_MS/, 'the deadline comes from the constant');
 });

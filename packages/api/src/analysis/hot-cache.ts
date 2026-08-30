@@ -46,11 +46,10 @@ export interface HotAnalysisCacheObserver {
  * to be swept. The smallest safe design is therefore a deadline this tier owns, chosen so small that
  * it cannot meaningfully disagree with the policy it sits under.
  *
- * A minute is that size. The retention window is 30 days by default and 365 at most, so the extra
- * staleness this tier can introduce is at worst `HOT_CACHE_TTL_MS` divided by the durable tier's own
- * retention window (`AnalysisCacheSettings.ttlMs`, which this tier neither reads nor has an
- * equivalent of) — under one part in forty
- * thousand of the window an operator configured. And because the deadline is **absolute**, fixed
+ * A minute is that size. The extra staleness this tier can introduce is at worst
+ * `HOT_CACHE_TTL_MS` — a duration, not a proportion — and the retention window it sits under is 30
+ * days by default and never less than one, so that worst case is a rounding error against every
+ * window an operator can configure. And because the deadline is **absolute**, fixed
  * when the entry is stored and never renewed by a read, a position asked for a thousand times a
  * second still leaves this tier after a minute. That is what makes it incapable of extending a
  * durable entry indefinitely; a sliding deadline would make a hot position immortal, which is the
