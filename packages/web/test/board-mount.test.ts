@@ -257,9 +257,31 @@ test('Escape cancels promotion after focus leaves it and cleans up its document 
     assert.ok(reopenedOverlay);
     assert.equal(board.doc.listenerCount('keydown'), 1);
 
+    const promotionDestination = board.focusedSquare('e8');
+    assert.ok(promotionDestination);
+    promotionDestination.focused = false;
+    mounted.setPosition(fen); // authoritative sync must dismiss stale promotion UI and listeners
+    assert.equal(reopenedOverlay.removed, true);
+    assert.equal(board.doc.listenerCount('keydown'), 0);
+    assert.equal(promotionDestination.focused, true, 'position sync restores focus to the board');
+
+    let staleEscapePrevented = false;
+    board.doc.dispatchKeydown({
+      key: 'Escape',
+      preventDefault: () => { staleEscapePrevented = true; },
+      stopPropagation: () => undefined,
+    });
+    assert.equal(staleEscapePrevented, false, 'position sync removes the stale Escape handler');
+
+    board.dispatchClick(288, 96); // position sync must also clear pending promotion state
+    board.dispatchClick(288, 32);
+    const finalOverlay = board.overlay();
+    assert.ok(finalOverlay);
+    assert.equal(board.doc.listenerCount('keydown'), 1);
+
     mounted.destroy();
     assert.equal(board.doc.listenerCount('keydown'), 0);
-    assert.equal(reopenedOverlay.removed, true);
+    assert.equal(finalOverlay.removed, true);
   } finally {
     mounted.destroy();
     Object.defineProperty(globalThis, 'document', { configurable: true, value: previousDocument });

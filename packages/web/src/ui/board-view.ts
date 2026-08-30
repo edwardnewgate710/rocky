@@ -103,9 +103,12 @@ export class BoardView {
 
   /** Set the position: updates both the rendered pieces and the interaction. */
   setPosition(fen: string): void {
+    const restorePromotionFocus = this.overlay !== null;
+    this.closeOverlay();
     this.pieces = parsePlacement(fen);
     this.interaction.setPosition(fen);
     this.render();
+    if (restorePromotionFocus) this.focusCurrentSquare();
   }
 
   /** Replace the last-move highlight, or clear it when the game has no last move. */
@@ -338,6 +341,11 @@ export class BoardView {
     this.interaction.cancelPromotion();
     this.closeOverlay();
     this.render();
+    this.focusCurrentSquare();
+  }
+
+  /** Return focus to the board's current roving-focus square. */
+  private focusCurrentSquare(): void {
     if (this.focusedSquare) {
       this.root.querySelector<HTMLElement>(`[data-square="${this.focusedSquare}"]`)?.focus();
     }
