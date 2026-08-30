@@ -694,8 +694,34 @@ a cache miss and reported, never cast to a trusted type. The adapter fails open 
 infrastructure fault (a cache is an optimization and `EngineManager.analyze` calls it unguarded) and
 reports each one through an injected hook.
 
-No TTL and no eviction, consistent with ADR-0002's "TTL only on ephemeral tiers". A retention policy
-is a precondition of production wiring, not of the schema.
+#### Retention (`0027_engine_analysis_cache_retention.sql`, ADR-0138)
+
+```sql
+CREATE INDEX engine_analysis_cache_updated_at_idx ON engine_analysis_cache (updated_at);
+```
+
+The API composes this cache from ADR-0138 onward, so the table now has a retention policy. A row is
+eligible once `updated_at < now() - ttl` (default 30 days, `ANALYSIS_CACHE_TTL_DAYS`, clamped to a
+year). `updated_at` moves only on a dominating write, so the window measures age since the entry last
+got **stronger**, not since it was last read: touching rows on read would make every cache hit a
+row-locking write on the platform's hottest positions. A popular position therefore expires on
+schedule, costs one recomputation, and is cached again for another window.
+
+The engine fingerprint is the primary invalidator and the TTL is its backstop. An engine upgrade
+changes the fingerprint, so every row from the old build becomes unreachable at once, is never
+refreshed again, and ages out.
+
+Cleanup is an hourly sweep from the API, deleting at most 500 rows per statement and 20 batches per
+tick. The batch is chosen with `FOR UPDATE SKIP LOCKED`, which is what makes two replicas sweeping at
+once claim disjoint batches, and what makes a row that a stronger write refreshes mid-statement get
+re-checked against its committed version and survive. The index above is what keeps that scan from
+reading the whole table; it is a plain transactional `CREATE INDEX` because the table was empty in
+every deployment until this wiring landed.
+
+The cache pool carries `statement_timeout = 250ms` and a matching connection-acquisition bound, so a
+lookup that would hang becomes an absorbed fault and a cache miss rather than a stalled analysis.
+Retention shares that bound; a swept batch that times out is rolled back and retried on the next
+tick.
 
 
 

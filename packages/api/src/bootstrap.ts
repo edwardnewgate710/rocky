@@ -89,7 +89,13 @@ import {
 import type { AnalysisProvider } from '@chess-platform/engine';
 import { EngineBackedEvaluator } from '@chess-platform/anti-cheat/engine';
 import { AntiCheatAnalysisService } from './anti-cheat/analysis-service';
-import { createAnalysisFromEnv, createMistakePrediction, createPuzzleGeneration } from './analysis/composition';
+import {
+  analysisCacheSettingsFromEnv,
+  createAnalysisFromEnv,
+  createMistakePrediction,
+  createPuzzleGeneration,
+} from './analysis/composition';
+import { createAnalysisCacheComposition } from './analysis/durable-cache';
 import { createOpeningExploration } from './openings/composition';
 import { createAiFromEnv, createMoveExplanation } from './ai/composition';
 import { createEndgameTraining } from './endgames/composition';
@@ -247,7 +253,35 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
   // above — that one backs anti-cheat evaluation and is a different workload with different limits.
   // Composes only when an engine binary is configured; otherwise `deps.analysis` stays undefined,
   // `GET /v1/capabilities` reports `analysis: false`, and the route answers 503.
-  const analysisComposition = options.analysis ?? createAnalysisFromEnv();
+  //
+  // The cache tier (ADR-0138) is passed as a factory, not a value, so it is built only on the branch
+  // where an engine exists — a deployment without one opens no cache pool and starts no sweeper. It
+  // resolves its connection string exactly as the main pool above did, including the part that says
+  // an injected `pool` is the caller taking over connection management: reaching past it to
+  // `DATABASE_URL` would open a second, real pool underneath a caller that supplied its own — which
+  // in a test suite means connecting to whatever database happens to be configured.
+  // An empty string is "not supplied", exactly as the main pool above reads it. `??` alone would
+  // keep it, so the pool would fall back to `DATABASE_URL` and connect while the cache pool threw
+  // on a blank DSN — turning a bootstrap that used to work into a startup failure. The cache must
+  // not be stricter about its connection string than the pool it sits beside.
+  const suppliedConnectionString =
+    options.connectionString !== undefined && options.connectionString !== ''
+      ? options.connectionString
+      : undefined;
+  const cacheConnectionString =
+    suppliedConnectionString ?? (options.pool === undefined ? process.env['DATABASE_URL'] : undefined);
+  const analysisComposition =
+    options.analysis ??
+    createAnalysisFromEnv(process.env, () =>
+      createAnalysisCacheComposition({
+        settings: analysisCacheSettingsFromEnv(process.env),
+        logger,
+        metrics,
+        ...(cacheConnectionString !== undefined
+          ? { connectionString: cacheConnectionString }
+          : {}),
+      }),
+    );
 
   // Move Explanation (ADR-0115) needs *both* halves: an AI provider to write the prose and the
   // analysis subsystem above to ground it. Either one missing composes nothing, which is the point
