@@ -155,3 +155,52 @@ test('the two-column form keeps its labels, focus order and focus ring', async (
   expect(outline.style).not.toBe('none');
   expect(Number.parseFloat(outline.width)).toBeGreaterThanOrEqual(3);
 });
+
+test('coarse pointers get usable auth and anchor-button targets with visible focus', async ({ browser }) => {
+  const context = await browser.newContext({
+    hasTouch: true,
+    viewport: { width: 390, height: 844 },
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto('/');
+    await expect(page.locator('#auth')).toBeVisible();
+    expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
+
+    expect(await page.evaluate(() => ({
+      documentWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth,
+    }))).toEqual({ documentWidth: 390, viewportWidth: 390 });
+
+    for (const selector of ACTIONS) {
+      expect((await boxOf(page, selector)).height, selector).toBeGreaterThanOrEqual(44);
+    }
+    expect((await boxOf(page, '#auth-forgot-password')).height).toBeGreaterThanOrEqual(44);
+
+    const outline = await page.locator('#auth-forgot-password').evaluate((element) => {
+      (element as HTMLElement).focus();
+      const style = getComputedStyle(element);
+      return { width: style.outlineWidth, style: style.outlineStyle };
+    });
+    expect(outline.style).not.toBe('none');
+    expect(Number.parseFloat(outline.width)).toBeGreaterThanOrEqual(3);
+
+    await page.locator('#study').evaluate((section) => {
+      (section as HTMLElement).hidden = false;
+      section.querySelector('#study-export-link')?.setAttribute('href', '/study.pgn');
+    });
+    const exportLink = page.locator('#study-export-link');
+    await expect(exportLink).toBeVisible();
+    expect((await boxOf(page, '#study-export-link')).height).toBeGreaterThanOrEqual(44);
+
+    const exportOutline = await exportLink.evaluate((element) => {
+      (element as HTMLElement).focus();
+      const style = getComputedStyle(element);
+      return { width: style.outlineWidth, style: style.outlineStyle };
+    });
+    expect(exportOutline.style).not.toBe('none');
+    expect(Number.parseFloat(exportOutline.width)).toBeGreaterThanOrEqual(3);
+  } finally {
+    await context.close();
+  }
+});

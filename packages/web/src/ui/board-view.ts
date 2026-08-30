@@ -290,11 +290,18 @@ export class BoardView {
 
   private showPromotion(to: Square): void {
     this.closeOverlay();
+    this.focusedSquare = to;
     const color: Piece['color'] = rankIndex(to) === 7 ? 'w' : 'b';
     const overlay = document.createElement('div');
     overlay.className = 'cb-promotion';
     overlay.setAttribute('role', 'dialog');
     overlay.setAttribute('aria-label', 'Choose promotion piece');
+    overlay.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.cancelPromotion();
+    });
     for (const role of PROMO_ROLES) {
       const btn = document.createElement('button');
       btn.type = 'button';
@@ -314,15 +321,22 @@ export class BoardView {
     cancel.setAttribute('aria-label', 'Cancel promotion');
     cancel.addEventListener('click', (e) => {
       e.stopPropagation();
-      this.interaction.cancelPromotion();
-      this.closeOverlay();
-      this.render();
+      this.cancelPromotion();
     });
     overlay.appendChild(cancel);
     this.root.appendChild(overlay);
     this.overlay = overlay;
     const first = overlay.querySelector('button');
     if (first instanceof HTMLElement) first.focus();
+  }
+
+  private cancelPromotion(): void {
+    this.interaction.cancelPromotion();
+    this.closeOverlay();
+    this.render();
+    if (this.focusedSquare) {
+      this.root.querySelector<HTMLElement>(`[data-square="${this.focusedSquare}"]`)?.focus();
+    }
   }
 
   private closeOverlay(): void {

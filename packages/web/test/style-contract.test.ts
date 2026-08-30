@@ -528,11 +528,119 @@ test('the mistake classification is a word, never a colour', () => {
   // readers. `ok`/`inaccuracy`/`mistake`/`blunder` is a four-value ordinal and takes the same answer:
   // emphasis by weight, severity by the word itself.
   assert.match(verdictRule.body, /font-weight\s*:\s*600/);
-  assert.match(verdictRule.body, /color\s*:\s*var\(--text\)/);
+  assert.match(verdictRule.body, /color\s*:\s*var\(--fg\)/);
 
   // Ember specifically. It means the *application* failed — a validation error, a failed action — and
   // a blunder is data the player asked for. Borrowing it here would give one hue two meanings, which
   // is the exact drift that split error colour off from the accent in the first place.
   assert.equal(/--danger|--err|ember|#e5484d|#b42318/i.test(verdictRule.body), false,
     'a blunder must not be painted in the error colour');
+});
+
+test('every CSS custom-property reference is defined', () => {
+  const stripped = stripCssComments(CSS);
+  const referenced = new Set([...stripped.matchAll(/var\(\s*(--[a-zA-Z0-9_-]+)/g)].map((match) => match[1]!));
+  const declared = new Set([...stripped.matchAll(/(--[a-zA-Z0-9_-]+)\s*:/g)].map((match) => match[1]!));
+  const missing = [...referenced].filter((token) => !declared.has(token));
+
+  assert.deepEqual(
+    missing,
+    [],
+    `these custom properties are referenced with var() but never declared: ${missing.join(', ')}`,
+  );
+});
+
+test('anchor buttons share the visual, focus and coarse-pointer contract without fake disabled semantics', () => {
+  const all = rules();
+  const base = all.find((rule) => rule.selectors.includes('button') && rule.selectors.includes('a.button'));
+  assert.ok(base, 'expected a shared base rule for `button` and `a.button`');
+  assert.match(base.body, /background-color\s*:\s*transparent/);
+  assert.match(base.body, /border\s*:\s*1px solid currentColor/);
+
+  const anchor = all.find((rule) => rule.selectors.includes('a.button') && !rule.selectors.includes('button'));
+  assert.ok(anchor, 'expected a dedicated `a.button` geometry rule');
+  assert.match(anchor.body, /display\s*:\s*inline-flex/);
+  assert.match(anchor.body, /align-items\s*:\s*center/);
+  assert.match(anchor.body, /justify-content\s*:\s*center/);
+  assert.match(anchor.body, /text-decoration\s*:\s*none/);
+
+  const hover = all.find((rule) => rule.selectors.includes('a.button:hover'));
+  assert.ok(hover, 'missing hover rule for `a.button`');
+  assert.match(hover.body, /background-color\s*:\s*var\(--panel\)/);
+  assert.match(hover.body, /box-shadow\s*:\s*var\(--lift\)/);
+
+  const focus = all.find((rule) => rule.selectors.includes('a.button:focus-visible'));
+  assert.ok(focus, 'missing focus-visible rule for `a.button`');
+  assert.match(focus.body, /outline\s*:\s*3px solid var\(--sel\)/);
+
+  const coarse = rules(atRuleBody('@media (pointer: coarse)'))
+    .find((rule) => rule.selectors.includes('a.button'));
+  assert.ok(coarse, 'missing coarse-pointer rule for `a.button`');
+  assert.match(coarse.body, /min-height\s*:\s*44px/);
+
+  const disabledSelectors = all
+    .flatMap((rule) => rule.selectors)
+    .filter((selector) => selector.includes(':disabled'));
+  assert.equal(
+    disabledSelectors.some((selector) => selector.includes('a.button') || selector.includes('a:disabled')),
+    false,
+    'disabled semantics must remain native-button-only',
+  );
+});
+
+test('auth metadata links have a visible focus ring and coarse-pointer touch target', () => {
+  const focus = rules().find((rule) => rule.selectors.includes('.auth-meta a:focus-visible'));
+  assert.ok(focus, 'missing .auth-meta a:focus-visible rule');
+  assert.match(focus.body, /outline\s*:\s*3px solid var\(--sel\)/);
+
+  const coarseRules = rules(atRuleBody('@media (pointer: coarse)'));
+  const target = coarseRules.find(
+    (rule) => rule.selectors.includes('.auth-meta a') && /min-height\s*:\s*44px/.test(rule.body),
+  );
+  const layout = coarseRules.find(
+    (rule) => rule.selectors.includes('.auth-meta a') && /display\s*:\s*inline-flex/.test(rule.body),
+  );
+  assert.ok(target, 'missing 44px coarse-pointer target for .auth-meta a');
+  assert.ok(layout, 'missing coarse-pointer layout rule for .auth-meta a');
+  assert.match(layout.body, /align-items\s*:\s*center/);
+});
+
+test('semantic alignment and indentation rules use logical properties', () => {
+  const all = rules();
+  const physicalHorizontal = /(^|[\s;{])(float|clear)\s*:|(margin|padding|border)-(left|right)\s*:|(^|[\s;])text-align\s*:\s*(left|right)/;
+  const targets = [
+    '.social-action-destructive',
+    '.empty-inline',
+    '.game-review-move',
+    '.opening-value',
+    '.puzzle-value',
+    '.explain-value',
+    '.coach-value',
+    '.assess-value',
+    '.quiz-option-btn',
+    '.notation-prefix',
+    '.notation-variation',
+    '.endgame-value',
+  ];
+
+  for (const selector of targets) {
+    const rule = all.find((candidate) => candidate.selectors.includes(selector));
+    assert.ok(rule, `could not find rule for ${selector}`);
+    assert.doesNotMatch(rule.body, physicalHorizontal, `${selector} uses a physical horizontal property`);
+  }
+
+  assert.match(all.find((rule) => rule.selectors.includes('.social-action-destructive'))!.body, /margin-inline-start\s*:\s*auto/);
+  assert.match(all.find((rule) => rule.selectors.includes('.notation-prefix'))!.body, /margin-inline-end\s*:\s*2px/);
+
+  const variation = all.find((rule) => rule.selectors.includes('.notation-variation'))!;
+  assert.match(variation.body, /margin-inline-start\s*:\s*12px/);
+  assert.match(variation.body, /padding-inline-start\s*:\s*8px/);
+  assert.match(variation.body, /border-inline-start\s*:\s*2px solid var\(--panel-strong\)/);
+
+  for (const selector of ['.empty-inline', '.game-review-move', '.quiz-option-btn']) {
+    assert.match(all.find((rule) => rule.selectors.includes(selector))!.body, /text-align\s*:\s*start/);
+  }
+  for (const selector of ['.opening-value', '.puzzle-value', '.explain-value', '.coach-value', '.assess-value', '.endgame-value']) {
+    assert.match(all.find((rule) => rule.selectors.includes(selector))!.body, /text-align\s*:\s*end/);
+  }
 });
