@@ -197,8 +197,9 @@ asserted by a test rather than merely described, so the claim cannot quietly bec
   in one process: `createAnalysisFromEnv` composed with the durable tier, a cold request answered by
   a real search through a real binary and stored in PostgreSQL by the canonical migration's schema,
   that composition shut down, and a second composition — its own pool, its own workers, sharing only
-  the database — answering the same request with `analysis_cache_events_total{event="cache_hit"}` and
-  `analysis_cache_events_total{event="engine_computation_started"}` at zero. Both engine families are
+  the database — answering the same requests with `analysis_cache_events_total{event="cache_hit"}` at
+  two, one per request, and `analysis_cache_events_total{event="engine_computation_started"}` at
+  zero. Both engine families are
   covered: `standard` through Stockfish 16 and `threecheck` through Fairy-Stockfish 14, the latter
   also proving that the Three-Check FEN `engineFenFor` canonicalises is what round-trips as the cache
   key. Note what the second composition still does do: it spawns both binaries, because the
