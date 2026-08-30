@@ -42,6 +42,13 @@ import { InMemoryMetrics } from '../src/ports/metrics';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
 
+/**
+ * Whether an engine path is set *and* points at something.
+ *
+ * The existence check is the part that matters: a variable holding a path to a binary that is not
+ * there is the shape a broken CI install takes, and without it this file would skip on a job that
+ * was supposed to run it — which is the one failure the whole arrangement is built to avoid.
+ */
 function binaryPresent(variable: string): boolean {
   const path = process.env[variable];
   return path !== undefined && path !== '' && existsSync(path);
