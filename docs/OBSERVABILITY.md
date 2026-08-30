@@ -48,7 +48,10 @@ Metrics are exposed in standard Prometheus text format (`v0.0.4`) at `GET /v1/me
 
 #### Analysis cache (ADR-0138, ADR-0139)
 
-Three sources report, and they answer different questions — none can be derived from the others.
+Three *reporters* feed the series below — the engine's orchestration observer, the process-local hot
+tier, and the durable adapter's fault hook — and they answer different questions, so none can be
+derived from the others. (Three reporters, five metric families: a reporter is who is talking, not
+how many series it writes.)
 
 - `analysis_cache_events_total` (counter), labeled `event`: what the **request** did, straight from the
   engine's orchestration events (`cache_hit`, `cache_miss`, `request_coalesced`,
@@ -56,7 +59,11 @@ Three sources report, and they answer different questions — none can be derive
 - `analysis_cache_lookup_seconds` (histogram), labeled `outcome` (`hit`, `miss`, `read_failure`):
   lookup latency.
 - `analysis_cache_hot_total` (counter), labeled `outcome` (`hit`, `miss`, `durable_hit`, `expired`,
-  `evicted`): which **tier** answered, and why an entry left memory.
+  `evicted`): which **tier** answered, and why an entry left memory. `expired` means "left because
+  its deadline had passed", counted wherever that happens — a read that finds it dead, an eviction
+  that gives it up first, or a write that replaces it — while `evicted` is reserved for a *live*
+  entry given up to make room. That is what keeps the two a clean split between TTL pressure and
+  capacity pressure.
 - `analysis_cache_faults_total` (counter), labeled `fault` (`read`, `write`, `payload`, `retention`):
   whether the **database** misbehaved.
 - `analysis_cache_retention_deleted_total` (counter): rows removed by the retention sweep.

@@ -283,7 +283,13 @@ export class HotAnalysisCache implements AnalysisCache {
     const stored: AnalysisLimits = { ...limits };
     const now = this.now();
     const current = this.entries.get(keyString);
-    if (current !== undefined && now < current.expiresAt && !limitsSatisfy(stored, current.limits)) {
+    if (current !== undefined && now >= current.expiresAt) {
+      // Counted here as well as in `takeLive` and `evict`, because `expired` means "left because its
+      // deadline had passed" rather than "was read after its deadline". A replacement is the third
+      // way an entry can leave for that reason, and omitting it would make the counter understate
+      // TTL pressure by however much of the traffic happens to be writes.
+      this.observe('expired');
+    } else if (current !== undefined && !limitsSatisfy(stored, current.limits)) {
       return;
     }
     // Delete before set so a replacement lands at the tail rather than keeping the old entry's

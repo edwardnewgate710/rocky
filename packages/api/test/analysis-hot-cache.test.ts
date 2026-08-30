@@ -343,13 +343,15 @@ test('repeated writes for one key keep the strongest, and never duplicate the en
   assert.equal((await hot.get(key(), { depth: 30 }))?.[0]?.depth, 30, 'but a deeper one must');
 });
 
-test('an expired incumbent does not block its replacement', async () => {
+test('an expired incumbent does not block its replacement, and is counted as expired', async () => {
   const clock = new ManualClock();
+  const { observer, seen } = outcomes();
   const hot = new HotAnalysisCache({
     delegate: new CountingDelegate(),
     maxEntries: 10,
     ttlMs: 60_000,
     now: clock.now,
+    observer,
   });
 
   await hot.set(key(), results(20), { limits: { depth: 20 } });
@@ -360,6 +362,11 @@ test('an expired incumbent does not block its replacement', async () => {
   await hot.set(key(), results(10), { limits: { depth: 10 } });
 
   assert.equal((await hot.get(key(), { depth: 10 }))?.[0]?.depth, 10);
+  // A replacement is the third way an entry can leave for its deadline, alongside a read that finds
+  // it dead and an eviction that gives it up first. Counting only the first two would make `expired`
+  // understate TTL pressure by however much of the traffic happens to be writes.
+  assert.equal(seen.filter((o) => o === 'expired').length, 1);
+  assert.equal(seen.filter((o) => o === 'evicted').length, 0, 'this was not capacity pressure');
 });
 
 test('distinct identities do not collide', async () => {
