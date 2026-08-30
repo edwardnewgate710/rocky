@@ -96,14 +96,20 @@ test('migrations replay in the order the runner applies them, which is lexicogra
   }
 });
 
+/**
+ * The guard replays migrations in exactly the order the runner does.
+ *
+ * Pinned against the runner's own source rather than restated, so the two cannot drift apart
+ * silently: a change to `migrate.ts`'s sort has to be made here too, or this fails. The whole guard
+ * is worthless if it reads the migrations in a different order from the code it is guarding, and
+ * nothing else would notice.
+ *
+ * The expression lives in `migrationFiles` now, which the runner and the readiness probe share, so
+ * the chained `.map` that attaches each file's version is allowed after it. What is still pinned is
+ * the property that matters: `.sort()` with no comparator, ordering by filename exactly as this
+ * guard does.
+ */
 test('the guard replays migrations in exactly the order the runner does', () => {
-  // Pinned against the runner's own source rather than restated, so the two cannot drift apart
-  // silently: a change to `migrate.ts`'s sort must be made here too or this fails.
-  //
-  // The expression now lives in `migrationFiles`, which the runner and the readiness probe share, so
-  // the chained `.map` that attaches each file's version is allowed after it. What is still pinned is
-  // the property that matters: `.sort()` with no comparator, ordering by filename exactly as this
-  // guard does.
   const runner = readFileSync('packages/persistence/src/pg/migrate.ts', 'utf8');
   assert.match(
     runner,

@@ -239,6 +239,15 @@ export async function migrate(pool: Pool, dir: string): Promise<number> {
   }
 }
 
+/**
+ * The walk itself: ensure the ledger exists, then apply every file the database has no record of.
+ *
+ * Separated from {@link migrate} because the advisory lock is that function's whole job — this one
+ * assumes it is already held and may therefore read `schema_migrations`, decide what is outstanding,
+ * and write to it without racing another booting instance. The ledger is created here rather than in
+ * a migration because it is the thing that records migrations, and the `ADD COLUMN IF NOT EXISTS`
+ * below is how a ledger written before online indexes existed acquires the `state` column.
+ */
 async function runMigrations(pool: Pool, dir: string): Promise<number> {
   await pool.query(
     `CREATE TABLE IF NOT EXISTS schema_migrations (
