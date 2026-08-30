@@ -227,9 +227,20 @@ export function createApiServer(deps: ApiDependencies, options: ApiServerOptions
     auth,
     openapiDocument: () => buildOpenApiDocument(router, info),
     listen: (port: number, host?: string): Promise<Server> =>
-      new Promise((resolve) => {
+      new Promise((resolve, reject) => {
         const server = createServer(handler);
-        server.listen(port, host, () => resolve(server));
+        // A bind failure arrives as an `error` event rather than through the
+        // callback, so without this listener the promise would never settle and
+        // the event — having no handler at all — would take the process down
+        // with it. It is removed once listening, deliberately: a later server
+        // error keeps whatever semantics it had before rather than being
+        // quietly swallowed by a `reject` on an already-settled promise.
+        const rejectOnBindFailure = (error: Error): void => reject(error);
+        server.once('error', rejectOnBindFailure);
+        server.listen(port, host, () => {
+          server.removeListener('error', rejectOnBindFailure);
+          resolve(server);
+        });
       }),
   };
 }

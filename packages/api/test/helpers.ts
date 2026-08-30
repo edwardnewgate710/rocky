@@ -4,8 +4,7 @@
  * cost and a manual clock so tests are fast and deterministic.
  */
 
-import type { AddressInfo } from 'node:net';
-import type { Server } from 'node:http';
+import { closeServer, listenOnFetchablePort } from './listen';
 import type { Role } from '@chess-platform/persistence';
 import { ScryptPasswordHasher } from '../src/auth/password';
 import { AccessTokenService } from '../src/auth/tokens';
@@ -49,15 +48,8 @@ import { InMemoryAchievementsRepository } from '@chess-platform/achievements';
 export const TEST_SECRET = 'test-access-token-secret-0123456789abcdef';
 export const START_MS = 1_700_000_000_000;
 
-// WHATWG Fetch blocks several legacy-service ports even on localhost. Windows
-// can allocate them from a low ephemeral range, so discard those assignments.
-const FETCH_BLOCKED_EPHEMERAL_PORTS = new Set([
-  1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566,
-  6665, 6666, 6667, 6668, 6669, 6697, 10080,
-]);
-
-const closeServer = (server: Server): Promise<void> =>
-  new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+/** The loopback address every harness binds; also the host in its `baseUrl`. */
+const HARNESS_HOST = '127.0.0.1';
 
 export interface Harness {
   readonly server: ApiServer;
@@ -327,14 +319,11 @@ export async function startHarness(
     ...(harnessOptions.logger ? { logger: harnessOptions.logger } : {}),
     ...(harnessOptions.tracer ? { tracer: harnessOptions.tracer } : {}),
   });
-  let http: Server;
-  let port: number;
-  do {
-    http = await server.listen(0, '127.0.0.1');
-    ({ port } = http.address() as AddressInfo);
-    if (FETCH_BLOCKED_EPHEMERAL_PORTS.has(port)) await closeServer(http);
-  } while (FETCH_BLOCKED_EPHEMERAL_PORTS.has(port));
-  const baseUrl = `http://127.0.0.1:${port}`;
+  const { server: http, port } = await listenOnFetchablePort(
+    (p, h) => server.listen(p, h),
+    HARNESS_HOST,
+  );
+  const baseUrl = `http://${HARNESS_HOST}:${port}`;
 
   return {
     server,

@@ -33,7 +33,7 @@ import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { closeServer, listenOnFetchablePort } from './listen';
 import {
   createPool,
   migrate,
@@ -51,22 +51,9 @@ const skip = DATABASE_URL ? false : 'DATABASE_URL not set';
 /** Long enough for `resolveConfig`, and not a secret — it signs nothing that outlives the test. */
 const TEST_SECRET = 'test-access-token-secret-0123456789abcdef';
 
-/**
- * WHATWG `fetch` refuses several legacy-service ports even on loopback, and Windows hands them out
- * of a low ephemeral range. Copied from `helpers.ts`, which learned it the hard way.
- */
-const FETCH_BLOCKED_PORTS = new Set([
-  1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668, 6669,
-  6697, 10080,
-]);
+/** The loopback address this suite binds; also the host in the `baseUrl` it hands to `run`. */
+const SERVER_HOST = '127.0.0.1';
 
-/**
- * Wait for the listener to actually stop, rather than only asking it to.
- *
- * `Server.close` is callback-shaped and reports its failure there; returning before it settles would
- * leave the port held while the next case tries to bind, which is the kind of flake that only shows
- * up under `--test-concurrency`.
- */
 /** SQLSTATE 57P01 — `admin_shutdown`: the backend was terminated by `pg_terminate_backend`. */
 const ADMIN_SHUTDOWN = '57P01';
 
@@ -81,9 +68,6 @@ function rethrowUnlessForcedTermination(error: Error): void {
   if (error.message.includes('terminating connection due to administrator command')) return;
   throw error;
 }
-
-const closeServer = (server: Server): Promise<void> =>
-  new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
 
 /**
  * A directory holding the first `count` migrations, copied byte-for-byte from the real ones.
@@ -158,17 +142,17 @@ async function withSchema(run: (fixture: Fixture) => Promise<void>): Promise<voi
     const composed = createPgApiServer({ pool, logger, config: { accessTokenSecret: TEST_SECRET } });
     shutdownAnalysis = composed.shutdownAnalysis;
 
-    let port: number;
-    do {
-      http = await composed.server.listen(0, '127.0.0.1');
-      ({ port } = http.address() as AddressInfo);
-      if (FETCH_BLOCKED_PORTS.has(port)) {
-        await closeServer(http);
-        http = undefined;
-      }
-    } while (http === undefined);
+    const listening = await listenOnFetchablePort(
+      (p, h) => composed.server.listen(p, h),
+      SERVER_HOST,
+    );
+    http = listening.server;
 
-    await run({ baseUrl: `http://127.0.0.1:${port}`, pool, migrateTo: (dir) => migrate(pool, dir) });
+    await run({
+      baseUrl: `http://${SERVER_HOST}:${listening.port}`,
+      pool,
+      migrateTo: (dir) => migrate(pool, dir),
+    });
   } finally {
     if (http) await closeServer(http);
     if (shutdownAnalysis) await shutdownAnalysis();
