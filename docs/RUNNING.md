@@ -63,7 +63,8 @@ composition root. Config is entirely via environment variables:
 - `ACCESS_TOKEN_SECRET` — HMAC signing secret (shared with the gateway)
 - `PORT` — listen port (default 8080)
 - `REFRESH_COOKIE_SECURE` — defaults to `true`; the local Compose stack explicitly sets `false`
-  with `NODE_ENV=development` so browsers can use the refresh cookie over localhost HTTP
+  with `NODE_ENV=development` so browsers can use the refresh cookie over localhost HTTP. Compose
+  binds every published port to `127.0.0.1`, keeping that non-TLS exception off the network.
 
 Health check: `GET /v1/health` returns `{ status: "ok" }`.
 

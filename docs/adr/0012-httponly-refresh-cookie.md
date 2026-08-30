@@ -127,7 +127,8 @@ The cookie is preferred when both are present.
 - Config: `ApiConfig.cookieSecure` (default `true`, resolved in
   `resolveConfig`). The production entrypoint also accepts the exact environment
   strings `REFRESH_COOKIE_SECURE=true|false`; `false` fails startup unless
-  `NODE_ENV=development`.
+  `NODE_ENV=development`. The local Compose stack additionally binds all published
+  ports to `127.0.0.1`, so its non-Secure development cookie is not exposed off-host.
 - Routes: `packages/api/src/routes.ts` (set/read/clear cookie on auth routes).
 - Web: `packages/web/src/net/session.ts` (removed `WebStorageTokenStore`),
   `packages/web/src/app/composition.ts` (always uses `MemoryTokenStore`),
