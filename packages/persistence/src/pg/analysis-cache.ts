@@ -105,9 +105,10 @@ const UPSERT_SQL = `
  * trade than the single recomputation an expiring hot entry costs.
  *
  * `FOR UPDATE SKIP LOCKED` does two separate jobs. It makes concurrent sweepers take disjoint
- * batches instead of contending, and — because a locked row is re-checked against its committed
- * version rather than the snapshot the scan started from — it is what stops a row that a stronger
- * write refreshed mid-statement from being deleted anyway. An unlocked subquery would delete it.
+ * batches instead of contending, and it makes the sweep pass over a row another transaction is
+ * writing rather than deleting it on the strength of a snapshot that is about to be out of date — an
+ * unlocked subquery would delete a row a stronger search was landing at that very moment. The
+ * skipped row is no longer eligible by the next tick, because that write is what refreshed it.
  *
  * The batch is bounded so one tick cannot hold a large delete open, and it is a single statement, so
  * a failure leaves no transaction behind and no rows half-removed.

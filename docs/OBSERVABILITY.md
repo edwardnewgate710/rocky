@@ -59,6 +59,8 @@ Two sources report, and they answer different questions — neither can be deriv
   whether the **database** misbehaved.
 - `analysis_cache_retention_deleted_total` (counter): rows removed by the retention sweep.
 
+A read that times out is absorbed too, so its latency lands in `analysis_cache_lookup_seconds{outcome="miss"}` and the `read_failure` series stays empty for a Postgres-backed cache. Miss latency percentiles therefore include absorbed database timeouts; `analysis_cache_faults_total{fault="read"}` is what says how many.
+
 **Do not infer cache health from the event counters alone.** The Postgres adapter absorbs every fault
 and returns normally, so a failed read is recorded as `cache_miss` and — the sharp case — a failed
 write is recorded as `cache_write_completed`, because `set` resolved. During a total database outage

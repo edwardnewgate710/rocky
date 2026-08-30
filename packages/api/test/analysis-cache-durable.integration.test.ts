@@ -292,6 +292,40 @@ test('a cache pool that cannot connect degrades to computing, and says so', { sk
   }
 });
 
+/**
+ * The pool the production factory built really is bounded — asserted through the tier, not beside it.
+ *
+ * The unit test asserts the config object; this asserts that the object reaches the pool. An
+ * exclusive table lock makes the lookup hang for real, so without `statement_timeout` on this pool
+ * the analysis would wait for the lock rather than the bound, and this test would stop finishing.
+ */
+test('a lookup that would hang is bounded by the pool the factory built', { skip }, async () => {
+  const node = instance();
+  const blocker = createPool({ max: 1 });
+  const holder = await blocker.connect();
+  try {
+    await holder.query('BEGIN');
+    await holder.query('LOCK TABLE engine_analysis_cache IN ACCESS EXCLUSIVE MODE');
+
+    const startedAt = Date.now();
+    const results = await analyze(node, freshFen());
+    const elapsed = Date.now() - startedAt;
+
+    assert.equal(results.length, 1, 'the analysis still completes');
+    assert.equal(node.searches(), 1);
+    assert.ok(elapsed < 10_000, `the cache must not wait on the lock (took ${elapsed}ms)`);
+    assert.ok(
+      counter(node.metrics, 'analysis_cache_faults_total{fault="read"}') >= 1,
+      'the bounded read is reported as a fault, not passed off as a cold cache',
+    );
+  } finally {
+    await holder.query('ROLLBACK').catch(() => {});
+    holder.release();
+    await blocker.end();
+    await node.shutdown();
+  }
+});
+
 test('the retention sweep runs against the composed cache without disturbing it', { skip }, async () => {
   const node = instance();
   const fen = freshFen();

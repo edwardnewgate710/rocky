@@ -43,6 +43,21 @@ const CONNECTION_TIMEOUT_MS = 250;
  */
 const POOL_MAX = 4;
 
+/**
+ * Everything about the cache pool except where it connects, exported so it can be asserted.
+ *
+ * Stated as one object, and the only thing {@link createAnalysisCacheComposition} spreads into
+ * `createPool`, because these three settings are the whole of the bound this phase exists to add and
+ * a silently dropped one is invisible: the pool still works, the logs still say the tier was
+ * composed, and analysis simply becomes able to stall again. A separate literal at the call site
+ * could drift from whatever a test asserted; this cannot.
+ */
+export const ANALYSIS_CACHE_POOL_CONFIG = {
+  max: POOL_MAX,
+  statement_timeout: STATEMENT_TIMEOUT_MS,
+  connectionTimeoutMillis: CONNECTION_TIMEOUT_MS,
+} as const;
+
 /** Sweep hourly: often enough that expired rows do not pile up, rare enough to be invisible. */
 const RETENTION_INTERVAL_MS = 3_600_000;
 /** Rows per delete, so no single statement runs long enough to matter. */
@@ -93,9 +108,7 @@ export function createAnalysisCacheComposition(
 
   const pool = createPool({
     connectionString: options.connectionString,
-    max: POOL_MAX,
-    statement_timeout: STATEMENT_TIMEOUT_MS,
-    connectionTimeoutMillis: CONNECTION_TIMEOUT_MS,
+    ...ANALYSIS_CACHE_POOL_CONFIG,
   });
   const cache = new PgAnalysisCache(pool, {
     onError: (fault, error) => observability.reportFault(fault, error),
@@ -118,10 +131,12 @@ export function createAnalysisCacheComposition(
     cache,
     observer: observability,
     shutdown: async () => {
-      // Order matters: stop scheduling sweeps, then release the pool. The engine must already have
-      // drained by the time this runs, or the last searches' writes would meet a closed pool — which
-      // is why this hangs off the analysis shutdown handle rather than the process's pool teardown.
-      retention.stop();
+      // Order matters: stop sweeping and wait for the batch in flight, *then* release the pool. A
+      // sweep still running when the pool drains would have its next statement rejected and would
+      // report an orderly shutdown as a retention failure. The engine must already have drained by
+      // the time this runs, or the last searches' writes would meet a closed pool — which is why
+      // this hangs off the analysis shutdown handle rather than the process's pool teardown.
+      await retention.stop();
       await pool.end();
     },
   };

@@ -51,28 +51,41 @@ function withEnv<T>(overrides: Record<string, string | undefined>, run: () => T)
  * Boot the real composition root and hand back what it logged, having shut the analysis subsystem
  * down again — which is also how this file proves the shutdown handle releases the cache pool and
  * the sweeper rather than leaking a timer into the rest of the suite.
+ *
+ * A `connectionString` is passed explicitly wherever the durable tier is expected. These tests inject
+ * their own `pool` so nothing connects, and an injected pool is the caller taking over connection
+ * management — so the cache does not reach past it to `DATABASE_URL`. Production injects no pool and
+ * resolves the same string from the environment.
  */
-async function boot(overrides: Record<string, string | undefined>): Promise<Record_[]> {
+async function boot(
+  overrides: Record<string, string | undefined>,
+  connectionString?: string,
+): Promise<Record_[]> {
   const records: Record_[] = [];
   const logger = new JsonLogger(
     {},
     { level: 'debug', sink: (line) => records.push(JSON.parse(line) as Record_) },
   );
   const pool = new Pool();
-  const { shutdownAnalysis } = withEnv(overrides, () => createPgDependencies({ pool, logger }));
+  const { shutdownAnalysis } = withEnv(overrides, () =>
+    createPgDependencies({
+      pool,
+      logger,
+      ...(connectionString !== undefined ? { connectionString } : {}),
+    }),
+  );
   await shutdownAnalysis();
   await pool.end();
   return records;
 }
 
+const UNUSED_DSN = 'postgres://unused:unused@127.0.0.1:1/none';
+
 const cacheLines = (records: Record_[]): Record_[] =>
   records.filter((r) => r.msg.startsWith('analysis cache:'));
 
 test('createPgDependencies: composes the durable cache when an engine and a database are configured', async () => {
-  const records = await boot({
-    STOCKFISH_PATH: '/usr/local/bin/stockfish',
-    DATABASE_URL: 'postgres://unused:unused@127.0.0.1:1/none',
-  });
+  const records = await boot({ STOCKFISH_PATH: '/usr/local/bin/stockfish' }, UNUSED_DSN);
 
   const composed = cacheLines(records);
   assert.equal(composed.length, 1, 'exactly one cache tier is built, not one per request');
@@ -88,22 +101,20 @@ test('createPgDependencies: composes the durable cache when an engine and a data
 });
 
 test('createPgDependencies: honours the durable cache off switch', async () => {
-  const records = await boot({
-    STOCKFISH_PATH: '/usr/local/bin/stockfish',
-    DATABASE_URL: 'postgres://unused:unused@127.0.0.1:1/none',
-    ANALYSIS_CACHE_DURABLE: '0',
-  });
+  const records = await boot(
+    { STOCKFISH_PATH: '/usr/local/bin/stockfish', ANALYSIS_CACHE_DURABLE: '0' },
+    UNUSED_DSN,
+  );
 
   assert.match(String(cacheLines(records)[0]?.msg), /durable tier off/);
   assert.equal(cacheLines(records)[0]?.reason, 'disabled by configuration');
 });
 
 test('createPgDependencies: the retention window is configurable at the composition root', async () => {
-  const records = await boot({
-    STOCKFISH_PATH: '/usr/local/bin/stockfish',
-    DATABASE_URL: 'postgres://unused:unused@127.0.0.1:1/none',
-    ANALYSIS_CACHE_TTL_DAYS: '7',
-  });
+  const records = await boot(
+    { STOCKFISH_PATH: '/usr/local/bin/stockfish', ANALYSIS_CACHE_TTL_DAYS: '7' },
+    UNUSED_DSN,
+  );
 
   assert.equal(cacheLines(records)[0]?.ttlMs, 7 * 86_400_000);
 });
@@ -114,11 +125,10 @@ test('createPgDependencies: the retention window is configurable at the composit
  * nothing in the process would ever read.
  */
 test('createPgDependencies: builds no cache tier at all when no engine is configured', async () => {
-  const records = await boot({
-    STOCKFISH_PATH: undefined,
-    FAIRY_STOCKFISH_PATH: undefined,
-    DATABASE_URL: 'postgres://unused:unused@127.0.0.1:1/none',
-  });
+  const records = await boot(
+    { STOCKFISH_PATH: undefined, FAIRY_STOCKFISH_PATH: undefined },
+    UNUSED_DSN,
+  );
 
   assert.deepEqual(cacheLines(records), [], 'a pool built here would never be used or closed');
 });
@@ -129,11 +139,25 @@ test('createPgDependencies: builds no cache tier at all when no engine is config
  * test — and it is reported rather than assumed.
  */
 test('createPgDependencies: says why the durable tier is absent instead of leaving it unexplained', async () => {
-  const records = await boot({
-    STOCKFISH_PATH: '/usr/local/bin/stockfish',
-    DATABASE_URL: undefined,
-  });
+  const records = await boot({ STOCKFISH_PATH: '/usr/local/bin/stockfish', DATABASE_URL: undefined });
 
   assert.match(String(cacheLines(records)[0]?.msg), /durable tier off/);
+  assert.equal(cacheLines(records)[0]?.reason, 'no connection string');
+});
+
+/**
+ * An injected pool is the caller taking over connection management, and the cache respects that
+ * rather than reaching past it to the environment.
+ *
+ * Without this rule the durable tier would open a second, real pool underneath any caller that
+ * supplied its own — which in a test suite means silently connecting to whatever database happens to
+ * be configured, on a code path the caller went out of its way to keep off the network.
+ */
+test('createPgDependencies: an injected pool is not overridden by DATABASE_URL', async () => {
+  const records = await boot({
+    STOCKFISH_PATH: '/usr/local/bin/stockfish',
+    DATABASE_URL: UNUSED_DSN,
+  });
+
   assert.equal(cacheLines(records)[0]?.reason, 'no connection string');
 });

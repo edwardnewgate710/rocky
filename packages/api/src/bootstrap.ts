@@ -256,10 +256,12 @@ export function createPgDependencies(options: PgBootstrapOptions = {}): {
   //
   // The cache tier (ADR-0138) is passed as a factory, not a value, so it is built only on the branch
   // where an engine exists — a deployment without one opens no cache pool and starts no sweeper. It
-  // resolves its connection string the same way the main pool above did, which is what makes durable
-  // caching unreachable-by-construction in exactly the cases the main pool could not have connected
-  // either: a caller that injected its own `pool` without a connection string, meaning a test.
-  const cacheConnectionString = options.connectionString ?? process.env['DATABASE_URL'];
+  // resolves its connection string exactly as the main pool above did, including the part that says
+  // an injected `pool` is the caller taking over connection management: reaching past it to
+  // `DATABASE_URL` would open a second, real pool underneath a caller that supplied its own — which
+  // in a test suite means connecting to whatever database happens to be configured.
+  const cacheConnectionString =
+    options.connectionString ?? (options.pool === undefined ? process.env['DATABASE_URL'] : undefined);
   const analysisComposition =
     options.analysis ??
     createAnalysisFromEnv(process.env, () =>

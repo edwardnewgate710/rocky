@@ -9,8 +9,14 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import ts from 'typescript';
 import { analysisCacheSettingsFromEnv } from '../src/analysis/composition';
-import { createAnalysisCacheComposition } from '../src/analysis/durable-cache';
+import {
+  ANALYSIS_CACHE_POOL_CONFIG,
+  createAnalysisCacheComposition,
+} from '../src/analysis/durable-cache';
 import {
   AnalysisCacheObservability,
   RETENTION_FAILURE_ESCALATION,
@@ -20,6 +26,8 @@ import { JsonLogger } from '../src/ports/logger';
 import { InMemoryMetrics } from '../src/ports/metrics';
 
 const DAY_MS = 86_400_000;
+// Two levels: at runtime this file lives in dist-test/test, so the package root is its grandparent.
+const PACKAGE_ROOT = resolve(__dirname, '..', '..');
 
 interface Captured {
   readonly level: string;
@@ -46,6 +54,75 @@ function observability(): {
   const { logger, records } = capturingLogger();
   return { telemetry: new AnalysisCacheObservability({ metrics, logger }), metrics, records };
 }
+
+/**
+ * The durable cache actually reaches the engine.
+ *
+ * This is a source assertion because no behavioural one is available: `EngineManager` does not expose
+ * the cache it was given, and reaching it through `createAnalysisFromEnv` would need a real engine
+ * binary to spawn before the cache is ever consulted. Deleting the two spreads below would leave the
+ * tier composed, its pool open, its sweeper running and its "durable tier composed" line in the log —
+ * while the engine quietly went on using the in-process LRU. Every other test in this change would
+ * still pass. The repository already guards this class of composition-root bug the same way, in
+ * `ai-composition.test.ts`.
+ */
+test('createAnalysisFromEnv hands the tier\u2019s cache and observer to the engine', () => {
+  const file = resolve(PACKAGE_ROOT, 'src/analysis/composition.ts');
+  const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.ES2022, true);
+
+  let body: string | undefined;
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === 'createAnalysisFromEnv') {
+      body = node.body?.getText(source);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+
+  assert.ok(body !== undefined, 'createAnalysisFromEnv must exist to be asserted about');
+  const engineCall = /createAnalysisEngine\(env,\s*\{([\s\S]*?)\}\);/.exec(body);
+  assert.ok(engineCall, 'the engine must still be built from within createAnalysisFromEnv');
+  assert.match(
+    engineCall[1] ?? '',
+    /cache:\s*tier\.cache/,
+    'the durable cache must be passed to the engine, or production silently keeps the LRU',
+  );
+  assert.match(
+    engineCall[1] ?? '',
+    /observer:\s*tier\.observer/,
+    'the engine observer must be passed too, or cache telemetry is never emitted',
+  );
+});
+
+/**
+ * Both halves of the bound are actually on the pool.
+ *
+ * Neither is visible in behaviour until something goes wrong, which is exactly why they need an
+ * assertion: dropping either leaves a pool that works, logs that say the tier was composed, and an
+ * analysis path that can stall again — the failure ADR-0135 §7 named as a precondition. The values
+ * are asserted as literals rather than against the constants they came from, so an edit to a
+ * constant has to be a deliberate edit to this expectation too.
+ */
+test('the cache pool carries both timeouts and its connection bound', () => {
+  assert.deepEqual(
+    { ...ANALYSIS_CACHE_POOL_CONFIG },
+    { max: 4, statement_timeout: 250, connectionTimeoutMillis: 250 },
+  );
+});
+
+/**
+ * `statement_timeout` bounds a statement already in flight. `connectionTimeoutMillis` bounds the
+ * queue in front of it, which `node-postgres` leaves unbounded by default — so without it a
+ * saturated pool stalls analysis for as long as it stays saturated, and the server-side timeout
+ * never gets a chance to fire because the statement was never sent.
+ */
+test('the connection bound is set, because the statement bound cannot cover waiting for a connection', () => {
+  assert.equal(
+    ANALYSIS_CACHE_POOL_CONFIG.connectionTimeoutMillis,
+    ANALYSIS_CACHE_POOL_CONFIG.statement_timeout,
+    'both are ways of waiting, so both are bounded the same',
+  );
+});
 
 test('analysisCacheSettingsFromEnv: durable by default, with a thirty-day window', () => {
   const settings = analysisCacheSettingsFromEnv({});
@@ -332,11 +409,118 @@ test('the sweeper schedules nothing until started, and nothing after being stopp
   await new Promise((resolve) => setTimeout(resolve, 60));
   assert.ok(store.calls.length > 0, 'the interval must actually fire');
 
-  sweeper.stop();
-  sweeper.stop();
+  await sweeper.stop();
+  await sweeper.stop();
   const afterStop = store.calls.length;
   await new Promise((resolve) => setTimeout(resolve, 60));
   assert.equal(store.calls.length, afterStop, 'a stopped sweeper leaves no timer behind');
+});
+
+/**
+ * The shutdown ordering that keeps an orderly stop out of the fault counter.
+ *
+ * The owner's next act after stopping the sweeper is to close the pool. If `stop()` returned while a
+ * sweep was still running, that sweep's next batch would be rejected by the draining pool and
+ * reported as a retention failure — an operator would see an error and a fault every time the
+ * service shut down.
+ */
+test('stopping the sweeper waits for the batch already in flight', async () => {
+  const { telemetry, records } = observability();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let finished = false;
+  const store = {
+    async deleteExpired(): Promise<number> {
+      await gate;
+      finished = true;
+      return 0;
+    },
+  };
+  const sweeper = retention(store, telemetry);
+
+  const sweep = sweeper.sweep();
+  const stopped = sweeper.stop();
+  let stopResolved = false;
+  void stopped.then(() => {
+    stopResolved = true;
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(stopResolved, false, 'stop must not resolve while a batch is still running');
+
+  release();
+  await sweep;
+  await stopped;
+  assert.equal(finished, true);
+  assert.equal(
+    records.some((r) => String(r.level) === 'warn' || String(r.level) === 'error'),
+    false,
+    'an orderly stop is not a retention failure',
+  );
+});
+
+test('a sweep in progress abandons its remaining batches once stopped', async () => {
+  const { telemetry } = observability();
+  const store = fakeStore(Array(50).fill(10));
+  const sweeper = retention(store, telemetry, { batchSize: 10, maxBatchesPerSweep: 40 });
+
+  // Stop between batches: the loop checks before each one, so a shutdown waits out at most the batch
+  // already issued rather than the nineteen that were still budgeted.
+  const sweep = sweeper.sweep();
+  await sweeper.stop();
+  await sweep;
+
+  assert.ok(store.calls.length < 40, `a stopped sweep must not run its full budget (ran ${store.calls.length})`);
+});
+
+/**
+ * A fixed batch size is a trap. If 500 rows ever stop fitting inside the pool's statement timeout,
+ * every subsequent tick retries the same 500 rows, every one of them times out, and the table is
+ * never trimmed again — a permanent stall that only shows up as a growing disk. Backing off turns
+ * that into a slower sweep that still makes progress.
+ */
+test('the batch size backs off after a failure and is restored by a clean sweep', async () => {
+  const { telemetry } = observability();
+  let failNext = true;
+  const asked: number[] = [];
+  const store = {
+    async deleteExpired(_before: Date, limit: number): Promise<number> {
+      asked.push(limit);
+      if (failNext) throw new Error('statement timeout');
+      return 0;
+    },
+  };
+  const sweeper = retention(store, telemetry, { batchSize: 400, maxBatchesPerSweep: 4 });
+
+  await sweeper.sweep();
+  await sweeper.sweep();
+  await sweeper.sweep();
+  assert.deepEqual(asked, [400, 200, 100], 'each failure halves the batch');
+
+  failNext = false;
+  await sweeper.sweep();
+  await sweeper.sweep();
+  assert.equal(asked[3], 50, 'the recovering sweep still uses the reduced size');
+  assert.equal(asked[4], 400, 'and a clean sweep restores the configured one');
+});
+
+test('the batch size never backs off to nothing', async () => {
+  const { telemetry } = observability();
+  const asked: number[] = [];
+  const store = {
+    async deleteExpired(_before: Date, limit: number): Promise<number> {
+      asked.push(limit);
+      throw new Error('always fails');
+    },
+  };
+  const sweeper = retention(store, telemetry, { batchSize: 400 });
+
+  for (let i = 0; i < 12; i++) await sweeper.sweep();
+
+  assert.ok(asked.every((n) => n >= 25), 'a floor keeps the sweep able to make progress');
+  assert.equal(asked.at(-1), 25);
 });
 
 test('the sweeper refuses options that would remove its bounds', () => {

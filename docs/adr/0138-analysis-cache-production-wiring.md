@@ -119,9 +119,10 @@ DELETE FROM engine_analysis_cache c USING expired e WHERE c.fingerprint = e.fing
 `SKIP LOCKED` does two jobs. It makes concurrent sweepers claim disjoint batches instead of
 contending — which is why no advisory lock elects a single sweeper, and why adding one was rejected
 as a lock to release correctly on every failure path in exchange for avoiding work that is already
-correct when duplicated. And `FOR UPDATE` is what makes the sweep re-check a row against its
-*committed* version rather than the snapshot the scan started from, so a row a stronger write
-refreshed mid-statement is no longer eligible and survives. An unlocked subquery would delete it.
+correct when duplicated. And it makes the sweep pass over a row another transaction is writing rather
+than deleting it on the strength of a snapshot that is about to be out of date: an unlocked subquery
+would delete a row a stronger search was landing at that moment, whereas the skipped row is simply no
+longer eligible by the next tick, because that write is what refreshed it.
 
 Migration `0027` adds the `updated_at` index the sweep needs. It is a plain transactional
 `CREATE INDEX` rather than the online-index directive, because the table is empty in every deployment

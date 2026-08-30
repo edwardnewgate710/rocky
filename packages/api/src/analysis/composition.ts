@@ -248,10 +248,18 @@ export function createAnalysisFromEnv(
   // Called only past that guard, so a deployment with no engine binary opens no connection pool and
   // starts no sweeper for a cache nothing would ever read.
   const tier = cacheTier?.();
-  const engine = createAnalysisEngine(env, {
-    ...(tier?.cache !== undefined ? { cache: tier.cache } : {}),
-    ...(tier !== undefined ? { observer: tier.observer } : {}),
-  });
+  let engine: EngineManager;
+  try {
+    engine = createAnalysisEngine(env, {
+      ...(tier?.cache !== undefined ? { cache: tier.cache } : {}),
+      ...(tier !== undefined ? { observer: tier.observer } : {}),
+    });
+  } catch (error) {
+    // The tier is already holding a pool and a running sweeper at this point, and the handle that
+    // would release them is the one this function was about to return. Nothing else can reach it.
+    void tier?.shutdown();
+    throw error;
+  }
   const policy = analysisLimitsPolicyFromEnv(env);
   const service = new AnalysisService({
     provider: engine,
@@ -267,8 +275,13 @@ export function createAnalysisFromEnv(
     // so releasing the tier before the pools are empty would turn every one of those final writes
     // into an absorbed fault — losing exactly the deep results a graceful shutdown is trying to keep.
     shutdown: async (options = {}) => {
-      await engine.shutdown(options);
-      await tier?.shutdown();
+      try {
+        await engine.shutdown(options);
+      } finally {
+        // A worker that refuses to drain must not also cost a leaked connection pool and a timer
+        // that goes on sweeping after the process believes it has shut the subsystem down.
+        await tier?.shutdown();
+      }
     },
   };
 }
