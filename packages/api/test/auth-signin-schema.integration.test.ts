@@ -60,6 +60,13 @@ const FETCH_BLOCKED_PORTS = new Set([
   6697, 10080,
 ]);
 
+/**
+ * Wait for the listener to actually stop, rather than only asking it to.
+ *
+ * `Server.close` is callback-shaped and reports its failure there; returning before it settles would
+ * leave the port held while the next case tries to bind, which is the kind of flake that only shows
+ * up under `--test-concurrency`.
+ */
 const closeServer = (server: Server): Promise<void> =>
   new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
 
@@ -144,6 +151,12 @@ async function withSchema(run: (fixture: Fixture) => Promise<void>): Promise<voi
   }
 }
 
+/**
+ * The sign-in request exactly as the web client sends it — `POST /v1/auth/login`, JSON body.
+ *
+ * `body` is deliberately `unknown`: several cases here send something the route should reject, and
+ * typing it as a valid request would make the malformed cases unwritable.
+ */
 const login = (baseUrl: string, body: unknown): Promise<Response> =>
   fetch(`${baseUrl}/v1/auth/login`, {
     method: 'POST',
