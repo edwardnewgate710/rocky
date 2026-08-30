@@ -245,6 +245,7 @@ export function bootstrap(
   const authSectionEl = doc.getElementById('auth');
 
   let selfProfileSessionHandler: ((session: AuthSession | null) => void) | null = null;
+  let setCreateGameAuthenticated: ((authenticated: boolean) => void) | null = null;
   let setPlayBotAuthenticated: ((authenticated: boolean) => void) | null = null;
   let gameSessionHandler: ((session: AuthSession | null) => void) | null = null;
   let endgameSessionHandler: (() => void) | null = null;
@@ -261,17 +262,12 @@ export function bootstrap(
         // the form inside it: hiding only the form left a signed-in visitor looking at an empty box.
         if (authSectionEl) authSectionEl.hidden = session !== null || hideAuthSection;
         if (authLogoutEl) authLogoutEl.hidden = session === null;
-        // Update create-seek button state (M2 gating).
-        const createBtn = doc.getElementById('create-seek');
-        if (createBtn instanceof HTMLButtonElement) {
-          createBtn.disabled = session === null;
-          createBtn.title = session === null ? 'Sign in to create a seek' : '';
-        }
         const playBotBtn = doc.getElementById('play-bot');
         if (playBotBtn instanceof HTMLButtonElement) {
           playBotBtn.disabled = session === null;
           playBotBtn.title = session === null ? 'Sign in to play the computer' : '';
         }
+        setCreateGameAuthenticated?.(session !== null);
         setPlayBotAuthenticated?.(session !== null);
         selfProfileSessionHandler?.(session);
         gameSessionHandler?.(session);
@@ -387,6 +383,7 @@ export function bootstrap(
       isAuthenticated: () => auth.isAuthenticated(),
       ...(deps?.storage !== undefined ? { storage: deps.storage } : {}),
     });
+    setCreateGameAuthenticated = mountedLobby.setCreateGameAuthenticated;
     setPlayBotAuthenticated = mountedLobby.setPlayBotAuthenticated;
 
     return createBootstrapped(app, auth, theme, { lobby: mountedLobby.lobby });

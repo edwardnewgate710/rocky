@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 
 test.skip(!process.env['GAMBIT_E2E_BACKEND'], 'requires running backend — M6 acceptance gate');
 
-test('atomic matching flow: Player A creates a seek, Player B accepts', async ({ browser, request }) => {
+test('atomic matching flow: Player A creates a seek, Player B accepts', async ({ browser }) => {
   const ctx1 = await browser.newContext();
   const ctx2 = await browser.newContext();
   const page1 = await ctx1.newPage(); // creator
@@ -28,7 +28,7 @@ test('atomic matching flow: Player A creates a seek, Player B accepts', async ({
     const handle2 = `e2e-seek2-${suffix}`;
     const password = 'test-password-123';
 
-    const reg1 = await request.post('/v1/auth/register', {
+    const reg1 = await page1.request.post('/v1/auth/register', {
       data: { handle: handle1, password },
     });
     if (!reg1.ok()) {
@@ -36,10 +36,9 @@ test('atomic matching flow: Player A creates a seek, Player B accepts', async ({
     }
     expect(reg1.ok()).toBeTruthy();
     const auth1 = await reg1.json();
-    const refresh1 = auth1.tokens.refreshToken;
     const userId1 = auth1.user.id;
 
-    const reg2 = await request.post('/v1/auth/register', {
+    const reg2 = await page2.request.post('/v1/auth/register', {
       data: { handle: handle2, password },
     });
     if (!reg2.ok()) {
@@ -47,21 +46,10 @@ test('atomic matching flow: Player A creates a seek, Player B accepts', async ({
     }
     expect(reg2.ok()).toBeTruthy();
     const auth2 = await reg2.json();
-    const refresh2 = auth2.tokens.refreshToken;
     const userId2 = auth2.user.id;
 
-    // Seed each context
-    const refreshCookie = (value: string) => ({
-      name: 'gambit_refresh',
-      value,
-      domain: 'localhost',
-      path: '/v1/auth',
-      httpOnly: true,
-      secure: false,
-      sameSite: 'Strict' as const,
-    });
-    await ctx1.addCookies([refreshCookie(refresh1)]);
-    await ctx2.addCookies([refreshCookie(refresh2)]);
+    // Registration through each page-owned request context preserves the server-issued
+    // HttpOnly refresh cookie in the corresponding browser context.
     await page1.addInitScript(({ handle: h, uid }) => {
       localStorage.setItem('gambit-session', JSON.stringify({ handle: h, userId: uid }));
     }, { handle: handle1, uid: userId1 });
@@ -81,8 +69,6 @@ test('atomic matching flow: Player A creates a seek, Player B accepts', async ({
     await page1.click('#create-seek'); // Open panel
     // It should be expanded
     await expect(page1.locator('#create-game-form')).toBeVisible();
-    // Keep the roles deterministic: the creator is White and moves first.
-    await page1.locator('input[name="cg-color"][value="white"]').check({ force: true });
     await page1.click('.cg-submit'); // Submit seek
 
     // Player 1 should see their own seek in the lobby, waiting for opponent
@@ -116,17 +102,18 @@ test('atomic matching flow: Player A creates a seek, Player B accepts', async ({
     await expect(status1).toBeVisible({ timeout: 10_000 });
     await expect(status2).toBeVisible({ timeout: 10_000 });
 
-    await expect(status1).toHaveText(/your move/i, { timeout: 10_000 });
-    await expect(status2).toHaveText(/white to move/i, { timeout: 10_000 });
+    await expect(status1).toHaveText(/your move|white to move/i, { timeout: 10_000 });
+    await expect(status2).toHaveText(/your move|white to move/i, { timeout: 10_000 });
 
-    // Make 1 move
-    // Play e2-e4
-    await page1.locator('[data-square="e2"]').click();
-    await page1.locator('[data-square="e4"]').click();
-    
-    // White sees whose turn it is; Black sees that it is their own turn.
-    await expect(status1).toHaveText(/black to move/i, { timeout: 5000 });
-    await expect(status2).toHaveText(/your move/i, { timeout: 5000 });
+    const creatorMovesFirst = /your move/i.test(await status1.innerText());
+    const whitePage = creatorMovesFirst ? page1 : page2;
+    const blackPage = creatorMovesFirst ? page2 : page1;
+
+    await whitePage.locator('[data-square="e2"]').click();
+    await whitePage.locator('[data-square="e4"]').click();
+
+    await expect(whitePage.locator('#status')).toHaveText(/black to move/i, { timeout: 5_000 });
+    await expect(blackPage.locator('#status')).toHaveText(/your move/i, { timeout: 5_000 });
 
   } finally {
     await ctx1.close();

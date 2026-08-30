@@ -7,18 +7,14 @@
  * rejected (returns `null`), so a corrupt or stale blob falls back to the
  * first-run defaults rather than restoring something invalid.
  */
-import { TIME_PRESETS, CUSTOM_LIMITS } from './time-presets.js';
+import { CREATE_GAME_PRESETS, type CreateGamePresetId } from './time-presets.js';
 
 export const PREFS_STORAGE_KEY = 'gambit-create-game';
 
 export type SeekMode = 'casual' | 'rated';
 
 export interface CreateGamePrefs {
-  /** A preset id (e.g. `5+3`) or the literal `custom`. */
-  readonly time: string;
-  /** Present only when `time === 'custom'`. */
-  readonly minutes?: number;
-  readonly increment?: number;
+  readonly time: CreateGamePresetId;
   readonly mode: SeekMode;
 }
 
@@ -43,17 +39,8 @@ export function parseCreateGamePrefs(raw: string | null): CreateGamePrefs | null
   const time = o.time;
   if (typeof time !== 'string') return null;
 
-  if (time === 'custom') {
-    const minutes = Number(o.minutes);
-    const increment = Number(o.increment);
-    const { minMinutes, maxMinutes, minIncrement, maxIncrement } = CUSTOM_LIMITS;
-    if (!Number.isFinite(minutes) || minutes < minMinutes || minutes > maxMinutes) return null;
-    if (!Number.isFinite(increment) || increment < minIncrement || increment > maxIncrement) return null;
-    return { time, minutes, increment, mode };
-  }
-
-  if (!TIME_PRESETS.some((p) => p.id === time)) return null;
-  return { time, mode };
+  const preset = CREATE_GAME_PRESETS.find((candidate) => candidate.id === time);
+  return preset ? { time: preset.id, mode } : null;
 }
 
 /** Serialize prefs for storage. */

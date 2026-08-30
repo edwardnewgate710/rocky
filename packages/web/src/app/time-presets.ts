@@ -1,10 +1,10 @@
 /**
- * Time-control presets for the create-a-game panel.
+ * Shared time-control mappings for lobby game creation.
  *
- * Pure and DOM-free: the panel renders chips from {@link TIME_PRESETS} and calls
- * {@link presetToTimeControl} / {@link estimateSpeed} to build the request body
- * and the speed-bucket label. Keeping the mapping here (not in markup) means the
- * clock maths are unit-tested in one place.
+ * Pure and DOM-free: the human seek panel renders its focused V1 choices from
+ * {@link CREATE_GAME_PRESETS}; Play vs Computer keeps the wider ladder in
+ * {@link TIME_PRESETS}. Both call {@link presetToTimeControl} so the wire mapping
+ * stays unit-tested in one place without coupling the two surfaces.
  */
 import type { TimeControl } from '../api/models.js';
 
@@ -17,7 +17,17 @@ export interface TimePreset {
   readonly increment: number;
 }
 
-/** The curated preset ladder: bullet → classical. `Custom` is handled separately. */
+/** The exact time controls offered by the focused Create-a-Game Web V1 flow. */
+export const CREATE_GAME_PRESETS = [
+  { id: '3+0', minutes: 3, increment: 0 },
+  { id: '5+0', minutes: 5, increment: 0 },
+  { id: '10+0', minutes: 10, increment: 0 },
+  { id: '15+10', minutes: 15, increment: 10 },
+] as const satisfies readonly TimePreset[];
+
+export type CreateGamePresetId = (typeof CREATE_GAME_PRESETS)[number]['id'];
+
+/** The wider preset ladder used by Play vs Computer: bullet → classical. */
 export const TIME_PRESETS: readonly TimePreset[] = [
   { id: '1+0', minutes: 1, increment: 0 },
   { id: '2+1', minutes: 2, increment: 1 },
@@ -33,14 +43,6 @@ export const TIME_PRESETS: readonly TimePreset[] = [
 
 /** Preselected preset — a rapid game most players reach for. */
 export const DEFAULT_PRESET_ID = '10+0';
-
-/** Bounds for the custom-time inputs (minutes, increment seconds). */
-export const CUSTOM_LIMITS = {
-  minMinutes: 0.5,
-  maxMinutes: 180,
-  minIncrement: 0,
-  maxIncrement: 60,
-} as const;
 
 export type SpeedLabel = 'Bullet' | 'Blitz' | 'Rapid' | 'Classical';
 

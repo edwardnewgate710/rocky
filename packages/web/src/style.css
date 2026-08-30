@@ -1022,28 +1022,22 @@ button:disabled {
 
 .cg-presets,
 .cg-segmented { display: flex; flex-wrap: wrap; gap: 6px; }
+.create-game .cg-presets {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.create-game .cg-segmented {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-width: 20rem;
+}
+.create-game .cg-chip,
+.create-game .cg-seg { box-sizing: border-box; width: 100%; }
 .cg-hint { margin: 0; font-size: 0.75rem; color: var(--muted); }
 .cg-field-error { margin: 0; font-size: 0.75rem; color: var(--ember); }
 
-/* Form controls (custom time, variant, rating range). */
-.cg-custom,
-.cg-rating-inputs { display: flex; flex-wrap: wrap; gap: 12px; }
-.cg-num,
-.cg-row {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 0.75rem;
-  color: var(--muted);
-}
-.cg-custom input,
-.cg-rating-inputs input {
-  width: 6rem;
-}
 .auth-field input,
-.cg-select,
 .nav-search input[type='search'],
-.cg-form input[type='number'],
 .composer-form input,
 .team-search input,
 .thread-form input,
@@ -1058,33 +1052,12 @@ button:disabled {
   font-size: 0.875rem;
 }
 .auth-field input:focus-visible,
-.cg-select:focus-visible,
 .nav-search input[type='search']:focus-visible,
-.cg-form input:focus-visible,
 .composer-form input:focus-visible,
 .team-search input:focus-visible,
 .thread-form input:focus-visible,
 .step-san-input:focus-visible,
 .study-search input:focus-visible { outline: 3px solid var(--sel); outline-offset: 1px; }
-
-/* More options disclosure. */
-.cg-more { display: flex; flex-direction: column; gap: 8px; }
-.cg-more-toggle {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 0;
-  border: 0;
-  background: none;
-  color: var(--muted);
-  font-size: 0.875rem;
-  cursor: pointer;
-}
-.cg-more-toggle::before { content: '▸'; font-size: 0.7em; }
-.cg-more-toggle[aria-expanded='true']::before { content: '▾'; }
-.cg-more-toggle:hover { color: var(--fg); box-shadow: none; background: none; }
-.cg-advanced { display: flex; flex-direction: column; gap: 12px; }
 
 .cg-actions { display: flex; gap: 8px; align-items: center; }
 .cg-submit { font-weight: 600; }
@@ -1094,15 +1067,16 @@ button:disabled {
   .auth-field input,
   .cg-chip,
   .cg-seg,
-  .cg-select,
   .nav-search input[type='search'],
-  .cg-form input[type='number'],
   .composer-form input,
   .composer-form button,
   .team-search input,
   .thread-form input,
   .step-san-input,
   .study-search input { min-height: 44px; }
+}
+@media (max-width: 420px) {
+  .create-game .cg-presets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (prefers-reduced-motion: reduce) {
   .cg-chip,
