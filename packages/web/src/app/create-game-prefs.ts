@@ -46,6 +46,14 @@ function includesString<T extends string>(values: readonly T[], value: unknown):
   return typeof value === 'string' && values.some((candidate) => candidate === value);
 }
 
+export function isOfferedVariant(value: unknown): value is Variant {
+  return includesString(OFFERED_VARIANTS, value);
+}
+
+export function isSeekColor(value: unknown): value is SeekColor {
+  return includesString(SEEK_COLORS, value);
+}
+
 /**
  * Parse a stored prefs blob, validating every field. Returns `null` for missing,
  * malformed, unknown-preset, or out-of-range input so the caller uses defaults.
@@ -67,7 +75,7 @@ export function parseCreateGamePrefs(raw: string | null): CreateGamePrefs | null
   const variant =
     o.variant === undefined
       ? DEFAULT_CREATE_GAME_VARIANT
-      : includesString(OFFERED_VARIANTS, o.variant)
+      : isOfferedVariant(o.variant)
         ? o.variant
         : null;
   if (variant === null) return null;
@@ -75,7 +83,7 @@ export function parseCreateGamePrefs(raw: string | null): CreateGamePrefs | null
   const color =
     o.color === undefined
       ? DEFAULT_CREATE_GAME_COLOR
-      : includesString(SEEK_COLORS, o.color)
+      : isSeekColor(o.color)
         ? o.color
         : null;
   if (color === null) return null;

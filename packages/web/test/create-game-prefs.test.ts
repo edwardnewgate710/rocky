@@ -79,6 +79,17 @@ test('parse rejects explicitly unknown variant and color values', () => {
   );
 });
 
+test('parse defaults either individually missing V3 field without overwriting the other', () => {
+  assert.deepEqual(
+    parseCreateGamePrefs('{"time":"5+3","mode":"rated","variant":"atomic"}'),
+    { time: '5+3', mode: 'rated', variant: 'atomic', color: 'random' },
+  );
+  assert.deepEqual(
+    parseCreateGamePrefs('{"time":"5+3","mode":"rated","color":"black"}'),
+    { time: '5+3', mode: 'rated', variant: 'standard', color: 'black' },
+  );
+});
+
 test('serialize round-trips V3 variant and color through parse', () => {
   const prefs = {
     time: 'custom' as const,

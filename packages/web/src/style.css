@@ -1032,13 +1032,29 @@ button:disabled {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
+.create-game .cg-variants {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
 .create-game .cg-segmented {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   max-width: 20rem;
 }
+.create-game .cg-colors {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  max-width: 20rem;
+}
 .create-game .cg-chip,
 .create-game .cg-seg { box-sizing: border-box; width: 100%; }
+.cg-option-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
 .cg-hint { margin: 0; font-size: 0.75rem; color: var(--muted); }
 .cg-field-error { margin: 0; font-size: 0.75rem; color: var(--ember); }
 .cg-time-detail { min-block-size: 7rem; }
@@ -1104,7 +1120,8 @@ button:disabled {
   .study-search input { min-height: 44px; }
 }
 @media (max-width: 420px) {
-  .create-game .cg-presets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .create-game .cg-presets,
+  .create-game .cg-variants { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (prefers-reduced-motion: reduce) {
   .cg-chip,
