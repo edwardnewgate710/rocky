@@ -116,7 +116,17 @@ test('optional and nullable are independent axes, and the migration moved only o
 
     // Optional AND nullable: absent, a number, or an explicit null. Both at once.
     assert.equal(required.has('minRating'), false);
-    assert.deepEqual(seek.properties!['minRating']!.type, ['integer', 'null']);
+    assert.deepEqual(seek.properties!['minRating'], {
+      type: ['integer', 'null'],
+      minimum: 0,
+      maximum: 4000,
+    });
+    assert.equal(required.has('maxRating'), false);
+    assert.deepEqual(seek.properties!['maxRating'], {
+      type: ['integer', 'null'],
+      minimum: 0,
+      maximum: 4000,
+    });
 
     // Required, not nullable: always present, never null.
     assert.equal(required.has('variant'), true);
