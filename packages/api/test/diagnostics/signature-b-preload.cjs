@@ -117,7 +117,7 @@ function safeErr(err) {
   }
   try {
     return {
-      name: typeof err.name === 'string' ? err.name : undefined,
+      name: typeof err.name === 'string' ? redact(err.name) : undefined,
       message: redact(String(err.message ?? '')),
       stack: redact(String(err.stack ?? '')),
       code: normalizeMeta(err.code),

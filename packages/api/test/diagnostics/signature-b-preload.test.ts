@@ -312,13 +312,18 @@ test('diagnostic preload: redacts postgres/postgresql credentials, tokens, Autho
       'Authorization: Basic dXNlcjpwYXNzd29yZA==,',
       'Cookie: session=xyz123; token=abc456; other=789',
     ];
-    throw new Error(parts.join(' and '));
+    const err = new Error(parts.join(' and '));
+    err.name = 'CustomError password="supersecretname"';
+    throw err;
   `);
   t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
 
   const uncaught = records.find((r) => r.kind === 'uncaughtExceptionMonitor');
   assert.ok(uncaught, 'uncaught record exists');
   const msg = uncaught?.err?.message ?? '';
+  const errName = uncaught?.err?.name ?? '';
+  assert.ok(errName.includes('password=[REDACTED]'), 'redacts password in error name');
+  assert.ok(!errName.includes('supersecretname'), 'raw password not present in error name');
   assert.ok(msg.includes('postgres://[REDACTED_CREDS]@db.internal:5432/chess'), 'redacts postgresql credentials');
   assert.ok(msg.includes('postgres://[REDACTED_CREDS]@10.0.0.1:5432/main'), 'redacts postgres credentials');
   assert.ok(msg.includes('[REDACTED_API_KEY]'), 'redacts OpenAI-style api key');
