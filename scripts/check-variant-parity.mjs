@@ -597,6 +597,7 @@ function scanColumnConstraints(clause, file, constraintNamespace, variantConstra
  */
 export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
   let hasStudiesTable = false;
+  let currentStudiesTableName = 'studies';
   let hasVariantColumn = false;
   const constraintNamespace = new Set();
   const variantConstraints = new Set();
@@ -633,8 +634,9 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
           if (ref === null) break;
           idx = ref.nextIndex;
 
-          if (isTableTarget(ref, 'studies')) {
+          if (isTableTarget(ref, currentStudiesTableName) || isTableTarget(ref, 'studies')) {
             hasStudiesTable = false;
+            currentStudiesTableName = 'studies';
             hasVariantColumn = false;
             constraintNamespace.clear();
             variantConstraints.clear();
@@ -671,7 +673,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
         }
 
         const ref = parseQualifiedTableTarget(stmt, idx);
-        if (ref === null || !isTableTarget(ref, 'studies')) {
+        if (ref === null || (!isTableTarget(ref, currentStudiesTableName) && !isTableTarget(ref, 'studies'))) {
           continue;
         }
 
@@ -683,12 +685,10 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
 
         // Table rename: ALTER TABLE studies RENAME TO new_name
         if (stmt[idx]?.value === 'rename' && stmt[idx + 1]?.value === 'to') {
-          hasStudiesTable = false;
-          hasVariantColumn = false;
-          constraintNamespace.clear();
-          variantConstraints.clear();
-          activeChecks.clear();
-          activeFks.clear();
+          const newName = stmt[idx + 2]?.value;
+          if (newName) {
+            currentStudiesTableName = newName;
+          }
           continue;
         }
 
@@ -909,6 +909,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
 
         // Fresh table creation clears prior state
         hasStudiesTable = true;
+        currentStudiesTableName = 'studies';
         hasVariantColumn = false;
         constraintNamespace.clear();
         variantConstraints.clear();
@@ -1023,6 +1024,14 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
         }
       }
     }
+  }
+
+  if (currentStudiesTableName !== 'studies' || !hasStudiesTable) {
+    return {
+      check: null,
+      checks: [],
+      hasForeignKey: false,
+    };
   }
 
   let latestCheck = null;

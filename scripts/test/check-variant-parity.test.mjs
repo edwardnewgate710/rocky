@@ -1095,6 +1095,41 @@ test('operators or expressions inside IN-list fail loudly rather than extracting
   }
 });
 
+test('table rename round-trip preserves foreign key constraint when renamed back to studies', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_rename_away.sql': `ALTER TABLE studies RENAME TO studies_temp;`,
+    '0003_rename_back.sql': `ALTER TABLE studies_temp RENAME TO studies;`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dir), true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('table rename round-trip preserves CHECK constraint when renamed back to studies', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL CHECK (variant IN ('standard', 'atomic'))
+    );`,
+    '0002_rename_away.sql': `ALTER TABLE studies RENAME TO studies_temp;`,
+    '0003_rename_back.sql': `ALTER TABLE studies_temp RENAME TO studies;`,
+  });
+  try {
+    const found = effectiveStudyVariantConstraint(dir);
+    assert.equal(found?.file, '0001_initial.sql');
+    assert.deepEqual(found?.variants, ['standard', 'atomic']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
 
 
 
