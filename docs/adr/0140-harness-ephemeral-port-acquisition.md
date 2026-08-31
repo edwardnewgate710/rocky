@@ -224,7 +224,7 @@ those mechanisms fire on real occurrences, not synthetic ones.** It hooks
 that captures both uncaught exceptions and fatal unhandled rejections without registering active
 listeners that alter Node's default crash handling), `warning`, `beforeExit`, and Node's
 own unconditional `exit` event, writing a structured, redacted, timestamped
-line to disk before each fires — bypassing stdout/stderr entirely so the test
+line to disk (before delegation for `process.exit`, `process.abort`, and `process.kill`, and during event delivery for `uncaughtExceptionMonitor`, `warning`, `beforeExit`, and `exit`) — bypassing stdout/stderr entirely so the test
 reporter's own output is never touched. A bounded 20-run instrumented pass over
 the full `packages/api` suite (chosen the same way as the original 20-run
 sample: enough for >90% detection odds at the historically observed ~1-in-5
