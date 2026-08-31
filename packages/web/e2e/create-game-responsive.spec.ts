@@ -1,5 +1,5 @@
 /**
- * Static browser contract for the focused Create-a-Game Web V2 surface.
+ * Static browser contract for the focused Create-a-Game Web V3 surface.
  *
  * The API calls needed to restore a signed-in lobby are stubbed, so this runs with Vite preview
  * only. Real seek creation and matching remain covered by seek-acceptance.spec.ts.
@@ -53,14 +53,15 @@ for (const viewport of [
   { name: 'mobile', width: 390, height: 844 },
   { name: 'small mobile', width: 320, height: 640 },
 ] as const) {
-  test(`create-game V2 stays focused and within ${viewport.name} (${viewport.width}px)`, async ({ page }) => {
+  test(`create-game V3 stays focused and within ${viewport.name} (${viewport.width}px)`, async ({ page }) => {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await openCreateGame(page);
     const createForm = page.locator('#create-game-form');
 
     await expect(createForm.locator('input[name="cg-time"]')).toHaveCount(11);
     await expect(createForm.locator('input[name="cg-mode"]')).toHaveCount(2);
-    await expect(createForm.locator('input[name="cg-color"]')).toHaveCount(0);
+    await expect(createForm.locator('input[name="cg-variant"]')).toHaveCount(8);
+    await expect(createForm.locator('input[name="cg-color"]')).toHaveCount(3);
     await expect(createForm.locator('.cg-more-toggle')).toHaveCount(0);
     await expect(createForm.locator('select')).toHaveCount(0);
     await expect(createForm.locator('.cg-submit')).toHaveText('Create seek');
@@ -71,6 +72,22 @@ for (const viewport of [
     expect(await createForm.locator('input[name="cg-mode"]').evaluateAll((radios) =>
       radios.map((radio) => (radio as HTMLInputElement).value),
     )).toEqual(['casual', 'rated']);
+    expect(await createForm.locator('input[name="cg-variant"]').evaluateAll((radios) =>
+      radios.map((radio) => (radio as HTMLInputElement).value),
+    )).toEqual([
+      'standard', 'chess960', 'kingofthehill', 'atomic',
+      'crazyhouse', 'threecheck', 'horde', 'racingkings',
+    ]);
+    expect(await createForm.locator('input[name="cg-color"]').evaluateAll((radios) =>
+      radios.map((radio) => (radio as HTMLInputElement).value),
+    )).toEqual(['random', 'white', 'black']);
+
+    for (const label of ['King of the Hill', 'Racing Kings']) {
+      const fits = await createForm.getByText(label, { exact: true }).evaluate((element) =>
+        element.scrollWidth <= element.clientWidth && element.scrollHeight <= element.clientHeight,
+      );
+      expect(fits, `${label} at ${viewport.width}px`).toBe(true);
+    }
 
     expect(await page.evaluate(() => ({
       documentWidth: document.documentElement.scrollWidth,
@@ -98,23 +115,83 @@ test('create-game radios keep native keyboard selection and a visible focus ring
   });
   expect(outline.style).not.toBe('none');
   expect(Number.parseFloat(outline.width)).toBeGreaterThanOrEqual(3);
+
+  const variant = page.locator('input[name="cg-variant"]:checked');
+  await variant.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(variant).toHaveValue('chess960');
+
+  const color = page.locator('input[name="cg-color"]:checked');
+  await color.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(color).toHaveValue('white');
 });
 
-test('create-game V2 mirrors under RTL without overflow while notation stays LTR', async ({ page }) => {
-  await page.setViewportSize({ width: 320, height: 640 });
-  await page.addInitScript(() => {
-    document.addEventListener('DOMContentLoaded', () => document.documentElement.setAttribute('dir', 'rtl'));
+for (const viewport of [
+  { name: 'desktop', width: 1440, height: 900 },
+  { name: 'mobile', width: 320, height: 640 },
+] as const) {
+  test(`create-game V3 mirrors under ${viewport.name} RTL without overflow while notation stays LTR`, async ({ page }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await page.addInitScript(() => {
+      document.addEventListener('DOMContentLoaded', () => document.documentElement.setAttribute('dir', 'rtl'));
+    });
+    await openCreateGame(page);
+
+    await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(viewport.width);
+
+    const first = await page.locator('#create-game-form .cg-chip:has(input[value="1+0"])').boundingBox();
+    const second = await page.locator('#create-game-form .cg-chip:has(input[value="2+1"])').boundingBox();
+    if (first === null || second === null) throw new Error('time controls have no rendered bounds');
+    expect(first.x).toBeGreaterThan(second.x);
+    await expect(page.locator('#create-game-form .cg-chip:has(input[value="1+0"]) .cg-chip-label')).toHaveAttribute('dir', 'ltr');
+
+    const random = await page.locator('#create-game-form .cg-seg:has(input[value="random"])').boundingBox();
+    const white = await page.locator('#create-game-form .cg-seg:has(input[value="white"])').boundingBox();
+    if (random === null || white === null) throw new Error('color controls have no rendered bounds');
+    expect(random.x).toBeGreaterThan(white.x);
   });
+}
+
+test('default Standard and Random reach the exact seek payload', async ({ page }) => {
   await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+  await expect(form.locator('input[name="cg-variant"]:checked')).toHaveValue('standard');
+  await expect(form.locator('input[name="cg-color"]:checked')).toHaveValue('random');
 
-  await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
+  const requestPromise = page.waitForRequest(
+    (request) => request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/v1/seeks'),
+  );
+  await form.locator('.cg-submit').click();
+  const request = await requestPromise;
+  expect(request.postDataJSON()).toEqual({
+    variant: 'standard',
+    color: 'random',
+    timeControl: { initialMs: 600_000, incrementMs: 0, delayMs: 0, kind: 'sudden_death' },
+    rated: false,
+  });
+});
 
-  const first = await page.locator('#create-game-form .cg-chip:has(input[value="1+0"])').boundingBox();
-  const second = await page.locator('#create-game-form .cg-chip:has(input[value="2+1"])').boundingBox();
-  if (first === null || second === null) throw new Error('time controls have no rendered bounds');
-  expect(first.x).toBeGreaterThan(second.x);
-  await expect(page.locator('#create-game-form .cg-chip:has(input[value="1+0"]) .cg-chip-label')).toHaveAttribute('dir', 'ltr');
+test('Atomic and Black reach the exact existing seek payload', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+  await form.locator('.cg-chip:has(input[name="cg-time"][value="5+3"])').click();
+  await form.locator('.cg-chip:has(input[name="cg-variant"][value="atomic"])').click();
+  await form.locator('.cg-seg:has(input[name="cg-color"][value="black"])').click();
+  await form.locator('.cg-seg:has(input[name="cg-mode"][value="rated"])').click();
+
+  const requestPromise = page.waitForRequest(
+    (request) => request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/v1/seeks'),
+  );
+  await form.locator('.cg-submit').click();
+  const request = await requestPromise;
+  expect(request.postDataJSON()).toEqual({
+    variant: 'atomic',
+    color: 'black',
+    timeControl: { initialMs: 300_000, incrementMs: 3_000, delayMs: 0, kind: 'increment' },
+    rated: true,
+  });
 });
 
 test('Custom validates before request and preserves exact integer-millisecond payload', async ({ page }) => {
@@ -146,6 +223,10 @@ test('Custom validates before request and preserves exact integer-millisecond pa
   await expect(form.locator('.cg-field-error')).toHaveText(
     'Increment must be a whole number between 0 and 60 seconds.',
   );
+  await form.locator('.cg-chip:has(input[name="cg-variant"][value="atomic"])').click();
+  await expect(form.locator('#cg-increment')).toHaveAttribute('aria-invalid', 'true');
+  await form.locator('.cg-seg:has(input[name="cg-color"][value="black"])').click();
+  await expect(form.locator('#cg-increment')).toHaveAttribute('aria-invalid', 'true');
   await form.locator('#cg-increment').fill('4');
   await expect(form.locator('#cg-increment')).not.toHaveAttribute('aria-invalid', 'true');
   await expect(form.locator('.cg-field-error')).toBeHidden();
@@ -156,7 +237,8 @@ test('Custom validates before request and preserves exact integer-millisecond pa
   await form.locator('.cg-submit').click();
   const request = await requestPromise;
   expect(request.postDataJSON()).toEqual({
-    variant: 'standard',
+    variant: 'atomic',
+    color: 'black',
     timeControl: { initialMs: 450_000, incrementMs: 4_000, delayMs: 0, kind: 'increment' },
     rated: true,
   });

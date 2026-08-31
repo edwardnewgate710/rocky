@@ -1,11 +1,17 @@
 /**
  * Create-a-game panel — the lobby's focused seek builder.
  *
- * The collapsed trigger opens one short form: preset or custom time controls,
- * Casual/Rated, and a single Create seek action. The component owns only DOM
- * and form state; the lobby wiring remains responsible for the network request.
+ * The collapsed trigger opens one short form for time, variant, mode, and color.
+ * The component owns only DOM and form state; the lobby wiring remains
+ * responsible for the network request.
  */
-import type { TimeControl } from '../api/models.js';
+import {
+  OFFERED_VARIANTS,
+  SEEK_COLORS,
+  type SeekColor,
+  type TimeControl,
+  type Variant,
+} from '../api/models.js';
 import type { KeyValueStorage } from '../net/session.js';
 import {
   CREATE_GAME_PRESETS,
@@ -17,19 +23,36 @@ import {
   validateCustomTime,
 } from './time-presets.js';
 import {
+  DEFAULT_CREATE_GAME_COLOR,
+  DEFAULT_CREATE_GAME_VARIANT,
   PREFS_STORAGE_KEY,
+  isOfferedVariant,
+  isSeekColor,
   parseCreateGamePrefs,
   serializeCreateGamePrefs,
   type CreateGamePrefs,
   type SeekMode,
 } from './create-game-prefs.js';
 import { el } from './dom.js';
+import { VARIANT_LABELS } from './variant-labels.js';
+
+const CREATE_GAME_COLORS: readonly SeekColor[] = [
+  DEFAULT_CREATE_GAME_COLOR,
+  ...SEEK_COLORS.filter((color) => color !== DEFAULT_CREATE_GAME_COLOR),
+];
+
+const COLOR_LABELS: Record<SeekColor, string> = {
+  random: 'Random',
+  white: 'White',
+  black: 'Black',
+};
 
 /** The validated settings sent through the existing seek-creation path. */
 export interface CreateGameParams {
-  readonly variant: 'standard';
+  readonly variant: Variant;
   readonly timeControl: TimeControl;
   readonly rated: boolean;
+  readonly color: SeekColor;
 }
 
 export interface CreateGamePanelCallbacks {
@@ -44,7 +67,7 @@ export interface CreateGamePanelOptions {
   readonly mount: HTMLElement;
   readonly callbacks: CreateGamePanelCallbacks;
   readonly initialAuthenticated?: boolean;
-  /** Persists the last successful V1 time control and mode. */
+  /** Persists the last successful V3 settings. */
   readonly storage?: KeyValueStorage;
 }
 
@@ -113,7 +136,9 @@ export class CreateGamePanel {
     });
     this.form.append(
       this.createTimeField(prefs?.time ?? DEFAULT_PRESET_ID),
+      this.createVariantField(prefs?.variant ?? DEFAULT_CREATE_GAME_VARIANT),
       this.createModeField(prefs?.mode ?? 'casual'),
+      this.createColorField(prefs?.color ?? DEFAULT_CREATE_GAME_COLOR),
       el(this.doc, 'div', { class: 'cg-actions' }, this.submitBtn, this.cancelBtn),
     );
     this.bindEvents();
@@ -229,6 +254,38 @@ export class CreateGamePanel {
     return modeField;
   }
 
+  /** Build the canonical player-facing variant choices. */
+  private createVariantField(initialVariant: Variant): HTMLFieldSetElement {
+    const variants = el(this.doc, 'div', { class: 'cg-variants' });
+    for (const variant of OFFERED_VARIANTS) {
+      variants.append(
+        this.radio('cg-variant', variant, VARIANT_LABELS[variant], variant === initialVariant),
+      );
+    }
+    return el(
+      this.doc,
+      'fieldset',
+      { class: 'cg-field' },
+      el(this.doc, 'legend', {}, 'Variant'),
+      variants,
+    );
+  }
+
+  /** Build the color preference choices in their player-facing order. */
+  private createColorField(initialColor: SeekColor): HTMLFieldSetElement {
+    const colors = el(this.doc, 'div', { class: 'cg-colors' });
+    for (const color of CREATE_GAME_COLORS) {
+      colors.append(this.radio('cg-color', color, COLOR_LABELS[color], color === initialColor));
+    }
+    return el(
+      this.doc,
+      'fieldset',
+      { class: 'cg-field' },
+      el(this.doc, 'legend', {}, 'Color'),
+      colors,
+    );
+  }
+
   /** Bind disclosure, cancellation, submission, and Escape behavior once. */
   private bindEvents(): void {
     this.trigger.addEventListener('click', () => this.setExpanded(true));
@@ -251,13 +308,15 @@ export class CreateGamePanel {
 
   /** Create a native radio wrapped by the visual chip or segmented-control label. */
   private radio(
-    name: 'cg-time' | 'cg-mode',
+    name: 'cg-time' | 'cg-variant' | 'cg-mode' | 'cg-color',
     value: string,
     label: string,
     checked: boolean,
     secondary?: string,
   ): HTMLLabelElement {
-    const className = name === 'cg-time' ? 'cg-chip' : 'cg-seg';
+    const isChip = name === 'cg-time' || name === 'cg-variant';
+    const className = isChip ? 'cg-chip' : 'cg-seg';
+    const labelClass = name === 'cg-time' ? 'cg-chip-label' : 'cg-option-label';
     const input = el(this.doc, 'input', { type: 'radio', name, value });
     if (checked) input.checked = true;
     return el(
@@ -269,8 +328,8 @@ export class CreateGamePanel {
         this.doc,
         'span',
         {
-          class: className === 'cg-chip' ? 'cg-chip-label' : 'cg-seg-label',
-          ...(className === 'cg-chip' ? { dir: 'ltr' } : {}),
+          class: className === 'cg-chip' ? labelClass : 'cg-seg-label',
+          ...(name === 'cg-time' ? { dir: 'ltr' } : {}),
         },
         label,
       ),
@@ -287,6 +346,9 @@ export class CreateGamePanel {
   private gather(): { readonly params: CreateGameParams; readonly prefs: CreateGamePrefs } | null {
     const selected = this.readChecked('cg-time');
     const mode = this.readChecked('cg-mode') === 'rated' ? 'rated' : 'casual';
+    const variant = this.readChecked('cg-variant');
+    const color = this.readChecked('cg-color');
+    if (!isOfferedVariant(variant) || !isSeekColor(color)) return null;
     if (selected === CUSTOM_PRESET_ID) {
       const minutes = this.customMinutes.value.trim() === '' ? Number.NaN : Number(this.customMinutes.value);
       const increment =
@@ -298,11 +360,19 @@ export class CreateGamePanel {
       }
       return {
         params: {
-          variant: 'standard',
+          variant,
           timeControl: validation.timeControl,
           rated: mode === 'rated',
+          color,
         },
-        prefs: { time: CUSTOM_PRESET_ID, minutes, increment, mode },
+        prefs: {
+          time: CUSTOM_PRESET_ID,
+          minutes,
+          increment,
+          mode,
+          variant,
+          color,
+        },
       };
     }
 
@@ -311,15 +381,21 @@ export class CreateGamePanel {
 
     return {
       params: {
-        variant: 'standard',
+        variant,
         timeControl: presetToTimeControl(preset.minutes, preset.increment),
         rated: mode === 'rated',
+        color,
       },
-      prefs: { time: preset.id, mode },
+      prefs: {
+        time: preset.id,
+        mode,
+        variant,
+        color,
+      },
     };
   }
 
-  /** Read only preferences that still belong to the approved V1 choice set. */
+  /** Read only preferences that still belong to the approved choice sets. */
   private readPrefs(): CreateGamePrefs | null {
     if (!this.storage) return null;
     try {
@@ -386,7 +462,7 @@ export class CreateGamePanel {
     this.form.setAttribute('aria-busy', String(pending));
     this.submitBtn.disabled = pending;
     this.cancelBtn.disabled = pending;
-    for (const name of ['cg-time', 'cg-mode']) {
+    for (const name of ['cg-time', 'cg-variant', 'cg-mode', 'cg-color']) {
       for (const radio of this.form.querySelectorAll<HTMLInputElement>(`input[name="${name}"]`)) {
         radio.disabled = pending;
       }
