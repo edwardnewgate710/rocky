@@ -210,17 +210,13 @@ export function tokenizeSql(sql) {
       continue;
     }
 
-    if (ch === ';' || ch === ',' || ch === '(' || ch === ')' || ch === '.' || ch === '*') {
-      tokens.push({
-        type: 'punct',
-        value: ch,
-        raw: ch,
-        pos: i,
-      });
-      i++;
-      continue;
-    }
-
+    // Punctuation and operators (;, ,, (, ), ., *, |, =, <, >, :, +, -, etc.)
+    tokens.push({
+      type: 'punct',
+      value: ch,
+      raw: ch,
+      pos: i,
+    });
     i++;
   }
   return tokens;
@@ -471,6 +467,43 @@ function splitAlterActions(tokens) {
 }
 
 /**
+ * Parses a strict IN-list of string literals: `('literal1', 'literal2', ...)`.
+ *
+ * @param {SqlToken[]} tokens Array of tokens.
+ * @param {number} startIndex Index of first token inside the `IN (` list.
+ * @returns {{ variants: string[], nextIndex: number } | null} Parsed variants and next token index, or null if malformed.
+ */
+function parseStrictVariantInList(tokens, startIndex) {
+  let idx = startIndex;
+  const variants = [];
+  let expectLiteral = true;
+
+  while (idx < tokens.length) {
+    const t = tokens[idx];
+    if (expectLiteral) {
+      if (t.type === 'string') {
+        variants.push(t.value);
+        expectLiteral = false;
+        idx++;
+      } else {
+        return null;
+      }
+    } else {
+      if (t.type === 'punct' && t.value === ',') {
+        expectLiteral = true;
+        idx++;
+      } else if (t.type === 'punct' && t.value === ')') {
+        return { variants, nextIndex: idx + 1 };
+      } else {
+        return null;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
  * Scans a column definition clause for CHECK and REFERENCES constraints on variant.
  *
  * @param {SqlToken[]} clause Tokens making up the column definition.
@@ -500,15 +533,15 @@ function scanColumnConstraints(clause, file, constraintNamespace, variantConstra
           if (i >= 2 && clause[i - 2]?.value === 'constraint') {
             inlineName = clause[i - 1]?.value;
           }
-          const variantTokens = [];
-          let vIdx = pIdx + 3;
-          while (vIdx < clause.length && clause[vIdx]?.value !== ')') {
-            if (clause[vIdx].type === 'string') {
-              variantTokens.push(clause[vIdx].value);
-            }
-            vIdx++;
+          const parsedIn = parseStrictVariantInList(clause, pIdx + 3);
+          if (parsedIn === null) {
+            throw new Error(
+              `${file} defines an unsupported CHECK predicate shape on \`studies.variant\` ` +
+                `(\`${clause.map((t) => t.raw).join(' ')}\`). Teach this guard non-standard CHECK predicates ` +
+                `rather than ignoring the constraint.`,
+            );
           }
-          if (clause[vIdx + 1]?.value !== ')') {
+          if (clause[parsedIn.nextIndex]?.value !== ')') {
             throw new Error(
               `${file} defines a compound or non-standard CHECK predicate on \`studies.variant\` ` +
                 `(\`${clause.map((t) => t.raw).join(' ')}\`). Teach this guard compound CHECK predicates ` +
@@ -518,7 +551,7 @@ function scanColumnConstraints(clause, file, constraintNamespace, variantConstra
           const name = inlineName ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_check');
           constraintNamespace.add(name);
           variantConstraints.add(name);
-          activeChecks.set(name, { file, name, variants: variantTokens });
+          activeChecks.set(name, { file, name, variants: parsedIn.variants });
         } else {
           throw new Error(
             `${file} defines an unsupported CHECK predicate shape on \`studies.variant\` ` +
@@ -789,25 +822,25 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
                   if (name === null && i >= 2 && action[i - 2]?.value === 'constraint') {
                     name = action[i - 1]?.value ?? null;
                   }
-                  const assignedName = name ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_check');
-                  const variantTokens = [];
-                  let vIdx = pIdx + 3;
-                  while (vIdx < action.length && action[vIdx]?.value !== ')') {
-                    if (action[vIdx].type === 'string') {
-                      variantTokens.push(action[vIdx].value);
-                    }
-                    vIdx++;
+                  const parsedIn = parseStrictVariantInList(action, pIdx + 3);
+                  if (parsedIn === null) {
+                    throw new Error(
+                      `${file} defines an unsupported CHECK predicate shape on \`studies.variant\` ` +
+                        `(\`${action.map((t) => t.raw).join(' ')}\`). Teach this guard non-standard CHECK predicates ` +
+                        `rather than ignoring the constraint.`,
+                    );
                   }
-                  if (action[vIdx + 1]?.value !== ')') {
+                  if (action[parsedIn.nextIndex]?.value !== ')') {
                     throw new Error(
                       `${file} defines a compound or non-standard CHECK predicate on \`studies.variant\` ` +
                         `(\`${action.map((t) => t.raw).join(' ')}\`). Teach this guard compound CHECK predicates ` +
                         `rather than ignoring suffix expressions.`,
                     );
                   }
+                  const assignedName = name ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_check');
                   constraintNamespace.add(assignedName);
                   variantConstraints.add(assignedName);
-                  activeChecks.set(assignedName, { file, name: assignedName, variants: variantTokens });
+                  activeChecks.set(assignedName, { file, name: assignedName, variants: parsedIn.variants });
                   handled = true;
                 } else {
                   throw new Error(
@@ -926,25 +959,25 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
                   if (name === null && i >= 2 && clause[i - 2]?.value === 'constraint') {
                     name = clause[i - 1]?.value ?? null;
                   }
-                  const assignedName = name ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_check');
-                  const variantTokens = [];
-                  let vIdx = pIdx + 3;
-                  while (vIdx < clause.length && clause[vIdx]?.value !== ')') {
-                    if (clause[vIdx].type === 'string') {
-                      variantTokens.push(clause[vIdx].value);
-                    }
-                    vIdx++;
+                  const parsedIn = parseStrictVariantInList(clause, pIdx + 3);
+                  if (parsedIn === null) {
+                    throw new Error(
+                      `${file} defines an unsupported CHECK predicate shape on \`studies.variant\` ` +
+                        `(\`${clause.map((t) => t.raw).join(' ')}\`). Teach this guard non-standard CHECK predicates ` +
+                        `rather than ignoring the constraint.`,
+                    );
                   }
-                  if (clause[vIdx + 1]?.value !== ')') {
+                  if (clause[parsedIn.nextIndex]?.value !== ')') {
                     throw new Error(
                       `${file} defines a compound or non-standard CHECK predicate on \`studies.variant\` ` +
                         `(\`${clause.map((t) => t.raw).join(' ')}\`). Teach this guard compound CHECK predicates ` +
                         `rather than ignoring suffix expressions.`,
                     );
                   }
+                  const assignedName = name ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_check');
                   constraintNamespace.add(assignedName);
                   variantConstraints.add(assignedName);
-                  activeChecks.set(assignedName, { file, name: assignedName, variants: variantTokens });
+                  activeChecks.set(assignedName, { file, name: assignedName, variants: parsedIn.variants });
                   handled = true;
                 } else {
                   throw new Error(

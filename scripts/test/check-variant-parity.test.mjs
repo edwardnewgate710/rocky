@@ -1078,6 +1078,24 @@ test('unsupported table-level CHECK predicate shape fails loudly rather than bei
   }
 });
 
+test('operators or expressions inside IN-list fail loudly rather than extracting partial literals', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL CHECK (variant IN ('standard' || 'chess960', 'atomic'))
+    );`,
+  });
+  try {
+    assert.throws(
+      () => replayStudiesSchema(dir),
+      /defines an unsupported CHECK predicate shape on `studies.variant`/,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
 
 
 
