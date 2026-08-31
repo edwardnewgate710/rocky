@@ -400,6 +400,18 @@ test('effectiveStudyVariantForeignKey tracks explicit inline constraint names an
   }
 });
 
+test('effectiveStudyVariantForeignKey handles multiple DROP CONSTRAINT clauses in a single statement', () => {
+  const dir = migrations({
+    '0001_fk.sql': `ALTER TABLE studies ADD CONSTRAINT custom_fk FOREIGN KEY (variant) REFERENCES variants(code);`,
+    '0002_multi_drop.sql': `ALTER TABLE studies DROP CONSTRAINT unrelated_constraint, DROP CONSTRAINT custom_fk;`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dir), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('effectiveStudyVariantForeignKey does not match subsequent column referencing variants', () => {
   const dir = migrations({
     '0001_distinct_columns.sql': `CREATE TABLE studies (
@@ -410,6 +422,21 @@ test('effectiveStudyVariantForeignKey does not match subsequent column referenci
   });
   try {
     assert.equal(effectiveStudyVariantForeignKey(dir), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('effectiveStudyVariantConstraint preserves active CHECK constraint when FK is added without dropping CHECK', () => {
+  const dir = migrations({
+    '0001_check.sql': `ALTER TABLE studies ADD COLUMN variant TEXT NOT NULL DEFAULT 'standard' CHECK (variant IN ('standard', 'atomic'));`,
+    '0002_fk.sql': `ALTER TABLE studies ADD CONSTRAINT studies_variant_fk FOREIGN KEY (variant) REFERENCES variants(code);`,
+  });
+  try {
+    const check = effectiveStudyVariantConstraint(dir);
+    assert.notEqual(check, null);
+    assert.deepEqual(check.variants, ['standard', 'atomic']);
+    assert.equal(effectiveStudyVariantForeignKey(dir), true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

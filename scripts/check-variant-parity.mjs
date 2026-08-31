@@ -295,9 +295,10 @@ export function effectiveStudyVariantConstraint(dir = MIGRATIONS_DIR) {
       // against the one being tracked — a substring test for "variant" both missed a legitimately
       // named constraint (`DROP CONSTRAINT allowed_codes`) and would have fired on an unrelated one
       // that happened to contain the word. Raised in the CodeRabbit review of PR #141.
-      const dropped = /DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?"?(\w+)"?/i.exec(statement);
-      if (dropped !== null && current !== null && normalise(dropped[1]) === current.name) {
-        current = null;
+      for (const m of statement.matchAll(/DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?"?(\w+)"?/gi)) {
+        if (current !== null && normalise(m[1]) === current.name) {
+          current = null;
+        }
       }
       if (/DROP\s+COLUMN\s+(?:IF\s+EXISTS\s+)?"?variant"?/i.test(statement)) current = null;
 
@@ -307,11 +308,6 @@ export function effectiveStudyVariantConstraint(dir = MIGRATIONS_DIR) {
           name: normalise(m[1] ?? IMPLICIT_CONSTRAINT_NAME),
           variants: [...m[2].matchAll(/'([a-z0-9]+)'/g)].map((t) => t[1]),
         };
-      }
-
-      // Once the column derives from the lookup table there is no second list left to drift.
-      if (VARIANT_FK_TABLE.test(statement) || VARIANT_FK_INLINE.test(statement)) {
-        current = null;
       }
     }
   }
@@ -337,9 +333,8 @@ export function effectiveStudyVariantForeignKey(dir = MIGRATIONS_DIR) {
         activeFks.add(normalise(renamed[2]));
       }
 
-      const dropped = /DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?"?(\w+)"?/i.exec(statement);
-      if (dropped !== null) {
-        activeFks.delete(normalise(dropped[1]));
+      for (const m of statement.matchAll(/DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?"?(\w+)"?/gi)) {
+        activeFks.delete(normalise(m[1]));
       }
       if (/DROP\s+COLUMN\s+(?:IF\s+EXISTS\s+)?"?variant"?/i.test(statement)) {
         activeFks.clear();
