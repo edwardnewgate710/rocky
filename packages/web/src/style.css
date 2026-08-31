@@ -1010,11 +1010,17 @@ button:disabled {
 .cg-seg:has(input:checked) {
   border-color: var(--sel);
   background: color-mix(in srgb, var(--sel) 12%, transparent);
+  box-shadow: inset 0 0 0 1px var(--sel);
 }
 .cg-chip:has(input:focus-visible),
 .cg-seg:has(input:focus-visible) {
   outline: 3px solid var(--sel);
   outline-offset: 2px;
+}
+.cg-chip-label {
+  direction: ltr;
+  unicode-bidi: isolate;
+  font-variant-numeric: tabular-nums;
 }
 .cg-chip-speed { font-size: 0.75rem; color: var(--muted); }
 .cg-seg-label { display: inline-flex; align-items: center; gap: 5px; }
@@ -1035,8 +1041,28 @@ button:disabled {
 .create-game .cg-seg { box-sizing: border-box; width: 100%; }
 .cg-hint { margin: 0; font-size: 0.75rem; color: var(--muted); }
 .cg-field-error { margin: 0; font-size: 0.75rem; color: var(--ember); }
+.cg-time-detail { min-block-size: 7rem; }
+.cg-time-summary { margin: 0; font-size: 0.75rem; color: var(--muted); }
+.cg-custom {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  align-items: start;
+}
+.cg-custom[hidden] { display: none; }
+.cg-num {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.cg-num input { box-sizing: border-box; width: 100%; }
+.cg-custom .cg-field-error { grid-column: 1 / -1; min-block-size: 1.2em; }
 
 .auth-field input,
+.cg-num input,
 .nav-search input[type='search'],
 .composer-form input,
 .team-search input,
@@ -1052,6 +1078,7 @@ button:disabled {
   font-size: 0.875rem;
 }
 .auth-field input:focus-visible,
+.cg-num input:focus-visible,
 .nav-search input[type='search']:focus-visible,
 .composer-form input:focus-visible,
 .team-search input:focus-visible,
@@ -1065,6 +1092,7 @@ button:disabled {
 
 @media (pointer: coarse) {
   .auth-field input,
+  .cg-num input,
   .cg-chip,
   .cg-seg,
   .nav-search input[type='search'],

@@ -720,7 +720,7 @@ test('POST-AUD-001: deferred bot creation cannot navigate after disposal', async
   }
 });
 
-test('mountLobby: create-game V1 renders only the approved choices', () => {
+test('mountLobby: create-game V2 renders the canonical ladder plus Custom', () => {
   const { doc, elements } = createTestDoc();
   const { client } = makeFakeClient();
 
@@ -729,7 +729,7 @@ test('mountLobby: create-game V1 renders only the approved choices', () => {
   const form = elements.get('create-game')!.querySelector('#create-game-form')!;
   assert.deepEqual(
     form.querySelectorAll<FakeDOMElement>('input[name="cg-time"]').map((radio) => radio.value),
-    ['3+0', '5+0', '10+0', '15+10'],
+    ['1+0', '2+1', '3+0', '3+2', '5+0', '5+3', '10+0', '10+5', '15+10', '30+20', 'custom'],
   );
   assert.deepEqual(
     form.querySelectorAll<FakeDOMElement>('input[name="cg-mode"]').map((radio) => radio.value),
@@ -738,6 +738,8 @@ test('mountLobby: create-game V1 renders only the approved choices', () => {
   assert.equal(form.querySelectorAll('input[name="cg-color"]').length, 0);
   assert.equal(form.querySelector('.cg-more-toggle'), null);
   assert.equal(form.querySelector('select'), null);
+  assert.equal(form.querySelector('.cg-custom')?.hidden, true);
+  assert.equal(form.querySelector('.cg-time-summary')?.hidden, false);
 });
 
 test('mountLobby: default submit sends the exact 10+0 casual request', async () => {
@@ -800,6 +802,133 @@ test('mountLobby: creates the exact V1 seek request and collapses on success', a
 
 });
 
+test('mountLobby: a newly exposed preset changes the exact rated seek payload', async () => {
+  const { doc, elements } = createTestDoc();
+  const { client, createdSeeks } = makeFakeClient();
+
+  mountTestLobby({ doc, client, isAuthenticated: () => true });
+  const mount = elements.get('create-game')!;
+  mount.querySelector('#create-seek')!.click();
+  const form = mount.querySelector('#create-game-form')!;
+  selectRadio(form, 'cg-time', '2+1');
+  selectRadio(form, 'cg-mode', 'rated');
+
+  submit(form);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(createdSeeks, [{
+    variant: 'standard',
+    timeControl: {
+      initialMs: 120_000,
+      incrementMs: 1_000,
+      delayMs: 0,
+      kind: 'increment',
+    },
+    rated: true,
+  }]);
+});
+
+test('mountLobby: valid Custom values create and persist the exact request', async () => {
+  const { doc, elements } = createTestDoc();
+  const { client, createdSeeks } = makeFakeClient();
+  const memoryStorage: Record<string, string> = {};
+  const storage: KeyValueStorage = {
+    getItem: (key) => memoryStorage[key] ?? null,
+    setItem: (key, value) => { memoryStorage[key] = value; },
+    removeItem: (key) => { delete memoryStorage[key]; },
+  };
+
+  mountTestLobby({ doc, client, isAuthenticated: () => true, storage });
+  const mount = elements.get('create-game')!;
+  mount.querySelector('#create-seek')!.click();
+  const form = mount.querySelector('#create-game-form')!;
+  selectRadio(form, 'cg-time', 'custom');
+  form.querySelector<FakeDOMElement>('#cg-minutes')!.value = '7.5';
+  form.querySelector<FakeDOMElement>('#cg-increment')!.value = '4';
+  selectRadio(form, 'cg-mode', 'rated');
+
+  submit(form);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(createdSeeks, [{
+    variant: 'standard',
+    timeControl: {
+      initialMs: 450_000,
+      incrementMs: 4_000,
+      delayMs: 0,
+      kind: 'increment',
+    },
+    rated: true,
+  }]);
+  assert.deepEqual(JSON.parse(memoryStorage['gambit-create-game']!), {
+    time: 'custom',
+    minutes: 7.5,
+    increment: 4,
+    mode: 'rated',
+  });
+});
+
+test('mountLobby: invalid Custom values show a field error and send no request', async () => {
+  const { doc, elements } = createTestDoc();
+  const { client, createdSeeks } = makeFakeClient();
+
+  mountTestLobby({ doc, client, isAuthenticated: () => true });
+  const mount = elements.get('create-game')!;
+  mount.querySelector('#create-seek')!.click();
+  const form = mount.querySelector('#create-game-form')!;
+  selectRadio(form, 'cg-time', 'custom');
+  const minutes = form.querySelector<FakeDOMElement>('#cg-minutes')!;
+  minutes.value = '0';
+
+  submit(form);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(createdSeeks.length, 0);
+  assert.equal(minutes.getAttribute('aria-invalid'), 'true');
+  assert.equal(form.querySelector('.cg-field-error')?.textContent, 'Minutes must be between 0.5 and 180 in 0.5-minute steps.');
+  assert.equal(form.querySelector('.cg-submit')?.disabled, false);
+
+  minutes.value = '5';
+  const increment = form.querySelector<FakeDOMElement>('#cg-increment')!;
+  increment.value = '';
+  submit(form);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(createdSeeks.length, 0);
+  assert.equal(increment.getAttribute('aria-invalid'), 'true');
+  assert.equal(form.querySelector('.cg-field-error')?.textContent, 'Increment must be a whole number between 0 and 60 seconds.');
+});
+
+test('mountLobby: editing the other Custom field preserves current validation feedback', async () => {
+  const { doc, elements } = createTestDoc();
+  const { client, createdSeeks } = makeFakeClient();
+
+  mountTestLobby({ doc, client, isAuthenticated: () => true });
+  const mount = elements.get('create-game')!;
+  mount.querySelector('#create-seek')!.click();
+  const form = mount.querySelector('#create-game-form')!;
+  selectRadio(form, 'cg-time', 'custom');
+  const minutes = form.querySelector<FakeDOMElement>('#cg-minutes')!;
+  const increment = form.querySelector<FakeDOMElement>('#cg-increment')!;
+  minutes.value = '5';
+  increment.value = '';
+
+  submit(form);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(createdSeeks.length, 0);
+  assert.equal(increment.getAttribute('aria-invalid'), 'true');
+
+  minutes.value = '6';
+  minutes.dispatchEvent(new Event('input'));
+  assert.equal(increment.getAttribute('aria-invalid'), 'true');
+  assert.equal(form.querySelector('.cg-field-error')?.textContent, 'Increment must be a whole number between 0 and 60 seconds.');
+
+  increment.value = '2';
+  increment.dispatchEvent(new Event('input'));
+  assert.equal(increment.getAttribute('aria-invalid'), null);
+  assert.equal(form.querySelector('.cg-field-error')?.hidden, true);
+});
+
 test('mountLobby: blocks duplicate seek submissions while the first is pending', async () => {
   const pendingSeek = deferred<SeekView>();
   const { doc, elements } = createTestDoc();
@@ -816,10 +945,19 @@ test('mountLobby: blocks duplicate seek submissions while the first is pending',
   assert.equal(createdSeeks.length, 1);
   assert.equal(form.querySelector('.cg-submit')?.disabled, true);
   assert.equal(form.querySelector('.cg-submit')?.textContent, 'Creating…');
+  assert.equal(form.getAttribute('aria-busy'), 'true');
+  const radios = [
+    ...form.querySelectorAll<FakeDOMElement>('input[name="cg-time"]'),
+    ...form.querySelectorAll<FakeDOMElement>('input[name="cg-mode"]'),
+  ];
+  assert.ok(radios.length > 0);
+  assert.ok(radios.every((input) => input.disabled));
+  assert.equal(form.querySelector('.cg-cancel')?.disabled, true);
 
   pendingSeek.resolve(makeSeek({ id: 'pending-created' }));
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(form.hidden, true);
+  assert.equal(form.getAttribute('aria-busy'), 'false');
 });
 
 test('mountLobby: failed create preserves choices, unlocks submit, and retries', async () => {
@@ -900,11 +1038,11 @@ test('mountLobby: reports errors to #lobby-error element', async () => {
 
 });
 
-test('mountLobby: valid V1 storage is passed to CreateGamePanel', () => {
+test('mountLobby: a valid new preset preference is passed to CreateGamePanel', () => {
   const { doc } = createTestDoc();
   const { client } = makeFakeClient();
   const memoryStorage: Record<string, string> = {
-    'gambit-create-game': JSON.stringify({ time: '3+0', mode: 'rated' }),
+    'gambit-create-game': JSON.stringify({ time: '3+2', mode: 'rated' }),
   };
   const customStorage: KeyValueStorage = {
     getItem: (key: string): string | null => memoryStorage[key] ?? null,
@@ -921,7 +1059,26 @@ test('mountLobby: valid V1 storage is passed to CreateGamePanel', () => {
 
   const form = (doc.getElementById('create-game') as unknown as FakeDOMElement)
     .querySelector('#create-game-form');
-  assert.equal(form?.querySelector<FakeDOMElement>('input[name="cg-time"]:checked')?.value, '3+0');
+  assert.equal(form?.querySelector<FakeDOMElement>('input[name="cg-time"]:checked')?.value, '3+2');
+  assert.equal(form?.querySelector<FakeDOMElement>('input[name="cg-mode"]:checked')?.value, 'rated');
+});
+
+test('mountLobby: a valid Custom preference restores its inputs and mode', () => {
+  const { doc } = createTestDoc();
+  const { client } = makeFakeClient();
+  const storage: KeyValueStorage = {
+    getItem: () => JSON.stringify({ time: 'custom', minutes: 12.5, increment: 7, mode: 'rated' }),
+    setItem: () => {},
+    removeItem: () => {},
+  };
+
+  mountTestLobby({ doc, client, isAuthenticated: () => true, storage });
+
+  const form = (doc.getElementById('create-game') as unknown as FakeDOMElement)
+    .querySelector('#create-game-form');
+  assert.equal(form?.querySelector<FakeDOMElement>('input[name="cg-time"]:checked')?.value, 'custom');
+  assert.equal(form?.querySelector<FakeDOMElement>('#cg-minutes')?.value, '12.5');
+  assert.equal(form?.querySelector<FakeDOMElement>('#cg-increment')?.value, '7');
   assert.equal(form?.querySelector<FakeDOMElement>('input[name="cg-mode"]:checked')?.value, 'rated');
 });
 
@@ -929,7 +1086,7 @@ test('mountLobby: stale storage falls back to 10+0 casual', () => {
   const { doc } = createTestDoc();
   const { client } = makeFakeClient();
   const storage: KeyValueStorage = {
-    getItem: () => JSON.stringify({ time: '3+2', mode: 'rated' }),
+    getItem: () => JSON.stringify({ time: '7+7', mode: 'rated' }),
     setItem: () => {},
     removeItem: () => {},
   };
