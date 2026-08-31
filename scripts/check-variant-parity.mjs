@@ -524,6 +524,9 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
           }
 
           if (isTableTarget(ref, 'variants') && hasCascade) {
+            for (const fkName of activeFks) {
+              constraintNamespace.delete(fkName);
+            }
             activeFks.clear();
           }
 
@@ -611,6 +614,12 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
             if (action[cIdx]?.value === 'if' && action[cIdx + 1]?.value === 'exists') cIdx += 2;
             if (action[cIdx]?.value === 'variant') {
               // Drops all constraints on variant
+              for (const checkName of activeChecks.keys()) {
+                constraintNamespace.delete(checkName);
+              }
+              for (const fkName of activeFks) {
+                constraintNamespace.delete(fkName);
+              }
               activeChecks.clear();
               activeFks.clear();
             }
@@ -623,6 +632,12 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
             if (action[cIdx]?.value === 'column') cIdx++;
             if (action[cIdx]?.value === 'variant' && action[cIdx + 1]?.value === 'to') {
               // variant column is renamed away
+              for (const checkName of activeChecks.keys()) {
+                constraintNamespace.delete(checkName);
+              }
+              for (const fkName of activeFks) {
+                constraintNamespace.delete(fkName);
+              }
               activeChecks.clear();
               activeFks.clear();
             }

@@ -533,6 +533,24 @@ test('DROP TABLE variants CASCADE clears active studies foreign key', () => {
   } finally {
     rmSync(dropVariantsCascadeDir, { recursive: true, force: true });
   }
+
+  const cascadeRecreateDir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_drop_variants.sql': `DROP TABLE variants CASCADE;`,
+    '0003_recreate_variants.sql': `CREATE TABLE variants (code TEXT PRIMARY KEY);`,
+    '0004_readd_fk.sql': `ALTER TABLE studies ADD FOREIGN KEY (variant) REFERENCES variants(code);`,
+    '0005_drop_fk.sql': `ALTER TABLE studies DROP CONSTRAINT studies_variant_fkey;`,
+  });
+  try {
+    // Releasing the cascaded FK name allows the re-added FK to use base name studies_variant_fkey,
+    // so dropping studies_variant_fkey properly clears it.
+    assert.equal(effectiveStudyVariantForeignKey(cascadeRecreateDir), false);
+  } finally {
+    rmSync(cascadeRecreateDir, { recursive: true, force: true });
+  }
 });
 
 test('DROP TABLE multi-table containing variants with CASCADE clears active studies foreign key', () => {
