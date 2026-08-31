@@ -372,12 +372,26 @@ test('pg studies repository integration tests', { skip }, async () => {
       assert.equal(fetched.variant, v);
     }
 
-    // 10.5 Referencing study protects variants(code) from deletion (NO ACTION / RESTRICT)
-    await assert.rejects(
-      async () => pool.query(`DELETE FROM variants WHERE code = 'standard'`),
-      (err: unknown) => isPgConstraintViolation(err, '23503', 'studies_variant_fk'),
-      'deleting a referenced variant row must be rejected with foreign_key_violation (23503)'
+    // 10.5 Referencing study specifically protects variants(code) via studies_variant_fk (NO ACTION / RESTRICT)
+    await pool.query(
+      `INSERT INTO variants (code, name, enabled) VALUES ('test_fk_protection_variant', 'Test FK Variant', true)`
     );
+    const customVarStudyId = uuidv7();
+    await pool.query(
+      `INSERT INTO studies (id, owner_id, name, description, visibility, variant, created_at, updated_at)
+       VALUES ($1, $2, 'Custom Variant Study', '', 'public', 'test_fk_protection_variant', NOW(), NOW())`,
+      [customVarStudyId, alice]
+    );
+    try {
+      await assert.rejects(
+        async () => pool.query(`DELETE FROM variants WHERE code = 'test_fk_protection_variant'`),
+        (err: unknown) => isPgConstraintViolation(err, '23503', 'studies_variant_fk'),
+        'deleting a variant referenced only by studies must raise foreign_key_violation on studies_variant_fk'
+      );
+    } finally {
+      await pool.query(`DELETE FROM studies WHERE id = $1`, [customVarStudyId]);
+      await pool.query(`DELETE FROM variants WHERE code = 'test_fk_protection_variant'`);
+    }
   } finally {
     if (createdUserIds.length > 0) {
       await pool.query(`DELETE FROM users WHERE id = ANY($1)`, [createdUserIds]);
