@@ -49,7 +49,7 @@ function runWithPreload(
   readonly records: readonly DiagnosticRecord[];
 } {
   const generatedLogDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-test-'));
-  const targetLogDir = envOverride.SIGB_LOG_DIR || generatedLogDir;
+  const targetLogDir = envOverride.SIGB_LOG_DIR ? path.resolve(envOverride.SIGB_LOG_DIR) : generatedLogDir;
   const scriptPath = path.join(generatedLogDir, 'test-target.cjs');
   fs.writeFileSync(scriptPath, code, 'utf8');
 
@@ -59,8 +59,8 @@ function runWithPreload(
 
   const env: Record<string, string | undefined> = {
     ...process.env,
-    SIGB_LOG_DIR: targetLogDir,
     ...envOverride,
+    SIGB_LOG_DIR: targetLogDir,
   };
   delete env.NODE_TEST_CONTEXT;
 
@@ -294,6 +294,19 @@ test('diagnostic preload: pre-existing directory does not fail or crash', (t) =>
 
   assert.equal(status, 0, 'runs cleanly with pre-existing directory');
   assert.ok(records.length > 0, 'wrote diagnostic records to pre-existing directory');
+});
+
+test('diagnostic preload: relative SIGB_LOG_DIR resolves correctly', (t) => {
+  const relDir = `./tmp-sigb-rel-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const absDir = path.resolve(relDir);
+  const { records, logDir } = runWithPreload('const relOk = true;', { SIGB_LOG_DIR: relDir });
+  t.after(() => {
+    fs.rmSync(logDir, { recursive: true, force: true });
+    fs.rmSync(absDir, { recursive: true, force: true });
+  });
+
+  assert.ok(fs.existsSync(absDir), 'creates directory at resolved absolute path');
+  assert.ok(records.length > 0, 'reads child diagnostic records from relative SIGB_LOG_DIR');
 });
 
 test('diagnostic preload: usage glob pattern matches test files without literal backslash and excludes diag files', () => {

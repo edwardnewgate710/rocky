@@ -179,8 +179,8 @@ worth fixing on its own merits.
 
 ### Follow-up investigation: the mechanism is now proven, the trigger is not
 
-A later increment (`claude/node-test-signature-b`) instrumented every
-JS-visible process-level event a child process can raise and captured three
+A later increment (`claude/node-test-signature-b`) instrumented selected
+termination and error paths a child process can raise and captured three
 further real occurrences directly, rather than reasoning from symptoms or
 synthetic proxies alone.
 
@@ -262,7 +262,7 @@ future occurrences, and the forbidden responses — sleeps, retries around the w
 swallowing errors, lowering concurrency to hide it — would suppress the symptom without touching
 whatever the root cause turns out to be. Signature B stays open and unresolved. The diagnostic
 preload is committed so the next occurrence — on this machine, in CI, or elsewhere — can be
-captured with complete instrumentation rather than re-deriving it.
+captured with selected termination and error path instrumentation rather than re-deriving it.
 
 ## 5. `ApiServer.listen` rejects on a failed bind
 
