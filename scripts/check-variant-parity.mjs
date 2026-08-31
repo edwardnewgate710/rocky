@@ -482,33 +482,50 @@ function splitAlterActions(tokens) {
  */
 function scanColumnConstraints(clause, file, constraintNamespace, variantConstraints, activeChecks, activeFks) {
   for (let i = 0; i < clause.length; i++) {
-    // Check for inline CHECK (variant IN (...))
+    // Check for inline CHECK (variant ...)
     if (clause[i].value === 'check' && clause[i + 1]?.value === '(') {
-      const pIdx = i + 2;
-      if (clause[pIdx]?.value === 'variant' && clause[pIdx + 1]?.value === 'in' && clause[pIdx + 2]?.value === '(') {
-        let inlineName = null;
-        if (i >= 2 && clause[i - 2]?.value === 'constraint') {
-          inlineName = clause[i - 1]?.value;
-        }
-        const variantTokens = [];
-        let vIdx = pIdx + 3;
-        while (vIdx < clause.length && clause[vIdx]?.value !== ')') {
-          if (clause[vIdx].type === 'string') {
-            variantTokens.push(clause[vIdx].value);
+      let depth = 1;
+      let endIdx = i + 2;
+      while (endIdx < clause.length && depth > 0) {
+        if (clause[endIdx].value === '(') depth++;
+        else if (clause[endIdx].value === ')') depth--;
+        endIdx++;
+      }
+      const checkTokens = clause.slice(i + 2, endIdx - 1);
+      const referencesVariant = checkTokens.some((t) => (t.type === 'word' || t.type === 'ident') && t.value === 'variant');
+      if (referencesVariant) {
+        const pIdx = i + 2;
+        if (clause[pIdx]?.value === 'variant' && clause[pIdx + 1]?.value === 'in' && clause[pIdx + 2]?.value === '(') {
+          let inlineName = null;
+          if (i >= 2 && clause[i - 2]?.value === 'constraint') {
+            inlineName = clause[i - 1]?.value;
           }
-          vIdx++;
-        }
-        if (clause[vIdx + 1]?.value !== ')') {
+          const variantTokens = [];
+          let vIdx = pIdx + 3;
+          while (vIdx < clause.length && clause[vIdx]?.value !== ')') {
+            if (clause[vIdx].type === 'string') {
+              variantTokens.push(clause[vIdx].value);
+            }
+            vIdx++;
+          }
+          if (clause[vIdx + 1]?.value !== ')') {
+            throw new Error(
+              `${file} defines a compound or non-standard CHECK predicate on \`studies.variant\` ` +
+                `(\`${clause.map((t) => t.raw).join(' ')}\`). Teach this guard compound CHECK predicates ` +
+                `rather than ignoring suffix expressions.`,
+            );
+          }
+          const name = inlineName ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_check');
+          constraintNamespace.add(name);
+          variantConstraints.add(name);
+          activeChecks.set(name, { file, name, variants: variantTokens });
+        } else {
           throw new Error(
-            `${file} defines a compound or non-standard CHECK predicate on \`studies.variant\` ` +
-              `(\`${clause.map((t) => t.raw).join(' ')}\`). Teach this guard compound CHECK predicates ` +
-              `rather than ignoring suffix expressions.`,
+            `${file} defines an unsupported CHECK predicate shape on \`studies.variant\` ` +
+              `(\`${clause.map((t) => t.raw).join(' ')}\`). Teach this guard non-standard CHECK predicates ` +
+              `rather than ignoring the constraint.`,
           );
         }
-        const name = inlineName ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_check');
-        constraintNamespace.add(name);
-        variantConstraints.add(name);
-        activeChecks.set(name, { file, name, variants: variantTokens });
       }
     }
 
@@ -753,35 +770,52 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
 
           let handled = false;
 
-          // Search for table-level CHECK (variant IN (...))
+          // Search for table-level CHECK (variant ...)
           for (let i = 0; i < action.length; i++) {
             if (action[i].value === 'check' && action[i + 1]?.value === '(') {
-              const pIdx = i + 2;
-              if (action[pIdx]?.value === 'variant' && action[pIdx + 1]?.value === 'in' && action[pIdx + 2]?.value === '(') {
-                let name = explicitName;
-                if (name === null && i >= 2 && action[i - 2]?.value === 'constraint') {
-                  name = action[i - 1]?.value ?? null;
-                }
-                const assignedName = name ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_check');
-                const variantTokens = [];
-                let vIdx = pIdx + 3;
-                while (vIdx < action.length && action[vIdx]?.value !== ')') {
-                  if (action[vIdx].type === 'string') {
-                    variantTokens.push(action[vIdx].value);
+              let depth = 1;
+              let endIdx = i + 2;
+              while (endIdx < action.length && depth > 0) {
+                if (action[endIdx].value === '(') depth++;
+                else if (action[endIdx].value === ')') depth--;
+                endIdx++;
+              }
+              const checkTokens = action.slice(i + 2, endIdx - 1);
+              const referencesVariant = checkTokens.some((t) => (t.type === 'word' || t.type === 'ident') && t.value === 'variant');
+              if (referencesVariant) {
+                const pIdx = i + 2;
+                if (action[pIdx]?.value === 'variant' && action[pIdx + 1]?.value === 'in' && action[pIdx + 2]?.value === '(') {
+                  let name = explicitName;
+                  if (name === null && i >= 2 && action[i - 2]?.value === 'constraint') {
+                    name = action[i - 1]?.value ?? null;
                   }
-                  vIdx++;
-                }
-                if (action[vIdx + 1]?.value !== ')') {
+                  const assignedName = name ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_check');
+                  const variantTokens = [];
+                  let vIdx = pIdx + 3;
+                  while (vIdx < action.length && action[vIdx]?.value !== ')') {
+                    if (action[vIdx].type === 'string') {
+                      variantTokens.push(action[vIdx].value);
+                    }
+                    vIdx++;
+                  }
+                  if (action[vIdx + 1]?.value !== ')') {
+                    throw new Error(
+                      `${file} defines a compound or non-standard CHECK predicate on \`studies.variant\` ` +
+                        `(\`${action.map((t) => t.raw).join(' ')}\`). Teach this guard compound CHECK predicates ` +
+                        `rather than ignoring suffix expressions.`,
+                    );
+                  }
+                  constraintNamespace.add(assignedName);
+                  variantConstraints.add(assignedName);
+                  activeChecks.set(assignedName, { file, name: assignedName, variants: variantTokens });
+                  handled = true;
+                } else {
                   throw new Error(
-                    `${file} defines a compound or non-standard CHECK predicate on \`studies.variant\` ` +
-                      `(\`${action.map((t) => t.raw).join(' ')}\`). Teach this guard compound CHECK predicates ` +
-                      `rather than ignoring suffix expressions.`,
+                    `${file} defines an unsupported CHECK predicate shape on \`studies.variant\` ` +
+                      `(\`${action.map((t) => t.raw).join(' ')}\`). Teach this guard non-standard CHECK predicates ` +
+                      `rather than ignoring the constraint.`,
                   );
                 }
-                constraintNamespace.add(assignedName);
-                variantConstraints.add(assignedName);
-                activeChecks.set(assignedName, { file, name: assignedName, variants: variantTokens });
-                handled = true;
               }
             }
           }
@@ -873,35 +907,52 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
 
           let handled = false;
 
-          // Table-level CHECK (variant IN (...))
+          // Table-level CHECK (variant ...)
           for (let i = 0; i < clause.length; i++) {
             if (clause[i].value === 'check' && clause[i + 1]?.value === '(') {
-              const pIdx = i + 2;
-              if (clause[pIdx]?.value === 'variant' && clause[pIdx + 1]?.value === 'in' && clause[pIdx + 2]?.value === '(') {
-                let name = explicitName;
-                if (name === null && i >= 2 && clause[i - 2]?.value === 'constraint') {
-                  name = clause[i - 1]?.value ?? null;
-                }
-                const assignedName = name ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_check');
-                const variantTokens = [];
-                let vIdx = pIdx + 3;
-                while (vIdx < clause.length && clause[vIdx]?.value !== ')') {
-                  if (clause[vIdx].type === 'string') {
-                    variantTokens.push(clause[vIdx].value);
+              let depth = 1;
+              let endIdx = i + 2;
+              while (endIdx < clause.length && depth > 0) {
+                if (clause[endIdx].value === '(') depth++;
+                else if (clause[endIdx].value === ')') depth--;
+                endIdx++;
+              }
+              const checkTokens = clause.slice(i + 2, endIdx - 1);
+              const referencesVariant = checkTokens.some((t) => (t.type === 'word' || t.type === 'ident') && t.value === 'variant');
+              if (referencesVariant) {
+                const pIdx = i + 2;
+                if (clause[pIdx]?.value === 'variant' && clause[pIdx + 1]?.value === 'in' && clause[pIdx + 2]?.value === '(') {
+                  let name = explicitName;
+                  if (name === null && i >= 2 && clause[i - 2]?.value === 'constraint') {
+                    name = clause[i - 1]?.value ?? null;
                   }
-                  vIdx++;
-                }
-                if (clause[vIdx + 1]?.value !== ')') {
+                  const assignedName = name ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_check');
+                  const variantTokens = [];
+                  let vIdx = pIdx + 3;
+                  while (vIdx < clause.length && clause[vIdx]?.value !== ')') {
+                    if (clause[vIdx].type === 'string') {
+                      variantTokens.push(clause[vIdx].value);
+                    }
+                    vIdx++;
+                  }
+                  if (clause[vIdx + 1]?.value !== ')') {
+                    throw new Error(
+                      `${file} defines a compound or non-standard CHECK predicate on \`studies.variant\` ` +
+                        `(\`${clause.map((t) => t.raw).join(' ')}\`). Teach this guard compound CHECK predicates ` +
+                        `rather than ignoring suffix expressions.`,
+                    );
+                  }
+                  constraintNamespace.add(assignedName);
+                  variantConstraints.add(assignedName);
+                  activeChecks.set(assignedName, { file, name: assignedName, variants: variantTokens });
+                  handled = true;
+                } else {
                   throw new Error(
-                    `${file} defines a compound or non-standard CHECK predicate on \`studies.variant\` ` +
-                      `(\`${clause.map((t) => t.raw).join(' ')}\`). Teach this guard compound CHECK predicates ` +
-                      `rather than ignoring suffix expressions.`,
+                    `${file} defines an unsupported CHECK predicate shape on \`studies.variant\` ` +
+                      `(\`${clause.map((t) => t.raw).join(' ')}\`). Teach this guard non-standard CHECK predicates ` +
+                      `rather than ignoring the constraint.`,
                   );
                 }
-                constraintNamespace.add(assignedName);
-                variantConstraints.add(assignedName);
-                activeChecks.set(assignedName, { file, name: assignedName, variants: variantTokens });
-                handled = true;
               }
             }
           }

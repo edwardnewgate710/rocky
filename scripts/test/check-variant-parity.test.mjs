@@ -1043,6 +1043,42 @@ test('ALTER TABLE IF EXISTS studies skips actions when table does not exist', ()
   }
 });
 
+test('unsupported inline CHECK predicate shape fails loudly rather than being ignored', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL CHECK (variant = ANY (ARRAY['standard', 'atomic']))
+    );`,
+  });
+  try {
+    assert.throws(
+      () => replayStudiesSchema(dir),
+      /defines an unsupported CHECK predicate shape on `studies.variant`/,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('unsupported table-level CHECK predicate shape fails loudly rather than being ignored', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL,
+      CONSTRAINT chk_custom CHECK (studies.variant IN ('standard', 'atomic'))
+    );`,
+  });
+  try {
+    assert.throws(
+      () => replayStudiesSchema(dir),
+      /defines an unsupported CHECK predicate shape on `studies.variant`/,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
 
 
 
