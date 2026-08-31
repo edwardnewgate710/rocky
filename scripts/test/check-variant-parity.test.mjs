@@ -22,6 +22,7 @@ import {
   disagreements,
   ROOT,
   TS_MIRRORS,
+  MIGRATIONS_DIR,
 } from '../check-variant-parity.mjs';
 
 /** A throwaway migration directory. Files are named so the runner's ordering applies. */
@@ -305,6 +306,10 @@ ALTER TABLE studies ADD CONSTRAINT studies_variant_fk
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('the committed migrations directory leaves studies.variant derived from foreign key with no CHECK', () => {
+  assert.equal(effectiveStudyVariantConstraint(MIGRATIONS_DIR), null);
 });
 
 test('a renamed declaration fails loudly instead of checking nothing', () => {

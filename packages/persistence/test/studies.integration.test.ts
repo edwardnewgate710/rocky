@@ -28,6 +28,19 @@ class CorePositionReader implements PositionReader {
   }
 }
 
+interface PgErrorShape {
+  code?: string;
+  constraint?: string;
+}
+
+function isPgConstraintViolation(err: unknown, code: string, constraint?: string): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const pgErr = err as PgErrorShape;
+  if (pgErr.code !== code) return false;
+  if (constraint !== undefined && pgErr.constraint !== constraint) return false;
+  return true;
+}
+
 test('pg studies repository integration tests', { skip }, async () => {
   const pool = createPool();
   await migrate(pool, join(process.cwd(), 'migrations'));
@@ -70,7 +83,7 @@ test('pg studies repository integration tests', { skip }, async () => {
           `INSERT INTO study_collaborators (study_id, player_id, role) VALUES ($1, $2, 'owner')`,
           [studyId1, bob]
         ),
-      (err: any) => err && err.code === '23505'
+      (err: unknown) => isPgConstraintViolation(err, '23505')
     );
 
     // 2. Collaborators and Ownership Transfer (demotes before promoting)
@@ -81,7 +94,7 @@ test('pg studies repository integration tests', { skip }, async () => {
     // New owner must already be a collaborator
     await assert.rejects(
       async () => repo.transferOwnership(studyId1, alice, charlie, t2),
-      (err: any) => err instanceof StudyRuleError && err.code === 'not_found'
+      (err: unknown) => err instanceof StudyRuleError && err.code === 'not_found'
     );
 
     // Transfer ownership from Alice to Bob
@@ -97,7 +110,7 @@ test('pg studies repository integration tests', { skip }, async () => {
     // Non-collaborator gets not_found
     await assert.rejects(
       async () => repo.getStudy(privStudyId, charlie),
-      (err: any) => err instanceof StudyRuleError && err.code === 'not_found'
+      (err: unknown) => err instanceof StudyRuleError && err.code === 'not_found'
     );
 
     // Unlisted study
@@ -126,7 +139,7 @@ test('pg studies repository integration tests', { skip }, async () => {
           `INSERT INTO study_chapters (id, study_id, name, order_index, starting_fen) VALUES ($1, $2, 'Bad Order', 0, $3)`,
           [uuidv7(), studyId1, ch1.startingFen]
         ),
-      (err: any) => err && err.code === '23505'
+      (err: unknown) => isPgConstraintViolation(err, '23505')
     );
 
     // Reorder chapters
@@ -142,7 +155,7 @@ test('pg studies repository integration tests', { skip }, async () => {
 
     await assert.rejects(
       async () => repo.deleteChapter(chId2, bob, t2),
-      (err: any) => err instanceof StudyRuleError && err.code === 'invalid_transition'
+      (err: unknown) => err instanceof StudyRuleError && err.code === 'invalid_transition'
     );
 
     // 5. Tree Node Management (append, resolve SAN, return existing child, delete node cascade)
@@ -217,13 +230,13 @@ test('pg studies repository integration tests', { skip }, async () => {
 
     await assert.rejects(
       async () => repo.importPgn(studyId1, bob, `[Event "Bad"]\n\n1. e4 invalidmove *`, reader, t2),
-      (err: any) => err instanceof StudyRuleError && err.code === 'invalid_input'
+      (err: unknown) => err instanceof StudyRuleError && err.code === 'invalid_input'
     );
 
     // `Nf6` is perfectly good SAN — there is simply no white knight that can reach f6 on move 2.
     await assert.rejects(
       async () => repo.importPgn(studyId1, bob, `[Event "Bad"]\n\n1. e4 e5 2. Nf6 *`, reader, t2),
-      (err: any) =>
+      (err: unknown) =>
         err instanceof StudyRuleError && err.code === 'invalid_move' && /Nf6/.test(err.message)
     );
 
@@ -270,7 +283,7 @@ test('pg studies repository integration tests', { skip }, async () => {
     for (const badId of ['not-a-uuid', 'bad-id-123']) {
       await assert.rejects(
         async () => repo.getStudy(badId, alice),
-        (err: any) => err instanceof StudyRuleError && err.code === 'not_found',
+        (err: unknown) => err instanceof StudyRuleError && err.code === 'not_found',
         `getStudy('${badId}') must yield not_found`
       );
     }
@@ -284,7 +297,86 @@ test('pg studies repository integration tests', { skip }, async () => {
 
     await assert.rejects(
       async () => repo.getStudy(cascadeStudyId, alice),
-      (err: any) => err instanceof StudyRuleError && err.code === 'not_found'
+      (err: unknown) => err instanceof StudyRuleError && err.code === 'not_found'
+    );
+
+    // 10. Variant Foreign Key and Integrity (Migration 0028)
+    // 10.1 Metadata verification: FK constraint exists and points to variants(code)
+    const fkRes = await pool.query<{
+      constraint_name: string;
+      table_name: string;
+      column_name: string;
+      foreign_table_name: string;
+      foreign_column_name: string;
+    }>(`
+      SELECT
+        tc.constraint_name,
+        tc.table_name,
+        kcu.column_name,
+        ccu.table_name AS foreign_table_name,
+        ccu.column_name AS foreign_column_name
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.key_column_usage kcu
+        ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+      JOIN information_schema.constraint_column_usage ccu
+        ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
+      WHERE tc.table_name = 'studies'
+        AND tc.constraint_type = 'FOREIGN KEY'
+        AND kcu.column_name = 'variant'
+    `);
+    assert.equal(fkRes.rows.length, 1, 'expected exactly one FK constraint on studies.variant');
+    assert.equal(fkRes.rows[0]?.constraint_name, 'studies_variant_fk');
+    assert.equal(fkRes.rows[0]?.foreign_table_name, 'variants');
+    assert.equal(fkRes.rows[0]?.foreign_column_name, 'code');
+
+    // 10.2 Absence of old CHECK constraint
+    const oldCheckRes = await pool.query<{ conname: string }>(`
+      SELECT conname
+      FROM pg_constraint
+      WHERE conrelid = 'studies'::regclass
+        AND contype = 'c'
+        AND conname = 'studies_variant_check'
+    `);
+    assert.equal(oldCheckRes.rows.length, 0, 'old CHECK constraint studies_variant_check must no longer exist');
+
+    // 10.3 Invalid variant insertion rejected by FK constraint (23503)
+    const badStudyId = uuidv7();
+    await assert.rejects(
+      async () =>
+        pool.query(
+          `INSERT INTO studies (id, owner_id, name, description, visibility, variant, created_at, updated_at)
+           VALUES ($1, $2, 'Bad Variant Study', '', 'public', 'nonexistent_variant', NOW(), NOW())`,
+          [badStudyId, alice]
+        ),
+      (err: unknown) => isPgConstraintViolation(err, '23503', 'studies_variant_fk'),
+      'inserting an invalid variant must raise foreign_key_violation (23503) referencing studies_variant_fk'
+    );
+
+    // 10.4 All 8 canonical StudyVariants can be created and queried through repository
+    const ALL_VARIANTS: readonly StudyVariant[] = [
+      'standard',
+      'chess960',
+      'kingofthehill',
+      'atomic',
+      'crazyhouse',
+      'threecheck',
+      'horde',
+      'racingkings',
+    ];
+    for (const v of ALL_VARIANTS) {
+      const vStudyId = uuidv7();
+      const vStudy = await repo.createStudy(vStudyId, alice, `Study ${v}`, '', 'public', t0, { variant: v });
+      assert.equal(vStudy.id, vStudyId);
+      assert.equal(vStudy.variant, v);
+      const fetched = await repo.getStudy(vStudyId, alice);
+      assert.equal(fetched.variant, v);
+    }
+
+    // 10.5 Referencing study protects variants(code) from deletion (NO ACTION / RESTRICT)
+    await assert.rejects(
+      async () => pool.query(`DELETE FROM variants WHERE code = 'standard'`),
+      (err: unknown) => isPgConstraintViolation(err, '23503', 'studies_variant_fk'),
+      'deleting a referenced variant row must be rejected with foreign_key_violation (23503)'
     );
   } finally {
     if (createdUserIds.length > 0) {

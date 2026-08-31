@@ -6,14 +6,12 @@
  * nothing derives from anything else. That is survivable only while they match, and there was no
  * check that they do.
  *
- * The sharp edge is the database. Every other variant column is
+ * The database variant columns (games, ratings, seeks, and studies via migration 0028) are
  * `variant TEXT NOT NULL REFERENCES variants(code)`, so once a row exists in the `variants` lookup
- * table the database accepts that value in the games and ratings columns. `studies.variant` alone
- * (migration 0022, M15 Increment 9) is governed by an inline `CHECK (variant IN (...))`, so the
- * same row does nothing for studies: the type system says the variant is fine, the API accepts it,
- * and Postgres rejects the insert at runtime as a constraint violation. The application-level
- * declarations below still need their own updates in either case — the lookup row settles only
- * what the *database* will store.
+ * table the database accepts that value uniformly. `studies.variant` was initially governed by an
+ * inline `CHECK (variant IN (...))` in migration 0022 and converted to `REFERENCES variants(code)`
+ * in migration 0028. The application-level declarations below still need their own updates in either
+ * case — the lookup row settles what the *database* will store.
  *
  * `chess-core`'s `Variant` is treated as the root: it is the type the engine actually branches on,
  * so a variant that is not there is not a variant at all. Every other list is compared to it.
