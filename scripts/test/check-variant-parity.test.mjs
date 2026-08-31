@@ -1325,6 +1325,39 @@ test('creating or altering table in another schema does not overwrite public.stu
   }
 });
 
+test('ALTER TABLE SET SCHEMA moving studies out of public leaves effectiveStudyVariantForeignKey false', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_move_schema.sql': `ALTER TABLE studies SET SCHEMA archive;`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dir), false);
+    assert.equal(effectiveStudyVariantConstraint(dir), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('ALTER TABLE SET SCHEMA moving table into public restores effectiveStudyVariantForeignKey true', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_move_to_archive.sql': `ALTER TABLE studies SET SCHEMA archive;`,
+    '0003_move_back_to_public.sql': `ALTER TABLE archive.studies SET SCHEMA public;`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dir), true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
 
 
 

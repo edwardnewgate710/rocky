@@ -719,6 +719,17 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
           continue;
         }
 
+        // Table schema move: ALTER TABLE target SET SCHEMA new_schema
+        if (stmt[idx]?.value === 'set' && stmt[idx + 1]?.value === 'schema') {
+          const newSchema = stmt[idx + 2]?.value;
+          if (newSchema) {
+            const newKey = `${newSchema}.${ref.table}`;
+            tables.delete(key);
+            tables.set(newKey, currentTable);
+          }
+          continue;
+        }
+
         const actionTokens = stmt.slice(idx);
         const actionClauses = splitAlterActions(actionTokens);
 
