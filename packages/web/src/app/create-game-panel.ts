@@ -1,7 +1,7 @@
 /**
- * Create-a-game panel — the lobby's focused Web V1 seek builder.
+ * Create-a-game panel — the lobby's focused seek builder.
  *
- * The collapsed trigger opens one short form: four approved time controls,
+ * The collapsed trigger opens one short form: preset or custom time controls,
  * Casual/Rated, and a single Create seek action. The component owns only DOM
  * and form state; the lobby wiring remains responsible for the network request.
  */
@@ -9,8 +9,12 @@ import type { TimeControl } from '../api/models.js';
 import type { KeyValueStorage } from '../net/session.js';
 import {
   CREATE_GAME_PRESETS,
+  CUSTOM_LIMITS,
+  CUSTOM_PRESET_ID,
   DEFAULT_PRESET_ID,
+  estimateSpeed,
   presetToTimeControl,
+  validateCustomTime,
 } from './time-presets.js';
 import {
   PREFS_STORAGE_KEY,
@@ -50,6 +54,12 @@ export class CreateGamePanel {
   private readonly trigger: HTMLButtonElement;
   private readonly form: HTMLFormElement;
   private readonly submitBtn: HTMLButtonElement;
+  private readonly cancelBtn: HTMLButtonElement;
+  private readonly customFields: HTMLDivElement;
+  private readonly customMinutes: HTMLInputElement;
+  private readonly customIncrement: HTMLInputElement;
+  private readonly customError: HTMLParagraphElement;
+  private readonly timeSummary: HTMLParagraphElement;
   private readonly storage: KeyValueStorage | undefined;
 
   private expanded = false;
@@ -63,20 +73,51 @@ export class CreateGamePanel {
     this.trigger = this.createTrigger();
     this.submitBtn = el(this.doc, 'button', { type: 'submit', class: 'cg-submit' });
     this.submitBtn.textContent = 'Create seek';
-    const cancelBtn = el(this.doc, 'button', { type: 'button', class: 'cg-cancel' });
-    cancelBtn.textContent = 'Cancel';
+    this.cancelBtn = el(this.doc, 'button', { type: 'button', class: 'cg-cancel' });
+    this.cancelBtn.textContent = 'Cancel';
+    this.customMinutes = this.numberInput(
+      'cg-minutes',
+      {
+        min: CUSTOM_LIMITS.minMinutes,
+        max: CUSTOM_LIMITS.maxMinutes,
+        step: CUSTOM_LIMITS.minuteStep,
+      },
+      'decimal',
+    );
+    this.customIncrement = this.numberInput(
+      'cg-increment',
+      {
+        min: CUSTOM_LIMITS.minIncrement,
+        max: CUSTOM_LIMITS.maxIncrement,
+        step: 1,
+      },
+      'numeric',
+    );
+    this.customError = el(this.doc, 'p', {
+      class: 'cg-field-error',
+      id: 'cg-custom-error',
+      role: 'alert',
+      hidden: '',
+    });
+    this.customFields = this.createCustomFields(
+      prefs?.time === CUSTOM_PRESET_ID ? prefs.minutes : 5,
+      prefs?.time === CUSTOM_PRESET_ID ? prefs.increment : 0,
+    );
+    this.timeSummary = el(this.doc, 'p', { class: 'cg-time-summary', 'aria-live': 'polite' });
     this.form = el(this.doc, 'form', {
       id: 'create-game-form',
       class: 'cg-form',
       'aria-label': 'Create a game',
+      novalidate: '',
       hidden: '',
     });
     this.form.append(
       this.createTimeField(prefs?.time ?? DEFAULT_PRESET_ID),
       this.createModeField(prefs?.mode ?? 'casual'),
-      el(this.doc, 'div', { class: 'cg-actions' }, this.submitBtn, cancelBtn),
+      el(this.doc, 'div', { class: 'cg-actions' }, this.submitBtn, this.cancelBtn),
     );
-    this.bindEvents(cancelBtn);
+    this.bindEvents();
+    this.syncTimeSelection(false);
     opts.mount.replaceChildren(this.trigger, this.form);
     this.setAuthenticated(opts.initialAuthenticated ?? false);
   }
@@ -94,19 +135,69 @@ export class CreateGamePanel {
     return trigger;
   }
 
-  /** Build the V1 time-control radio group with one guaranteed initial choice. */
+  /** Build the time-control radio group with one guaranteed initial choice. */
   private createTimeField(initialTimeId: string): HTMLFieldSetElement {
     const presets = el(this.doc, 'div', { class: 'cg-presets' });
     for (const preset of CREATE_GAME_PRESETS) {
-      presets.append(this.radio('cg-time', preset.id, preset.id, preset.id === initialTimeId));
+      const speed = estimateSpeed(presetToTimeControl(preset.minutes, preset.increment));
+      presets.append(this.radio('cg-time', preset.id, preset.id, preset.id === initialTimeId, speed));
     }
+    presets.append(
+      this.radio('cg-time', CUSTOM_PRESET_ID, 'Custom', initialTimeId === CUSTOM_PRESET_ID),
+    );
     return el(
       this.doc,
       'fieldset',
       { class: 'cg-field' },
       el(this.doc, 'legend', {}, 'Time'),
       presets,
+      el(this.doc, 'div', { class: 'cg-time-detail' }, this.timeSummary, this.customFields),
     );
+  }
+
+  /** Build bounded custom time inputs without changing the existing API contract. */
+  private createCustomFields(minutes: number, increment: number): HTMLDivElement {
+    this.customMinutes.value = String(minutes);
+    this.customIncrement.value = String(increment);
+    this.customMinutes.setAttribute('aria-describedby', 'cg-custom-error');
+    this.customIncrement.setAttribute('aria-describedby', 'cg-custom-error');
+    return el(
+      this.doc,
+      'div',
+      { class: 'cg-custom', hidden: '' },
+      el(
+        this.doc,
+        'label',
+        { class: 'cg-num' },
+        el(this.doc, 'span', {}, 'Minutes'),
+        this.customMinutes,
+      ),
+      el(
+        this.doc,
+        'label',
+        { class: 'cg-num' },
+        el(this.doc, 'span', {}, 'Increment (seconds)'),
+        this.customIncrement,
+      ),
+      this.customError,
+    );
+  }
+
+  /** Create one constrained number input whose browser hints mirror validation. */
+  private numberInput(
+    id: string,
+    limits: { readonly min: number; readonly max: number; readonly step: number },
+    inputMode: 'decimal' | 'numeric',
+  ): HTMLInputElement {
+    return el(this.doc, 'input', {
+      id,
+      type: 'number',
+      min: String(limits.min),
+      max: String(limits.max),
+      step: String(limits.step),
+      inputmode: inputMode,
+      autocomplete: 'off',
+    });
   }
 
   /** Build the mutually exclusive Casual/Rated radio group and its explanation. */
@@ -139,9 +230,14 @@ export class CreateGamePanel {
   }
 
   /** Bind disclosure, cancellation, submission, and Escape behavior once. */
-  private bindEvents(cancelBtn: HTMLButtonElement): void {
+  private bindEvents(): void {
     this.trigger.addEventListener('click', () => this.setExpanded(true));
-    cancelBtn.addEventListener('click', () => this.setExpanded(false));
+    this.cancelBtn.addEventListener('click', () => this.setExpanded(false));
+    for (const radio of this.form.querySelectorAll<HTMLInputElement>('input[name="cg-time"]')) {
+      radio.addEventListener('change', () => this.syncTimeSelection(true));
+    }
+    this.customMinutes.addEventListener('input', () => this.clearCustomError());
+    this.customIncrement.addEventListener('input', () => this.clearCustomError());
     this.form.addEventListener('submit', (event) => {
       event.preventDefault();
       void this.submit();
@@ -159,6 +255,7 @@ export class CreateGamePanel {
     value: string,
     label: string,
     checked: boolean,
+    secondary?: string,
   ): HTMLLabelElement {
     const className = name === 'cg-time' ? 'cg-chip' : 'cg-seg';
     const input = el(this.doc, 'input', { type: 'radio', name, value });
@@ -168,7 +265,16 @@ export class CreateGamePanel {
       'label',
       { class: className },
       input,
-      el(this.doc, 'span', { class: className === 'cg-chip' ? 'cg-chip-label' : 'cg-seg-label' }, label),
+      el(
+        this.doc,
+        'span',
+        {
+          class: className === 'cg-chip' ? 'cg-chip-label' : 'cg-seg-label',
+          ...(className === 'cg-chip' ? { dir: 'ltr' } : {}),
+        },
+        label,
+      ),
+      ...(secondary ? [el(this.doc, 'span', { class: 'cg-chip-speed' }, secondary)] : []),
     );
   }
 
@@ -177,17 +283,38 @@ export class CreateGamePanel {
     return this.form.querySelector<HTMLInputElement>(`input[name="${name}"]:checked`)?.value ?? null;
   }
 
-  /** Convert the current V1 selections into the exact existing seek request contract. */
-  private gather(): CreateGameParams {
+  /** Convert validated selections into the exact existing seek request contract. */
+  private gather(): { readonly params: CreateGameParams; readonly prefs: CreateGamePrefs } | null {
     const selected = this.readChecked('cg-time');
-    const preset =
-      CREATE_GAME_PRESETS.find((candidate) => candidate.id === selected) ??
-      CREATE_GAME_PRESETS.find((candidate) => candidate.id === DEFAULT_PRESET_ID)!;
+    const mode = this.readChecked('cg-mode') === 'rated' ? 'rated' : 'casual';
+    if (selected === CUSTOM_PRESET_ID) {
+      const minutes = Number(this.customMinutes.value);
+      const increment = Number(this.customIncrement.value);
+      const validation = validateCustomTime(minutes, increment);
+      if (!validation.ok) {
+        this.showCustomError(validation.message, validation.field);
+        return null;
+      }
+      return {
+        params: {
+          variant: 'standard',
+          timeControl: validation.timeControl,
+          rated: mode === 'rated',
+        },
+        prefs: { time: CUSTOM_PRESET_ID, minutes, increment, mode },
+      };
+    }
+
+    const preset = CREATE_GAME_PRESETS.find((candidate) => candidate.id === selected);
+    if (!preset) return null;
 
     return {
-      variant: 'standard',
-      timeControl: presetToTimeControl(preset.minutes, preset.increment),
-      rated: this.readChecked('cg-mode') === 'rated',
+      params: {
+        variant: 'standard',
+        timeControl: presetToTimeControl(preset.minutes, preset.increment),
+        rated: mode === 'rated',
+      },
+      prefs: { time: preset.id, mode },
     };
   }
 
@@ -201,15 +328,9 @@ export class CreateGamePanel {
     }
   }
 
-  /** Persist the successful V1 choices without making storage a creation dependency. */
-  private savePrefs(): void {
+  /** Persist successful choices without making storage a creation dependency. */
+  private savePrefs(prefs: CreateGamePrefs): void {
     if (!this.storage) return;
-    const selected = this.readChecked('cg-time');
-    const preset = CREATE_GAME_PRESETS.find((candidate) => candidate.id === selected);
-    const prefs: CreateGamePrefs = {
-      time: preset?.id ?? DEFAULT_PRESET_ID,
-      mode: this.readChecked('cg-mode') === 'rated' ? 'rated' : 'casual',
-    };
     try {
       this.storage.setItem(PREFS_STORAGE_KEY, serializeCreateGamePrefs(prefs));
     } catch {
@@ -221,11 +342,13 @@ export class CreateGamePanel {
   private async submit(): Promise<void> {
     if (this.pending) return;
     this.callbacks.onError(null);
+    const submission = this.gather();
+    if (!submission) return;
     this.setPending(true);
     try {
-      const created = await this.callbacks.onSubmit(this.gather());
+      const created = await this.callbacks.onSubmit(submission.params);
       if (created) {
-        this.savePrefs();
+        this.savePrefs(submission.prefs);
         this.setExpanded(false);
       }
     } catch (error) {
@@ -259,8 +382,53 @@ export class CreateGamePanel {
   /** Reflect the controller's in-flight state while preventing duplicate submission. */
   setPending(pending: boolean): void {
     this.pending = pending;
+    this.form.setAttribute('aria-busy', String(pending));
     this.submitBtn.disabled = pending;
+    this.cancelBtn.disabled = pending;
+    for (const radio of this.form.querySelectorAll<HTMLInputElement>('input[type="radio"]')) {
+      radio.disabled = pending;
+    }
+    this.syncTimeSelection(false);
     this.submitBtn.textContent = pending ? 'Creating…' : 'Create seek';
+  }
+
+  /** Synchronize custom-field visibility and a stable summary region. */
+  private syncTimeSelection(focusCustom: boolean): void {
+    const selected = this.readChecked('cg-time');
+    const isCustom = selected === CUSTOM_PRESET_ID;
+    this.customFields.hidden = !isCustom;
+    this.timeSummary.hidden = isCustom;
+    this.customMinutes.disabled = this.pending || !isCustom;
+    this.customIncrement.disabled = this.pending || !isCustom;
+    if (isCustom) {
+      this.timeSummary.textContent = '';
+      if (focusCustom && !this.pending) this.customMinutes.focus();
+      return;
+    }
+    this.clearCustomError();
+    const preset = CREATE_GAME_PRESETS.find((candidate) => candidate.id === selected);
+    if (!preset) return;
+    const speed = estimateSpeed(presetToTimeControl(preset.minutes, preset.increment));
+    const minutes = preset.minutes === 1 ? '1 minute' : `${preset.minutes} minutes`;
+    const increment = preset.increment === 0 ? 'no increment' : `${preset.increment} second increment`;
+    this.timeSummary.textContent = `${speed} — ${minutes} per side, ${increment}.`;
+  }
+
+  /** Surface one custom validation error at the field that needs correction. */
+  private showCustomError(message: string, field: 'minutes' | 'increment'): void {
+    this.customError.textContent = message;
+    this.customError.hidden = false;
+    const input = field === 'minutes' ? this.customMinutes : this.customIncrement;
+    input.setAttribute('aria-invalid', 'true');
+    input.focus();
+  }
+
+  /** Clear custom validation state without affecting the lobby-level error region. */
+  private clearCustomError(): void {
+    this.customError.textContent = '';
+    this.customError.hidden = true;
+    this.customMinutes.removeAttribute('aria-invalid');
+    this.customIncrement.removeAttribute('aria-invalid');
   }
 
 }
