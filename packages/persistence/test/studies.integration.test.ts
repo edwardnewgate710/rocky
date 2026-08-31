@@ -33,6 +33,14 @@ interface PgErrorShape {
   constraint?: string;
 }
 
+/**
+ * Type guard verifying whether an unknown error is a PostgreSQL constraint violation matching a code and optional constraint name.
+ *
+ * @param err The unknown error caught in an assert.rejects handler.
+ * @param code The expected 5-character PostgreSQL SQLSTATE error code.
+ * @param constraint Optional constraint name to match against the error's constraint property.
+ * @returns boolean indicating if the error matches the expected PostgreSQL constraint violation.
+ */
 function isPgConstraintViolation(err: unknown, code: string, constraint?: string): boolean {
   if (typeof err !== 'object' || err === null) return false;
   const pgErr = err as PgErrorShape;

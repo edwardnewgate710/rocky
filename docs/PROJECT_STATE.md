@@ -9,18 +9,19 @@ _Last updated: 2026-08-31 — M15 Increment 42: Studies variant database integri
 ## M15 Increment 42 — Studies variant database integrity (FK conversion)
 
 `studies.variant` now derives directly from the canonical `variants` lookup table via a foreign key
-constraint `studies_variant_fk` (`REFERENCES variants(code)` in migration `0028_studies_variant_fk.sql`),
-replacing the duplicated inline `CHECK (variant IN (...))` constraint introduced in migration `0022`.
+constraint `studies_variant_fk` (`REFERENCES variants(code)` added with `NOT VALID` in migration
+`0028_studies_variant_fk.sql` and validated in `0029_validate_studies_variant_fk.sql`), replacing the
+duplicated inline `CHECK (variant IN (...))` constraint introduced in migration `0022`.
 
 All database variant columns (`games.variant`, `ratings.variant`, `seeks.variant`, and `studies.variant`)
 now share identical relational integrity semantics:
 - Inserting an unsupported variant code into `studies.variant` is rejected by PostgreSQL with SQLSTATE
   `23503` (`foreign_key_violation`) referencing `studies_variant_fk`.
 - Existing study rows retain `NOT NULL DEFAULT 'standard'`.
-- Foreign key semantics use default `NO ACTION` (RESTRICT) to protect `variants(code)` against accidental
-  deletions while referenced by active studies.
+- Foreign key semantics use default `NO ACTION` to protect `variants(code)` against accidental deletions
+  while referenced by active studies.
 - `scripts/check-variant-parity.mjs` verifies that `studies.variant` derives from `variants(code)` without
-  maintaining a redundant SQL CHECK mirror.
+  maintaining a redundant SQL CHECK mirror, and validates foreign key presence across migrations.
 
 ## M15 Increment 41 — Chess960 production integration (ADR-0137)
 

@@ -19,6 +19,7 @@ import {
   migrationFiles,
   effectiveLookupVariants,
   effectiveStudyVariantConstraint,
+  effectiveStudyVariantForeignKey,
   disagreements,
   ROOT,
   TS_MIRRORS,
@@ -310,6 +311,22 @@ ALTER TABLE studies ADD CONSTRAINT studies_variant_fk
 
 test('the committed migrations directory leaves studies.variant derived from foreign key with no CHECK', () => {
   assert.equal(effectiveStudyVariantConstraint(MIGRATIONS_DIR), null);
+  assert.equal(effectiveStudyVariantForeignKey(MIGRATIONS_DIR), true);
+});
+
+test('dropping the CHECK without adding a foreign key leaves effectiveStudyVariantForeignKey false', () => {
+  const dir = migrations({
+    '0022_study_variant.sql': `ALTER TABLE studies
+  ADD COLUMN variant TEXT NOT NULL DEFAULT 'standard'
+  CHECK (variant IN ('standard', 'atomic'));`,
+    '0025_drop_only.sql': `ALTER TABLE studies DROP CONSTRAINT studies_variant_check;`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantConstraint(dir), null);
+    assert.equal(effectiveStudyVariantForeignKey(dir), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('a renamed declaration fails loudly instead of checking nothing', () => {

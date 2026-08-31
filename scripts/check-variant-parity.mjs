@@ -6,12 +6,12 @@
  * nothing derives from anything else. That is survivable only while they match, and there was no
  * check that they do.
  *
- * The database variant columns (games, ratings, seeks, and studies via migration 0028) are
+ * The database variant columns (games, ratings, seeks, and studies via migrations 0028/0029) are
  * `variant TEXT NOT NULL REFERENCES variants(code)`, so once a row exists in the `variants` lookup
  * table the database accepts that value uniformly. `studies.variant` was initially governed by an
  * inline `CHECK (variant IN (...))` in migration 0022 and converted to `REFERENCES variants(code)`
- * in migration 0028. The application-level declarations below still need their own updates in either
- * case — the lookup row settles what the *database* will store.
+ * in migration 0028 (validated in 0029). The application-level declarations below still need their
+ * own updates in either case — the lookup row settles what the *database* will store.
  *
  * `chess-core`'s `Variant` is treated as the root: it is the type the engine actually branches on,
  * so a variant that is not there is not a variant at all. Every other list is compared to it.
@@ -305,6 +305,32 @@ export function effectiveStudyVariantConstraint(dir = MIGRATIONS_DIR) {
     }
   }
   return current;
+}
+
+/**
+ * Returns true if the effective migration schema defines a foreign key from studies.variant to variants(code).
+ *
+ * @param {string} dir The migrations directory to replay.
+ * @returns {boolean} Whether studies.variant has an active foreign key referencing variants(code).
+ */
+export function effectiveStudyVariantForeignKey(dir = MIGRATIONS_DIR) {
+  let fkFound = false;
+  for (const file of migrationFiles(dir)) {
+    const sql = stripComments(readFileSync(join(dir, file), 'utf8'), 'sql');
+    for (const statement of splitStatements(sql)) {
+      if (!TARGETS_STUDIES.test(statement)) continue;
+      if (/\bvariant\b[\s\S]*?REFERENCES\s+variants\s*\(\s*code\s*\)/i.test(statement)) {
+        fkFound = true;
+      }
+      if (/DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?"?studies_variant_fk"?/i.test(statement)) {
+        fkFound = false;
+      }
+      if (/DROP\s+COLUMN\s+(?:IF\s+EXISTS\s+)?"?variant"?/i.test(statement)) {
+        fkFound = false;
+      }
+    }
+  }
+  return fkFound;
 }
 
 /** The root. Everything else is measured against this one. */

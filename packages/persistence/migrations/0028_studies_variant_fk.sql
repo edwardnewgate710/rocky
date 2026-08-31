@@ -5,4 +5,4 @@ ALTER TABLE studies
 
 ALTER TABLE studies
     ADD CONSTRAINT studies_variant_fk
-    FOREIGN KEY (variant) REFERENCES variants(code);
+    FOREIGN KEY (variant) REFERENCES variants(code) NOT VALID;
