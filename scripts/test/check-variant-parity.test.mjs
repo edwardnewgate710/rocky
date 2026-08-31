@@ -25,6 +25,7 @@ import {
   effectiveStudyVariantConstraint,
   effectiveStudyVariantForeignKey,
   collectMirrors,
+  evaluateParity,
   disagreements,
   ROOT,
   TS_MIRRORS,
@@ -1246,23 +1247,65 @@ INSERT INTO variants (code) VALUES
 test('parity evaluation flags failure when both CHECK and FK are removed from studies.variant', () => {
   const dir = migrations({
     '0001_variants.sql': `CREATE TABLE variants (code TEXT PRIMARY KEY);
-INSERT INTO variants (code) VALUES ('standard');`,
+INSERT INTO variants (code) VALUES
+  ('standard'), ('chess960'), ('kingofthehill'), ('atomic'),
+  ('crazyhouse'), ('threecheck'), ('horde'), ('racingkings');`,
     '0002_studies.sql': `CREATE TABLE studies (
       id UUID PRIMARY KEY,
       variant TEXT NOT NULL
-        CONSTRAINT chk_v CHECK (variant IN ('standard'))
+        CONSTRAINT chk_v CHECK (variant IN ('standard', 'chess960', 'kingofthehill', 'atomic', 'crazyhouse', 'threecheck', 'horde', 'racingkings'))
         CONSTRAINT fk_v REFERENCES variants(code)
     );`,
     '0003_drop_both.sql': `ALTER TABLE studies DROP CONSTRAINT chk_v, DROP CONSTRAINT fk_v;`,
   });
   try {
-    const { studyConstraint, hasStudyVariantFk } = collectMirrors(dir);
+    const { failures, studyConstraint, hasStudyVariantFk } = evaluateParity(dir);
     assert.equal(studyConstraint, null);
     assert.equal(hasStudyVariantFk, false);
+    assert.equal(failures.length, 1);
+    assert.match(failures[0], /`studies\.variant` has no CHECK constraint and no foreign key referencing `variants\(code\)`/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('quoted identifier case is preserved so renaming to "Studies" leaves effectiveStudyVariantForeignKey false', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_rename_case.sql': `ALTER TABLE studies RENAME TO "Studies";`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dir), false);
+    assert.equal(effectiveStudyVariantConstraint(dir), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('shadow table recreation and drop preserves original renamed table constraints on rename back', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_rename_away.sql': `ALTER TABLE studies RENAME TO studies_backup;`,
+    '0003_create_shadow.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      note TEXT
+    );`,
+    '0004_drop_shadow.sql': `DROP TABLE studies;`,
+    '0005_rename_back.sql': `ALTER TABLE studies_backup RENAME TO studies;`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dir), true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 
 
 

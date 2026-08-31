@@ -188,7 +188,7 @@ export function tokenizeSql(sql) {
       }
       tokens.push({
         type: 'ident',
-        value: val.toLowerCase(),
+        value: val,
         raw: sql.slice(start, i),
         pos: start,
       });
@@ -596,15 +596,31 @@ function scanColumnConstraints(clause, file, constraintNamespace, variantConstra
  * }} Effective check constraint on studies.variant and whether an active foreign key referencing variants(code) exists.
  */
 export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
-  let hasStudiesTable = false;
-  let currentStudiesTableName = 'studies';
-  let hasVariantColumn = false;
-  const constraintNamespace = new Set();
-  const variantConstraints = new Set();
-  /** @type {Map<string, { file: string, name: string, variants: string[] }>} */
-  const activeChecks = new Map();
-  /** @type {Set<string>} */
-  const activeFks = new Set();
+  /**
+   * @type {Map<string, {
+   *   hasVariantColumn: boolean,
+   *   constraintNamespace: Set<string>,
+   *   variantConstraints: Set<string>,
+   *   activeChecks: Map<string, { file: string, name: string, variants: string[] }>,
+   *   activeFks: Set<string>
+   * }>}
+   */
+  const tables = new Map();
+
+  function getOrCreateTable(tableName) {
+    let t = tables.get(tableName);
+    if (!t) {
+      t = {
+        hasVariantColumn: false,
+        constraintNamespace: new Set(),
+        variantConstraints: new Set(),
+        activeChecks: new Map(),
+        activeFks: new Set(),
+      };
+      tables.set(tableName, t);
+    }
+    return t;
+  }
 
   for (const file of migrationFiles(dir)) {
     const rawSql = readFileSync(join(dir, file), 'utf8');
@@ -634,23 +650,17 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
           if (ref === null) break;
           idx = ref.nextIndex;
 
-          if (isTableTarget(ref, currentStudiesTableName) || isTableTarget(ref, 'studies')) {
-            hasStudiesTable = false;
-            currentStudiesTableName = 'studies';
-            hasVariantColumn = false;
-            constraintNamespace.clear();
-            variantConstraints.clear();
-            activeChecks.clear();
-            activeFks.clear();
+          if (isTableTarget(ref, 'variants') && hasCascade) {
+            for (const tbl of tables.values()) {
+              for (const fkName of tbl.activeFks) {
+                tbl.constraintNamespace.delete(fkName);
+                tbl.variantConstraints.delete(fkName);
+              }
+              tbl.activeFks.clear();
+            }
           }
 
-          if (isTableTarget(ref, 'variants') && hasCascade) {
-            for (const fkName of activeFks) {
-              constraintNamespace.delete(fkName);
-              variantConstraints.delete(fkName);
-            }
-            activeFks.clear();
-          }
+          tables.delete(ref.table);
 
           if (stmt[idx]?.type === 'punct' && stmt[idx].value === ',') {
             idx++;
@@ -673,21 +683,23 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
         }
 
         const ref = parseQualifiedTableTarget(stmt, idx);
-        if (ref === null || (!isTableTarget(ref, currentStudiesTableName) && !isTableTarget(ref, 'studies'))) {
+        if (ref === null || (!isTableTarget(ref, 'studies') && !tables.has(ref.table))) {
           continue;
         }
 
-        if (!hasStudiesTable && isTableIfExists) {
+        if (isTableIfExists && !tables.has(ref.table)) {
           continue;
         }
-        hasStudiesTable = true;
+
+        const currentTable = getOrCreateTable(ref.table);
         idx = ref.nextIndex;
 
-        // Table rename: ALTER TABLE studies RENAME TO new_name
+        // Table rename: ALTER TABLE target RENAME TO new_name
         if (stmt[idx]?.value === 'rename' && stmt[idx + 1]?.value === 'to') {
           const newName = stmt[idx + 2]?.value;
           if (newName) {
-            currentStudiesTableName = newName;
+            tables.delete(ref.table);
+            tables.set(newName, currentTable);
           }
           continue;
         }
@@ -706,10 +718,10 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
             }
             if (action[cIdx]?.type === 'word' || action[cIdx]?.type === 'ident') {
               const name = action[cIdx].value;
-              constraintNamespace.delete(name);
-              variantConstraints.delete(name);
-              activeChecks.delete(name);
-              activeFks.delete(name);
+              currentTable.constraintNamespace.delete(name);
+              currentTable.variantConstraints.delete(name);
+              currentTable.activeChecks.delete(name);
+              currentTable.activeFks.delete(name);
             }
             continue;
           }
@@ -717,7 +729,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
           // Action B: RENAME CONSTRAINT <old_name> TO <new_name>
           if (action[0].value === 'rename' && action[1]?.value === 'constraint') {
             const oldName = action[2]?.value;
-            if (oldName && activeChecks.has(oldName)) {
+            if (oldName && currentTable.activeChecks.has(oldName)) {
               throw new Error(
                 `${file} renames the constraint governing \`studies.variant\` ` +
                   `(\`${oldName}\`). Teach this guard \`RENAME CONSTRAINT\` rather than leaving it ` +
@@ -726,17 +738,17 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
             }
             if (oldName && action[3]?.value === 'to' && action[4]) {
               const newName = action[4].value;
-              if (constraintNamespace.has(oldName)) {
-                constraintNamespace.delete(oldName);
-                constraintNamespace.add(newName);
+              if (currentTable.constraintNamespace.has(oldName)) {
+                currentTable.constraintNamespace.delete(oldName);
+                currentTable.constraintNamespace.add(newName);
               }
-              if (variantConstraints.has(oldName)) {
-                variantConstraints.delete(oldName);
-                variantConstraints.add(newName);
+              if (currentTable.variantConstraints.has(oldName)) {
+                currentTable.variantConstraints.delete(oldName);
+                currentTable.variantConstraints.add(newName);
               }
-              if (activeFks.has(oldName)) {
-                activeFks.delete(oldName);
-                activeFks.add(newName);
+              if (currentTable.activeFks.has(oldName)) {
+                currentTable.activeFks.delete(oldName);
+                currentTable.activeFks.add(newName);
               }
             }
             continue;
@@ -748,14 +760,13 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
             if (action[cIdx]?.value === 'column') cIdx++;
             if (action[cIdx]?.value === 'if' && action[cIdx + 1]?.value === 'exists') cIdx += 2;
             if (action[cIdx]?.value === 'variant') {
-              hasVariantColumn = false;
-              // Drops all constraints depending on variant
-              for (const name of variantConstraints) {
-                constraintNamespace.delete(name);
+              currentTable.hasVariantColumn = false;
+              for (const name of currentTable.variantConstraints) {
+                currentTable.constraintNamespace.delete(name);
               }
-              variantConstraints.clear();
-              activeChecks.clear();
-              activeFks.clear();
+              currentTable.variantConstraints.clear();
+              currentTable.activeChecks.clear();
+              currentTable.activeFks.clear();
             }
             continue;
           }
@@ -765,11 +776,10 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
             let cIdx = 1;
             if (action[cIdx]?.value === 'column') cIdx++;
             if (action[cIdx]?.value === 'variant' && action[cIdx + 1]?.value === 'to') {
-              hasVariantColumn = false;
-              // variant column is renamed away; constraints remain on renamed column in namespace
-              variantConstraints.clear();
-              activeChecks.clear();
-              activeFks.clear();
+              currentTable.hasVariantColumn = false;
+              currentTable.variantConstraints.clear();
+              currentTable.activeChecks.clear();
+              currentTable.activeFks.clear();
             }
             continue;
           }
@@ -784,11 +794,11 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
             colIdx += 3;
           }
           if (action[colIdx]?.value === 'variant') {
-            if (hasVariantColumn && isColIfNotExists) {
+            if (currentTable.hasVariantColumn && isColIfNotExists) {
               continue;
             }
-            hasVariantColumn = true;
-            scanColumnConstraints(action.slice(colIdx), file, constraintNamespace, variantConstraints, activeChecks, activeFks);
+            currentTable.hasVariantColumn = true;
+            scanColumnConstraints(action.slice(colIdx), file, currentTable.constraintNamespace, currentTable.variantConstraints, currentTable.activeChecks, currentTable.activeFks);
             continue;
           }
 
@@ -837,10 +847,10 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
                         `rather than ignoring suffix expressions.`,
                     );
                   }
-                  const assignedName = name ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_check');
-                  constraintNamespace.add(assignedName);
-                  variantConstraints.add(assignedName);
-                  activeChecks.set(assignedName, { file, name: assignedName, variants: parsedIn.variants });
+                  const assignedName = name ?? nextImplicitConstraintName(currentTable.constraintNamespace, 'studies_variant_check');
+                  currentTable.constraintNamespace.add(assignedName);
+                  currentTable.variantConstraints.add(assignedName);
+                  currentTable.activeChecks.set(assignedName, { file, name: assignedName, variants: parsedIn.variants });
                   handled = true;
                 } else {
                   throw new Error(
@@ -868,10 +878,10 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
               if (refTarget && isTableTarget(refTarget, 'variants')) {
                 const afterRef = refTarget.nextIndex;
                 if (action[afterRef]?.value === '(' && action[afterRef + 1]?.value === 'code' && action[afterRef + 2]?.value === ')') {
-                  const name = explicitName ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_fkey');
-                  constraintNamespace.add(name);
-                  variantConstraints.add(name);
-                  activeFks.add(name);
+                  const name = explicitName ?? nextImplicitConstraintName(currentTable.constraintNamespace, 'studies_variant_fkey');
+                  currentTable.constraintNamespace.add(name);
+                  currentTable.variantConstraints.add(name);
+                  currentTable.activeFks.add(name);
                   handled = true;
                 }
               }
@@ -882,14 +892,14 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
 
           // Register any other explicitly named constraint
           if (explicitName !== null) {
-            constraintNamespace.add(explicitName);
+            currentTable.constraintNamespace.add(explicitName);
           }
         }
         continue;
       }
 
       // -----------------------------------------------------------------------
-      // 3. CREATE TABLE [IF NOT EXISTS] studies (...)
+      // 3. CREATE TABLE [IF NOT EXISTS] target (...)
       // -----------------------------------------------------------------------
       if (stmt[0].value === 'create' && stmt[1].value === 'table') {
         let idx = 2;
@@ -899,22 +909,22 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
           idx += 3;
         }
         const ref = parseQualifiedTableTarget(stmt, idx);
-        if (ref === null || !isTableTarget(ref, 'studies')) {
+        if (ref === null || (!isTableTarget(ref, 'studies') && !tables.has(ref.table))) {
           continue;
         }
 
-        if (hasStudiesTable && isTableIfNotExists) {
+        if (tables.has(ref.table) && isTableIfNotExists) {
           continue;
         }
 
-        // Fresh table creation clears prior state
-        hasStudiesTable = true;
-        currentStudiesTableName = 'studies';
-        hasVariantColumn = false;
-        constraintNamespace.clear();
-        variantConstraints.clear();
-        activeChecks.clear();
-        activeFks.clear();
+        const currentTable = {
+          hasVariantColumn: false,
+          constraintNamespace: new Set(),
+          variantConstraints: new Set(),
+          activeChecks: new Map(),
+          activeFks: new Set(),
+        };
+        tables.set(ref.table, currentTable);
 
         const openParen = stmt.findIndex((t) => t.type === 'punct' && t.value === '(');
         if (openParen === -1) continue;
@@ -927,8 +937,8 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
 
           // Column-level: variant <TYPE> ...
           if (clause[0]?.value === 'variant') {
-            hasVariantColumn = true;
-            scanColumnConstraints(clause, file, constraintNamespace, variantConstraints, activeChecks, activeFks);
+            currentTable.hasVariantColumn = true;
+            scanColumnConstraints(clause, file, currentTable.constraintNamespace, currentTable.variantConstraints, currentTable.activeChecks, currentTable.activeFks);
             continue;
           }
 
@@ -975,10 +985,10 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
                         `rather than ignoring suffix expressions.`,
                     );
                   }
-                  const assignedName = name ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_check');
-                  constraintNamespace.add(assignedName);
-                  variantConstraints.add(assignedName);
-                  activeChecks.set(assignedName, { file, name: assignedName, variants: parsedIn.variants });
+                  const assignedName = name ?? nextImplicitConstraintName(currentTable.constraintNamespace, 'studies_variant_check');
+                  currentTable.constraintNamespace.add(assignedName);
+                  currentTable.variantConstraints.add(assignedName);
+                  currentTable.activeChecks.set(assignedName, { file, name: assignedName, variants: parsedIn.variants });
                   handled = true;
                 } else {
                   throw new Error(
@@ -1006,10 +1016,10 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
               if (refTarget && isTableTarget(refTarget, 'variants')) {
                 const afterRef = refTarget.nextIndex;
                 if (clause[afterRef]?.value === '(' && clause[afterRef + 1]?.value === 'code' && clause[afterRef + 2]?.value === ')') {
-                  const name = explicitName ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_fkey');
-                  constraintNamespace.add(name);
-                  variantConstraints.add(name);
-                  activeFks.add(name);
+                  const name = explicitName ?? nextImplicitConstraintName(currentTable.constraintNamespace, 'studies_variant_fkey');
+                  currentTable.constraintNamespace.add(name);
+                  currentTable.variantConstraints.add(name);
+                  currentTable.activeFks.add(name);
                   handled = true;
                 }
               }
@@ -1019,14 +1029,15 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
           if (handled) continue;
 
           if (explicitName !== null) {
-            constraintNamespace.add(explicitName);
+            currentTable.constraintNamespace.add(explicitName);
           }
         }
       }
     }
   }
 
-  if (currentStudiesTableName !== 'studies' || !hasStudiesTable) {
+  const studiesTable = tables.get('studies');
+  if (!studiesTable) {
     return {
       check: null,
       checks: [],
@@ -1035,14 +1046,14 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
   }
 
   let latestCheck = null;
-  for (const item of activeChecks.values()) {
+  for (const item of studiesTable.activeChecks.values()) {
     latestCheck = item;
   }
 
   return {
     check: latestCheck,
-    checks: Array.from(activeChecks.values()),
-    hasForeignKey: activeFks.size > 0,
+    checks: Array.from(studiesTable.activeChecks.values()),
+    hasForeignKey: studiesTable.activeFks.size > 0,
   };
 }
 
@@ -1137,10 +1148,39 @@ export function collectMirrors(dir = MIGRATIONS_DIR) {
   return { mirrors, studyConstraint: replayed.check, hasStudyVariantFk: replayed.hasForeignKey };
 }
 
+/**
+ * Evaluates variant parity across TypeScript mirrors and SQL migrations.
+ *
+ * @param {string} [dir=MIGRATIONS_DIR] Path to the migrations directory.
+ * @returns {{
+ *   failures: string[],
+ *   mirrors: Array<{ label: string, file: string, variants: string[] }>,
+ *   studyConstraint: { file: string, name: string, variants: string[] } | null,
+ *   hasStudyVariantFk: boolean
+ * }} Parity evaluation results and any failure descriptions.
+ */
+export function evaluateParity(dir = MIGRATIONS_DIR) {
+  const root = extractRegion(ROOT);
+  const { mirrors, studyConstraint, hasStudyVariantFk } = collectMirrors(dir);
+  const failures = [];
+
+  for (const mirror of mirrors) {
+    const problems = disagreements(root.variants, mirror.variants);
+    if (problems.length > 0) {
+      failures.push(`${mirror.label} (${mirror.file}): ${problems.join('; ')}`);
+    }
+  }
+
+  if (studyConstraint === null && !hasStudyVariantFk) {
+    failures.push('`studies.variant` has no CHECK constraint and no foreign key referencing `variants(code)`');
+  }
+
+  return { failures, mirrors, studyConstraint, hasStudyVariantFk };
+}
+
 function main() {
   const root = extractRegion(ROOT);
-  const { mirrors, studyConstraint, hasStudyVariantFk } = collectMirrors();
-  const failures = [];
+  const { failures, mirrors, studyConstraint, hasStudyVariantFk } = evaluateParity();
 
   console.log(`root: ${root.label} (${root.file})`);
   console.log(`      ${root.variants.join(', ')}\n`);
@@ -1151,7 +1191,6 @@ function main() {
       console.log(`  ok    ${mirror.label}`);
     } else {
       console.log(`  FAIL  ${mirror.label} (${mirror.file}): ${problems.join('; ')}`);
-      failures.push(mirror.label);
     }
   }
 
@@ -1164,7 +1203,6 @@ function main() {
       console.log(
         '  FAIL  `studies.variant` has no CHECK constraint and no foreign key referencing `variants(code)`',
       );
-      failures.push('`studies.variant` missing foreign key');
     }
   }
 
@@ -1192,3 +1230,4 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.a
     process.exit(1);
   }
 }
+
