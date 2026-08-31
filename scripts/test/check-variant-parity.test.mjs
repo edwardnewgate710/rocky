@@ -554,6 +554,21 @@ test('effectiveStudyVariantForeignKey does not match subsequent column referenci
   }
 });
 
+test('effectiveStudyVariantForeignKey does not match prefix column like archived_variant referencing variants', () => {
+  const dir = migrations({
+    '0001_archived_variant.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL,
+      archived_variant TEXT REFERENCES variants(code)
+    );`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dir), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('effectiveStudyVariantConstraint preserves active CHECK constraint when FK is added without dropping CHECK', () => {
   const dir = migrations({
     '0001_check.sql': `ALTER TABLE studies ADD COLUMN variant TEXT NOT NULL DEFAULT 'standard' CHECK (variant IN ('standard', 'atomic'));`,

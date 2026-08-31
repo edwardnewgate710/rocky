@@ -252,15 +252,16 @@ const IMPLICIT_CONSTRAINT_NAME = 'studies_variant_check';
 const IMPLICIT_FK_CONSTRAINT_NAME = 'studies_variant_fkey';
 
 /** A `CHECK (variant IN (...))`, with the constraint name when the statement gives one. */
-const VARIANT_CHECK = /(?:CONSTRAINT\s+"?(\w+)"?\s+)?CHECK\s*\(\s*"?variant"?\s+IN\s*\(([\s\S]*?)\)\s*\)/gi;
+const VARIANT_CHECK =
+  /(?:CONSTRAINT\s+"?(\w+)"?\s+)?CHECK\s*\(\s*(?:\bvariant\b|"variant")\s+IN\s*\(([\s\S]*?)\)\s*\)/gi;
 
 /** Table-level `FOREIGN KEY (variant) REFERENCES variants(code)`. */
 const VARIANT_FK_TABLE =
-  /(?:CONSTRAINT\s+"?(\w+)"?\s+)?FOREIGN\s+KEY\s*\(\s*"?variant"?\s*\)\s*REFERENCES\s+"?variants"?\s*\(\s*"?code"?\s*\)/gi;
+  /(?:CONSTRAINT\s+"?(\w+)"?\s+)?FOREIGN\s+KEY\s*\(\s*(?:\bvariant\b|"variant")\s*\)\s*REFERENCES\s+"?variants"?\s*\(\s*"?code"?\s*\)/gi;
 
 /** Inline-column `variant TEXT ... [CONSTRAINT name] REFERENCES variants(code)`. */
 const VARIANT_FK_INLINE =
-  /(?:ADD\s+COLUMN|CREATE\s+TABLE)\s+[^;]*?"?variant"?\s+TEXT\b[^,;)]*?(?:CONSTRAINT\s+"?(\w+)"?\s+)?REFERENCES\s+"?variants"?\s*\(\s*"?code"?\s*\)/gi;
+  /(?:ADD\s+COLUMN|CREATE\s+TABLE)\s+[^;]*?(?:\bvariant\b|"variant")\s+TEXT\b[^,;)]*?(?:CONSTRAINT\s+"?(\w+)"?\s+)?REFERENCES\s+"?variants"?\s*\(\s*"?code"?\s*\)/gi;
 
 const normalise = (name) => name.replace(/"/g, '').toLowerCase();
 
