@@ -383,6 +383,22 @@ test('effectiveStudyVariantForeignKey tracks multiple foreign keys added in a si
   }
 });
 
+test('effectiveStudyVariantForeignKey clears active foreign keys when variant column is renamed', () => {
+  const dir = migrations({
+    '0001_inline.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_rename_col.sql': `ALTER TABLE studies RENAME COLUMN variant TO old_variant;`,
+    '0003_readd_unconstrained.sql': `ALTER TABLE studies ADD COLUMN variant TEXT NOT NULL DEFAULT 'standard';`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dir), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('effectiveStudyVariantForeignKey recognizes inline column references on studies', () => {
   const dir = migrations({
     '0001_inline.sql': `CREATE TABLE studies (

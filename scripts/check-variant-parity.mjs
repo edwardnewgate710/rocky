@@ -300,7 +300,7 @@ export function effectiveStudyVariantConstraint(dir = MIGRATIONS_DIR) {
           current = null;
         }
       }
-      if (/DROP\s+COLUMN\s+(?:IF\s+EXISTS\s+)?"?variant"?/i.test(statement)) current = null;
+      if (/(?:DROP|RENAME)\s+COLUMN\s+(?:IF\s+EXISTS\s+)?"?variant"?/i.test(statement)) current = null;
 
       for (const m of statement.matchAll(VARIANT_CHECK)) {
         current = {
@@ -336,7 +336,7 @@ export function effectiveStudyVariantForeignKey(dir = MIGRATIONS_DIR) {
       for (const m of statement.matchAll(/DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?"?(\w+)"?/gi)) {
         activeFks.delete(normalise(m[1]));
       }
-      if (/DROP\s+COLUMN\s+(?:IF\s+EXISTS\s+)?"?variant"?/i.test(statement)) {
+      if (/(?:DROP|RENAME)\s+COLUMN\s+(?:IF\s+EXISTS\s+)?"?variant"?/i.test(statement)) {
         activeFks.clear();
       }
 
