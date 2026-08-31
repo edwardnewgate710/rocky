@@ -170,19 +170,103 @@ Hypotheses examined and **refuted** with evidence:
   throw would be attributed to that test with a stack, which is not the
   observed signature.
 
-The leading unrefuted hypothesis is a process-level fault in the test child
-after module load and before the first test reports — a keep-alive socket to a
-closed harness erroring inside undici's pool, or an uncaught `'error'` event on
-an `http.Server`. **One instance of that second shape has now been fixed** (§5),
-and it produces exactly this signature when it fires: with the fix reverted, the
-regression test for it fails through an uncaught `ERR_UNHANDLED_ERROR` rather
-than an assertion. That makes it a plausible contributor, but not a
-demonstrated cause — signature B was reproduced on files doing no failing bind,
-and it was never observed to coincide with one. It stays open.
+One instance of an uncaught `'error'` event on an `http.Server` **has since been
+fixed** (§5): with that fix reverted, the regression test for it fails through
+an uncaught `ERR_UNHANDLED_ERROR`. That made it a plausible contributor, but a
+follow-up investigation (below) has since ruled it out as the mechanism behind
+the observed signature specifically, even though it remained a real defect
+worth fixing on its own merits.
 
-Nothing above is strong enough to justify a fix, and a fix that cannot be shown
-to remove a reproduction is indistinguishable from a coincidence. Signature B
-stays open.
+### Follow-up investigation: the failure mode is characterized, the trigger is not
+
+A later increment (`claude/node-test-signature-b`) instrumented selected
+termination and error paths a child process can raise and captured three
+further real occurrences directly, rather than reasoning from symptoms or
+synthetic proxies alone.
+
+**Node's test runner spawns one child process per test file.** Verified
+directly: two trivial files run together under
+`node --test --test-concurrency=1` report distinct PIDs, neither matching the
+parent's. The flag-free PID run is the evidence for default per-file process
+isolation on the tested Node version, while the explicit `--test-isolation=process`
+flag demonstrates that process isolation can also be explicitly selected. This process
+boundary proves that a terminating child does not directly abort sibling test processes
+in the runner, though shared host resources can still interact across processes.
+
+**The bare `'test failed'` with no stack and empty stderr is what Node's runner reports for a
+child that calls `process.exit(1)` (or terminates silently) before registering any test.** This was reproduced directly: a synthetic file that calls
+`process.exit(1)` before registering any test produces the identical reported
+shape as the real defect — `✖ <file> (Nms)` / `'test failed'`, zero individual
+tests in the summary, nothing on stderr. Every OTHER synthetic mechanism tried
+produces a visibly different shape:
+
+- An error thrown after a test's own promise settles (`setImmediate` inside a
+  passing test) — Node prints an explicit
+  `ℹ Error: ... generated asynchronous activity after the test ended ...`
+  diagnostic line, and the triggering test still shows `✔`.
+- An `http.Server` emitting `'error'` with its listener already removed —
+  same diagnostic line, same visible `✔` on the test that created it.
+- A promise rejected synchronously inside a test's own body — attributed to
+  that specific test, with a full stack.
+- A process killed by `SIGKILL` after a test completes — that test's `✔`
+  still prints before the file dies.
+- A synchronous throw at module load, before any `test()` call — prints a
+  full stack trace to stderr.
+
+None of these match. The real defect's log is completely silent before the
+bare file-level failure: no diagnostic line, no stderr, no test names at all
+for that file (not even the ones that would have run first).
+
+**A diagnostic preload
+(`packages/api/test/diagnostics/signature-b-preload.cjs`) captures which of
+those mechanisms fire on real occurrences, not synthetic ones.** It hooks
+`process.exit`, `process.abort`, `process.kill`, `uncaughtExceptionMonitor` (a passive observer
+that captures both uncaught exceptions and fatal unhandled rejections without registering active
+listeners that alter Node's default crash handling), `warning`, `beforeExit`, and Node's
+own unconditional `exit` event, writing a structured, redacted, timestamped
+line to disk (before delegation for `process.exit`, `process.abort`, and `process.kill`, and during event delivery for `uncaughtExceptionMonitor`, `warning`, `beforeExit`, and `exit`) — bypassing stdout/stderr entirely so the test
+reporter's own output is never touched. A bounded 20-run instrumented pass over
+the full `packages/api` suite (chosen the same way as the original 20-run
+sample: enough for >90% detection odds at the historically observed ~1-in-5
+rate) reproduced the defect 3 times, on **three files never previously
+implicated** — `rate-limit-atomicity`, `dependency-parity`, `studies-api` — none
+of the original four. Combined with the original four, that is **seven distinct files** observed with this symptom
+to date. Occurrences across seven distinct files make a shared or cross-cutting path more
+plausible and make a defect confined to one test file less likely, but do not exclude
+file-specific inputs or lifecycle interactions.
+
+All three historical captures show the identical signature: **only the `start` and
+`preload-installed` lines were logged. None of the hooks active at that time fired —
+including `process.exit`, `process.kill`, `uncaughtExceptionMonitor`, `warning`,
+`beforeExit`, and Node's `exit` event.**
+Crucially, however, the diagnostic preload in use during those historical runs did
+not yet wrap `process.abort()`. Because `process.abort()` terminates the process
+immediately without emitting Node's `exit` event, those historical captures directly
+ruled out `process.exit`, uncaught exceptions, and fatal unhandled rejections, but
+could not categorically exclude an uninstrumented `process.abort()` or an external termination.
+
+**This narrows Signature B's investigated possibilities while leaving its root cause unresolved:**
+`process.abort()` is now instrumented so any future occurrence will record whether an abort
+was invoked through JS; an absent record narrows in-runtime JS termination but cannot alone
+prove external termination without corroborating child exit status/signal data or OS-level
+evidence (e.g. distinguishing an external kill or uncatchable signal from a native C++/V8 crash).
+Two observations remain consistent with an
+environmental (not code) origin: at the time of capture this development machine had roughly
+2.5 GB of 15.7 GB RAM free, with several unrelated concurrent processes (other agents' worktrees
+and dev servers) running; and `node --test` spawns dozens of child processes across a full
+`packages/api` run, each loading the same large cross-package import graph, which is exactly the
+pattern most exposed to transient resource contention. Neither observation is proof of a specific
+external actor — no crash was recorded in the Windows Application or System event logs in the
+capture window — so the exact trigger (OS scheduler, memory pressure, antivirus, or something
+else entirely) is not established.
+
+**No fix is proposed.** The investigated JS mechanisms (`process.exit`, exceptions, rejections)
+have been ruled out on the historical captures, `process.abort()` instrumentation is in place for
+future occurrences, and the forbidden responses — sleeps, retries around the whole file,
+swallowing errors, lowering concurrency to hide it — would suppress the symptom without touching
+whatever the root cause turns out to be. Signature B stays open and unresolved. The diagnostic
+preload is committed so the next occurrence — on this machine, in CI, or elsewhere — can be
+captured with selected termination and error path instrumentation rather than re-deriving it.
 
 ## 5. `ApiServer.listen` rejects on a failed bind
 
