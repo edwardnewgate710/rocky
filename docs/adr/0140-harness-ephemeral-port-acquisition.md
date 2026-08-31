@@ -187,10 +187,11 @@ synthetic proxies alone.
 **Node's test runner spawns one child process per test file.** Verified
 directly: two trivial files run together under
 `node --test --test-concurrency=1` report distinct PIDs, neither matching the
-parent's. A same-named (currently experimental on this Node version) flag,
-`--test-isolation=process`, confirms this is the default rather than an
-accident of this run. It is why the failure is confined to exactly one file
-per occurrence with no effect on any other file in the same run.
+parent's. The flag-free PID run is the evidence for default per-file process
+isolation on the tested Node version, while the explicit `--test-isolation=process`
+flag demonstrates that process isolation can also be explicitly selected. It is why
+the failure is confined to exactly one file per occurrence with no effect on any
+other file in the same run.
 
 **The bare `'test failed'` with no stack is what Node's runner reports for a
 child that exits non-zero or is signaled before any subtest result is recorded.** This was reproduced directly: a synthetic file that calls

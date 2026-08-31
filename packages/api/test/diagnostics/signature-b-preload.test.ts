@@ -49,7 +49,10 @@ function runWithPreload(
   readonly records: readonly DiagnosticRecord[];
 } {
   const generatedLogDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-test-'));
-  const targetLogDir = envOverride.SIGB_LOG_DIR ? path.resolve(envOverride.SIGB_LOG_DIR) : generatedLogDir;
+  const rawLogDir = envOverride.SIGB_LOG_DIR;
+  const targetLogDir = rawLogDir
+    ? path.resolve(generatedLogDir, rawLogDir)
+    : generatedLogDir;
   const scriptPath = path.join(generatedLogDir, 'test-target.cjs');
   fs.writeFileSync(scriptPath, code, 'utf8');
 
@@ -60,7 +63,7 @@ function runWithPreload(
   const env: Record<string, string | undefined> = {
     ...process.env,
     ...envOverride,
-    SIGB_LOG_DIR: targetLogDir,
+    SIGB_LOG_DIR: rawLogDir ?? targetLogDir,
   };
   delete env.NODE_TEST_CONTEXT;
 
@@ -115,7 +118,10 @@ function runWithSafeAbortShimAndPreload(
   readonly records: readonly DiagnosticRecord[];
 } {
   const generatedLogDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-test-'));
-  const targetLogDir = envOverride.SIGB_LOG_DIR ? path.resolve(envOverride.SIGB_LOG_DIR) : generatedLogDir;
+  const rawLogDir = envOverride.SIGB_LOG_DIR;
+  const targetLogDir = rawLogDir
+    ? path.resolve(generatedLogDir, rawLogDir)
+    : generatedLogDir;
   const shimPath = path.join(generatedLogDir, 'safe-abort-shim.cjs');
   const scriptPath = path.join(generatedLogDir, 'test-target.cjs');
 
@@ -138,7 +144,7 @@ function runWithSafeAbortShimAndPreload(
   const env: Record<string, string | undefined> = {
     ...process.env,
     ...envOverride,
-    SIGB_LOG_DIR: targetLogDir,
+    SIGB_LOG_DIR: rawLogDir ?? targetLogDir,
   };
   delete env.NODE_TEST_CONTEXT;
 
@@ -318,15 +324,18 @@ test('diagnostic preload: process.kill records target PID and signal', (t) => {
   assert.ok(killRecord?.callerStack?.includes('kill-call-site'), 'traces kill call site');
 });
 
-test('diagnostic preload: redacts postgres/postgresql credentials, tokens, Authorization headers, cookies, and quoted secrets with spaces', (t) => {
+test('diagnostic preload: redacts postgres/postgresql credentials, tokens, Authorization headers, cookies, and quoted secrets with spaces or escaped quotes', (t) => {
   const { records, logDir } = runWithPreload(`
-    const err = new Error(
-      'Connect failed to postgresql://app_user:s3cr3tpass@db.internal:5432/chess and ' +
-      'postgres://admin:supersecret@10.0.0.1:5432/main and sk-1234567890abcdef12345 and ' +
-      'password="correct horse battery staple" and secret=\\'top secret key phrase\\' and ' +
-      'Authorization: Basic dXNlcjpwYXNzd29yZA==, Cookie: session=xyz123; token=abc456; other=789'
-    );
-    throw err;
+    const parts = [
+      'Connect failed to postgresql://app_user:s3cr3tpass@db.internal:5432/chess',
+      'postgres://admin:supersecret@10.0.0.1:5432/main',
+      'sk-1234567890abcdef12345',
+      'password="correct \\\\\\"horse\\\\\\" battery staple"',
+      "secret='top \\\\\\'secret\\\\\\' key phrase'",
+      'Authorization: Basic dXNlcjpwYXNzd29yZA==,',
+      'Cookie: session=xyz123; token=abc456; other=789',
+    ];
+    throw new Error(parts.join(' and '));
   `);
   t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
 
@@ -336,14 +345,14 @@ test('diagnostic preload: redacts postgres/postgresql credentials, tokens, Autho
   assert.ok(msg.includes('postgres://[REDACTED_CREDS]@db.internal:5432/chess'), 'redacts postgresql credentials');
   assert.ok(msg.includes('postgres://[REDACTED_CREDS]@10.0.0.1:5432/main'), 'redacts postgres credentials');
   assert.ok(msg.includes('[REDACTED_API_KEY]'), 'redacts OpenAI-style api key');
-  assert.ok(msg.includes('password=[REDACTED]'), 'redacts double-quoted password with spaces');
-  assert.ok(msg.includes('secret=[REDACTED]'), 'redacts single-quoted secret with spaces');
+  assert.ok(msg.includes('password=[REDACTED]'), 'redacts double-quoted password with escaped quotes');
+  assert.ok(msg.includes('secret=[REDACTED]'), 'redacts single-quoted secret with escaped quotes');
   assert.ok(msg.includes('Authorization=[REDACTED]'), 'redacts Basic authorization header');
   assert.ok(msg.includes('Cookie=[REDACTED]'), 'redacts multi-cookie header');
   assert.ok(!msg.includes('s3cr3tpass'), 'raw password 1 not present');
   assert.ok(!msg.includes('supersecret'), 'raw password 2 not present');
-  assert.ok(!msg.includes('correct horse battery staple'), 'raw quoted password with spaces not present');
-  assert.ok(!msg.includes('top secret key phrase'), 'raw single-quoted secret with spaces not present');
+  assert.ok(!msg.includes('horse'), 'raw quoted password content with escaped quotes not present');
+  assert.ok(!msg.includes('key phrase'), 'raw single-quoted secret content with escaped quotes not present');
   assert.ok(!msg.includes('dXNlcjpwYXNzd29yZA=='), 'raw basic auth credential not present');
   assert.ok(!msg.includes('session=xyz123'), 'raw cookie session not present');
   assert.ok(!msg.includes('token=abc456'), 'raw cookie token not present');
@@ -391,14 +400,14 @@ test('diagnostic preload: pre-existing directory does not fail or crash', (t) =>
 
 test('diagnostic preload: relative SIGB_LOG_DIR resolves correctly', (t) => {
   const relDir = `./tmp-sigb-rel-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const absDir = path.resolve(relDir);
   const { records, logDir } = runWithPreload('const relOk = true;', { SIGB_LOG_DIR: relDir });
+  const absDir = path.resolve(logDir, relDir);
   t.after(() => {
     fs.rmSync(logDir, { recursive: true, force: true });
     fs.rmSync(absDir, { recursive: true, force: true });
   });
 
-  assert.ok(fs.existsSync(absDir), 'creates directory at resolved absolute path');
+  assert.ok(fs.existsSync(absDir), 'creates directory at resolved relative path in child cwd');
   assert.ok(records.length > 0, 'reads child diagnostic records from relative SIGB_LOG_DIR');
 });
 
