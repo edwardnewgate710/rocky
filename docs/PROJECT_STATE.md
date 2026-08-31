@@ -13,6 +13,10 @@ constraint `studies_variant_fk` (`REFERENCES variants(code)` added with `NOT VAL
 `0028_studies_variant_fk.sql` and validated in `0029_validate_studies_variant_fk.sql`), replacing the
 duplicated inline `CHECK (variant IN (...))` constraint introduced in migration `0022`.
 
+This completes the database integrity conversion candidate originally deferred in M15 Increment 10
+("Decided and not done: studies.variant stays a CHECK, for now"). Historical entries in earlier
+increment logs record the pre-migration state when the column was governed by a CHECK constraint.
+
 All database variant columns (`games.variant`, `ratings.variant`, `seeks.variant`, and `studies.variant`)
 now share identical relational integrity semantics:
 - Inserting an unsupported variant code into `studies.variant` is rejected by PostgreSQL with SQLSTATE

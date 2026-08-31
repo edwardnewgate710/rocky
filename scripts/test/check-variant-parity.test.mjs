@@ -15,6 +15,10 @@ import { join } from 'node:path';
 import {
   stripComments,
   splitStatements,
+  tokenizeSql,
+  splitSqlStatements,
+  parseQualifiedTableTarget,
+  replayStudiesSchema,
   extractRegion,
   migrationFiles,
   effectiveLookupVariants,
@@ -539,6 +543,157 @@ test('effectiveStudyVariantForeignKey and effectiveStudyVariantConstraint clear 
   } finally {
     rmSync(dropMultiVariantsCascadeDir, { recursive: true, force: true });
   }
+
+  const dropPublicStudiesDir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_drop_public_studies.sql': `DROP TABLE public.studies;`,
+    '0003_recreate_unconstrained.sql': `CREATE TABLE studies (id UUID PRIMARY KEY, variant TEXT NOT NULL);`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dropPublicStudiesDir), false);
+    assert.equal(effectiveStudyVariantConstraint(dropPublicStudiesDir), null);
+  } finally {
+    rmSync(dropPublicStudiesDir, { recursive: true, force: true });
+  }
+
+  const dropMultiStudiesDir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_drop_multi_studies.sql': `DROP TABLE studies, studies_backup;`,
+    '0003_recreate_unconstrained.sql': `CREATE TABLE studies (id UUID PRIMARY KEY, variant TEXT NOT NULL);`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dropMultiStudiesDir), false);
+    assert.equal(effectiveStudyVariantConstraint(dropMultiStudiesDir), null);
+  } finally {
+    rmSync(dropMultiStudiesDir, { recursive: true, force: true });
+  }
+
+  const dropVariantsSchemaArchiveDir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_drop_other_schema.sql': `DROP TABLE variants.archive CASCADE;`,
+  });
+  try {
+    // variants.archive drops table archive in schema variants; canonical public.variants FK remains intact
+    assert.equal(effectiveStudyVariantForeignKey(dropVariantsSchemaArchiveDir), true);
+  } finally {
+    rmSync(dropVariantsSchemaArchiveDir, { recursive: true, force: true });
+  }
+
+  const dropQuotedVariantsNameDir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_drop_other_table.sql': `DROP TABLE "archived variants" CASCADE;`,
+  });
+  try {
+    // "archived variants" is not the variants table; public.variants FK remains intact
+    assert.equal(effectiveStudyVariantForeignKey(dropQuotedVariantsNameDir), true);
+  } finally {
+    rmSync(dropQuotedVariantsNameDir, { recursive: true, force: true });
+  }
+
+  const dropPublicVariantsCascadeDir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_drop_public_variants.sql': `DROP TABLE public.variants CASCADE;`,
+    '0003_recreate_variants.sql': `CREATE TABLE variants (code TEXT PRIMARY KEY);`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dropPublicVariantsCascadeDir), false);
+  } finally {
+    rmSync(dropPublicVariantsCascadeDir, { recursive: true, force: true });
+  }
+
+  const dropVariantsRestrictDir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_drop_variants_restrict.sql': `DROP TABLE variants RESTRICT;`,
+  });
+  try {
+    // RESTRICT does not cascade to dependent FKs
+    assert.equal(effectiveStudyVariantForeignKey(dropVariantsRestrictDir), true);
+  } finally {
+    rmSync(dropVariantsRestrictDir, { recursive: true, force: true });
+  }
+});
+
+test('effectiveStudyVariantForeignKey ignores string literals containing RENAME TO keyword', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_add_column_with_default.sql': `ALTER TABLE studies ADD COLUMN note TEXT DEFAULT 'RENAME TO archive';`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dir), true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('effectiveStudyVariantForeignKey distinguishes escaped quoted identifier from variant column', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      "archived""variant" TEXT NOT NULL REFERENCES variants(code),
+      variant TEXT NOT NULL
+    );`,
+  });
+  try {
+    // "archived""variant" is a separate column from "variant", so studies.variant has no FK
+    assert.equal(effectiveStudyVariantForeignKey(dir), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('effectiveStudyVariantForeignKey tracks occupied constraint namespace across constraint types', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL
+    );`,
+    // Unrelated constraint occupies the base name studies_variant_fkey
+    '0002_occupy_name.sql': `ALTER TABLE studies ADD CONSTRAINT studies_variant_fkey CHECK (id IS NOT NULL);`,
+    // Unnamed FK receives next free name studies_variant_fkey1
+    '0003_add_unnamed_fk.sql': `ALTER TABLE studies ADD FOREIGN KEY (variant) REFERENCES variants(code);`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dir), true);
+
+    // Dropping studies_variant_fkey drops the unrelated CHECK, leaving the FK studies_variant_fkey1 active
+    writeFileSync(
+      join(dir, '0004_drop_unrelated.sql'),
+      `ALTER TABLE studies DROP CONSTRAINT studies_variant_fkey;`,
+      'utf8',
+    );
+    assert.equal(effectiveStudyVariantForeignKey(dir), true);
+
+    // Dropping studies_variant_fkey1 drops the FK
+    writeFileSync(
+      join(dir, '0005_drop_fk.sql'),
+      `ALTER TABLE studies DROP CONSTRAINT studies_variant_fkey1;`,
+      'utf8',
+    );
+    assert.equal(effectiveStudyVariantForeignKey(dir), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('effectiveStudyVariantForeignKey recognizes inline column references on studies', () => {
@@ -677,3 +832,38 @@ test('every mirror the guard claims to read is really there', () => {
     assert.ok(found.variants.includes('standard'), `${spec.label} is missing 'standard'`);
   }
 });
+
+test('tokenizeSql correctly distinguishes string literals, escaped quotes, and punctuation', () => {
+  const sql = `ALTER TABLE "public"."studies" ADD COLUMN note TEXT DEFAULT 'It''s a ''quoted'' string; not a stmt';`;
+  const tokens = tokenizeSql(sql);
+
+  assert.equal(tokens[0].value, 'alter');
+  assert.equal(tokens[1].value, 'table');
+  assert.equal(tokens[2].type, 'ident');
+  assert.equal(tokens[2].value, 'public');
+  assert.equal(tokens[3].value, '.');
+  assert.equal(tokens[4].type, 'ident');
+  assert.equal(tokens[4].value, 'studies');
+
+  const stringToken = tokens.find((t) => t.type === 'string');
+  assert.notEqual(stringToken, undefined);
+  assert.equal(stringToken.value, "It's a 'quoted' string; not a stmt");
+
+  const stmts = splitSqlStatements(tokens);
+  assert.equal(stmts.length, 1, 'semicolon inside string literal must not split statement');
+});
+
+test('parseQualifiedTableTarget handles schema qualification and ONLY keyword', () => {
+  const t1 = tokenizeSql('ONLY "public"."studies"');
+  const ref1 = parseQualifiedTableTarget(t1, 0);
+  assert.deepEqual(ref1, { schema: 'public', table: 'studies', nextIndex: 4 });
+
+  const t2 = tokenizeSql('studies');
+  const ref2 = parseQualifiedTableTarget(t2, 0);
+  assert.deepEqual(ref2, { schema: 'public', table: 'studies', nextIndex: 1 });
+
+  const t3 = tokenizeSql('variants.archive');
+  const ref3 = parseQualifiedTableTarget(t3, 0);
+  assert.deepEqual(ref3, { schema: 'variants', table: 'archive', nextIndex: 3 });
+});
+

@@ -41,6 +41,10 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+/**
+ * Directory holding the database migration SQL scripts.
+ * @type {string}
+ */
 export const MIGRATIONS_DIR = 'packages/persistence/migrations';
 
 /**
@@ -52,8 +56,9 @@ export const MIGRATIONS_DIR = 'packages/persistence/migrations';
  * the first because the escape is consumed, the second because the closing quote immediately reopens
  * a new string.
  *
- * @param {string} text
- * @param {'ts' | 'sql'} dialect
+ * @param {string} text The raw source code to strip.
+ * @param {'ts' | 'sql'} dialect The language dialect determining comment syntax.
+ * @returns {string} Comment-stripped source code with preserved offsets.
  */
 export function stripComments(text, dialect) {
   const lineMarker = dialect === 'sql' ? '--' : '//';
@@ -108,6 +113,190 @@ export function stripComments(text, dialect) {
 }
 
 /**
+ * Token represents a lexical unit extracted from SQL source text.
+ * @typedef {Object} SqlToken
+ * @property {'word' | 'ident' | 'string' | 'punct'} type The syntactic category of the token.
+ * @property {string} value The normalized token value (lowercase for identifiers/keywords).
+ * @property {string} raw The verbatim token text from source.
+ * @property {number} pos The starting character offset in the source.
+ */
+
+/**
+ * Tokenizes SQL source into a flat array of lexical tokens.
+ *
+ * Correctly distinguishes single-quoted strings (with doubled quote escaping `''`),
+ * double-quoted identifiers (with doubled quote escaping `""`), keywords/unquoted words,
+ * and punctuation tokens.
+ *
+ * @param {string} sql Comment-stripped SQL text.
+ * @returns {SqlToken[]} Array of SQL tokens.
+ */
+export function tokenizeSql(sql) {
+  /** @type {SqlToken[]} */
+  const tokens = [];
+  let i = 0;
+  while (i < sql.length) {
+    const ch = sql[i];
+
+    if (/\s/.test(ch)) {
+      i++;
+      continue;
+    }
+
+    if (ch === "'") {
+      const start = i;
+      let val = '';
+      i++;
+      while (i < sql.length) {
+        if (sql[i] === "'") {
+          if (sql[i + 1] === "'") {
+            val += "'";
+            i += 2;
+            continue;
+          }
+          i++;
+          break;
+        }
+        val += sql[i];
+        i++;
+      }
+      tokens.push({
+        type: 'string',
+        value: val,
+        raw: sql.slice(start, i),
+        pos: start,
+      });
+      continue;
+    }
+
+    if (ch === '"') {
+      const start = i;
+      let val = '';
+      i++;
+      while (i < sql.length) {
+        if (sql[i] === '"') {
+          if (sql[i + 1] === '"') {
+            val += '"';
+            i += 2;
+            continue;
+          }
+          i++;
+          break;
+        }
+        val += sql[i];
+        i++;
+      }
+      tokens.push({
+        type: 'ident',
+        value: val.toLowerCase(),
+        raw: sql.slice(start, i),
+        pos: start,
+      });
+      continue;
+    }
+
+    if (/[a-zA-Z_]/.test(ch)) {
+      const start = i;
+      while (i < sql.length && /[a-zA-Z0-9_$]/.test(sql[i])) {
+        i++;
+      }
+      const word = sql.slice(start, i);
+      tokens.push({
+        type: 'word',
+        value: word.toLowerCase(),
+        raw: word,
+        pos: start,
+      });
+      continue;
+    }
+
+    if (ch === ';' || ch === ',' || ch === '(' || ch === ')' || ch === '.' || ch === '*') {
+      tokens.push({
+        type: 'punct',
+        value: ch,
+        raw: ch,
+        pos: i,
+      });
+      i++;
+      continue;
+    }
+
+    i++;
+  }
+  return tokens;
+}
+
+/**
+ * Splits a stream of SQL tokens into individual statements delimited by top-level semicolons.
+ *
+ * @param {SqlToken[]} tokens Array of SQL tokens.
+ * @returns {SqlToken[][]} Array of statement token arrays.
+ */
+export function splitSqlStatements(tokens) {
+  const statements = [];
+  let current = [];
+  for (const token of tokens) {
+    if (token.type === 'punct' && token.value === ';') {
+      if (current.length > 0) {
+        statements.push(current);
+        current = [];
+      }
+    } else {
+      current.push(token);
+    }
+  }
+  if (current.length > 0) {
+    statements.push(current);
+  }
+  return statements;
+}
+
+/**
+ * Parses a table reference from a token stream starting at `startIndex`.
+ * Handles optional `ONLY` and optional `schema.` qualifiers.
+ *
+ * @param {SqlToken[]} tokens Array of SQL tokens.
+ * @param {number} startIndex Position in token stream to begin parsing table reference.
+ * @returns {{ schema: string, table: string, nextIndex: number } | null} Parsed table reference or null if invalid.
+ */
+export function parseQualifiedTableTarget(tokens, startIndex) {
+  let idx = startIndex;
+  if (tokens[idx]?.value === 'only') idx++;
+
+  if (!tokens[idx] || (tokens[idx].type !== 'word' && tokens[idx].type !== 'ident')) {
+    return null;
+  }
+
+  const firstIdent = tokens[idx].value;
+  idx++;
+
+  if (tokens[idx]?.type === 'punct' && tokens[idx].value === '.') {
+    idx++;
+    if (!tokens[idx] || (tokens[idx].type !== 'word' && tokens[idx].type !== 'ident')) {
+      return null;
+    }
+    const secondIdent = tokens[idx].value;
+    idx++;
+    return { schema: firstIdent, table: secondIdent, nextIndex: idx };
+  }
+
+  return { schema: 'public', table: firstIdent, nextIndex: idx };
+}
+
+/**
+ * Determines if a parsed table reference matches a specified table and default schema.
+ *
+ * @param {{ schema: string, table: string } | null} ref Parsed table reference.
+ * @param {string} targetTable Expected table name.
+ * @param {string} [targetSchema='public'] Expected schema name (defaults to 'public').
+ * @returns {boolean} True if the table reference matches the target.
+ */
+function isTableTarget(ref, targetTable, targetSchema = 'public') {
+  if (ref === null) return false;
+  return ref.table === targetTable && (!ref.schema || ref.schema === targetSchema);
+}
+
+/**
  * Pulls the quoted variant codes out of one region of a source file.
  *
  * `open` locates the declaration and `close` ends it, because every one of these lists is a literal
@@ -117,7 +306,8 @@ export function stripComments(text, dialect) {
  * A region that does not match is a hard failure, never an empty list. A guard that silently starts
  * checking nothing after a rename is worse than no guard, because the green tick still gets trusted.
  *
- * @param {{label: string, file: string, open: RegExp, close: RegExp, dialect?: 'ts' | 'sql', text?: string}} spec
+ * @param {{label: string, file: string, open: RegExp, close: RegExp, dialect?: 'ts' | 'sql', text?: string}} spec Target region specification.
+ * @returns {{ label: string, file: string, variants: string[] }} Extracted variant list.
  */
 export function extractRegion({ label, file, open, close, dialect = 'ts', text }) {
   const source = stripComments(text ?? readFileSync(file, 'utf8'), dialect);
@@ -149,6 +339,9 @@ export function extractRegion({ label, file, open, close, dialect = 'ts', text }
  * names this repository uses the two orders coincide, but `9_x.sql` and `10_y.sql` would apply
  * as `10` then `9`, and a guard that sorted numerically would disagree with the schema on disk.
  * Fidelity to the runner is the invariant, not numeric intuition.
+ *
+ * @param {string} [dir=MIGRATIONS_DIR] Directory containing migration SQL files.
+ * @returns {string[]} Sorted migration file names.
  */
 export function migrationFiles(dir = MIGRATIONS_DIR) {
   return readdirSync(dir)
@@ -160,6 +353,9 @@ export function migrationFiles(dir = MIGRATIONS_DIR) {
  * Splits SQL into statements, respecting string literals so a `;` inside one does not end one.
  *
  * Comment stripping runs first, so only quotes are left to worry about.
+ *
+ * @param {string} sql Comment-stripped SQL text.
+ * @returns {string[]} Individual SQL statements.
  */
 export function splitStatements(sql) {
   const statements = [];
@@ -194,6 +390,10 @@ export function splitStatements(sql) {
  * migration and 0001 can never change. Any statement that mutates the table in a way this does not
  * model is a hard failure: quietly returning a set that ignores a `DELETE` would be a guard
  * confidently reporting the wrong schema.
+ *
+ * @param {string} [dir=MIGRATIONS_DIR] Path to the directory containing migration files.
+ * @returns {string[]} Array of variant codes present in the lookup table.
+ * @throws {Error} If unmodelled mutations (DELETE/UPDATE) or no INSERT statements are found.
  */
 export function effectiveLookupVariants(dir = MIGRATIONS_DIR) {
   const codes = [];
@@ -220,164 +420,461 @@ export function effectiveLookupVariants(dir = MIGRATIONS_DIR) {
 }
 
 /**
- * How `studies.variant` is constrained after every migration has run.
+ * Allocates the next implicit constraint name following PostgreSQL's naming convention.
  *
- * The last migration to define the constraint wins, so replacing it (`DROP CONSTRAINT ... ,
- * ADD CONSTRAINT ... CHECK (...)`) is a supported forward change rather than a reason to edit 0022.
+ * If the candidate base name is free on the table, it is chosen. If already occupied anywhere
+ * in the table's constraint namespace, the lowest available positive integer suffix is appended.
  *
- * A migration that swaps the `CHECK` for `REFERENCES variants(code)` — the conversion recorded as a
- * candidate in PROJECT_STATE — makes the column derive from the lookup table, at which point there
- * is no separate list left to drift. That returns `null`, and the caller skips the mirror.
+ * @param {Set<string>} constraintNamespace The set of all constraint names currently active on the table.
+ * @param {string} baseName The base constraint name (e.g. 'studies_variant_check' or 'studies_variant_fkey').
+ * @returns {string} The allocated unique constraint name.
  */
+function nextImplicitConstraintName(constraintNamespace, baseName) {
+  if (!constraintNamespace.has(baseName)) {
+    return baseName;
+  }
+  let suffix = 1;
+  while (constraintNamespace.has(`${baseName}${suffix}`)) {
+    suffix++;
+  }
+  return `${baseName}${suffix}`;
+}
+
 /**
- * `CREATE TABLE studies` / `ALTER TABLE studies`, and nothing else.
+ * Splits action clauses of an ALTER TABLE statement by comma at parenthesis nesting depth 0.
  *
- * `IF EXISTS` and `IF NOT EXISTS` are both accepted because both are valid PostgreSQL and a
- * migration is exactly where the defensive form gets written. Skipping `ALTER TABLE IF EXISTS
- * studies` would leave the guard comparing against a constraint that statement had just replaced.
- * Raised in the CodeRabbit review of PR #141.
+ * @param {SqlToken[]} tokens Action tokens following the table target.
+ * @returns {SqlToken[][]} Array of token arrays, one per action clause.
  */
-const TARGETS_STUDIES =
-  /^\s*(?:CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?|ALTER\s+TABLE(?:\s+IF\s+EXISTS)?|DROP\s+TABLE(?:\s+IF\s+EXISTS)?)\s+(?:ONLY\s+)?"?studies"?(?:[\s(;]|$)/i;
+function splitAlterActions(tokens) {
+  const actions = [];
+  let current = [];
+  let depth = 0;
+  for (const token of tokens) {
+    if (token.type === 'punct') {
+      if (token.value === '(') depth++;
+      else if (token.value === ')') depth--;
+      else if (token.value === ',' && depth === 0) {
+        if (current.length > 0) {
+          actions.push(current);
+          current = [];
+        }
+        continue;
+      }
+    }
+    current.push(token);
+  }
+  if (current.length > 0) {
+    actions.push(current);
+  }
+  return actions;
+}
 
 /**
- * The name PostgreSQL gives a `CHECK` on `studies.variant` that was written without one.
+ * Replays all migrations through a deterministic schema state machine to evaluate constraints on `studies.variant`.
  *
- * `<table>_<column>_check` is the server's own convention, so this is what a later migration has to
- * name in its `DROP CONSTRAINT` — which makes it the right default to track against.
+ * Tracks table drops (including multi-table and cascaded variants drops), table renames, column drops,
+ * column renames, explicit constraint additions/drops/renames, and implicit PostgreSQL constraint name allocation.
+ *
+ * @param {string} [dir=MIGRATIONS_DIR] Migrations directory path.
+ * @returns {{
+ *   check: { file: string, name: string, variants: string[] } | null,
+ *   hasForeignKey: boolean
+ * }} Effective check constraint on studies.variant and whether an active foreign key referencing variants(code) exists.
  */
-const IMPLICIT_CONSTRAINT_NAME = 'studies_variant_check';
+export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
+  const constraintNamespace = new Set();
+  /** @type {Map<string, { file: string, name: string, variants: string[] }>} */
+  const activeChecks = new Map();
+  /** @type {Set<string>} */
+  const activeFks = new Set();
 
-/** The name PostgreSQL gives a foreign key on `studies.variant` written without an explicit name. */
-const IMPLICIT_FK_CONSTRAINT_NAME = 'studies_variant_fkey';
-
-/** A `CHECK (variant IN (...))`, with the constraint name when the statement gives one. */
-const VARIANT_CHECK =
-  /(?:CONSTRAINT\s+"?(\w+)"?\s+)?CHECK\s*\(\s*(?:\bvariant\b|"variant")\s+IN\s*\(([\s\S]*?)\)\s*\)/gi;
-
-/** Table-level `FOREIGN KEY (variant) REFERENCES variants(code)`. */
-const VARIANT_FK_TABLE =
-  /(?:CONSTRAINT\s+"?(\w+)"?\s+)?FOREIGN\s+KEY\s*\(\s*(?:\bvariant\b|"variant")\s*\)\s*REFERENCES\s+"?variants"?\s*\(\s*"?code"?\s*\)/gi;
-
-/** Inline-column `variant TEXT ... [CONSTRAINT name] REFERENCES variants(code)`. */
-const VARIANT_FK_INLINE =
-  /(?:ADD\s+COLUMN|CREATE\s+TABLE)\s+[^;]*?(?:\bvariant\b|"variant")\s+TEXT\b[^,;)]*?(?:CONSTRAINT\s+"?(\w+)"?\s+)?REFERENCES\s+"?variants"?\s*\(\s*"?code"?\s*\)/gi;
-
-const normalise = (name) => name.replace(/"/g, '').toLowerCase();
-
-export function effectiveStudyVariantConstraint(dir = MIGRATIONS_DIR) {
-  let current = null;
   for (const file of migrationFiles(dir)) {
-    const sql = stripComments(readFileSync(join(dir, file), 'utf8'), 'sql');
+    const rawSql = readFileSync(join(dir, file), 'utf8');
+    const stripped = stripComments(rawSql, 'sql');
+    const tokens = tokenizeSql(stripped);
+    const statements = splitSqlStatements(tokens);
 
-    // Per statement, and only statements that name `studies` as their table. Testing the file as a
-    // whole let any other table move the answer: one migration that touches `studies` and also gives
-    // some other table its own `variant` CHECK would have overwritten this, and a `REFERENCES
-    // variants(code)` elsewhere in the same file — which is how games and ratings are already
-    // declared — would have cleared it, silently skipping the mirror the guard exists to compare.
-    // Raised in the CodeRabbit review of PR #141.
-    for (const statement of splitStatements(sql)) {
-      if (!TARGETS_STUDIES.test(statement)) continue;
+    for (const stmt of statements) {
+      if (stmt.length < 2) continue;
 
-      if (/^\s*DROP\s+TABLE/i.test(statement) || /RENAME\s+TO\b/i.test(statement)) {
-        current = null;
+      // -----------------------------------------------------------------------
+      // 1. DROP TABLE [IF EXISTS] [ONLY] table1 [, table2 ...] [CASCADE | RESTRICT]
+      // -----------------------------------------------------------------------
+      if (stmt[0].value === 'drop' && stmt[1].value === 'table') {
+        let idx = 2;
+        if (stmt[idx]?.value === 'if' && stmt[idx + 1]?.value === 'exists') {
+          idx += 2;
+        }
+
+        const hasCascade = stmt.some((t) => t.value === 'cascade');
+
+        while (idx < stmt.length) {
+          if (stmt[idx]?.value === 'cascade' || stmt[idx]?.value === 'restrict') {
+            break;
+          }
+          const ref = parseQualifiedTableTarget(stmt, idx);
+          if (ref === null) break;
+          idx = ref.nextIndex;
+
+          if (isTableTarget(ref, 'studies')) {
+            constraintNamespace.clear();
+            activeChecks.clear();
+            activeFks.clear();
+          }
+
+          if (isTableTarget(ref, 'variants') && hasCascade) {
+            activeFks.clear();
+          }
+
+          if (stmt[idx]?.type === 'punct' && stmt[idx].value === ',') {
+            idx++;
+          } else {
+            break;
+          }
+        }
         continue;
       }
 
-      // A rename would leave every name tracked below pointing at something that no longer answers
-      // to it, and the drop that follows would look like an unrelated constraint. There is no
-      // half-right answer available, so say so rather than report a schema that is not there.
-      const renamed = /RENAME\s+CONSTRAINT\s+"?(\w+)"?/i.exec(statement);
-      if (renamed !== null && current !== null && normalise(renamed[1]) === current.name) {
-        throw new Error(
-          `${file} renames the constraint governing \`studies.variant\` ` +
-            `(\`${renamed[1]}\`). Teach this guard \`RENAME CONSTRAINT\` rather than leaving it ` +
-            `tracking a name nothing answers to.`,
-        );
-      }
-
-      // Order matters: `DROP CONSTRAINT` then `ADD CONSTRAINT ... CHECK` is how a constraint is
-      // replaced without editing the migration that first defined it. The name is compared exactly
-      // against the one being tracked — a substring test for "variant" both missed a legitimately
-      // named constraint (`DROP CONSTRAINT allowed_codes`) and would have fired on an unrelated one
-      // that happened to contain the word. Raised in the CodeRabbit review of PR #141.
-      for (const m of statement.matchAll(/DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?"?(\w+)"?/gi)) {
-        if (current !== null && normalise(m[1]) === current.name) {
-          current = null;
+      // -----------------------------------------------------------------------
+      // 2. ALTER TABLE [IF EXISTS] [ONLY] target ...
+      // -----------------------------------------------------------------------
+      if (stmt[0].value === 'alter' && stmt[1].value === 'table') {
+        let idx = 2;
+        if (stmt[idx]?.value === 'if' && stmt[idx + 1]?.value === 'exists') {
+          idx += 2;
         }
-      }
-      if (/(?:DROP\s+COLUMN(?:\s+IF\s+EXISTS)?|RENAME(?:\s+COLUMN)?)\s+"?variant"?/i.test(statement)) current = null;
 
-      for (const m of statement.matchAll(VARIANT_CHECK)) {
-        current = {
-          file,
-          name: normalise(m[1] ?? IMPLICIT_CONSTRAINT_NAME),
-          variants: [...m[2].matchAll(/'([a-z0-9]+)'/g)].map((t) => t[1]),
-        };
+        const ref = parseQualifiedTableTarget(stmt, idx);
+        if (ref === null || !isTableTarget(ref, 'studies')) {
+          continue;
+        }
+        idx = ref.nextIndex;
+
+        // Table rename: ALTER TABLE studies RENAME TO new_name
+        if (stmt[idx]?.value === 'rename' && stmt[idx + 1]?.value === 'to') {
+          constraintNamespace.clear();
+          activeChecks.clear();
+          activeFks.clear();
+          continue;
+        }
+
+        const actionTokens = stmt.slice(idx);
+        const actionClauses = splitAlterActions(actionTokens);
+
+        for (const action of actionClauses) {
+          if (action.length === 0) continue;
+
+          // Action A: DROP CONSTRAINT [IF EXISTS] <name>
+          if (action[0].value === 'drop' && action[1]?.value === 'constraint') {
+            let cIdx = 2;
+            if (action[cIdx]?.value === 'if' && action[cIdx + 1]?.value === 'exists') {
+              cIdx += 2;
+            }
+            if (action[cIdx]?.type === 'word' || action[cIdx]?.type === 'ident') {
+              const name = action[cIdx].value;
+              constraintNamespace.delete(name);
+              activeChecks.delete(name);
+              activeFks.delete(name);
+            }
+            continue;
+          }
+
+          // Action B: RENAME CONSTRAINT <old_name> TO <new_name>
+          if (action[0].value === 'rename' && action[1]?.value === 'constraint') {
+            const oldName = action[2]?.value;
+            if (oldName && activeChecks.has(oldName)) {
+              throw new Error(
+                `${file} renames the constraint governing \`studies.variant\` ` +
+                  `(\`${oldName}\`). Teach this guard \`RENAME CONSTRAINT\` rather than leaving it ` +
+                  `tracking a name nothing answers to.`,
+              );
+            }
+            if (oldName && action[3]?.value === 'to' && action[4]) {
+              const newName = action[4].value;
+              if (constraintNamespace.has(oldName)) {
+                constraintNamespace.delete(oldName);
+                constraintNamespace.add(newName);
+              }
+              if (activeFks.has(oldName)) {
+                activeFks.delete(oldName);
+                activeFks.add(newName);
+              }
+            }
+            continue;
+          }
+
+          // Action C: DROP [COLUMN] [IF EXISTS] <col_name>
+          if (action[0].value === 'drop') {
+            let cIdx = 1;
+            if (action[cIdx]?.value === 'column') cIdx++;
+            if (action[cIdx]?.value === 'if' && action[cIdx + 1]?.value === 'exists') cIdx += 2;
+            if (action[cIdx]?.value === 'variant') {
+              // Drops all constraints on variant
+              activeChecks.clear();
+              activeFks.clear();
+            }
+            continue;
+          }
+
+          // Action D: RENAME [COLUMN] <old_col> TO <new_col>
+          if (action[0].value === 'rename') {
+            let cIdx = 1;
+            if (action[cIdx]?.value === 'column') cIdx++;
+            if (action[cIdx]?.value === 'variant' && action[cIdx + 1]?.value === 'to') {
+              // variant column is renamed away
+              activeChecks.clear();
+              activeFks.clear();
+            }
+            continue;
+          }
+
+          // Action E: ADD [CONSTRAINT <name>] CHECK (variant IN (...))
+          // or ADD [COLUMN] variant TEXT ... CHECK (variant IN (...))
+          let explicitName = null;
+          let aIdx = 0;
+          if (action[aIdx]?.value === 'add') aIdx++;
+          if (action[aIdx]?.value === 'constraint') {
+            explicitName = action[aIdx + 1]?.value ?? null;
+            aIdx += 2;
+          }
+
+          // Search for CHECK (variant IN (...))
+          const checkIdx = action.findIndex((t) => t.value === 'check');
+          if (checkIdx !== -1 && action[checkIdx + 1]?.value === '(') {
+            let pIdx = checkIdx + 2;
+            if (action[pIdx]?.value === 'variant' && action[pIdx + 1]?.value === 'in' && action[pIdx + 2]?.value === '(') {
+              if (explicitName === null && checkIdx >= 2 && action[checkIdx - 2]?.value === 'constraint') {
+                explicitName = action[checkIdx - 1]?.value ?? null;
+              }
+              const variantTokens = [];
+              let vIdx = pIdx + 3;
+              while (vIdx < action.length && action[vIdx]?.value !== ')') {
+                if (action[vIdx].type === 'string') {
+                  variantTokens.push(action[vIdx].value);
+                }
+                vIdx++;
+              }
+              const name = explicitName ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_check');
+              constraintNamespace.add(name);
+              activeChecks.set(name, { file, name, variants: variantTokens });
+              continue;
+            }
+          }
+
+          // Action F: ADD [CONSTRAINT <name>] FOREIGN KEY (variant) REFERENCES [public.]variants(code)
+          const fkIdx = action.findIndex((t) => t.value === 'foreign');
+          if (
+            fkIdx !== -1 &&
+            action[fkIdx + 1]?.value === 'key' &&
+            action[fkIdx + 2]?.value === '(' &&
+            action[fkIdx + 3]?.value === 'variant' &&
+            action[fkIdx + 4]?.value === ')'
+          ) {
+            let rIdx = fkIdx + 5;
+            if (action[rIdx]?.value === 'references') {
+              const refTarget = parseQualifiedTableTarget(action, rIdx + 1);
+              if (refTarget && isTableTarget(refTarget, 'variants')) {
+                const afterRef = refTarget.nextIndex;
+                if (action[afterRef]?.value === '(' && action[afterRef + 1]?.value === 'code' && action[afterRef + 2]?.value === ')') {
+                  const name = explicitName ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_fkey');
+                  constraintNamespace.add(name);
+                  activeFks.add(name);
+                  continue;
+                }
+              }
+            }
+          }
+
+          // Action G: ADD [COLUMN] [IF NOT EXISTS] variant TEXT ... [CONSTRAINT <name>] REFERENCES [public.]variants(code)
+          let colIdx = 0;
+          if (action[colIdx]?.value === 'add') colIdx++;
+          if (action[colIdx]?.value === 'column') colIdx++;
+          if (action[colIdx]?.value === 'if' && action[colIdx + 1]?.value === 'not' && action[colIdx + 2]?.value === 'exists') {
+            colIdx += 3;
+          }
+          if (action[colIdx]?.value === 'variant' && action[colIdx + 1]?.value === 'text') {
+            const inlineRefIdx = action.findIndex((t) => t.value === 'references');
+            if (inlineRefIdx !== -1) {
+              const inlineRef = parseQualifiedTableTarget(action, inlineRefIdx + 1);
+              if (inlineRef && isTableTarget(inlineRef, 'variants')) {
+                const afterRef = inlineRef.nextIndex;
+                if (action[afterRef]?.value === '(' && action[afterRef + 1]?.value === 'code' && action[afterRef + 2]?.value === ')') {
+                  const inlineConIdx = action.findIndex((t) => t.value === 'constraint');
+                  const inlineConName = inlineConIdx !== -1 ? action[inlineConIdx + 1]?.value : null;
+                  const name = inlineConName ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_fkey');
+                  constraintNamespace.add(name);
+                  activeFks.add(name);
+                  continue;
+                }
+              }
+            }
+          }
+
+          // Register any other explicitly named constraint
+          if (explicitName !== null) {
+            constraintNamespace.add(explicitName);
+          }
+        }
+        continue;
+      }
+
+      // -----------------------------------------------------------------------
+      // 3. CREATE TABLE [IF NOT EXISTS] studies (...)
+      // -----------------------------------------------------------------------
+      if (stmt[0].value === 'create' && stmt[1].value === 'table') {
+        let idx = 2;
+        if (stmt[idx]?.value === 'if' && stmt[idx + 1]?.value === 'not' && stmt[idx + 2]?.value === 'exists') {
+          idx += 3;
+        }
+        const ref = parseQualifiedTableTarget(stmt, idx);
+        if (ref === null || !isTableTarget(ref, 'studies')) {
+          continue;
+        }
+
+        // Fresh table creation clears prior state
+        constraintNamespace.clear();
+        activeChecks.clear();
+        activeFks.clear();
+
+        const openParen = stmt.findIndex((t) => t.type === 'punct' && t.value === '(');
+        if (openParen === -1) continue;
+
+        const bodyTokens = stmt.slice(openParen + 1);
+        const clauses = splitAlterActions(bodyTokens);
+
+        for (const clause of clauses) {
+          let explicitName = null;
+          let cIdx = 0;
+          if (clause[cIdx]?.value === 'constraint') {
+            explicitName = clause[cIdx + 1]?.value ?? null;
+            cIdx += 2;
+          }
+
+          // Table-level CHECK (variant IN (...))
+          const checkIdx = clause.findIndex((t) => t.value === 'check');
+          if (checkIdx !== -1 && clause[checkIdx + 1]?.value === '(') {
+            let pIdx = checkIdx + 2;
+            if (clause[pIdx]?.value === 'variant' && clause[pIdx + 1]?.value === 'in' && clause[pIdx + 2]?.value === '(') {
+              const variantTokens = [];
+              let vIdx = pIdx + 3;
+              while (vIdx < clause.length && clause[vIdx]?.value !== ')') {
+                if (clause[vIdx].type === 'string') {
+                  variantTokens.push(clause[vIdx].value);
+                }
+                vIdx++;
+              }
+              const name = explicitName ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_check');
+              constraintNamespace.add(name);
+              activeChecks.set(name, { file, name, variants: variantTokens });
+              continue;
+            }
+          }
+
+          // Table-level FOREIGN KEY (variant) REFERENCES [public.]variants(code)
+          const fkIdx = clause.findIndex((t) => t.value === 'foreign');
+          if (
+            fkIdx !== -1 &&
+            clause[fkIdx + 1]?.value === 'key' &&
+            clause[fkIdx + 2]?.value === '(' &&
+            clause[fkIdx + 3]?.value === 'variant' &&
+            clause[fkIdx + 4]?.value === ')'
+          ) {
+            let rIdx = fkIdx + 5;
+            if (clause[rIdx]?.value === 'references') {
+              const refTarget = parseQualifiedTableTarget(clause, rIdx + 1);
+              if (refTarget && isTableTarget(refTarget, 'variants')) {
+                const afterRef = refTarget.nextIndex;
+                if (clause[afterRef]?.value === '(' && clause[afterRef + 1]?.value === 'code' && clause[afterRef + 2]?.value === ')') {
+                  const name = explicitName ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_fkey');
+                  constraintNamespace.add(name);
+                  activeFks.add(name);
+                  continue;
+                }
+              }
+            }
+          }
+
+          // Column-level: variant TEXT ...
+          if (clause[0]?.value === 'variant' && clause[1]?.value === 'text') {
+            const inlineCheckIdx = clause.findIndex((t) => t.value === 'check');
+            if (inlineCheckIdx !== -1 && clause[inlineCheckIdx + 1]?.value === '(') {
+              let pIdx = inlineCheckIdx + 2;
+              if (clause[pIdx]?.value === 'variant' && clause[pIdx + 1]?.value === 'in' && clause[pIdx + 2]?.value === '(') {
+                let inlineName = null;
+                if (inlineCheckIdx >= 2 && clause[inlineCheckIdx - 2]?.value === 'constraint') {
+                  inlineName = clause[inlineCheckIdx - 1]?.value;
+                }
+                const variantTokens = [];
+                let vIdx = pIdx + 3;
+                while (vIdx < clause.length && clause[vIdx]?.value !== ')') {
+                  if (clause[vIdx].type === 'string') {
+                    variantTokens.push(clause[vIdx].value);
+                  }
+                  vIdx++;
+                }
+                const name = inlineName ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_check');
+                constraintNamespace.add(name);
+                activeChecks.set(name, { file, name, variants: variantTokens });
+                continue;
+              }
+            }
+
+            const inlineRefIdx = clause.findIndex((t) => t.value === 'references');
+            if (inlineRefIdx !== -1) {
+              const inlineRef = parseQualifiedTableTarget(clause, inlineRefIdx + 1);
+              if (inlineRef && isTableTarget(inlineRef, 'variants')) {
+                const afterRef = inlineRef.nextIndex;
+                if (clause[afterRef]?.value === '(' && clause[afterRef + 1]?.value === 'code' && clause[afterRef + 2]?.value === ')') {
+                  const inlineConIdx = clause.findIndex((t) => t.value === 'constraint');
+                  const inlineConName = inlineConIdx !== -1 ? clause[inlineConIdx + 1]?.value : null;
+                  const name = inlineConName ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_fkey');
+                  constraintNamespace.add(name);
+                  activeFks.add(name);
+                  continue;
+                }
+              }
+            }
+          }
+
+          if (explicitName !== null) {
+            constraintNamespace.add(explicitName);
+          }
+        }
       }
     }
   }
-  return current;
+
+  let latestCheck = null;
+  for (const item of activeChecks.values()) {
+    latestCheck = item;
+  }
+
+  return {
+    check: latestCheck,
+    hasForeignKey: activeFks.size > 0,
+  };
 }
 
-const nextImplicitFkName = (activeFks) => {
-  if (!activeFks.has(IMPLICIT_FK_CONSTRAINT_NAME)) {
-    return IMPLICIT_FK_CONSTRAINT_NAME;
-  }
-  let i = 1;
-  while (activeFks.has(`${IMPLICIT_FK_CONSTRAINT_NAME}${i}`)) {
-    i++;
-  }
-  return `${IMPLICIT_FK_CONSTRAINT_NAME}${i}`;
-};
+/**
+ * Replays all migrations to compute the effective CHECK constraint governing `studies.variant`.
+ *
+ * @param {string} [dir=MIGRATIONS_DIR] Path to the migrations directory.
+ * @returns {{ file: string, name: string, variants: string[] } | null} The active CHECK constraint or null if none exists.
+ */
+export function effectiveStudyVariantConstraint(dir = MIGRATIONS_DIR) {
+  return replayStudiesSchema(dir).check;
+}
 
 /**
- * Returns true if the effective migration schema defines an active foreign key on studies.variant referencing variants(code).
+ * Replays all migrations to determine whether `studies.variant` has an active foreign key
+ * referencing `variants(code)`.
  *
  * @param {string} dir The migrations directory to replay.
  * @returns {boolean} Whether studies.variant has an active foreign key referencing variants(code).
  */
 export function effectiveStudyVariantForeignKey(dir = MIGRATIONS_DIR) {
-  const activeFks = new Set();
-  for (const file of migrationFiles(dir)) {
-    const sql = stripComments(readFileSync(join(dir, file), 'utf8'), 'sql');
-    for (const statement of splitStatements(sql)) {
-      if (/^\s*DROP\s+TABLE\b[^;]*?(?:\bvariants\b|"variants")[^;]*?\bCASCADE\b/i.test(statement)) {
-        activeFks.clear();
-        continue;
-      }
-
-      if (!TARGETS_STUDIES.test(statement)) continue;
-
-      if (/^\s*DROP\s+TABLE/i.test(statement) || /RENAME\s+TO\b/i.test(statement)) {
-        activeFks.clear();
-        continue;
-      }
-
-      const renamed = /RENAME\s+CONSTRAINT\s+"?(\w+)"?\s+TO\s+"?(\w+)"?/i.exec(statement);
-      if (renamed !== null && activeFks.has(normalise(renamed[1]))) {
-        activeFks.delete(normalise(renamed[1]));
-        activeFks.add(normalise(renamed[2]));
-      }
-
-      for (const m of statement.matchAll(/DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?"?(\w+)"?/gi)) {
-        activeFks.delete(normalise(m[1]));
-      }
-      if (/(?:DROP\s+COLUMN(?:\s+IF\s+EXISTS)?|RENAME(?:\s+COLUMN)?)\s+"?variant"?/i.test(statement)) {
-        activeFks.clear();
-      }
-
-      for (const m of statement.matchAll(VARIANT_FK_TABLE)) {
-        const name = m[1] ? normalise(m[1]) : nextImplicitFkName(activeFks);
-        activeFks.add(name);
-      }
-      for (const m of statement.matchAll(VARIANT_FK_INLINE)) {
-        const name = m[1] ? normalise(m[1]) : nextImplicitFkName(activeFks);
-        activeFks.add(name);
-      }
-    }
-  }
-  return activeFks.size > 0;
+  return replayStudiesSchema(dir).hasForeignKey;
 }
 
 /** The root. Everything else is measured against this one. */
