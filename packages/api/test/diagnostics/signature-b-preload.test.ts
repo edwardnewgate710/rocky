@@ -28,6 +28,14 @@ interface DiagnosticRecord {
   readonly activeResources?: Record<string, number> | null;
 }
 
+/**
+ * Executes a synthetic test script under the diagnostic preload in an isolated temporary directory.
+ * Sets `cwd: generatedLogDir` and disables core dumps on POSIX (`ulimit -c 0`) to prevent crash artifacts.
+ *
+ * @param {string} code - JavaScript code to execute in the child process.
+ * @param {Record<string, string>} [envOverride] - Optional environment variables to override.
+ * @returns {{ status: number | null, signal: NodeJS.Signals | null, logDir: string, records: readonly DiagnosticRecord[] }}
+ */
 function runWithPreload(
   code: string,
   envOverride: Record<string, string> = {},
@@ -42,15 +50,29 @@ function runWithPreload(
   const scriptPath = path.join(generatedLogDir, 'test-target.cjs');
   fs.writeFileSync(scriptPath, code, 'utf8');
 
-  const result = spawnSync(process.execPath, ['--require', PRELOAD_PATH, scriptPath], {
-    env: {
-      ...process.env,
-      SIGB_LOG_DIR: targetLogDir,
-      ...envOverride,
-    },
-    encoding: 'utf8',
-    windowsHide: true,
-  });
+  const args = ['--require', PRELOAD_PATH, scriptPath];
+  const env = {
+    ...process.env,
+    SIGB_LOG_DIR: targetLogDir,
+    ...envOverride,
+  };
+
+  // Set cwd to generatedLogDir and disable core dumping on POSIX to prevent routine test runs
+  // from leaving crash files or triggering host crash reporting.
+  const result =
+    process.platform !== 'win32'
+      ? spawnSync('sh', ['-c', 'ulimit -c 0 2>/dev/null; exec "$@"', 'sh', process.execPath, ...args], {
+          cwd: generatedLogDir,
+          env,
+          encoding: 'utf8',
+          windowsHide: true,
+        })
+      : spawnSync(process.execPath, args, {
+          cwd: generatedLogDir,
+          env,
+          encoding: 'utf8',
+          windowsHide: true,
+        });
 
   const files = fs.existsSync(targetLogDir)
     ? fs.readdirSync(targetLogDir).filter((f) => f.endsWith('.jsonl'))
