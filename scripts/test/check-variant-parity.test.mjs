@@ -366,6 +366,23 @@ test('effectiveStudyVariantForeignKey tracks multiple foreign keys independently
   }
 });
 
+test('effectiveStudyVariantForeignKey tracks multiple foreign keys added in a single comma-separated statement', () => {
+  const dir = migrations({
+    '0001_multi_add.sql': `ALTER TABLE studies
+      ADD CONSTRAINT fk_alpha FOREIGN KEY (variant) REFERENCES variants(code),
+      ADD CONSTRAINT fk_beta FOREIGN KEY (variant) REFERENCES variants(code);`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dir), true);
+    writeFileSync(join(dir, '0002_drop_alpha.sql'), `ALTER TABLE studies DROP CONSTRAINT fk_alpha;`, 'utf8');
+    assert.equal(effectiveStudyVariantForeignKey(dir), true);
+    writeFileSync(join(dir, '0003_drop_beta.sql'), `ALTER TABLE studies DROP CONSTRAINT fk_beta;`, 'utf8');
+    assert.equal(effectiveStudyVariantForeignKey(dir), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('effectiveStudyVariantForeignKey recognizes inline column references on studies', () => {
   const dir = migrations({
     '0001_inline.sql': `CREATE TABLE studies (

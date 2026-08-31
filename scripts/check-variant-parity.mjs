@@ -256,11 +256,11 @@ const VARIANT_CHECK = /(?:CONSTRAINT\s+"?(\w+)"?\s+)?CHECK\s*\(\s*variant\s+IN\s
 
 /** Table-level `FOREIGN KEY (variant) REFERENCES variants(code)`. */
 const VARIANT_FK_TABLE =
-  /(?:CONSTRAINT\s+"?(\w+)"?\s+)?FOREIGN\s+KEY\s*\(\s*"?variant"?\s*\)\s*REFERENCES\s+variants\s*\(\s*code\s*\)/i;
+  /(?:CONSTRAINT\s+"?(\w+)"?\s+)?FOREIGN\s+KEY\s*\(\s*"?variant"?\s*\)\s*REFERENCES\s+variants\s*\(\s*code\s*\)/gi;
 
 /** Inline-column `variant TEXT ... [CONSTRAINT name] REFERENCES variants(code)`. */
 const VARIANT_FK_INLINE =
-  /(?:ADD\s+COLUMN|CREATE\s+TABLE)\s+[^;]*?\bvariant\b\s+TEXT\b[^,;)]*?(?:CONSTRAINT\s+"?(\w+)"?\s+)?REFERENCES\s+variants\s*\(\s*code\s*\)/i;
+  /(?:ADD\s+COLUMN|CREATE\s+TABLE)\s+[^;]*?\bvariant\b\s+TEXT\b[^,;)]*?(?:CONSTRAINT\s+"?(\w+)"?\s+)?REFERENCES\s+variants\s*\(\s*code\s*\)/gi;
 
 const normalise = (name) => name.replace(/"/g, '').toLowerCase();
 
@@ -340,12 +340,11 @@ export function effectiveStudyVariantForeignKey(dir = MIGRATIONS_DIR) {
         activeFks.clear();
       }
 
-      const tableMatch = VARIANT_FK_TABLE.exec(statement);
-      const inlineMatch = VARIANT_FK_INLINE.exec(statement);
-      if (tableMatch !== null) {
-        activeFks.add(normalise(tableMatch[1] ?? IMPLICIT_FK_CONSTRAINT_NAME));
-      } else if (inlineMatch !== null) {
-        activeFks.add(normalise(inlineMatch[1] ?? IMPLICIT_FK_CONSTRAINT_NAME));
+      for (const m of statement.matchAll(VARIANT_FK_TABLE)) {
+        activeFks.add(normalise(m[1] ?? IMPLICIT_FK_CONSTRAINT_NAME));
+      }
+      for (const m of statement.matchAll(VARIANT_FK_INLINE)) {
+        activeFks.add(normalise(m[1] ?? IMPLICIT_FK_CONSTRAINT_NAME));
       }
     }
   }
