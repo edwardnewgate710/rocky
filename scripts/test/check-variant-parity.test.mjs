@@ -525,6 +525,20 @@ test('effectiveStudyVariantForeignKey and effectiveStudyVariantConstraint clear 
   } finally {
     rmSync(dropVariantsCascadeDir, { recursive: true, force: true });
   }
+
+  const dropMultiVariantsCascadeDir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_drop_multi_cascade.sql': `DROP TABLE archive, variants CASCADE;`,
+    '0003_recreate_unconstrained.sql': `CREATE TABLE variants (code TEXT PRIMARY KEY);`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dropMultiVariantsCascadeDir), false);
+  } finally {
+    rmSync(dropMultiVariantsCascadeDir, { recursive: true, force: true });
+  }
 });
 
 test('effectiveStudyVariantForeignKey recognizes inline column references on studies', () => {

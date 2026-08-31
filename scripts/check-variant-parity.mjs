@@ -342,7 +342,7 @@ export function effectiveStudyVariantForeignKey(dir = MIGRATIONS_DIR) {
   for (const file of migrationFiles(dir)) {
     const sql = stripComments(readFileSync(join(dir, file), 'utf8'), 'sql');
     for (const statement of splitStatements(sql)) {
-      if (/^\s*DROP\s+TABLE(?:\s+IF\s+EXISTS)?\s+(?:ONLY\s+)?"?variants"?\s+CASCADE\b/i.test(statement)) {
+      if (/^\s*DROP\s+TABLE\b[^;]*?(?:\bvariants\b|"variants")[^;]*?\bCASCADE\b/i.test(statement)) {
         activeFks.clear();
         continue;
       }
