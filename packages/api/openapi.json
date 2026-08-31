@@ -14273,13 +14273,17 @@
             "type": [
               "integer",
               "null"
-            ]
+            ],
+            "minimum": 0,
+            "maximum": 4000
           },
           "maxRating": {
             "type": [
               "integer",
               "null"
-            ]
+            ],
+            "minimum": 0,
+            "maximum": 4000
           }
         },
         "additionalProperties": false

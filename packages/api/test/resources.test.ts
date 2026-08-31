@@ -34,6 +34,63 @@ test('seek creation validates the time control and variant', async () => {
   }
 });
 
+test('seek rating filters enforce the published integer interval', async () => {
+  const h = await startHarness();
+  try {
+    const { token } = await h.makeUser('seek-rating-contract', ['user']);
+    const invalidCases = [
+      { label: 'minimum below zero', minRating: -1 },
+      { label: 'minimum above 4000', minRating: 4001 },
+      { label: 'maximum below zero', maxRating: -1 },
+      { label: 'maximum above 4000', maxRating: 4001 },
+      { label: 'fractional minimum', minRating: 1500.5 },
+      { label: 'fractional maximum', maxRating: 1500.5 },
+    ] as const;
+
+    for (const { label, ...ratingFilter } of invalidCases) {
+      const response = await h.json('POST', '/v1/seeks', {
+        token,
+        body: { variant: 'standard', timeControl: INC, ...ratingFilter },
+      });
+      assert.equal(response.status, 422, label);
+    }
+
+    const boundaries = await h.json('POST', '/v1/seeks', {
+      token,
+      body: { variant: 'standard', timeControl: INC, minRating: 0, maxRating: 4000 },
+    });
+    assert.equal(boundaries.status, 201);
+    assert.equal(boundaries.body.minRating, 0);
+    assert.equal(boundaries.body.maxRating, 4000);
+  } finally {
+    await h.close();
+  }
+});
+
+test('seek rating filters preserve explicit and omitted no-bound semantics', async () => {
+  const h = await startHarness();
+  try {
+    const { token } = await h.makeUser('seek-rating-no-bound', ['user']);
+    const explicitNulls = await h.json('POST', '/v1/seeks', {
+      token,
+      body: { variant: 'standard', timeControl: INC, minRating: null, maxRating: null },
+    });
+    assert.equal(explicitNulls.status, 201);
+    assert.equal(explicitNulls.body.minRating, null);
+    assert.equal(explicitNulls.body.maxRating, null);
+
+    const omitted = await h.json('POST', '/v1/seeks', {
+      token,
+      body: { variant: 'standard', timeControl: INC },
+    });
+    assert.equal(omitted.status, 201);
+    assert.equal(omitted.body.minRating, null);
+    assert.equal(omitted.body.maxRating, null);
+  } finally {
+    await h.close();
+  }
+});
+
 test('a created seek is listed with its derived speed', async () => {
   const h = await startHarness();
   try {
