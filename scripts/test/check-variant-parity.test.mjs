@@ -479,7 +479,7 @@ test('effectiveStudyVariantForeignKey reuses base unnamed constraint name in add
   }
 });
 
-test('effectiveStudyVariantForeignKey and effectiveStudyVariantConstraint clear state when studies table is dropped or renamed', () => {
+test('DROP TABLE studies clears constraint and foreign key state', () => {
   const dropDir = migrations({
     '0001_initial.sql': `CREATE TABLE studies (
       id UUID PRIMARY KEY,
@@ -497,7 +497,9 @@ test('effectiveStudyVariantForeignKey and effectiveStudyVariantConstraint clear 
   } finally {
     rmSync(dropDir, { recursive: true, force: true });
   }
+});
 
+test('ALTER TABLE studies RENAME TO clears constraint and foreign key state', () => {
   const renameDir = migrations({
     '0001_initial.sql': `CREATE TABLE studies (
       id UUID PRIMARY KEY,
@@ -515,7 +517,9 @@ test('effectiveStudyVariantForeignKey and effectiveStudyVariantConstraint clear 
   } finally {
     rmSync(renameDir, { recursive: true, force: true });
   }
+});
 
+test('DROP TABLE variants CASCADE clears active studies foreign key', () => {
   const dropVariantsCascadeDir = migrations({
     '0001_initial.sql': `CREATE TABLE studies (
       id UUID PRIMARY KEY,
@@ -529,7 +533,9 @@ test('effectiveStudyVariantForeignKey and effectiveStudyVariantConstraint clear 
   } finally {
     rmSync(dropVariantsCascadeDir, { recursive: true, force: true });
   }
+});
 
+test('DROP TABLE multi-table containing variants with CASCADE clears active studies foreign key', () => {
   const dropMultiVariantsCascadeDir = migrations({
     '0001_initial.sql': `CREATE TABLE studies (
       id UUID PRIMARY KEY,
@@ -543,7 +549,9 @@ test('effectiveStudyVariantForeignKey and effectiveStudyVariantConstraint clear 
   } finally {
     rmSync(dropMultiVariantsCascadeDir, { recursive: true, force: true });
   }
+});
 
+test('DROP TABLE public.studies with schema qualifier clears state', () => {
   const dropPublicStudiesDir = migrations({
     '0001_initial.sql': `CREATE TABLE studies (
       id UUID PRIMARY KEY,
@@ -558,7 +566,9 @@ test('effectiveStudyVariantForeignKey and effectiveStudyVariantConstraint clear 
   } finally {
     rmSync(dropPublicStudiesDir, { recursive: true, force: true });
   }
+});
 
+test('DROP TABLE multi-table containing studies clears state', () => {
   const dropMultiStudiesDir = migrations({
     '0001_initial.sql': `CREATE TABLE studies (
       id UUID PRIMARY KEY,
@@ -573,7 +583,9 @@ test('effectiveStudyVariantForeignKey and effectiveStudyVariantConstraint clear 
   } finally {
     rmSync(dropMultiStudiesDir, { recursive: true, force: true });
   }
+});
 
+test('DROP TABLE variants.archive CASCADE in another schema does not clear public.variants foreign keys', () => {
   const dropVariantsSchemaArchiveDir = migrations({
     '0001_initial.sql': `CREATE TABLE studies (
       id UUID PRIMARY KEY,
@@ -582,12 +594,13 @@ test('effectiveStudyVariantForeignKey and effectiveStudyVariantConstraint clear 
     '0002_drop_other_schema.sql': `DROP TABLE variants.archive CASCADE;`,
   });
   try {
-    // variants.archive drops table archive in schema variants; canonical public.variants FK remains intact
     assert.equal(effectiveStudyVariantForeignKey(dropVariantsSchemaArchiveDir), true);
   } finally {
     rmSync(dropVariantsSchemaArchiveDir, { recursive: true, force: true });
   }
+});
 
+test('DROP TABLE "archived variants" CASCADE with quoted name does not clear public.variants foreign keys', () => {
   const dropQuotedVariantsNameDir = migrations({
     '0001_initial.sql': `CREATE TABLE studies (
       id UUID PRIMARY KEY,
@@ -596,12 +609,13 @@ test('effectiveStudyVariantForeignKey and effectiveStudyVariantConstraint clear 
     '0002_drop_other_table.sql': `DROP TABLE "archived variants" CASCADE;`,
   });
   try {
-    // "archived variants" is not the variants table; public.variants FK remains intact
     assert.equal(effectiveStudyVariantForeignKey(dropQuotedVariantsNameDir), true);
   } finally {
     rmSync(dropQuotedVariantsNameDir, { recursive: true, force: true });
   }
+});
 
+test('DROP TABLE public.variants CASCADE with schema qualification clears active studies foreign key', () => {
   const dropPublicVariantsCascadeDir = migrations({
     '0001_initial.sql': `CREATE TABLE studies (
       id UUID PRIMARY KEY,
@@ -615,7 +629,9 @@ test('effectiveStudyVariantForeignKey and effectiveStudyVariantConstraint clear 
   } finally {
     rmSync(dropPublicVariantsCascadeDir, { recursive: true, force: true });
   }
+});
 
+test('DROP TABLE variants RESTRICT does not cascade to clear active studies foreign key', () => {
   const dropVariantsRestrictDir = migrations({
     '0001_initial.sql': `CREATE TABLE studies (
       id UUID PRIMARY KEY,
@@ -624,7 +640,6 @@ test('effectiveStudyVariantForeignKey and effectiveStudyVariantConstraint clear 
     '0002_drop_variants_restrict.sql': `DROP TABLE variants RESTRICT;`,
   });
   try {
-    // RESTRICT does not cascade to dependent FKs
     assert.equal(effectiveStudyVariantForeignKey(dropVariantsRestrictDir), true);
   } finally {
     rmSync(dropVariantsRestrictDir, { recursive: true, force: true });

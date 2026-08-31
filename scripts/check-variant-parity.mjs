@@ -686,14 +686,14 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
             }
           }
 
-          // Action G: ADD [COLUMN] [IF NOT EXISTS] variant TEXT ... [CONSTRAINT <name>] REFERENCES [public.]variants(code)
+          // Action G: ADD [COLUMN] [IF NOT EXISTS] variant <TYPE> ... [CONSTRAINT <name>] REFERENCES [public.]variants(code)
           let colIdx = 0;
           if (action[colIdx]?.value === 'add') colIdx++;
           if (action[colIdx]?.value === 'column') colIdx++;
           if (action[colIdx]?.value === 'if' && action[colIdx + 1]?.value === 'not' && action[colIdx + 2]?.value === 'exists') {
             colIdx += 3;
           }
-          if (action[colIdx]?.value === 'variant' && action[colIdx + 1]?.value === 'text') {
+          if (action[colIdx]?.value === 'variant') {
             const inlineRefIdx = action.findIndex((t) => t.value === 'references');
             if (inlineRefIdx !== -1) {
               const inlineRef = parseQualifiedTableTarget(action, inlineRefIdx + 1);
@@ -795,8 +795,8 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
             }
           }
 
-          // Column-level: variant TEXT ...
-          if (clause[0]?.value === 'variant' && clause[1]?.value === 'text') {
+          // Column-level: variant <TYPE> ...
+          if (clause[0]?.value === 'variant') {
             const inlineCheckIdx = clause.findIndex((t) => t.value === 'check');
             if (inlineCheckIdx !== -1 && clause[inlineCheckIdx + 1]?.value === '(') {
               let pIdx = inlineCheckIdx + 2;
@@ -852,6 +852,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
 
   return {
     check: latestCheck,
+    checks: Array.from(activeChecks.values()),
     hasForeignKey: activeFks.size > 0,
   };
 }
@@ -936,16 +937,15 @@ export function collectMirrors(dir = MIGRATIONS_DIR) {
     file: dir,
     variants: effectiveLookupVariants(dir),
   });
-  const study = effectiveStudyVariantConstraint(dir);
-  const hasStudyVariantFk = effectiveStudyVariantForeignKey(dir);
-  if (study !== null) {
+  const replayed = replayStudiesSchema(dir);
+  for (const checkItem of replayed.checks) {
     mirrors.push({
-      label: '`studies.variant` CHECK constraint, after all migrations',
-      file: join(dir, study.file),
-      variants: study.variants,
+      label: `\`studies.variant\` CHECK constraint (${checkItem.name}), after all migrations`,
+      file: join(dir, checkItem.file),
+      variants: checkItem.variants,
     });
   }
-  return { mirrors, studyConstraint: study, hasStudyVariantFk };
+  return { mirrors, studyConstraint: replayed.check, hasStudyVariantFk: replayed.hasForeignKey };
 }
 
 function main() {
