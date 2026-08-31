@@ -238,7 +238,7 @@ export function effectiveLookupVariants(dir = MIGRATIONS_DIR) {
  * Raised in the CodeRabbit review of PR #141.
  */
 const TARGETS_STUDIES =
-  /^\s*(?:CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?|ALTER\s+TABLE(?:\s+IF\s+EXISTS)?)\s+(?:ONLY\s+)?"?studies"?[\s(]/i;
+  /^\s*(?:CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?|ALTER\s+TABLE(?:\s+IF\s+EXISTS)?|DROP\s+TABLE(?:\s+IF\s+EXISTS)?)\s+(?:ONLY\s+)?"?studies"?(?:[\s(;]|$)/i;
 
 /**
  * The name PostgreSQL gives a `CHECK` on `studies.variant` that was written without one.
@@ -277,6 +277,11 @@ export function effectiveStudyVariantConstraint(dir = MIGRATIONS_DIR) {
     // Raised in the CodeRabbit review of PR #141.
     for (const statement of splitStatements(sql)) {
       if (!TARGETS_STUDIES.test(statement)) continue;
+
+      if (/^\s*DROP\s+TABLE/i.test(statement) || /RENAME\s+TO\b/i.test(statement)) {
+        current = null;
+        continue;
+      }
 
       // A rename would leave every name tracked below pointing at something that no longer answers
       // to it, and the drop that follows would look like an unrelated constraint. There is no
@@ -326,6 +331,11 @@ export function effectiveStudyVariantForeignKey(dir = MIGRATIONS_DIR) {
     const sql = stripComments(readFileSync(join(dir, file), 'utf8'), 'sql');
     for (const statement of splitStatements(sql)) {
       if (!TARGETS_STUDIES.test(statement)) continue;
+
+      if (/^\s*DROP\s+TABLE/i.test(statement) || /RENAME\s+TO\b/i.test(statement)) {
+        activeFks.clear();
+        continue;
+      }
 
       const renamed = /RENAME\s+CONSTRAINT\s+"?(\w+)"?\s+TO\s+"?(\w+)"?/i.exec(statement);
       if (renamed !== null && activeFks.has(normalise(renamed[1]))) {

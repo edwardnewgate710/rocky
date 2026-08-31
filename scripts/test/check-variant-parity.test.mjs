@@ -399,6 +399,44 @@ test('effectiveStudyVariantForeignKey clears active foreign keys when variant co
   }
 });
 
+test('effectiveStudyVariantForeignKey and effectiveStudyVariantConstraint clear state when studies table is dropped or renamed', () => {
+  const dropDir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_drop_table.sql': `DROP TABLE studies;`,
+    '0003_recreate_unconstrained.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL
+    );`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dropDir), false);
+    assert.equal(effectiveStudyVariantConstraint(dropDir), null);
+  } finally {
+    rmSync(dropDir, { recursive: true, force: true });
+  }
+
+  const renameDir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_rename_table.sql': `ALTER TABLE studies RENAME TO old_studies;`,
+    '0003_recreate_unconstrained.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL
+    );`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(renameDir), false);
+    assert.equal(effectiveStudyVariantConstraint(renameDir), null);
+  } finally {
+    rmSync(renameDir, { recursive: true, force: true });
+  }
+});
+
 test('effectiveStudyVariantForeignKey recognizes inline column references on studies', () => {
   const dir = migrations({
     '0001_inline.sql': `CREATE TABLE studies (
