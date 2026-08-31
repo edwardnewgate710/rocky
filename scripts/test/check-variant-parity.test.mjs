@@ -348,6 +348,24 @@ test('effectiveStudyVariantForeignKey tracks named foreign keys through drop and
   }
 });
 
+test('effectiveStudyVariantForeignKey tracks multiple foreign keys independently when one is dropped', () => {
+  const dir = migrations({
+    '0001_fk1.sql': `ALTER TABLE studies ADD CONSTRAINT fk_one FOREIGN KEY (variant) REFERENCES variants(code);`,
+    '0002_fk2.sql': `ALTER TABLE studies ADD CONSTRAINT fk_two FOREIGN KEY (variant) REFERENCES variants(code);`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dir), true);
+    // Dropping fk_one leaves fk_two active
+    writeFileSync(join(dir, '0003_drop_one.sql'), `ALTER TABLE studies DROP CONSTRAINT fk_one;`, 'utf8');
+    assert.equal(effectiveStudyVariantForeignKey(dir), true);
+    // Dropping fk_two clears all
+    writeFileSync(join(dir, '0004_drop_two.sql'), `ALTER TABLE studies DROP CONSTRAINT fk_two;`, 'utf8');
+    assert.equal(effectiveStudyVariantForeignKey(dir), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('effectiveStudyVariantForeignKey recognizes inline column references on studies', () => {
   const dir = migrations({
     '0001_inline.sql': `CREATE TABLE studies (

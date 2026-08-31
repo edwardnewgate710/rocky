@@ -325,41 +325,36 @@ export function effectiveStudyVariantConstraint(dir = MIGRATIONS_DIR) {
  * @returns {boolean} Whether studies.variant has an active foreign key referencing variants(code).
  */
 export function effectiveStudyVariantForeignKey(dir = MIGRATIONS_DIR) {
-  let activeFk = null;
+  const activeFks = new Set();
   for (const file of migrationFiles(dir)) {
     const sql = stripComments(readFileSync(join(dir, file), 'utf8'), 'sql');
     for (const statement of splitStatements(sql)) {
       if (!TARGETS_STUDIES.test(statement)) continue;
 
       const renamed = /RENAME\s+CONSTRAINT\s+"?(\w+)"?\s+TO\s+"?(\w+)"?/i.exec(statement);
-      if (renamed !== null && activeFk !== null && normalise(renamed[1]) === activeFk.name) {
-        activeFk = { file, name: normalise(renamed[2]) };
+      if (renamed !== null && activeFks.has(normalise(renamed[1]))) {
+        activeFks.delete(normalise(renamed[1]));
+        activeFks.add(normalise(renamed[2]));
       }
 
       const dropped = /DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?"?(\w+)"?/i.exec(statement);
-      if (dropped !== null && activeFk !== null && normalise(dropped[1]) === activeFk.name) {
-        activeFk = null;
+      if (dropped !== null) {
+        activeFks.delete(normalise(dropped[1]));
       }
       if (/DROP\s+COLUMN\s+(?:IF\s+EXISTS\s+)?"?variant"?/i.test(statement)) {
-        activeFk = null;
+        activeFks.clear();
       }
 
       const tableMatch = VARIANT_FK_TABLE.exec(statement);
       const inlineMatch = VARIANT_FK_INLINE.exec(statement);
       if (tableMatch !== null) {
-        activeFk = {
-          file,
-          name: normalise(tableMatch[1] ?? IMPLICIT_FK_CONSTRAINT_NAME),
-        };
+        activeFks.add(normalise(tableMatch[1] ?? IMPLICIT_FK_CONSTRAINT_NAME));
       } else if (inlineMatch !== null) {
-        activeFk = {
-          file,
-          name: normalise(inlineMatch[1] ?? IMPLICIT_FK_CONSTRAINT_NAME),
-        };
+        activeFks.add(normalise(inlineMatch[1] ?? IMPLICIT_FK_CONSTRAINT_NAME));
       }
     }
   }
-  return activeFk !== null;
+  return activeFks.size > 0;
 }
 
 /** The root. Everything else is measured against this one. */
