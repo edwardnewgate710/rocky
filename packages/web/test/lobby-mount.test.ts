@@ -886,6 +886,12 @@ test('mountLobby: minimum above maximum blocks submission and owns the relations
   assert.equal(minimum.getAttribute('aria-invalid'), 'true');
   assert.equal(maximum.getAttribute('aria-invalid'), null);
   assert.equal(form.querySelector('#cg-rating-error')?.textContent, 'Minimum rating must not exceed maximum rating.');
+
+  maximum.value = '1900';
+  maximum.dispatchEvent(new Event('input'));
+  assert.equal(form.querySelector('#cg-rating-error')?.hidden, true);
+  assert.equal(minimum.getAttribute('aria-invalid'), null);
+  assert.equal(maximum.getAttribute('aria-invalid'), null);
 });
 
 test('mountLobby: rating feedback is isolated from unrelated choices and custom-time feedback', async () => {

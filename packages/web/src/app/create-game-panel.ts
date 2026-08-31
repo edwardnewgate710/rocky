@@ -364,8 +364,8 @@ export class CreateGamePanel {
     }
     this.customMinutes.addEventListener('input', () => this.clearCustomError(this.customMinutes));
     this.customIncrement.addEventListener('input', () => this.clearCustomError(this.customIncrement));
-    this.minRating.addEventListener('input', () => this.clearRatingError(this.minRating));
-    this.maxRating.addEventListener('input', () => this.clearRatingError(this.maxRating));
+    this.minRating.addEventListener('input', () => this.clearRatingError());
+    this.maxRating.addEventListener('input', () => this.clearRatingError());
     this.form.addEventListener('submit', (event) => {
       event.preventDefault();
       void this.submit();
@@ -632,16 +632,11 @@ export class CreateGamePanel {
   }
 
   /** Clear only the rating validation channel, preserving custom-time feedback. */
-  private clearRatingError(input?: HTMLInputElement): void {
-    if (input && !input.hasAttribute('aria-invalid')) return;
+  private clearRatingError(): void {
     this.ratingError.textContent = '';
     this.ratingError.hidden = true;
-    if (input) {
-      input.removeAttribute('aria-invalid');
-    } else {
-      this.minRating.removeAttribute('aria-invalid');
-      this.maxRating.removeAttribute('aria-invalid');
-    }
+    this.minRating.removeAttribute('aria-invalid');
+    this.maxRating.removeAttribute('aria-invalid');
   }
 
 }
