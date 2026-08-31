@@ -288,8 +288,9 @@ export class CreateGamePanel {
     const selected = this.readChecked('cg-time');
     const mode = this.readChecked('cg-mode') === 'rated' ? 'rated' : 'casual';
     if (selected === CUSTOM_PRESET_ID) {
-      const minutes = Number(this.customMinutes.value);
-      const increment = Number(this.customIncrement.value);
+      const minutes = this.customMinutes.value.trim() === '' ? Number.NaN : Number(this.customMinutes.value);
+      const increment =
+        this.customIncrement.value.trim() === '' ? Number.NaN : Number(this.customIncrement.value);
       const validation = validateCustomTime(minutes, increment);
       if (!validation.ok) {
         this.showCustomError(validation.message, validation.field);
@@ -385,8 +386,10 @@ export class CreateGamePanel {
     this.form.setAttribute('aria-busy', String(pending));
     this.submitBtn.disabled = pending;
     this.cancelBtn.disabled = pending;
-    for (const radio of this.form.querySelectorAll<HTMLInputElement>('input[type="radio"]')) {
-      radio.disabled = pending;
+    for (const name of ['cg-time', 'cg-mode']) {
+      for (const radio of this.form.querySelectorAll<HTMLInputElement>(`input[name="${name}"]`)) {
+        radio.disabled = pending;
+      }
     }
     this.syncTimeSelection(false);
     this.submitBtn.textContent = pending ? 'Creating…' : 'Create seek';

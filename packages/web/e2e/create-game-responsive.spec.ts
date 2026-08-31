@@ -133,6 +133,14 @@ test('Custom validates before request and preserves exact integer-millisecond pa
     'Minutes must be between 0.5 and 180 in 0.5-minute steps.',
   );
 
+  await form.locator('#cg-minutes').fill('5');
+  await form.locator('#cg-increment').fill('');
+  await form.locator('.cg-submit').click();
+  await expect(form.locator('#cg-increment')).toHaveAttribute('aria-invalid', 'true');
+  await expect(form.locator('.cg-field-error')).toHaveText(
+    'Increment must be a whole number between 0 and 60 seconds.',
+  );
+
   await form.locator('#cg-minutes').fill('7.5');
   await form.locator('#cg-increment').fill('4');
   await form.locator('.cg-seg:has(input[value="rated"])').click();

@@ -887,6 +887,16 @@ test('mountLobby: invalid Custom values show a field error and send no request',
   assert.equal(minutes.getAttribute('aria-invalid'), 'true');
   assert.equal(form.querySelector('.cg-field-error')?.textContent, 'Minutes must be between 0.5 and 180 in 0.5-minute steps.');
   assert.equal(form.querySelector('.cg-submit')?.disabled, false);
+
+  minutes.value = '5';
+  const increment = form.querySelector<FakeDOMElement>('#cg-increment')!;
+  increment.value = '';
+  submit(form);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(createdSeeks.length, 0);
+  assert.equal(increment.getAttribute('aria-invalid'), 'true');
+  assert.equal(form.querySelector('.cg-field-error')?.textContent, 'Increment must be a whole number between 0 and 60 seconds.');
 });
 
 test('mountLobby: blocks duplicate seek submissions while the first is pending', async () => {
@@ -906,7 +916,12 @@ test('mountLobby: blocks duplicate seek submissions while the first is pending',
   assert.equal(form.querySelector('.cg-submit')?.disabled, true);
   assert.equal(form.querySelector('.cg-submit')?.textContent, 'Creating…');
   assert.equal(form.getAttribute('aria-busy'), 'true');
-  assert.ok(form.querySelectorAll<FakeDOMElement>('input[type="radio"]').every((input) => input.disabled));
+  const radios = [
+    ...form.querySelectorAll<FakeDOMElement>('input[name="cg-time"]'),
+    ...form.querySelectorAll<FakeDOMElement>('input[name="cg-mode"]'),
+  ];
+  assert.ok(radios.length > 0);
+  assert.ok(radios.every((input) => input.disabled));
   assert.equal(form.querySelector('.cg-cancel')?.disabled, true);
 
   pendingSeek.resolve(makeSeek({ id: 'pending-created' }));
