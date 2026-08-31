@@ -900,3 +900,78 @@ test('parseQualifiedTableTarget handles schema qualification and ONLY keyword', 
   assert.deepEqual(ref3, { schema: 'variants', table: 'archive', nextIndex: 3 });
 });
 
+test('inline column definition containing both CHECK and REFERENCES records both constraints', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL CONSTRAINT allowed_check CHECK (variant IN ('standard', 'atomic')) REFERENCES variants(code)
+    );`,
+    '0002_drop_check.sql': `ALTER TABLE studies DROP CONSTRAINT allowed_check;`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantConstraint(dir), null);
+    assert.equal(effectiveStudyVariantForeignKey(dir), true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('column definition containing multiple inline CHECK constraints records all of them', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL
+        CONSTRAINT check1 CHECK (variant IN ('standard', 'atomic'))
+        CONSTRAINT check2 CHECK (variant IN ('standard', 'atomic', 'chess960'))
+    );`,
+  });
+  try {
+    const replayed = replayStudiesSchema(dir);
+    assert.equal(replayed.checks.length, 2);
+    assert.equal(replayed.checks[0].name, 'check1');
+    assert.deepEqual(replayed.checks[0].variants, ['standard', 'atomic']);
+    assert.equal(replayed.checks[1].name, 'check2');
+    assert.deepEqual(replayed.checks[1].variants, ['standard', 'atomic', 'chess960']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('renaming column variant preserves existing constraint names in namespace for new unnamed FKs', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_rename_col.sql': `ALTER TABLE studies RENAME COLUMN variant TO old_variant;`,
+    '0003_add_new_variant.sql': `ALTER TABLE studies ADD COLUMN variant TEXT NOT NULL REFERENCES variants(code);`,
+    '0004_drop_new_fk.sql': `ALTER TABLE studies DROP CONSTRAINT studies_variant_fkey1;`,
+  });
+  try {
+    // The renamed column kept studies_variant_fkey, so the new FK was assigned studies_variant_fkey1.
+    // Dropping studies_variant_fkey1 clears the active FK on the new variant column.
+    assert.equal(effectiveStudyVariantForeignKey(dir), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('dropping column variant releases dependent constraint names from namespace', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_drop_col.sql': `ALTER TABLE studies DROP COLUMN variant;`,
+    '0003_readd_col.sql': `ALTER TABLE studies ADD COLUMN variant TEXT NOT NULL REFERENCES variants(code);`,
+    '0004_drop_readded_fk.sql': `ALTER TABLE studies DROP CONSTRAINT studies_variant_fkey;`,
+  });
+  try {
+    // Dropping the variant column released studies_variant_fkey, so re-adding allows reusing studies_variant_fkey.
+    assert.equal(effectiveStudyVariantForeignKey(dir), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+

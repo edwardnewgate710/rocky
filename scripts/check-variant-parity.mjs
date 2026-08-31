@@ -471,6 +471,61 @@ function splitAlterActions(tokens) {
 }
 
 /**
+ * Scans a column definition clause for CHECK and REFERENCES constraints on variant.
+ *
+ * @param {SqlToken[]} clause Tokens making up the column definition.
+ * @param {string} file Current migration filename.
+ * @param {Set<string>} constraintNamespace Set of active table constraint names.
+ * @param {Set<string>} variantConstraints Set of constraint names dependent on the variant column.
+ * @param {Map<string, { file: string, name: string, variants: string[] }>} activeChecks Active CHECK map.
+ * @param {Set<string>} activeFks Active foreign key set.
+ */
+function scanColumnConstraints(clause, file, constraintNamespace, variantConstraints, activeChecks, activeFks) {
+  for (let i = 0; i < clause.length; i++) {
+    // Check for inline CHECK (variant IN (...))
+    if (clause[i].value === 'check' && clause[i + 1]?.value === '(') {
+      const pIdx = i + 2;
+      if (clause[pIdx]?.value === 'variant' && clause[pIdx + 1]?.value === 'in' && clause[pIdx + 2]?.value === '(') {
+        let inlineName = null;
+        if (i >= 2 && clause[i - 2]?.value === 'constraint') {
+          inlineName = clause[i - 1]?.value;
+        }
+        const variantTokens = [];
+        let vIdx = pIdx + 3;
+        while (vIdx < clause.length && clause[vIdx]?.value !== ')') {
+          if (clause[vIdx].type === 'string') {
+            variantTokens.push(clause[vIdx].value);
+          }
+          vIdx++;
+        }
+        const name = inlineName ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_check');
+        constraintNamespace.add(name);
+        variantConstraints.add(name);
+        activeChecks.set(name, { file, name, variants: variantTokens });
+      }
+    }
+
+    // Check for inline REFERENCES variants(code)
+    if (clause[i].value === 'references') {
+      const inlineRef = parseQualifiedTableTarget(clause, i + 1);
+      if (inlineRef && isTableTarget(inlineRef, 'variants')) {
+        const afterRef = inlineRef.nextIndex;
+        if (clause[afterRef]?.value === '(' && clause[afterRef + 1]?.value === 'code' && clause[afterRef + 2]?.value === ')') {
+          let inlineName = null;
+          if (i >= 2 && clause[i - 2]?.value === 'constraint') {
+            inlineName = clause[i - 1]?.value;
+          }
+          const name = inlineName ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_fkey');
+          constraintNamespace.add(name);
+          variantConstraints.add(name);
+          activeFks.add(name);
+        }
+      }
+    }
+  }
+}
+
+/**
  * Replays all migrations through a deterministic schema state machine to evaluate constraints on `studies.variant`.
  *
  * Tracks table drops (including multi-table and cascaded variants drops), table renames, column drops,
@@ -479,11 +534,13 @@ function splitAlterActions(tokens) {
  * @param {string} [dir=MIGRATIONS_DIR] Migrations directory path.
  * @returns {{
  *   check: { file: string, name: string, variants: string[] } | null,
+ *   checks: Array<{ file: string, name: string, variants: string[] }>,
  *   hasForeignKey: boolean
  * }} Effective check constraint on studies.variant and whether an active foreign key referencing variants(code) exists.
  */
 export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
   const constraintNamespace = new Set();
+  const variantConstraints = new Set();
   /** @type {Map<string, { file: string, name: string, variants: string[] }>} */
   const activeChecks = new Map();
   /** @type {Set<string>} */
@@ -519,6 +576,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
 
           if (isTableTarget(ref, 'studies')) {
             constraintNamespace.clear();
+            variantConstraints.clear();
             activeChecks.clear();
             activeFks.clear();
           }
@@ -526,6 +584,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
           if (isTableTarget(ref, 'variants') && hasCascade) {
             for (const fkName of activeFks) {
               constraintNamespace.delete(fkName);
+              variantConstraints.delete(fkName);
             }
             activeFks.clear();
           }
@@ -557,6 +616,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
         // Table rename: ALTER TABLE studies RENAME TO new_name
         if (stmt[idx]?.value === 'rename' && stmt[idx + 1]?.value === 'to') {
           constraintNamespace.clear();
+          variantConstraints.clear();
           activeChecks.clear();
           activeFks.clear();
           continue;
@@ -577,6 +637,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
             if (action[cIdx]?.type === 'word' || action[cIdx]?.type === 'ident') {
               const name = action[cIdx].value;
               constraintNamespace.delete(name);
+              variantConstraints.delete(name);
               activeChecks.delete(name);
               activeFks.delete(name);
             }
@@ -599,6 +660,10 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
                 constraintNamespace.delete(oldName);
                 constraintNamespace.add(newName);
               }
+              if (variantConstraints.has(oldName)) {
+                variantConstraints.delete(oldName);
+                variantConstraints.add(newName);
+              }
               if (activeFks.has(oldName)) {
                 activeFks.delete(oldName);
                 activeFks.add(newName);
@@ -613,13 +678,11 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
             if (action[cIdx]?.value === 'column') cIdx++;
             if (action[cIdx]?.value === 'if' && action[cIdx + 1]?.value === 'exists') cIdx += 2;
             if (action[cIdx]?.value === 'variant') {
-              // Drops all constraints on variant
-              for (const checkName of activeChecks.keys()) {
-                constraintNamespace.delete(checkName);
+              // Drops all constraints depending on variant
+              for (const name of variantConstraints) {
+                constraintNamespace.delete(name);
               }
-              for (const fkName of activeFks) {
-                constraintNamespace.delete(fkName);
-              }
+              variantConstraints.clear();
               activeChecks.clear();
               activeFks.clear();
             }
@@ -631,21 +694,27 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
             let cIdx = 1;
             if (action[cIdx]?.value === 'column') cIdx++;
             if (action[cIdx]?.value === 'variant' && action[cIdx + 1]?.value === 'to') {
-              // variant column is renamed away
-              for (const checkName of activeChecks.keys()) {
-                constraintNamespace.delete(checkName);
-              }
-              for (const fkName of activeFks) {
-                constraintNamespace.delete(fkName);
-              }
+              // variant column is renamed away; constraints remain on renamed column in namespace
+              variantConstraints.clear();
               activeChecks.clear();
               activeFks.clear();
             }
             continue;
           }
 
-          // Action E: ADD [CONSTRAINT <name>] CHECK (variant IN (...))
-          // or ADD [COLUMN] variant TEXT ... CHECK (variant IN (...))
+          // Action E: ADD [COLUMN] variant ...
+          let colIdx = 0;
+          if (action[colIdx]?.value === 'add') colIdx++;
+          if (action[colIdx]?.value === 'column') colIdx++;
+          if (action[colIdx]?.value === 'if' && action[colIdx + 1]?.value === 'not' && action[colIdx + 2]?.value === 'exists') {
+            colIdx += 3;
+          }
+          if (action[colIdx]?.value === 'variant') {
+            scanColumnConstraints(action.slice(colIdx), file, constraintNamespace, variantConstraints, activeChecks, activeFks);
+            continue;
+          }
+
+          // Action F: Table-level ADD [CONSTRAINT <name>] CHECK (variant IN (...)) or FOREIGN KEY
           let explicitName = null;
           let aIdx = 0;
           if (action[aIdx]?.value === 'add') aIdx++;
@@ -654,30 +723,35 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
             aIdx += 2;
           }
 
-          // Search for CHECK (variant IN (...))
-          const checkIdx = action.findIndex((t) => t.value === 'check');
-          if (checkIdx !== -1 && action[checkIdx + 1]?.value === '(') {
-            let pIdx = checkIdx + 2;
-            if (action[pIdx]?.value === 'variant' && action[pIdx + 1]?.value === 'in' && action[pIdx + 2]?.value === '(') {
-              if (explicitName === null && checkIdx >= 2 && action[checkIdx - 2]?.value === 'constraint') {
-                explicitName = action[checkIdx - 1]?.value ?? null;
-              }
-              const variantTokens = [];
-              let vIdx = pIdx + 3;
-              while (vIdx < action.length && action[vIdx]?.value !== ')') {
-                if (action[vIdx].type === 'string') {
-                  variantTokens.push(action[vIdx].value);
+          let handled = false;
+
+          // Search for table-level CHECK (variant IN (...))
+          for (let i = 0; i < action.length; i++) {
+            if (action[i].value === 'check' && action[i + 1]?.value === '(') {
+              const pIdx = i + 2;
+              if (action[pIdx]?.value === 'variant' && action[pIdx + 1]?.value === 'in' && action[pIdx + 2]?.value === '(') {
+                let name = explicitName;
+                if (name === null && i >= 2 && action[i - 2]?.value === 'constraint') {
+                  name = action[i - 1]?.value ?? null;
                 }
-                vIdx++;
+                const assignedName = name ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_check');
+                const variantTokens = [];
+                let vIdx = pIdx + 3;
+                while (vIdx < action.length && action[vIdx]?.value !== ')') {
+                  if (action[vIdx].type === 'string') {
+                    variantTokens.push(action[vIdx].value);
+                  }
+                  vIdx++;
+                }
+                constraintNamespace.add(assignedName);
+                variantConstraints.add(assignedName);
+                activeChecks.set(assignedName, { file, name: assignedName, variants: variantTokens });
+                handled = true;
               }
-              const name = explicitName ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_check');
-              constraintNamespace.add(name);
-              activeChecks.set(name, { file, name, variants: variantTokens });
-              continue;
             }
           }
 
-          // Action F: ADD [CONSTRAINT <name>] FOREIGN KEY (variant) REFERENCES [public.]variants(code)
+          // Search for table-level FOREIGN KEY (variant) REFERENCES [public.]variants(code)
           const fkIdx = action.findIndex((t) => t.value === 'foreign');
           if (
             fkIdx !== -1 &&
@@ -694,37 +768,15 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
                 if (action[afterRef]?.value === '(' && action[afterRef + 1]?.value === 'code' && action[afterRef + 2]?.value === ')') {
                   const name = explicitName ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_fkey');
                   constraintNamespace.add(name);
+                  variantConstraints.add(name);
                   activeFks.add(name);
-                  continue;
+                  handled = true;
                 }
               }
             }
           }
 
-          // Action G: ADD [COLUMN] [IF NOT EXISTS] variant <TYPE> ... [CONSTRAINT <name>] REFERENCES [public.]variants(code)
-          let colIdx = 0;
-          if (action[colIdx]?.value === 'add') colIdx++;
-          if (action[colIdx]?.value === 'column') colIdx++;
-          if (action[colIdx]?.value === 'if' && action[colIdx + 1]?.value === 'not' && action[colIdx + 2]?.value === 'exists') {
-            colIdx += 3;
-          }
-          if (action[colIdx]?.value === 'variant') {
-            const inlineRefIdx = action.findIndex((t) => t.value === 'references');
-            if (inlineRefIdx !== -1) {
-              const inlineRef = parseQualifiedTableTarget(action, inlineRefIdx + 1);
-              if (inlineRef && isTableTarget(inlineRef, 'variants')) {
-                const afterRef = inlineRef.nextIndex;
-                if (action[afterRef]?.value === '(' && action[afterRef + 1]?.value === 'code' && action[afterRef + 2]?.value === ')') {
-                  const inlineConIdx = action.findIndex((t) => t.value === 'constraint');
-                  const inlineConName = inlineConIdx !== -1 ? action[inlineConIdx + 1]?.value : null;
-                  const name = inlineConName ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_fkey');
-                  constraintNamespace.add(name);
-                  activeFks.add(name);
-                  continue;
-                }
-              }
-            }
-          }
+          if (handled) continue;
 
           // Register any other explicitly named constraint
           if (explicitName !== null) {
@@ -749,6 +801,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
 
         // Fresh table creation clears prior state
         constraintNamespace.clear();
+        variantConstraints.clear();
         activeChecks.clear();
         activeFks.clear();
 
@@ -759,6 +812,14 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
         const clauses = splitAlterActions(bodyTokens);
 
         for (const clause of clauses) {
+          if (clause.length === 0) continue;
+
+          // Column-level: variant <TYPE> ...
+          if (clause[0]?.value === 'variant') {
+            scanColumnConstraints(clause, file, constraintNamespace, variantConstraints, activeChecks, activeFks);
+            continue;
+          }
+
           let explicitName = null;
           let cIdx = 0;
           if (clause[cIdx]?.value === 'constraint') {
@@ -766,23 +827,31 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
             cIdx += 2;
           }
 
+          let handled = false;
+
           // Table-level CHECK (variant IN (...))
-          const checkIdx = clause.findIndex((t) => t.value === 'check');
-          if (checkIdx !== -1 && clause[checkIdx + 1]?.value === '(') {
-            let pIdx = checkIdx + 2;
-            if (clause[pIdx]?.value === 'variant' && clause[pIdx + 1]?.value === 'in' && clause[pIdx + 2]?.value === '(') {
-              const variantTokens = [];
-              let vIdx = pIdx + 3;
-              while (vIdx < clause.length && clause[vIdx]?.value !== ')') {
-                if (clause[vIdx].type === 'string') {
-                  variantTokens.push(clause[vIdx].value);
+          for (let i = 0; i < clause.length; i++) {
+            if (clause[i].value === 'check' && clause[i + 1]?.value === '(') {
+              const pIdx = i + 2;
+              if (clause[pIdx]?.value === 'variant' && clause[pIdx + 1]?.value === 'in' && clause[pIdx + 2]?.value === '(') {
+                let name = explicitName;
+                if (name === null && i >= 2 && clause[i - 2]?.value === 'constraint') {
+                  name = clause[i - 1]?.value ?? null;
                 }
-                vIdx++;
+                const assignedName = name ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_check');
+                const variantTokens = [];
+                let vIdx = pIdx + 3;
+                while (vIdx < clause.length && clause[vIdx]?.value !== ')') {
+                  if (clause[vIdx].type === 'string') {
+                    variantTokens.push(clause[vIdx].value);
+                  }
+                  vIdx++;
+                }
+                constraintNamespace.add(assignedName);
+                variantConstraints.add(assignedName);
+                activeChecks.set(assignedName, { file, name: assignedName, variants: variantTokens });
+                handled = true;
               }
-              const name = explicitName ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_check');
-              constraintNamespace.add(name);
-              activeChecks.set(name, { file, name, variants: variantTokens });
-              continue;
             }
           }
 
@@ -803,54 +872,15 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
                 if (clause[afterRef]?.value === '(' && clause[afterRef + 1]?.value === 'code' && clause[afterRef + 2]?.value === ')') {
                   const name = explicitName ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_fkey');
                   constraintNamespace.add(name);
+                  variantConstraints.add(name);
                   activeFks.add(name);
-                  continue;
+                  handled = true;
                 }
               }
             }
           }
 
-          // Column-level: variant <TYPE> ...
-          if (clause[0]?.value === 'variant') {
-            const inlineCheckIdx = clause.findIndex((t) => t.value === 'check');
-            if (inlineCheckIdx !== -1 && clause[inlineCheckIdx + 1]?.value === '(') {
-              let pIdx = inlineCheckIdx + 2;
-              if (clause[pIdx]?.value === 'variant' && clause[pIdx + 1]?.value === 'in' && clause[pIdx + 2]?.value === '(') {
-                let inlineName = null;
-                if (inlineCheckIdx >= 2 && clause[inlineCheckIdx - 2]?.value === 'constraint') {
-                  inlineName = clause[inlineCheckIdx - 1]?.value;
-                }
-                const variantTokens = [];
-                let vIdx = pIdx + 3;
-                while (vIdx < clause.length && clause[vIdx]?.value !== ')') {
-                  if (clause[vIdx].type === 'string') {
-                    variantTokens.push(clause[vIdx].value);
-                  }
-                  vIdx++;
-                }
-                const name = inlineName ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_check');
-                constraintNamespace.add(name);
-                activeChecks.set(name, { file, name, variants: variantTokens });
-                continue;
-              }
-            }
-
-            const inlineRefIdx = clause.findIndex((t) => t.value === 'references');
-            if (inlineRefIdx !== -1) {
-              const inlineRef = parseQualifiedTableTarget(clause, inlineRefIdx + 1);
-              if (inlineRef && isTableTarget(inlineRef, 'variants')) {
-                const afterRef = inlineRef.nextIndex;
-                if (clause[afterRef]?.value === '(' && clause[afterRef + 1]?.value === 'code' && clause[afterRef + 2]?.value === ')') {
-                  const inlineConIdx = clause.findIndex((t) => t.value === 'constraint');
-                  const inlineConName = inlineConIdx !== -1 ? clause[inlineConIdx + 1]?.value : null;
-                  const name = inlineConName ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_fkey');
-                  constraintNamespace.add(name);
-                  activeFks.add(name);
-                  continue;
-                }
-              }
-            }
-          }
+          if (handled) continue;
 
           if (explicitName !== null) {
             constraintNamespace.add(explicitName);
