@@ -170,19 +170,102 @@ Hypotheses examined and **refuted** with evidence:
   throw would be attributed to that test with a stack, which is not the
   observed signature.
 
-The leading unrefuted hypothesis is a process-level fault in the test child
-after module load and before the first test reports — a keep-alive socket to a
-closed harness erroring inside undici's pool, or an uncaught `'error'` event on
-an `http.Server`. **One instance of that second shape has now been fixed** (§5),
-and it produces exactly this signature when it fires: with the fix reverted, the
-regression test for it fails through an uncaught `ERR_UNHANDLED_ERROR` rather
-than an assertion. That makes it a plausible contributor, but not a
-demonstrated cause — signature B was reproduced on files doing no failing bind,
-and it was never observed to coincide with one. It stays open.
+One instance of an uncaught `'error'` event on an `http.Server` **has since been
+fixed** (§5): with that fix reverted, the regression test for it fails through
+an uncaught `ERR_UNHANDLED_ERROR`. That made it a plausible contributor, but a
+follow-up investigation (below) has since ruled it out as the mechanism behind
+the observed signature specifically, even though it remained a real defect
+worth fixing on its own merits.
 
-Nothing above is strong enough to justify a fix, and a fix that cannot be shown
-to remove a reproduction is indistinguishable from a coincidence. Signature B
-stays open.
+### Follow-up investigation: the mechanism is now proven, the trigger is not
+
+A later increment (`claude/node-test-signature-b`) instrumented every
+JS-visible process-level event a child process can raise and captured three
+further real occurrences directly, rather than reasoning from symptoms or
+synthetic proxies alone.
+
+**Node's test runner spawns one child process per test file.** Verified
+directly: two trivial files run together under
+`node --test --test-concurrency=1` report distinct PIDs, neither matching the
+parent's. A same-named (currently experimental on this Node version) flag,
+`--test-isolation=process`, confirms this is the default rather than an
+accident of this run. It is why the failure is confined to exactly one file
+per occurrence with no effect on any other file in the same run.
+
+**The bare `'test failed'` with no stack is what Node's runner reports for a
+child that exits non-zero or signaled while none of its subtests recorded a
+failure.** This was reproduced directly: a synthetic file that calls
+`process.exit(1)` before registering any test produces the identical reported
+shape as the real defect — `✖ <file> (Nms)` / `'test failed'`, zero individual
+tests in the summary, nothing on stderr. Every OTHER synthetic mechanism tried
+produces a visibly different shape:
+
+- An error thrown after a test's own promise settles (`setImmediate` inside a
+  passing test) — Node prints an explicit
+  `ℹ Error: ... generated asynchronous activity after the test ended ...`
+  diagnostic line, and the triggering test still shows `✔`.
+- An `http.Server` emitting `'error'` with its listener already removed —
+  same diagnostic line, same visible `✔` on the test that created it.
+- A promise rejected synchronously inside a test's own body — attributed to
+  that specific test, with a full stack.
+- A process killed by `SIGKILL` after a test completes — that test's `✔`
+  still prints before the file dies.
+- A synchronous throw at module load, before any `test()` call — prints a
+  full stack trace to stderr.
+
+None of these match. The real defect's log is completely silent before the
+bare file-level failure: no diagnostic line, no stderr, no test names at all
+for that file (not even the ones that would have run first).
+
+**A new diagnostic preload
+(`packages/api/test/diagnostics/signature-b-preload.cjs`) proves which of
+those mechanisms it is, on real occurrences, not synthetic ones.** It hooks
+`process.exit`, `process.kill`, `uncaughtExceptionMonitor` (a passive observer
+that, unlike `uncaughtException`, never alters Node's default crash handling),
+`unhandledRejection`, `rejectionHandled`, `warning`, `beforeExit`, and Node's
+own unconditional `exit` event, writing a structured, redacted, timestamped
+line to disk before each fires — bypassing stdout/stderr entirely so the test
+reporter's own output is never touched. A bounded 20-run instrumented pass over
+the full `packages/api` suite (chosen the same way as the original 20-run
+sample: enough for >90% detection odds at the historically observed ~1-in-5
+rate) reproduced the defect 3 times, on **three files never previously
+implicated** — `rate-limit-atomicity`, `dependency-parity`, `studies-api` — none
+of the original four. Combined with the original four, that is **seven
+different files**, sharing nothing but the shared harness's `startHarness`
+import, which confirms this is not a defect specific to any one file's logic.
+
+All three captures show the identical signature: **only the `start` and
+`preload-installed` lines are logged. Nothing else fires — including Node's own
+`process.on('exit')`, which fires unconditionally for every JS-visible shutdown
+path, `process.exit()` included.** That rules out, directly and by observation
+rather than inference, every mechanism the preload watches for: `process.exit`,
+an uncaught exception, an unhandled rejection, a handled-late rejection, a
+runtime warning, and reaching an idle event loop. The child process disappeared
+before the JS runtime got to react to anything.
+
+**This narrows Signature B's cause to a class, not a line of code:** the
+per-file child process is being terminated by something outside the JS/V8
+layer entirely — an uncatchable signal or an external kill — not by any defect
+this repository's TypeScript can throw, catch, or leak. Two observations are
+consistent with an environmental (not code) origin: at the time of capture this
+development machine had roughly 2.5 GB of 15.7 GB RAM free, with several
+unrelated concurrent processes (other agents' worktrees and dev servers)
+running; and `node --test` spawns dozens of child processes across a full
+`packages/api` run, each loading the same large cross-package import graph,
+which is exactly the pattern most exposed to transient resource contention.
+Neither observation is proof of a specific external actor — no crash was
+recorded in the Windows Application or System event logs in the capture
+window — so the exact trigger (OS scheduler, memory pressure, antivirus, or
+something else entirely) is not established.
+
+**No fix is proposed.** Every mechanism this repository's code could cause and
+catch has been directly ruled out on real captures; what remains is external to
+the process, and the forbidden responses — sleeps, retries around the whole
+file, swallowing errors, lowering concurrency to hide it — would suppress the
+symptom without touching whatever the cause turns out to be. Signature B stays
+open. The diagnostic preload is committed so the next occurrence — on this
+machine, in CI, or elsewhere — can be captured with this same evidence rather
+than re-deriving it.
 
 ## 5. `ApiServer.listen` rejects on a failed bind
 
