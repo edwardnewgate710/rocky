@@ -67,11 +67,104 @@ const REDACT_PATTERNS = [
   [/sk-[a-zA-Z0-9_-]{10,}/g, '[REDACTED_API_KEY]'],
   [/Bearer\s+[A-Za-z0-9._~+/-]+=*/g, 'Bearer [REDACTED_TOKEN]'],
   [/(?:postgres|postgresql):\/\/[^:]+:[^@]+@/g, 'postgres://[REDACTED_CREDS]@'],
-  [/(["']?)(password(?:[_\s-]?hash|Hash)?|secret|token|authorization|cookie)\1\s*[:=]\s*(?:\[(?:[^\]\\]|\\.)*\]|\{(?:[^\}\\]|\\.)*\}|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^,\r\n}]+)/gi, '$1$2$1=[REDACTED]'],
 ];
 
+const SENSITIVE_KEY_RE = /(["']?)(password(?:[_\s-]?hash|Hash)?|secret|token|authorization|cookie)\1\s*[:=]\s*/gi;
+
 /**
- * Redacts known sensitive patterns (API keys, bearer tokens, credentials, passwords)
+ * Scans and redacts sensitive key-value pairs, tracking quote escapes and arbitrary nested array/object depth.
+ *
+ * @param {string} str - Input string to redact.
+ * @returns {string} Sanitized string with sensitive values replaced by [REDACTED].
+ */
+function redactSensitiveStructures(str) {
+  if (typeof str !== 'string') return str;
+  let out = '';
+  let lastIndex = 0;
+  SENSITIVE_KEY_RE.lastIndex = 0;
+
+  let match;
+  while ((match = SENSITIVE_KEY_RE.exec(str)) !== null) {
+    out += str.slice(lastIndex, match.index);
+    const keyPrefix = (match[1] || '') + match[2] + (match[1] || '') + '=[REDACTED]';
+    out += keyPrefix;
+
+    let i = SENSITIVE_KEY_RE.lastIndex;
+    if (i >= str.length) {
+      lastIndex = str.length;
+      break;
+    }
+
+    const firstChar = str[i];
+    if (firstChar === '"' || firstChar === "'") {
+      const quote = firstChar;
+      i++;
+      while (i < str.length) {
+        if (str[i] === '\\') {
+          i += 2;
+        } else if (str[i] === quote) {
+          i++;
+          break;
+        } else {
+          i++;
+        }
+      }
+    } else if (firstChar === '{' || firstChar === '[') {
+      const stack = [firstChar];
+      i++;
+      let inQuote = null;
+      while (i < str.length && stack.length > 0) {
+        const char = str[i];
+        if (inQuote) {
+          if (char === '\\') {
+            i += 2;
+          } else if (char === inQuote) {
+            inQuote = null;
+            i++;
+          } else {
+            i++;
+          }
+        } else {
+          if (char === '"' || char === "'") {
+            inQuote = char;
+            i++;
+          } else if (char === '{' || char === '[') {
+            stack.push(char);
+            i++;
+          } else if (char === '}' && stack[stack.length - 1] === '{') {
+            stack.pop();
+            i++;
+          } else if (char === ']' && stack[stack.length - 1] === '[') {
+            stack.pop();
+            i++;
+          } else {
+            i++;
+          }
+        }
+      }
+    } else {
+      while (
+        i < str.length &&
+        str[i] !== ',' &&
+        str[i] !== '\r' &&
+        str[i] !== '\n' &&
+        str[i] !== '}' &&
+        str[i] !== ']'
+      ) {
+        i++;
+      }
+    }
+
+    lastIndex = i;
+    SENSITIVE_KEY_RE.lastIndex = i;
+  }
+
+  out += str.slice(lastIndex);
+  return out;
+}
+
+/**
+ * Redacts known sensitive patterns (API keys, bearer tokens, credentials, passwords, nested structures)
  * from strings before writing to diagnostic logs.
  *
  * @param {unknown} value - The input value to redact.
@@ -81,6 +174,7 @@ function redact(value) {
   if (typeof value !== 'string') return value;
   let out = value;
   for (const [pattern, replacement] of REDACT_PATTERNS) out = out.replace(pattern, replacement);
+  out = redactSensitiveStructures(out);
   return out;
 }
 

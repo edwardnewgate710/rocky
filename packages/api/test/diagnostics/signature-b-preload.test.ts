@@ -331,6 +331,7 @@ test('diagnostic preload: redacts postgres/postgresql credentials, tokens, Autho
       '{"cookie":["theme=dark","session=raw-secret-cookie-val"]}',
       '{"token":["tok1","secret-array-token-val"]}',
       '{"authorization":{"type":"Bearer","token":"nested-secret-auth-token"}}',
+      '{"authorization":{"meta":{"type":"Bearer"},"credential":"deeply-nested-raw-secret"}}',
       'Authorization: Basic dXNlcjpwYXNzd29yZA==,',
       'Cookie: session=xyz123; token=abc456; other=789',
     ];
@@ -376,6 +377,7 @@ test('diagnostic preload: redacts postgres/postgresql credentials, tokens, Autho
   assert.ok(!msg.includes('raw-secret-cookie-val'), 'raw array cookie value absent from message');
   assert.ok(!msg.includes('secret-array-token-val'), 'raw array token value absent from message');
   assert.ok(!msg.includes('nested-secret-auth-token'), 'raw nested object auth token absent from message');
+  assert.ok(!msg.includes('deeply-nested-raw-secret'), 'deeply nested credential absent from message');
   assert.ok(!stack.includes('$2b$12$e8uq4abcdefghijklmnopqrstuvwxyz1234567890'), 'raw passwordHash absent from stack');
   assert.ok(!stack.includes('$2b$12$snakecasehash1234567890abcdefghijklmn'), 'raw password_hash absent from stack');
   assert.ok(!stack.includes('spacedhash1234567890abcdefghijklmn'), 'raw password hash absent from stack');
@@ -386,6 +388,7 @@ test('diagnostic preload: redacts postgres/postgresql credentials, tokens, Autho
   assert.ok(!stack.includes('raw-secret-cookie-val'), 'raw array cookie value absent from stack');
   assert.ok(!stack.includes('secret-array-token-val'), 'raw array token value absent from stack');
   assert.ok(!stack.includes('nested-secret-auth-token'), 'raw nested object auth token absent from stack');
+  assert.ok(!stack.includes('deeply-nested-raw-secret'), 'deeply nested credential absent from stack');
   assert.ok(!msg.includes('dXNlcjpwYXNzd29yZA=='), 'raw basic auth credential not present');
   assert.ok(!msg.includes('session=xyz123'), 'raw cookie session not present');
   assert.ok(!msg.includes('token=abc456'), 'raw cookie token not present');
