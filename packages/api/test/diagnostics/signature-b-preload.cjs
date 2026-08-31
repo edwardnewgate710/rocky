@@ -60,7 +60,7 @@ try {
 const REDACT_PATTERNS = [
   [/sk-[a-zA-Z0-9_-]{10,}/g, '[REDACTED_API_KEY]'],
   [/Bearer\s+[A-Za-z0-9._~+/-]+=*/g, 'Bearer [REDACTED_TOKEN]'],
-  [/postgres:\/\/[^:]+:[^@]+@/g, 'postgres://[REDACTED_CREDS]@'],
+  [/(?:postgres|postgresql):\/\/[^:]+:[^@]+@/g, 'postgres://[REDACTED_CREDS]@'],
   [/(password|secret|token|authorization|cookie)\s*[:=]\s*["']?[^"',\s]+["']?/gi, '$1=[REDACTED]'],
 ];
 
@@ -186,18 +186,14 @@ process.kill = function patchedKill(pid, signal) {
   return originalKill(pid, signal);
 };
 
-// Passive observer only: unlike 'uncaughtException', registering this does
-// NOT suppress Node's default crash behavior, so it cannot itself change
-// whether or how the process exits.
+// Passive observer only: unlike 'uncaughtException' or 'unhandledRejection', registering
+// 'uncaughtExceptionMonitor' does NOT suppress Node's default crash behavior, so it cannot
+// itself change whether or how the process exits. Node emits it for both 'uncaughtException'
+// and 'unhandledRejection' origins.
 process.on('uncaughtExceptionMonitor', (err, origin) => {
   write('uncaughtExceptionMonitor', { err: safeErr(err), origin, activeResources: activeResourceCounts() });
 });
 
-process.on('unhandledRejection', (reason) => {
-  write('unhandledRejection', { reason: safeErr(reason), activeResources: activeResourceCounts() });
-});
-
-process.on('rejectionHandled', () => write('rejectionHandled', {}));
 process.on('warning', (warning) => write('warning', { err: safeErr(warning) }));
 process.on('beforeExit', (code) => write('beforeExit', { code, activeResources: activeResourceCounts() }));
 process.on('exit', (code) => write('exit', { code }));

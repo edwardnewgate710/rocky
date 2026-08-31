@@ -14,6 +14,7 @@ interface DiagnosticRecord {
   readonly code?: number;
   readonly targetPid?: number;
   readonly signal?: string | number;
+  readonly origin?: string;
   readonly callerStack?: string;
   readonly err?: {
     readonly name?: string;
@@ -150,18 +151,20 @@ test('diagnostic preload: uncaughtExceptionMonitor passively captures error with
   assert.notEqual(status, 0);
   const uncaught = records.find((r) => r.kind === 'uncaughtExceptionMonitor');
   assert.ok(uncaught, 'records uncaughtExceptionMonitor');
+  assert.equal(uncaught?.origin, 'uncaughtException');
   assert.ok(uncaught?.err?.message?.includes('Bearer [REDACTED_TOKEN]'), 'redacts token in error message');
 });
 
-test('diagnostic preload: unhandledRejection captures rejection reason', (t) => {
-  const { records, logDir } = runWithPreload(`
+test('diagnostic preload: unhandledRejection passively captured by uncaughtExceptionMonitor with fatal exit', (t) => {
+  const { status, records, logDir } = runWithPreload(`
     Promise.reject(new Error('synthetic unhandled rejection: password="mysecretpassword"'));
   `);
   t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
 
-  const rejection = records.find((r) => r.kind === 'unhandledRejection');
-  assert.ok(rejection, 'records unhandledRejection');
-  assert.ok(rejection?.reason?.message?.includes('password=[REDACTED]'), 'redacts password in rejection reason');
+  assert.notEqual(status, 0, 'unhandled rejection must cause non-zero exit');
+  const rejectionRecord = records.find((r) => r.kind === 'uncaughtExceptionMonitor' && r.origin === 'unhandledRejection');
+  assert.ok(rejectionRecord, 'records unhandledRejection origin via uncaughtExceptionMonitor');
+  assert.ok(rejectionRecord?.err?.message?.includes('password=[REDACTED]'), 'redacts password in rejection reason');
 });
 
 test('diagnostic preload: process.kill records target PID and signal', (t) => {
@@ -178,10 +181,9 @@ test('diagnostic preload: process.kill records target PID and signal', (t) => {
   assert.ok(killRecord?.callerStack?.includes('kill-call-site'), 'traces kill call site');
 });
 
-test('diagnostic preload: redacts known sensitive token, key, password, and database credential patterns', (t) => {
+test('diagnostic preload: redacts postgres:// and postgresql:// connection strings, tokens, and passwords', (t) => {
   const { records, logDir } = runWithPreload(`
-    const err = new Error('Connect failed to postgres://app_user:s3cr3tpass@db.internal:5432/chess and sk-1234567890abcdef12345');
-    process.on('uncaughtExceptionMonitor', () => {});
+    const err = new Error('Connect failed to postgresql://app_user:s3cr3tpass@db.internal:5432/chess and postgres://admin:supersecret@10.0.0.1:5432/main and sk-1234567890abcdef12345');
     throw err;
   `);
   t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
@@ -189,9 +191,11 @@ test('diagnostic preload: redacts known sensitive token, key, password, and data
   const uncaught = records.find((r) => r.kind === 'uncaughtExceptionMonitor');
   assert.ok(uncaught, 'uncaught record exists');
   const msg = uncaught?.err?.message ?? '';
-  assert.ok(msg.includes('postgres://[REDACTED_CREDS]@db.internal:5432/chess'), 'redacts postgres credentials');
+  assert.ok(msg.includes('postgres://[REDACTED_CREDS]@db.internal:5432/chess'), 'redacts postgresql credentials');
+  assert.ok(msg.includes('postgres://[REDACTED_CREDS]@10.0.0.1:5432/main'), 'redacts postgres credentials');
   assert.ok(msg.includes('[REDACTED_API_KEY]'), 'redacts OpenAI-style api key');
   assert.ok(!msg.includes('s3cr3tpass'), 'raw password not present');
+  assert.ok(!msg.includes('supersecret'), 'raw second password not present');
   assert.ok(!msg.includes('sk-1234567890abcdef12345'), 'raw key not present');
 });
 
