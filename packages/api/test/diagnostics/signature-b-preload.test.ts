@@ -316,7 +316,7 @@ test('diagnostic preload: process.kill records target PID and signal', (t) => {
   assert.ok(killRecord?.callerStack?.includes('kill-call-site'), 'traces kill call site');
 });
 
-test('diagnostic preload: redacts postgres/postgresql credentials, tokens, Authorization headers, cookies, quoted secrets, and password hashes', (t) => {
+test('diagnostic preload: redacts postgres/postgresql credentials, tokens, Authorization headers, cookies, quoted secrets, password hashes, and JSON-quoted fields', (t) => {
   const { records, logDir } = runWithPreload(`
     const parts = [
       'Connect failed to postgresql://app_user:s3cr3tpass@db.internal:5432/chess',
@@ -327,6 +327,7 @@ test('diagnostic preload: redacts postgres/postgresql credentials, tokens, Autho
       'passwordHash="$2b$12$e8uq4abcdefghijklmnopqrstuvwxyz1234567890"',
       "password_hash='$2b$12$snakecasehash1234567890abcdefghijklmn'",
       'password hash: "spacedhash1234567890abcdefghijklmn"',
+      '{"authorization": "Bearer json_auth_token_xyz", "cookie": "session=json_cookie_val", "password": "json_password_secret", "password_hash": "$2b$12$json_hash_val"}',
       'Authorization: Basic dXNlcjpwYXNzd29yZA==,',
       'Cookie: session=xyz123; token=abc456; other=789',
     ];
@@ -351,6 +352,10 @@ test('diagnostic preload: redacts postgres/postgresql credentials, tokens, Autho
   assert.ok(msg.includes('passwordHash=[REDACTED]'), 'redacts passwordHash');
   assert.ok(msg.includes('password_hash=[REDACTED]'), 'redacts password_hash');
   assert.ok(msg.includes('password hash=[REDACTED]'), 'redacts password hash');
+  assert.ok(msg.includes('"authorization"=[REDACTED]'), 'redacts JSON-quoted authorization');
+  assert.ok(msg.includes('"cookie"=[REDACTED]'), 'redacts JSON-quoted cookie');
+  assert.ok(msg.includes('"password"=[REDACTED]'), 'redacts JSON-quoted password');
+  assert.ok(msg.includes('"password_hash"=[REDACTED]'), 'redacts JSON-quoted password_hash');
   assert.ok(msg.includes('Authorization=[REDACTED]'), 'redacts Basic authorization header');
   assert.ok(msg.includes('Cookie=[REDACTED]'), 'redacts multi-cookie header');
   assert.ok(!msg.includes('s3cr3tpass'), 'raw password 1 not present');
@@ -360,9 +365,17 @@ test('diagnostic preload: redacts postgres/postgresql credentials, tokens, Autho
   assert.ok(!msg.includes('$2b$12$e8uq4abcdefghijklmnopqrstuvwxyz1234567890'), 'raw passwordHash absent from message');
   assert.ok(!msg.includes('$2b$12$snakecasehash1234567890abcdefghijklmn'), 'raw password_hash absent from message');
   assert.ok(!msg.includes('spacedhash1234567890abcdefghijklmn'), 'raw password hash absent from message');
+  assert.ok(!msg.includes('json_auth_token_xyz'), 'raw JSON authorization absent from message');
+  assert.ok(!msg.includes('json_cookie_val'), 'raw JSON cookie absent from message');
+  assert.ok(!msg.includes('json_password_secret'), 'raw JSON password absent from message');
+  assert.ok(!msg.includes('$2b$12$json_hash_val'), 'raw JSON password_hash absent from message');
   assert.ok(!stack.includes('$2b$12$e8uq4abcdefghijklmnopqrstuvwxyz1234567890'), 'raw passwordHash absent from stack');
   assert.ok(!stack.includes('$2b$12$snakecasehash1234567890abcdefghijklmn'), 'raw password_hash absent from stack');
   assert.ok(!stack.includes('spacedhash1234567890abcdefghijklmn'), 'raw password hash absent from stack');
+  assert.ok(!stack.includes('json_auth_token_xyz'), 'raw JSON authorization absent from stack');
+  assert.ok(!stack.includes('json_cookie_val'), 'raw JSON cookie absent from stack');
+  assert.ok(!stack.includes('json_password_secret'), 'raw JSON password absent from stack');
+  assert.ok(!stack.includes('$2b$12$json_hash_val'), 'raw JSON password_hash absent from stack');
   assert.ok(!msg.includes('dXNlcjpwYXNzd29yZA=='), 'raw basic auth credential not present');
   assert.ok(!msg.includes('session=xyz123'), 'raw cookie session not present');
   assert.ok(!msg.includes('token=abc456'), 'raw cookie token not present');
@@ -428,7 +441,7 @@ test('diagnostic preload: empty SIGB_LOG_DIR falls back to default directory wit
     if (fs.existsSync(targetLogDir) && targetLogDir !== logDir) {
       const files = fs.readdirSync(targetLogDir).filter((f) => f.endsWith('.jsonl'));
       for (const file of files) {
-        if (records.some((r) => file.includes(String(r.pid)))) {
+        if (records.some((r) => file.startsWith(`run-${r.pid}-`))) {
           fs.rmSync(path.join(targetLogDir, file), { force: true });
         }
       }

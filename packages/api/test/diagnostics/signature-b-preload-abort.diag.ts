@@ -137,7 +137,7 @@ test('explicit diagnostic integration: empty SIGB_LOG_DIR falls back to default 
     if (fs.existsSync(targetLogDir) && targetLogDir !== logDir) {
       const files = fs.readdirSync(targetLogDir).filter((f) => f.endsWith('.jsonl'));
       for (const file of files) {
-        if (records.some((r) => file.includes(String(r.pid)))) {
+        if (records.some((r) => file.startsWith(`run-${r.pid}-`))) {
           fs.rmSync(path.join(targetLogDir, file), { force: true });
         }
       }
