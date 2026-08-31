@@ -88,6 +88,20 @@ export function stripComments(text, dialect) {
       continue;
     }
 
+    if (dialect === 'sql' && ch === '$') {
+      const match = /^\$([a-zA-Z0-9_]*)\$/.exec(text.slice(i));
+      if (match !== null) {
+        const tag = match[0];
+        const endStr = text.indexOf(tag, i + tag.length);
+        if (endStr !== -1) {
+          const fullDollar = text.slice(i, endStr + tag.length);
+          out += fullDollar;
+          i += fullDollar.length;
+          continue;
+        }
+      }
+    }
+
     if (ch === lineMarker[0] && next === lineMarker[1]) {
       while (i < text.length && text[i] !== '\n') {
         out += ' ';
@@ -141,6 +155,28 @@ export function tokenizeSql(sql) {
     if (/\s/.test(ch)) {
       i++;
       continue;
+    }
+
+    if (ch === '$') {
+      const match = /^\$([a-zA-Z0-9_]*)\$/.exec(sql.slice(i));
+      if (match !== null) {
+        const tag = match[0];
+        const start = i;
+        const endStr = sql.indexOf(tag, start + tag.length);
+        if (endStr === -1) {
+          throw new Error(`unterminated dollar-quoted string at position ${start}`);
+        }
+        const raw = sql.slice(start, endStr + tag.length);
+        const body = sql.slice(start + tag.length, endStr);
+        tokens.push({
+          type: 'string',
+          value: body,
+          raw: raw,
+          pos: start,
+        });
+        i = endStr + tag.length;
+        continue;
+      }
     }
 
     if (ch === "'") {
@@ -280,16 +316,30 @@ export function parseQualifiedTableTarget(tokens, startIndex) {
 }
 
 /**
+ * Computes a collision-free structured tuple key for a table reference.
+ *
+ * @param {{ schema?: string, table: string } | null} ref Parsed table reference.
+ * @returns {string} Structured key encoding [schema, table].
+ */
+export function tableKey(ref) {
+  if (ref === null) return '';
+  return JSON.stringify([ref.schema || 'public', ref.table]);
+}
+
+export const STUDIES_TABLE_KEY = tableKey({ schema: 'public', table: 'studies' });
+export const VARIANTS_TABLE_KEY = tableKey({ schema: 'public', table: 'variants' });
+
+/**
  * Determines if a parsed table reference matches a specified table and default schema.
  *
- * @param {{ schema: string, table: string } | null} ref Parsed table reference.
+ * @param {{ schema?: string, table: string } | null} ref Parsed table reference.
  * @param {string} targetTable Expected table name.
  * @param {string} [targetSchema='public'] Expected schema name (defaults to 'public').
  * @returns {boolean} True if the table reference matches the target.
  */
 function isTableTarget(ref, targetTable, targetSchema = 'public') {
   if (ref === null) return false;
-  return ref.table === targetTable && (!ref.schema || ref.schema === targetSchema);
+  return tableKey(ref) === tableKey({ schema: targetSchema, table: targetTable });
 }
 
 /**
@@ -607,11 +657,6 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
    */
   const tables = new Map();
 
-  function tableKey(ref) {
-    const schema = ref.schema || 'public';
-    return `${schema}.${ref.table}`;
-  }
-
   function getOrCreateTable(key) {
     let t = tables.get(key);
     if (!t) {
@@ -657,7 +702,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
 
           const key = tableKey(ref);
 
-          if (key === 'public.variants' && hasCascade) {
+          if (key === VARIANTS_TABLE_KEY && hasCascade) {
             for (const tbl of tables.values()) {
               for (const fkName of tbl.activeFks) {
                 tbl.constraintNamespace.delete(fkName);
@@ -667,7 +712,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
             }
           }
 
-          if (key === 'public.studies' || tables.has(key)) {
+          if (key === STUDIES_TABLE_KEY || tables.has(key)) {
             tables.delete(key);
           }
 
@@ -697,7 +742,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
         }
 
         const key = tableKey(ref);
-        if (key !== 'public.studies' && !tables.has(key)) {
+        if (key !== STUDIES_TABLE_KEY && !tables.has(key)) {
           continue;
         }
 
@@ -712,7 +757,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
         if (stmt[idx]?.value === 'rename' && stmt[idx + 1]?.value === 'to') {
           const newName = stmt[idx + 2]?.value;
           if (newName) {
-            const newKey = `${ref.schema || 'public'}.${newName}`;
+            const newKey = tableKey({ schema: ref.schema || 'public', table: newName });
             tables.delete(key);
             tables.set(newKey, currentTable);
           }
@@ -723,7 +768,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
         if (stmt[idx]?.value === 'set' && stmt[idx + 1]?.value === 'schema') {
           const newSchema = stmt[idx + 2]?.value;
           if (newSchema) {
-            const newKey = `${newSchema}.${ref.table}`;
+            const newKey = tableKey({ schema: newSchema, table: ref.table });
             tables.delete(key);
             tables.set(newKey, currentTable);
           }
@@ -940,7 +985,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
         }
 
         const key = tableKey(ref);
-        if (key !== 'public.studies' && !tables.has(key)) {
+        if (key !== STUDIES_TABLE_KEY && !tables.has(key)) {
           continue;
         }
 
@@ -1067,7 +1112,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
     }
   }
 
-  const studiesTable = tables.get('public.studies');
+  const studiesTable = tables.get(STUDIES_TABLE_KEY);
   if (!studiesTable) {
     return {
       check: null,

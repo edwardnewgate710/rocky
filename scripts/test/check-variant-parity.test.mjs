@@ -26,6 +26,9 @@ import {
   effectiveStudyVariantForeignKey,
   collectMirrors,
   evaluateParity,
+  tableKey,
+  STUDIES_TABLE_KEY,
+  VARIANTS_TABLE_KEY,
   disagreements,
   ROOT,
   TS_MIRRORS,
@@ -1356,6 +1359,139 @@ test('ALTER TABLE SET SCHEMA moving table into public restores effectiveStudyVar
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('tokenizeSql and splitSqlStatements treat untagged dollar-quoted body with semicolons as one statement', () => {
+  const sql = `DO $$
+  BEGIN
+    PERFORM 1;
+    PERFORM 2;
+  END
+  $$;`;
+  const tokens = tokenizeSql(sql);
+  const statements = splitSqlStatements(tokens);
+  assert.equal(statements.length, 1);
+  assert.equal(tokens[1].type, 'string');
+});
+
+test('tokenizeSql and splitSqlStatements treat tagged dollar-quoted body with semicolons as one statement', () => {
+  const sql = `DO $migration$
+  BEGIN
+    PERFORM 1;
+    PERFORM 2;
+  END
+  $migration$;`;
+  const tokens = tokenizeSql(sql);
+  const statements = splitSqlStatements(tokens);
+  assert.equal(statements.length, 1);
+  assert.equal(tokens[1].type, 'string');
+});
+
+test('fake DDL inside dollar-quoted body does not alter replay state', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_fake_ddl.sql': `DO $$
+    BEGIN
+      DROP TABLE studies;
+      ALTER TABLE studies ADD COLUMN variant TEXT;
+    END
+    $$;`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dir), true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('fake DROP TABLE variants CASCADE inside dollar-quoted body does not clear active studies FK', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_fake_cascade.sql': `DO $fn$
+    BEGIN
+      DROP TABLE variants CASCADE;
+    END
+    $fn$;`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dir), true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('dollar-quoted string requires exact matching tag and does not stop on mismatched inner tag', () => {
+  const sql = `DO $outer$ body with $inner$ inner text $inner$ more body $outer$;`;
+  const tokens = tokenizeSql(sql);
+  assert.equal(tokens.length, 3); // DO, string, ;
+  assert.equal(tokens[1].type, 'string');
+  assert.equal(tokens[1].value, ' body with $inner$ inner text $inner$ more body ');
+});
+
+test('unterminated dollar-quoted string throws explicit error', () => {
+  assert.throws(() => tokenizeSql('DO $$ BEGIN PERFORM 1;'), /unterminated dollar-quoted string/);
+  assert.throws(() => tokenizeSql('DO $tag$ BEGIN PERFORM 1; $different$'), /unterminated dollar-quoted string/);
+});
+
+test('ordinary single-quoted strings and positional parameters are not confused with dollar quotes', () => {
+  const sql = `SELECT 'hello $world$', $1, $2 FROM t;`;
+  const tokens = tokenizeSql(sql);
+  assert.equal(tokens[0].value, 'select');
+  assert.equal(tokens[1].type, 'string');
+  assert.equal(tokens[1].value, 'hello $world$');
+  assert.equal(tokens[3].type, 'punct');
+  assert.equal(tokens[3].value, '$');
+  assert.equal(tokens[4].type, 'punct');
+  assert.equal(tokens[4].value, '1');
+});
+
+test('structured tableKey distinguishes quoted identifiers containing periods', () => {
+  const key1 = tableKey({ schema: 'archive.x', table: 'studies' });
+  const key2 = tableKey({ schema: 'archive', table: 'x.studies' });
+  assert.notEqual(key1, key2);
+  assert.equal(key1, '["archive.x","studies"]');
+  assert.equal(key2, '["archive","x.studies"]');
+});
+
+test('structured tableKey distinguishes public.studies from a table named "public.studies" in public schema', () => {
+  const canonical = tableKey({ schema: 'public', table: 'studies' });
+  const literalDotted = tableKey({ schema: 'public', table: 'public.studies' });
+  assert.notEqual(canonical, literalDotted);
+  assert.equal(canonical, STUDIES_TABLE_KEY);
+  assert.equal(literalDotted, '["public","public.studies"]');
+});
+
+test('end-to-end parity failure when colliding-under-old-model table has variant constraints but public.studies is unconstrained', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE variants (code TEXT PRIMARY KEY);
+INSERT INTO variants (code) VALUES
+  ('standard'), ('chess960'), ('kingofthehill'), ('atomic'),
+  ('crazyhouse'), ('threecheck'), ('horde'), ('racingkings');`,
+    '0002_unconstrained_studies.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL
+    );`,
+    '0003_colliding_archive.sql': `CREATE TABLE "public.studies" (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+  });
+  try {
+    const { failures, studyConstraint, hasStudyVariantFk } = evaluateParity(dir);
+    assert.equal(studyConstraint, null);
+    assert.equal(hasStudyVariantFk, false);
+    assert.equal(failures.length, 1);
+    assert.match(failures[0], /`studies\.variant` has no CHECK constraint and no foreign key referencing `variants\(code\)`/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 
 
 
