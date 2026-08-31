@@ -7,16 +7,25 @@
  * rejected (returns `null`), so a corrupt or stale blob falls back to the
  * first-run defaults rather than restoring something invalid.
  */
-import { CREATE_GAME_PRESETS, type CreateGamePresetId } from './time-presets.js';
+import {
+  CREATE_GAME_PRESETS,
+  CUSTOM_PRESET_ID,
+  validateCustomTime,
+  type CreateGamePresetId,
+} from './time-presets.js';
 
 export const PREFS_STORAGE_KEY = 'gambit-create-game';
 
 export type SeekMode = 'casual' | 'rated';
 
-export interface CreateGamePrefs {
-  readonly time: CreateGamePresetId;
-  readonly mode: SeekMode;
-}
+export type CreateGamePrefs =
+  | { readonly time: CreateGamePresetId; readonly mode: SeekMode }
+  | {
+      readonly time: typeof CUSTOM_PRESET_ID;
+      readonly minutes: number;
+      readonly increment: number;
+      readonly mode: SeekMode;
+    };
 
 /**
  * Parse a stored prefs blob, validating every field. Returns `null` for missing,
@@ -38,6 +47,14 @@ export function parseCreateGamePrefs(raw: string | null): CreateGamePrefs | null
 
   const time = o.time;
   if (typeof time !== 'string') return null;
+
+  if (time === CUSTOM_PRESET_ID) {
+    const minutes = o.minutes;
+    const increment = o.increment;
+    if (typeof minutes !== 'number' || typeof increment !== 'number') return null;
+    if (!validateCustomTime(minutes, increment).ok) return null;
+    return { time, minutes, increment, mode };
+  }
 
   const preset = CREATE_GAME_PRESETS.find((candidate) => candidate.id === time);
   return preset ? { time: preset.id, mode } : null;

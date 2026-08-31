@@ -1,10 +1,9 @@
 /**
  * Shared time-control mappings for lobby game creation.
  *
- * Pure and DOM-free: the human seek panel renders its focused V1 choices from
- * {@link CREATE_GAME_PRESETS}; Play vs Computer keeps the wider ladder in
- * {@link TIME_PRESETS}. Both call {@link presetToTimeControl} so the wire mapping
- * stays unit-tested in one place without coupling the two surfaces.
+ * Pure and DOM-free: both lobby game-creation surfaces render the repository's
+ * canonical ladder and call {@link presetToTimeControl}, keeping the wire
+ * mapping and speed labels unit-tested in one place.
  */
 import type { TimeControl } from '../api/models.js';
 
@@ -17,18 +16,8 @@ export interface TimePreset {
   readonly increment: number;
 }
 
-/** The exact time controls offered by the focused Create-a-Game Web V1 flow. */
-export const CREATE_GAME_PRESETS = [
-  { id: '3+0', minutes: 3, increment: 0 },
-  { id: '5+0', minutes: 5, increment: 0 },
-  { id: '10+0', minutes: 10, increment: 0 },
-  { id: '15+10', minutes: 15, increment: 10 },
-] as const satisfies readonly TimePreset[];
-
-export type CreateGamePresetId = (typeof CREATE_GAME_PRESETS)[number]['id'];
-
-/** The wider preset ladder used by Play vs Computer: bullet → classical. */
-export const TIME_PRESETS: readonly TimePreset[] = [
+/** The curated repository ladder: bullet → classical. */
+export const TIME_PRESETS = [
   { id: '1+0', minutes: 1, increment: 0 },
   { id: '2+1', minutes: 2, increment: 1 },
   { id: '3+0', minutes: 3, increment: 0 },
@@ -39,7 +28,23 @@ export const TIME_PRESETS: readonly TimePreset[] = [
   { id: '10+5', minutes: 10, increment: 5 },
   { id: '15+10', minutes: 15, increment: 10 },
   { id: '30+20', minutes: 30, increment: 20 },
-];
+] as const satisfies readonly TimePreset[];
+
+/** The exact presets exposed by the Create-a-Game Web V2 flow. */
+export const CREATE_GAME_PRESETS = TIME_PRESETS;
+
+export type CreateGamePresetId = (typeof CREATE_GAME_PRESETS)[number]['id'];
+
+export const CUSTOM_PRESET_ID = 'custom';
+
+/** Product bounds retained from the repository's original custom-time flow. */
+export const CUSTOM_LIMITS = {
+  minMinutes: 0.5,
+  maxMinutes: 180,
+  minuteStep: 0.5,
+  minIncrement: 0,
+  maxIncrement: 60,
+} as const;
 
 /** Preselected preset — a rapid game most players reach for. */
 export const DEFAULT_PRESET_ID = '10+0';
@@ -60,6 +65,45 @@ export function presetToTimeControl(minutes: number, increment: number): TimeCon
     delayMs: 0,
     kind: incrementMs > 0 ? 'increment' : 'sudden_death',
   };
+}
+
+export type CustomTimeValidation =
+  | { readonly ok: true; readonly timeControl: TimeControl }
+  | {
+      readonly ok: false;
+      readonly field: 'minutes' | 'increment';
+      readonly message: string;
+    };
+
+/** Validate and map the custom inputs before any seek request can be created. */
+export function validateCustomTime(minutes: number, increment: number): CustomTimeValidation {
+  const minutesValid =
+    Number.isFinite(minutes) &&
+    minutes >= CUSTOM_LIMITS.minMinutes &&
+    minutes <= CUSTOM_LIMITS.maxMinutes &&
+    Number.isInteger(minutes / CUSTOM_LIMITS.minuteStep);
+  if (!minutesValid) {
+    return {
+      ok: false,
+      field: 'minutes',
+      message: 'Minutes must be between 0.5 and 180 in 0.5-minute steps.',
+    };
+  }
+
+  const incrementValid =
+    Number.isFinite(increment) &&
+    Number.isInteger(increment) &&
+    increment >= CUSTOM_LIMITS.minIncrement &&
+    increment <= CUSTOM_LIMITS.maxIncrement;
+  if (!incrementValid) {
+    return {
+      ok: false,
+      field: 'increment',
+      message: 'Increment must be a whole number between 0 and 60 seconds.',
+    };
+  }
+
+  return { ok: true, timeControl: presetToTimeControl(minutes, increment) };
 }
 
 /**
