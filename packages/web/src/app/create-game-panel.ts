@@ -17,6 +17,8 @@ import {
   validateCustomTime,
 } from './time-presets.js';
 import {
+  DEFAULT_CREATE_GAME_COLOR,
+  DEFAULT_CREATE_GAME_VARIANT,
   PREFS_STORAGE_KEY,
   parseCreateGamePrefs,
   serializeCreateGamePrefs,
@@ -302,7 +304,14 @@ export class CreateGamePanel {
           timeControl: validation.timeControl,
           rated: mode === 'rated',
         },
-        prefs: { time: CUSTOM_PRESET_ID, minutes, increment, mode },
+        prefs: {
+          time: CUSTOM_PRESET_ID,
+          minutes,
+          increment,
+          mode,
+          variant: DEFAULT_CREATE_GAME_VARIANT,
+          color: DEFAULT_CREATE_GAME_COLOR,
+        },
       };
     }
 
@@ -315,7 +324,12 @@ export class CreateGamePanel {
         timeControl: presetToTimeControl(preset.minutes, preset.increment),
         rated: mode === 'rated',
       },
-      prefs: { time: preset.id, mode },
+      prefs: {
+        time: preset.id,
+        mode,
+        variant: DEFAULT_CREATE_GAME_VARIANT,
+        color: DEFAULT_CREATE_GAME_COLOR,
+      },
     };
   }
 

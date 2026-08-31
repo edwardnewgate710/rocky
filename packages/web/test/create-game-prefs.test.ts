@@ -16,11 +16,13 @@ test('parse returns null for missing / malformed input', () => {
   assert.equal(parseCreateGamePrefs('null'), null);
 });
 
-test('parse accepts every canonical V2 preset with its mode', () => {
+test('parse restores every canonical V2 preset with V3 defaults', () => {
   for (const time of ['1+0', '2+1', '3+0', '3+2', '5+0', '5+3', '10+0', '10+5', '15+10', '30+20']) {
     assert.deepEqual(parseCreateGamePrefs(JSON.stringify({ time, mode: 'rated' })), {
       time,
       mode: 'rated',
+      variant: 'standard',
+      color: 'random',
     });
   }
 });
@@ -34,10 +36,17 @@ test('parse rejects an invalid mode', () => {
   assert.equal(parseCreateGamePrefs('{"time":"5+0"}'), null);
 });
 
-test('parse accepts valid custom time and rejects unsafe stored custom values', () => {
+test('parse restores valid V2 custom time with V3 defaults and rejects unsafe values', () => {
   assert.deepEqual(
     parseCreateGamePrefs('{"time":"custom","minutes":7,"increment":4,"mode":"casual"}'),
-    { time: 'custom', minutes: 7, increment: 4, mode: 'casual' },
+    {
+      time: 'custom',
+      minutes: 7,
+      increment: 4,
+      mode: 'casual',
+      variant: 'standard',
+      color: 'random',
+    },
   );
 
   for (const raw of [
@@ -55,8 +64,30 @@ test('parse accepts valid custom time and rejects unsafe stored custom values', 
   }
 });
 
-test('serialize round-trips through parse', () => {
-  const prefs = { time: 'custom' as const, minutes: 3.5, increment: 2, mode: 'rated' as const };
+test('parse rejects explicitly unknown variant and color values', () => {
+  assert.equal(
+    parseCreateGamePrefs(
+      '{"time":"5+3","mode":"rated","variant":"antichess","color":"black"}',
+    ),
+    null,
+  );
+  assert.equal(
+    parseCreateGamePrefs(
+      '{"time":"5+3","mode":"rated","variant":"atomic","color":"green"}',
+    ),
+    null,
+  );
+});
+
+test('serialize round-trips V3 variant and color through parse', () => {
+  const prefs = {
+    time: 'custom' as const,
+    minutes: 3.5,
+    increment: 2,
+    mode: 'rated' as const,
+    variant: 'crazyhouse' as const,
+    color: 'white' as const,
+  };
   assert.deepEqual(parseCreateGamePrefs(serializeCreateGamePrefs(prefs)), prefs);
 });
 
