@@ -614,7 +614,9 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
       // -----------------------------------------------------------------------
       if (stmt[0].value === 'alter' && stmt[1].value === 'table') {
         let idx = 2;
+        let isTableIfExists = false;
         if (stmt[idx]?.value === 'if' && stmt[idx + 1]?.value === 'exists') {
+          isTableIfExists = true;
           idx += 2;
         }
 
@@ -622,6 +624,11 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
         if (ref === null || !isTableTarget(ref, 'studies')) {
           continue;
         }
+
+        if (!hasStudiesTable && isTableIfExists) {
+          continue;
+        }
+        hasStudiesTable = true;
         idx = ref.nextIndex;
 
         // Table rename: ALTER TABLE studies RENAME TO new_name

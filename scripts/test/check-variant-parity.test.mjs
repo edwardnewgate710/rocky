@@ -1026,5 +1026,23 @@ test('compound CHECK predicate with suffix fails loudly rather than ignoring pre
   }
 });
 
+test('ALTER TABLE IF EXISTS studies skips actions when table does not exist', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      title TEXT NOT NULL
+    );`,
+    '0002_drop.sql': `DROP TABLE studies;`,
+    '0003_conditional_alter.sql': `ALTER TABLE IF EXISTS studies ADD COLUMN variant TEXT REFERENCES variants(code);`,
+  });
+  try {
+    // ALTER TABLE IF EXISTS is a no-op in PostgreSQL because studies was dropped.
+    assert.equal(effectiveStudyVariantForeignKey(dir), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
 
 
