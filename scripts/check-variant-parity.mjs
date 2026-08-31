@@ -320,6 +320,17 @@ export function effectiveStudyVariantConstraint(dir = MIGRATIONS_DIR) {
   return current;
 }
 
+const nextImplicitFkName = (activeFks) => {
+  if (!activeFks.has(IMPLICIT_FK_CONSTRAINT_NAME)) {
+    return IMPLICIT_FK_CONSTRAINT_NAME;
+  }
+  let i = 1;
+  while (activeFks.has(`${IMPLICIT_FK_CONSTRAINT_NAME}${i}`)) {
+    i++;
+  }
+  return `${IMPLICIT_FK_CONSTRAINT_NAME}${i}`;
+};
+
 /**
  * Returns true if the effective migration schema defines an active foreign key on studies.variant referencing variants(code).
  *
@@ -328,13 +339,11 @@ export function effectiveStudyVariantConstraint(dir = MIGRATIONS_DIR) {
  */
 export function effectiveStudyVariantForeignKey(dir = MIGRATIONS_DIR) {
   const activeFks = new Set();
-  let implicitFkCounter = 0;
   for (const file of migrationFiles(dir)) {
     const sql = stripComments(readFileSync(join(dir, file), 'utf8'), 'sql');
     for (const statement of splitStatements(sql)) {
       if (/^\s*DROP\s+TABLE(?:\s+IF\s+EXISTS)?\s+(?:ONLY\s+)?"?variants"?\s+CASCADE\b/i.test(statement)) {
         activeFks.clear();
-        implicitFkCounter = 0;
         continue;
       }
 
@@ -342,7 +351,6 @@ export function effectiveStudyVariantForeignKey(dir = MIGRATIONS_DIR) {
 
       if (/^\s*DROP\s+TABLE/i.test(statement) || /RENAME\s+TO\b/i.test(statement)) {
         activeFks.clear();
-        implicitFkCounter = 0;
         continue;
       }
 
@@ -360,17 +368,11 @@ export function effectiveStudyVariantForeignKey(dir = MIGRATIONS_DIR) {
       }
 
       for (const m of statement.matchAll(VARIANT_FK_TABLE)) {
-        const name = m[1]
-          ? normalise(m[1])
-          : (implicitFkCounter === 0 ? IMPLICIT_FK_CONSTRAINT_NAME : `${IMPLICIT_FK_CONSTRAINT_NAME}${implicitFkCounter}`);
-        if (!m[1]) implicitFkCounter++;
+        const name = m[1] ? normalise(m[1]) : nextImplicitFkName(activeFks);
         activeFks.add(name);
       }
       for (const m of statement.matchAll(VARIANT_FK_INLINE)) {
-        const name = m[1]
-          ? normalise(m[1])
-          : (implicitFkCounter === 0 ? IMPLICIT_FK_CONSTRAINT_NAME : `${IMPLICIT_FK_CONSTRAINT_NAME}${implicitFkCounter}`);
-        if (!m[1]) implicitFkCounter++;
+        const name = m[1] ? normalise(m[1]) : nextImplicitFkName(activeFks);
         activeFks.add(name);
       }
     }

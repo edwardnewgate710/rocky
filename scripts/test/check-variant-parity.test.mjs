@@ -455,6 +455,26 @@ test('effectiveStudyVariantForeignKey tracks multiple unnamed foreign keys with 
   }
 });
 
+test('effectiveStudyVariantForeignKey reuses base unnamed constraint name in add-drop-add-drop sequence', () => {
+  const dir = migrations({
+    '0001_add_first.sql': `ALTER TABLE studies ADD FOREIGN KEY (variant) REFERENCES variants(code);`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dir), true);
+    // 0002 drops the first generated name studies_variant_fkey
+    writeFileSync(join(dir, '0002_drop_first.sql'), `ALTER TABLE studies DROP CONSTRAINT studies_variant_fkey;`, 'utf8');
+    assert.equal(effectiveStudyVariantForeignKey(dir), false);
+    // 0003 adds another unnamed FK which reuses the available base name studies_variant_fkey
+    writeFileSync(join(dir, '0003_add_second.sql'), `ALTER TABLE studies ADD FOREIGN KEY (variant) REFERENCES variants(code);`, 'utf8');
+    assert.equal(effectiveStudyVariantForeignKey(dir), true);
+    // 0004 drops studies_variant_fkey again
+    writeFileSync(join(dir, '0004_drop_second.sql'), `ALTER TABLE studies DROP CONSTRAINT studies_variant_fkey;`, 'utf8');
+    assert.equal(effectiveStudyVariantForeignKey(dir), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('effectiveStudyVariantForeignKey and effectiveStudyVariantConstraint clear state when studies table is dropped or renamed', () => {
   const dropDir = migrations({
     '0001_initial.sql': `CREATE TABLE studies (
