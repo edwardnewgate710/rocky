@@ -127,27 +127,32 @@ test('create-game radios keep native keyboard selection and a visible focus ring
   await expect(color).toHaveValue('white');
 });
 
-test('create-game V3 mirrors under RTL without overflow while notation stays LTR', async ({ page }) => {
-  await page.setViewportSize({ width: 320, height: 640 });
-  await page.addInitScript(() => {
-    document.addEventListener('DOMContentLoaded', () => document.documentElement.setAttribute('dir', 'rtl'));
+for (const viewport of [
+  { name: 'desktop', width: 1440, height: 900 },
+  { name: 'mobile', width: 320, height: 640 },
+] as const) {
+  test(`create-game V3 mirrors under ${viewport.name} RTL without overflow while notation stays LTR`, async ({ page }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await page.addInitScript(() => {
+      document.addEventListener('DOMContentLoaded', () => document.documentElement.setAttribute('dir', 'rtl'));
+    });
+    await openCreateGame(page);
+
+    await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(viewport.width);
+
+    const first = await page.locator('#create-game-form .cg-chip:has(input[value="1+0"])').boundingBox();
+    const second = await page.locator('#create-game-form .cg-chip:has(input[value="2+1"])').boundingBox();
+    if (first === null || second === null) throw new Error('time controls have no rendered bounds');
+    expect(first.x).toBeGreaterThan(second.x);
+    await expect(page.locator('#create-game-form .cg-chip:has(input[value="1+0"]) .cg-chip-label')).toHaveAttribute('dir', 'ltr');
+
+    const random = await page.locator('#create-game-form .cg-seg:has(input[value="random"])').boundingBox();
+    const white = await page.locator('#create-game-form .cg-seg:has(input[value="white"])').boundingBox();
+    if (random === null || white === null) throw new Error('color controls have no rendered bounds');
+    expect(random.x).toBeGreaterThan(white.x);
   });
-  await openCreateGame(page);
-
-  await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
-
-  const first = await page.locator('#create-game-form .cg-chip:has(input[value="1+0"])').boundingBox();
-  const second = await page.locator('#create-game-form .cg-chip:has(input[value="2+1"])').boundingBox();
-  if (first === null || second === null) throw new Error('time controls have no rendered bounds');
-  expect(first.x).toBeGreaterThan(second.x);
-  await expect(page.locator('#create-game-form .cg-chip:has(input[value="1+0"]) .cg-chip-label')).toHaveAttribute('dir', 'ltr');
-
-  const random = await page.locator('#create-game-form .cg-seg:has(input[value="random"])').boundingBox();
-  const white = await page.locator('#create-game-form .cg-seg:has(input[value="white"])').boundingBox();
-  if (random === null || white === null) throw new Error('color controls have no rendered bounds');
-  expect(random.x).toBeGreaterThan(white.x);
-});
+}
 
 test('default Standard and Random reach the exact seek payload', async ({ page }) => {
   await openCreateGame(page);
