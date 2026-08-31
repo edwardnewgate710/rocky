@@ -252,15 +252,15 @@ const IMPLICIT_CONSTRAINT_NAME = 'studies_variant_check';
 const IMPLICIT_FK_CONSTRAINT_NAME = 'studies_variant_fkey';
 
 /** A `CHECK (variant IN (...))`, with the constraint name when the statement gives one. */
-const VARIANT_CHECK = /(?:CONSTRAINT\s+"?(\w+)"?\s+)?CHECK\s*\(\s*variant\s+IN\s*\(([\s\S]*?)\)\s*\)/gi;
+const VARIANT_CHECK = /(?:CONSTRAINT\s+"?(\w+)"?\s+)?CHECK\s*\(\s*"?variant"?\s+IN\s*\(([\s\S]*?)\)\s*\)/gi;
 
 /** Table-level `FOREIGN KEY (variant) REFERENCES variants(code)`. */
 const VARIANT_FK_TABLE =
-  /(?:CONSTRAINT\s+"?(\w+)"?\s+)?FOREIGN\s+KEY\s*\(\s*"?variant"?\s*\)\s*REFERENCES\s+variants\s*\(\s*code\s*\)/gi;
+  /(?:CONSTRAINT\s+"?(\w+)"?\s+)?FOREIGN\s+KEY\s*\(\s*"?variant"?\s*\)\s*REFERENCES\s+"?variants"?\s*\(\s*"?code"?\s*\)/gi;
 
 /** Inline-column `variant TEXT ... [CONSTRAINT name] REFERENCES variants(code)`. */
 const VARIANT_FK_INLINE =
-  /(?:ADD\s+COLUMN|CREATE\s+TABLE)\s+[^;]*?\bvariant\b\s+TEXT\b[^,;)]*?(?:CONSTRAINT\s+"?(\w+)"?\s+)?REFERENCES\s+variants\s*\(\s*code\s*\)/gi;
+  /(?:ADD\s+COLUMN|CREATE\s+TABLE)\s+[^;]*?"?variant"?\s+TEXT\b[^,;)]*?(?:CONSTRAINT\s+"?(\w+)"?\s+)?REFERENCES\s+"?variants"?\s*\(\s*"?code"?\s*\)/gi;
 
 const normalise = (name) => name.replace(/"/g, '').toLowerCase();
 
@@ -305,7 +305,7 @@ export function effectiveStudyVariantConstraint(dir = MIGRATIONS_DIR) {
           current = null;
         }
       }
-      if (/(?:DROP|RENAME)\s+COLUMN\s+(?:IF\s+EXISTS\s+)?"?variant"?/i.test(statement)) current = null;
+      if (/(?:DROP\s+COLUMN(?:\s+IF\s+EXISTS)?|RENAME(?:\s+COLUMN)?)\s+"?variant"?/i.test(statement)) current = null;
 
       for (const m of statement.matchAll(VARIANT_CHECK)) {
         current = {
@@ -327,6 +327,7 @@ export function effectiveStudyVariantConstraint(dir = MIGRATIONS_DIR) {
  */
 export function effectiveStudyVariantForeignKey(dir = MIGRATIONS_DIR) {
   const activeFks = new Set();
+  let implicitFkCounter = 0;
   for (const file of migrationFiles(dir)) {
     const sql = stripComments(readFileSync(join(dir, file), 'utf8'), 'sql');
     for (const statement of splitStatements(sql)) {
@@ -334,6 +335,7 @@ export function effectiveStudyVariantForeignKey(dir = MIGRATIONS_DIR) {
 
       if (/^\s*DROP\s+TABLE/i.test(statement) || /RENAME\s+TO\b/i.test(statement)) {
         activeFks.clear();
+        implicitFkCounter = 0;
         continue;
       }
 
@@ -346,15 +348,23 @@ export function effectiveStudyVariantForeignKey(dir = MIGRATIONS_DIR) {
       for (const m of statement.matchAll(/DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?"?(\w+)"?/gi)) {
         activeFks.delete(normalise(m[1]));
       }
-      if (/(?:DROP|RENAME)\s+COLUMN\s+(?:IF\s+EXISTS\s+)?"?variant"?/i.test(statement)) {
+      if (/(?:DROP\s+COLUMN(?:\s+IF\s+EXISTS)?|RENAME(?:\s+COLUMN)?)\s+"?variant"?/i.test(statement)) {
         activeFks.clear();
       }
 
       for (const m of statement.matchAll(VARIANT_FK_TABLE)) {
-        activeFks.add(normalise(m[1] ?? IMPLICIT_FK_CONSTRAINT_NAME));
+        const name = m[1]
+          ? normalise(m[1])
+          : (implicitFkCounter === 0 ? IMPLICIT_FK_CONSTRAINT_NAME : `${IMPLICIT_FK_CONSTRAINT_NAME}${implicitFkCounter}`);
+        if (!m[1]) implicitFkCounter++;
+        activeFks.add(name);
       }
       for (const m of statement.matchAll(VARIANT_FK_INLINE)) {
-        activeFks.add(normalise(m[1] ?? IMPLICIT_FK_CONSTRAINT_NAME));
+        const name = m[1]
+          ? normalise(m[1])
+          : (implicitFkCounter === 0 ? IMPLICIT_FK_CONSTRAINT_NAME : `${IMPLICIT_FK_CONSTRAINT_NAME}${implicitFkCounter}`);
+        if (!m[1]) implicitFkCounter++;
+        activeFks.add(name);
       }
     }
   }

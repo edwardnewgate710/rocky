@@ -383,8 +383,8 @@ test('effectiveStudyVariantForeignKey tracks multiple foreign keys added in a si
   }
 });
 
-test('effectiveStudyVariantForeignKey clears active foreign keys when variant column is renamed', () => {
-  const dir = migrations({
+test('effectiveStudyVariantForeignKey clears active foreign keys when variant column is renamed (with or without COLUMN keyword)', () => {
+  const dirWithColumn = migrations({
     '0001_inline.sql': `CREATE TABLE studies (
       id UUID PRIMARY KEY,
       variant TEXT NOT NULL REFERENCES variants(code)
@@ -393,6 +393,62 @@ test('effectiveStudyVariantForeignKey clears active foreign keys when variant co
     '0003_readd_unconstrained.sql': `ALTER TABLE studies ADD COLUMN variant TEXT NOT NULL DEFAULT 'standard';`,
   });
   try {
+    assert.equal(effectiveStudyVariantForeignKey(dirWithColumn), false);
+  } finally {
+    rmSync(dirWithColumn, { recursive: true, force: true });
+  }
+
+  const dirShorthand = migrations({
+    '0001_inline.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_rename_shorthand.sql': `ALTER TABLE studies RENAME variant TO old_variant;`,
+    '0003_readd_unconstrained.sql': `ALTER TABLE studies ADD COLUMN variant TEXT NOT NULL DEFAULT 'standard';`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dirShorthand), false);
+  } finally {
+    rmSync(dirShorthand, { recursive: true, force: true });
+  }
+});
+
+test('effectiveStudyVariantForeignKey recognizes double-quoted identifiers in table-level and inline foreign keys', () => {
+  const dirTable = migrations({
+    '0001_table_quoted.sql': `ALTER TABLE "studies" ADD CONSTRAINT "fk_quoted" FOREIGN KEY ("variant") REFERENCES "variants"("code");`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dirTable), true);
+  } finally {
+    rmSync(dirTable, { recursive: true, force: true });
+  }
+
+  const dirInline = migrations({
+    '0001_inline_quoted.sql': `CREATE TABLE "studies" (
+      "id" UUID PRIMARY KEY,
+      "variant" TEXT NOT NULL REFERENCES "variants"("code")
+    );`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dirInline), true);
+  } finally {
+    rmSync(dirInline, { recursive: true, force: true });
+  }
+});
+
+test('effectiveStudyVariantForeignKey tracks multiple unnamed foreign keys with non-colliding names', () => {
+  const dir = migrations({
+    '0001_two_unnamed.sql': `ALTER TABLE studies
+      ADD FOREIGN KEY (variant) REFERENCES variants(code),
+      ADD FOREIGN KEY (variant) REFERENCES variants(code);`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dir), true);
+    // Dropping the first generated name studies_variant_fkey leaves the second active
+    writeFileSync(join(dir, '0002_drop_first.sql'), `ALTER TABLE studies DROP CONSTRAINT studies_variant_fkey;`, 'utf8');
+    assert.equal(effectiveStudyVariantForeignKey(dir), true);
+    // Dropping the second generated name studies_variant_fkey1 clears all
+    writeFileSync(join(dir, '0003_drop_second.sql'), `ALTER TABLE studies DROP CONSTRAINT studies_variant_fkey1;`, 'utf8');
     assert.equal(effectiveStudyVariantForeignKey(dir), false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
