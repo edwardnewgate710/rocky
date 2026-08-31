@@ -189,12 +189,12 @@ directly: two trivial files run together under
 `node --test --test-concurrency=1` report distinct PIDs, neither matching the
 parent's. The flag-free PID run is the evidence for default per-file process
 isolation on the tested Node version, while the explicit `--test-isolation=process`
-flag demonstrates that process isolation can also be explicitly selected. It is why
-the failure is confined to exactly one file per occurrence with no effect on any
-other file in the same run.
+flag demonstrates that process isolation can also be explicitly selected. This process
+boundary proves that a terminating child does not directly abort sibling test processes
+in the runner, though shared host resources can still interact across processes.
 
-**The bare `'test failed'` with no stack is what Node's runner reports for a
-child that exits non-zero or is signaled before any subtest result is recorded.** This was reproduced directly: a synthetic file that calls
+**The bare `'test failed'` with no stack and empty stderr is what Node's runner reports for a
+child that calls `process.exit(1)` (or terminates silently) before registering any test.** This was reproduced directly: a synthetic file that calls
 `process.exit(1)` before registering any test produces the identical reported
 shape as the real defect — `✖ <file> (Nms)` / `'test failed'`, zero individual
 tests in the summary, nothing on stderr. Every OTHER synthetic mechanism tried

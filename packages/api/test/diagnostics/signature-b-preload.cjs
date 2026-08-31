@@ -163,7 +163,7 @@ function write(kind, fields) {
         kind,
         pid: process.pid,
         ppid: process.ppid,
-        testFile: process.env.NODE_TEST_CONTEXT === 'child-v8' ? (process.argv[1] || null) : null,
+        testFile: Boolean(process.env.NODE_TEST_CONTEXT) ? (process.argv[1] || null) : null,
         nodeTestContext: process.env.NODE_TEST_CONTEXT || null,
         timeIso: new Date().toISOString(),
         timeNs: process.hrtime.bigint().toString(),

@@ -11,6 +11,8 @@ interface DiagnosticRecord {
   readonly kind: string;
   readonly pid: number;
   readonly ppid: number;
+  readonly testFile?: string | null;
+  readonly nodeTestContext?: string | null;
   readonly code?: number;
   readonly targetPid?: number;
   readonly signal?: string | number;
@@ -62,10 +64,12 @@ function runWithPreload(
 
   const env: Record<string, string | undefined> = {
     ...process.env,
-    ...envOverride,
     SIGB_LOG_DIR: rawLogDir ?? targetLogDir,
   };
   delete env.NODE_TEST_CONTEXT;
+  for (const [k, v] of Object.entries(envOverride)) {
+    env[k] = v;
+  }
 
   const result = spawnSync(process.execPath, args, {
     cwd: generatedLogDir,
@@ -143,10 +147,12 @@ function runWithSafeAbortShimAndPreload(
 
   const env: Record<string, string | undefined> = {
     ...process.env,
-    ...envOverride,
     SIGB_LOG_DIR: rawLogDir ?? targetLogDir,
   };
   delete env.NODE_TEST_CONTEXT;
+  for (const [k, v] of Object.entries(envOverride)) {
+    env[k] = v;
+  }
 
   const result = spawnSync(process.execPath, args, {
     cwd: generatedLogDir,
@@ -428,3 +434,32 @@ test('diagnostic preload: usage glob pattern matches test files without literal 
   assert.ok(preloadSource.includes('"dist-test/test/**/*.test.js"'), 'preload usage specifies unescaped glob');
   assert.ok(!preloadSource.includes('**\\/*.test.js'), 'preload usage does not contain escaped backslash in glob');
 });
+
+test('diagnostic preload: captures testFile when NODE_TEST_CONTEXT is "child" or "child-v8"', (t) => {
+  const childRun = runWithPreload('const ok = true;', { NODE_TEST_CONTEXT: 'child' });
+  t.after(() => fs.rmSync(childRun.logDir, { recursive: true, force: true }));
+
+  const childRecord = childRun.records.find((r) => r.kind === 'preload-installed');
+  assert.ok(childRecord, 'preload-installed record exists for child context');
+  assert.equal(childRecord?.nodeTestContext, 'child', 'records nodeTestContext');
+  assert.ok(typeof childRecord?.testFile === 'string', 'testFile is a string for child context');
+  assert.ok(childRecord?.testFile?.includes('test-target.cjs'), 'testFile captures script path for child context');
+
+  const v8Run = runWithPreload('const ok = true;', { NODE_TEST_CONTEXT: 'child-v8' });
+  t.after(() => fs.rmSync(v8Run.logDir, { recursive: true, force: true }));
+
+  const v8Record = v8Run.records.find((r) => r.kind === 'preload-installed');
+  assert.ok(v8Record, 'preload-installed record exists for child-v8 context');
+  assert.equal(v8Record?.nodeTestContext, 'child-v8', 'records nodeTestContext');
+  assert.ok(typeof v8Record?.testFile === 'string', 'testFile is a string for child-v8 context');
+  assert.ok(v8Record?.testFile?.includes('test-target.cjs'), 'testFile captures script path for child-v8 context');
+
+  const rootRun = runWithPreload('const ok = true;');
+  t.after(() => fs.rmSync(rootRun.logDir, { recursive: true, force: true }));
+
+  const rootRecord = rootRun.records.find((r) => r.kind === 'preload-installed');
+  assert.ok(rootRecord, 'preload-installed record exists for root context');
+  assert.equal(rootRecord?.nodeTestContext, null, 'nodeTestContext is null for non-runner process');
+  assert.equal(rootRecord?.testFile, null, 'testFile is null for non-runner process');
+});
+
