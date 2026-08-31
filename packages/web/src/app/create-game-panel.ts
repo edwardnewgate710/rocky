@@ -236,8 +236,8 @@ export class CreateGamePanel {
     for (const radio of this.form.querySelectorAll<HTMLInputElement>('input[name="cg-time"]')) {
       radio.addEventListener('change', () => this.syncTimeSelection(true));
     }
-    this.customMinutes.addEventListener('input', () => this.clearCustomError());
-    this.customIncrement.addEventListener('input', () => this.clearCustomError());
+    this.customMinutes.addEventListener('input', () => this.clearCustomError(this.customMinutes));
+    this.customIncrement.addEventListener('input', () => this.clearCustomError(this.customIncrement));
     this.form.addEventListener('submit', (event) => {
       event.preventDefault();
       void this.submit();
@@ -421,17 +421,24 @@ export class CreateGamePanel {
   private showCustomError(message: string, field: 'minutes' | 'increment'): void {
     this.customError.textContent = message;
     this.customError.hidden = false;
+    this.customMinutes.removeAttribute('aria-invalid');
+    this.customIncrement.removeAttribute('aria-invalid');
     const input = field === 'minutes' ? this.customMinutes : this.customIncrement;
     input.setAttribute('aria-invalid', 'true');
     input.focus();
   }
 
   /** Clear custom validation state without affecting the lobby-level error region. */
-  private clearCustomError(): void {
+  private clearCustomError(input?: HTMLInputElement): void {
+    if (input && !input.hasAttribute('aria-invalid')) return;
     this.customError.textContent = '';
     this.customError.hidden = true;
-    this.customMinutes.removeAttribute('aria-invalid');
-    this.customIncrement.removeAttribute('aria-invalid');
+    if (input) {
+      input.removeAttribute('aria-invalid');
+    } else {
+      this.customMinutes.removeAttribute('aria-invalid');
+      this.customIncrement.removeAttribute('aria-invalid');
+    }
   }
 
 }

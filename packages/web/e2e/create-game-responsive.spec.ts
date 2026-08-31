@@ -142,7 +142,13 @@ test('Custom validates before request and preserves exact integer-millisecond pa
   );
 
   await form.locator('#cg-minutes').fill('7.5');
+  await expect(form.locator('#cg-increment')).toHaveAttribute('aria-invalid', 'true');
+  await expect(form.locator('.cg-field-error')).toHaveText(
+    'Increment must be a whole number between 0 and 60 seconds.',
+  );
   await form.locator('#cg-increment').fill('4');
+  await expect(form.locator('#cg-increment')).not.toHaveAttribute('aria-invalid', 'true');
+  await expect(form.locator('.cg-field-error')).toBeHidden();
   await form.locator('.cg-seg:has(input[value="rated"])').click();
   const requestPromise = page.waitForRequest(
     (request) => request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/v1/seeks'),

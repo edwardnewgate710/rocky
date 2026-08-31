@@ -899,6 +899,36 @@ test('mountLobby: invalid Custom values show a field error and send no request',
   assert.equal(form.querySelector('.cg-field-error')?.textContent, 'Increment must be a whole number between 0 and 60 seconds.');
 });
 
+test('mountLobby: editing the other Custom field preserves current validation feedback', async () => {
+  const { doc, elements } = createTestDoc();
+  const { client, createdSeeks } = makeFakeClient();
+
+  mountTestLobby({ doc, client, isAuthenticated: () => true });
+  const mount = elements.get('create-game')!;
+  mount.querySelector('#create-seek')!.click();
+  const form = mount.querySelector('#create-game-form')!;
+  selectRadio(form, 'cg-time', 'custom');
+  const minutes = form.querySelector<FakeDOMElement>('#cg-minutes')!;
+  const increment = form.querySelector<FakeDOMElement>('#cg-increment')!;
+  minutes.value = '5';
+  increment.value = '';
+
+  submit(form);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(createdSeeks.length, 0);
+  assert.equal(increment.getAttribute('aria-invalid'), 'true');
+
+  minutes.value = '6';
+  minutes.dispatchEvent(new Event('input'));
+  assert.equal(increment.getAttribute('aria-invalid'), 'true');
+  assert.equal(form.querySelector('.cg-field-error')?.textContent, 'Increment must be a whole number between 0 and 60 seconds.');
+
+  increment.value = '2';
+  increment.dispatchEvent(new Event('input'));
+  assert.equal(increment.getAttribute('aria-invalid'), null);
+  assert.equal(form.querySelector('.cg-field-error')?.hidden, true);
+});
+
 test('mountLobby: blocks duplicate seek submissions while the first is pending', async () => {
   const pendingSeek = deferred<SeekView>();
   const { doc, elements } = createTestDoc();
