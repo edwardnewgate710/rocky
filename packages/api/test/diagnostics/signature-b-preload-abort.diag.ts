@@ -43,7 +43,10 @@ function runDiagnosticChild(
   readonly records: readonly DiagnosticRecord[];
 } {
   const generatedLogDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-abort-diag-'));
-  const targetLogDir = envOverride.SIGB_LOG_DIR ? path.resolve(envOverride.SIGB_LOG_DIR) : generatedLogDir;
+  const rawLogDir = envOverride.SIGB_LOG_DIR;
+  const targetLogDir = rawLogDir
+    ? path.resolve(generatedLogDir, rawLogDir)
+    : generatedLogDir;
   const scriptPath = path.join(generatedLogDir, 'abort-target.cjs');
   fs.writeFileSync(scriptPath, code, 'utf8');
 
@@ -51,7 +54,7 @@ function runDiagnosticChild(
   const env = {
     ...process.env,
     ...envOverride,
-    SIGB_LOG_DIR: targetLogDir,
+    SIGB_LOG_DIR: rawLogDir ?? targetLogDir,
   };
 
   const result =
