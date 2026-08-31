@@ -380,25 +380,35 @@ test('pg studies repository integration tests', { skip }, async () => {
       assert.equal(fetched.variant, v);
     }
 
-    // 10.5 Referencing study specifically protects variants(code) via studies_variant_fk (NO ACTION / RESTRICT)
-    await pool.query(
-      `INSERT INTO variants (code, name, enabled) VALUES ('test_fk_protection_variant', 'Test FK Variant', true)`
-    );
+    // 10.5 Referencing study specifically protects variants(code) via studies_variant_fk (NO ACTION)
+    let customVarInserted = false;
+    let customStudyInserted = false;
+    const customVarCode = 'test_fk_protection_variant';
     const customVarStudyId = uuidv7();
-    await pool.query(
-      `INSERT INTO studies (id, owner_id, name, description, visibility, variant, created_at, updated_at)
-       VALUES ($1, $2, 'Custom Variant Study', '', 'public', 'test_fk_protection_variant', NOW(), NOW())`,
-      [customVarStudyId, alice]
-    );
     try {
+      await pool.query(
+        `INSERT INTO variants (code, name, enabled) VALUES ($1, 'Test FK Variant', true)`,
+        [customVarCode]
+      );
+      customVarInserted = true;
+      await pool.query(
+        `INSERT INTO studies (id, owner_id, name, description, visibility, variant, created_at, updated_at)
+         VALUES ($1, $2, 'Custom Variant Study', '', 'public', $3, NOW(), NOW())`,
+        [customVarStudyId, alice, customVarCode]
+      );
+      customStudyInserted = true;
       await assert.rejects(
-        async () => pool.query(`DELETE FROM variants WHERE code = 'test_fk_protection_variant'`),
+        async () => pool.query(`DELETE FROM variants WHERE code = $1`, [customVarCode]),
         (err: unknown) => isPgConstraintViolation(err, '23503', 'studies_variant_fk'),
         'deleting a variant referenced only by studies must raise foreign_key_violation on studies_variant_fk'
       );
     } finally {
-      await pool.query(`DELETE FROM studies WHERE id = $1`, [customVarStudyId]);
-      await pool.query(`DELETE FROM variants WHERE code = 'test_fk_protection_variant'`);
+      if (customStudyInserted) {
+        await pool.query(`DELETE FROM studies WHERE id = $1`, [customVarStudyId]);
+      }
+      if (customVarInserted) {
+        await pool.query(`DELETE FROM variants WHERE code = $1`, [customVarCode]);
+      }
     }
   } finally {
     if (createdUserIds.length > 0) {
