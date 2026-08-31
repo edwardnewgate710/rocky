@@ -217,10 +217,10 @@ None of these match. The real defect's log is completely silent before the
 bare file-level failure: no diagnostic line, no stderr, no test names at all
 for that file (not even the ones that would have run first).
 
-**A new diagnostic preload
-(`packages/api/test/diagnostics/signature-b-preload.cjs`) proves which of
-those mechanisms it is, on real occurrences, not synthetic ones.** It hooks
-`process.exit`, `process.kill`, `uncaughtExceptionMonitor` (a passive observer
+**A diagnostic preload
+(`packages/api/test/diagnostics/signature-b-preload.cjs`) captures which of
+those mechanisms fire on real occurrences, not synthetic ones.** It hooks
+`process.exit`, `process.abort`, `process.kill`, `uncaughtExceptionMonitor` (a passive observer
 that, unlike `uncaughtException`, never alters Node's default crash handling),
 `unhandledRejection`, `rejectionHandled`, `warning`, `beforeExit`, and Node's
 own unconditional `exit` event, writing a structured, redacted, timestamped
@@ -234,38 +234,37 @@ of the original four. Combined with the original four, that is **seven
 different files**, sharing nothing but the shared harness's `startHarness`
 import, which confirms this is not a defect specific to any one file's logic.
 
-All three captures show the identical signature: **only the `start` and
-`preload-installed` lines are logged. Nothing else fires — including Node's own
-`process.on('exit')`, which fires unconditionally for every JS-visible shutdown
-path, `process.exit()` included.** That rules out, directly and by observation
-rather than inference, every mechanism the preload watches for: `process.exit`,
-an uncaught exception, an unhandled rejection, a handled-late rejection, a
-runtime warning, and reaching an idle event loop. The child process disappeared
-before the JS runtime got to react to anything.
+All three historical captures show the identical signature: **only the `start` and
+`preload-installed` lines were logged. None of the hooks active at that time fired —
+including `process.exit`, `process.kill`, `uncaughtExceptionMonitor`, `unhandledRejection`,
+`rejectionHandled`, `warning`, `beforeExit`, and Node's `exit` event.**
+Crucially, however, the diagnostic preload in use during those historical runs did
+not yet wrap `process.abort()`. Because `process.abort()` terminates the process
+immediately without emitting Node's `exit` event, those historical captures directly
+ruled out `process.exit`, unhandled rejections, uncaught exceptions, and reaching an
+idle event loop, but could not categorically exclude an uninstrumented `process.abort()`
+or an external termination.
 
-**This narrows Signature B's cause to a class, not a line of code:** the
-per-file child process is being terminated by something outside the JS/V8
-layer entirely — an uncatchable signal or an external kill — not by any defect
-this repository's TypeScript can throw, catch, or leak. Two observations are
-consistent with an environmental (not code) origin: at the time of capture this
-development machine had roughly 2.5 GB of 15.7 GB RAM free, with several
-unrelated concurrent processes (other agents' worktrees and dev servers)
-running; and `node --test` spawns dozens of child processes across a full
-`packages/api` run, each loading the same large cross-package import graph,
-which is exactly the pattern most exposed to transient resource contention.
-Neither observation is proof of a specific external actor — no crash was
-recorded in the Windows Application or System event logs in the capture
-window — so the exact trigger (OS scheduler, memory pressure, antivirus, or
-something else entirely) is not established.
+**This narrows Signature B's investigated possibilities while leaving its root cause unresolved:**
+`process.abort()` is now instrumented so any future occurrence will record whether an abort
+was invoked or whether termination originated outside the JS runtime entirely (e.g. an OS-level
+kill, uncatchable signal, or native crash). Two observations remain consistent with an
+environmental (not code) origin: at the time of capture this development machine had roughly
+2.5 GB of 15.7 GB RAM free, with several unrelated concurrent processes (other agents' worktrees
+and dev servers) running; and `node --test` spawns dozens of child processes across a full
+`packages/api` run, each loading the same large cross-package import graph, which is exactly the
+pattern most exposed to transient resource contention. Neither observation is proof of a specific
+external actor — no crash was recorded in the Windows Application or System event logs in the
+capture window — so the exact trigger (OS scheduler, memory pressure, antivirus, or something
+else entirely) is not established.
 
-**No fix is proposed.** Every mechanism this repository's code could cause and
-catch has been directly ruled out on real captures; what remains is external to
-the process, and the forbidden responses — sleeps, retries around the whole
-file, swallowing errors, lowering concurrency to hide it — would suppress the
-symptom without touching whatever the cause turns out to be. Signature B stays
-open. The diagnostic preload is committed so the next occurrence — on this
-machine, in CI, or elsewhere — can be captured with this same evidence rather
-than re-deriving it.
+**No fix is proposed.** The investigated JS mechanisms (`process.exit`, exceptions, rejections)
+have been ruled out on the historical captures, `process.abort()` instrumentation is in place for
+future occurrences, and the forbidden responses — sleeps, retries around the whole file,
+swallowing errors, lowering concurrency to hide it — would suppress the symptom without touching
+whatever the root cause turns out to be. Signature B stays open and unresolved. The diagnostic
+preload is committed so the next occurrence — on this machine, in CI, or elsewhere — can be
+captured with complete instrumentation rather than re-deriving it.
 
 ## 5. `ApiServer.listen` rejects on a failed bind
 

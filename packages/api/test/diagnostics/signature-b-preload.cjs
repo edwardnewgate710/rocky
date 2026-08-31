@@ -9,18 +9,11 @@
  * no subtest recorded a failure — see `internal/test_runner/runner.js`.
  *
  * This module distinguishes the JS-catchable causes of that shape
- * (`process.exit`, an uncaught exception, an unhandled rejection, an
- * EventEmitter `'error'` event with no listener) from an external,
+ * (`process.exit`, `process.abort`, an uncaught exception, an unhandled
+ * rejection, an EventEmitter `'error'` event with no listener) from an external,
  * uncatchable termination of the child (an OS-level kill or native crash),
  * by hooking every relevant process-level event and writing what fired to a
- * structured log. If NONE of these hooks fire before the child disappears —
- * including Node's own unconditional `process.on('exit')`, which fires for
- * every JS-visible shutdown path including `process.exit()` itself — the
- * termination did not go through the JS layer at all.
- *
- * Usage (manual, not wired into `npm test`; run from packages/api):
- *   node --require ./test/diagnostics/signature-b-preload.cjs \
- *     --test --test-concurrency=1 "dist-test/test/**\/*.test.js"
+ * structured log.
  *
  * Set SIGB_LOG_DIR to control where logs land (defaults under the OS temp
  * dir). Logs are structured JSONL, one line per event, one file per child
@@ -42,15 +35,27 @@
  * Node's own re-raise of it, just without the emitter's constructor name.
  */
 
+// Usage (manual, not wired into `npm test`; run from packages/api):
+//   node --require ./test/diagnostics/signature-b-preload.cjs \
+//     --test --test-concurrency=1 "dist-test/test/**/*.test.js"
+
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
 const LOG_DIR = process.env.SIGB_LOG_DIR || path.join(os.tmpdir(), 'sigb-diag');
-try { fs.mkdirSync(LOG_DIR, { recursive: true }); } catch { /* best-effort; missing dir just drops logging */ }
+try {
+  fs.mkdirSync(LOG_DIR, { recursive: true, mode: 0o700 });
+} catch {
+  /* best-effort; missing dir just drops logging */
+}
 const LOG_FILE = path.join(LOG_DIR, `run-${process.pid}-${Date.now()}.jsonl`);
 let fd;
-try { fd = fs.openSync(LOG_FILE, 'a'); } catch { fd = null; }
+try {
+  fd = fs.openSync(LOG_FILE, 'a', 0o600);
+} catch {
+  fd = null;
+}
 
 const REDACT_PATTERNS = [
   [/sk-[a-zA-Z0-9_-]{10,}/g, '[REDACTED_API_KEY]'],
@@ -59,6 +64,13 @@ const REDACT_PATTERNS = [
   [/(password|secret|token|authorization|cookie)\s*[:=]\s*["']?[^"',\s]+["']?/gi, '$1=[REDACTED]'],
 ];
 
+/**
+ * Redacts known sensitive patterns (API keys, bearer tokens, credentials, passwords)
+ * from strings before writing to diagnostic logs.
+ *
+ * @param {unknown} value - The input value to redact.
+ * @returns {unknown} The sanitized value with sensitive patterns replaced by redaction placeholders.
+ */
 function redact(value) {
   if (typeof value !== 'string') return value;
   let out = value;
@@ -66,6 +78,13 @@ function redact(value) {
   return out;
 }
 
+/**
+ * Safely serializes an Error or error-like object into a redacted, JSON-safe structure.
+ * Prevents circular reference crashes and strips credentials from error messages and stacks.
+ *
+ * @param {unknown} err - The error or rejection value to serialize.
+ * @returns {unknown} A serialized error object or redacted primitive.
+ */
 function safeErr(err) {
   if (err == null) return err;
   if (typeof err !== 'object') return redact(String(err));
@@ -79,6 +98,12 @@ function safeErr(err) {
   };
 }
 
+/**
+ * Collects a non-identifying, aggregate count of currently active Node async resources
+ * using `process.getActiveResourcesInfo()` where available.
+ *
+ * @returns {Record<string, number> | null} Resource counts by type, or null if unsupported.
+ */
 function activeResourceCounts() {
   try {
     if (typeof process.getActiveResourcesInfo !== 'function') return null;
@@ -90,6 +115,14 @@ function activeResourceCounts() {
   }
 }
 
+/**
+ * Synchronously appends a structured JSONL diagnostic record to the active log file.
+ * Synchronous writes ensure diagnostic records survive abrupt process termination.
+ *
+ * @param {string} kind - The event or lifecycle hook kind (e.g. 'start', 'process.abort').
+ * @param {Record<string, unknown>} fields - Event-specific payload fields.
+ * @returns {void}
+ */
 function write(kind, fields) {
   if (!fd) return;
   const line = JSON.stringify({
@@ -102,18 +135,52 @@ function write(kind, fields) {
     timeNs: process.hrtime.bigint().toString(),
     ...fields,
   });
-  try { fs.writeSync(fd, line + '\n'); } catch { /* best-effort */ }
+  try {
+    fs.writeSync(fd, line + '\n');
+  } catch {
+    /* best-effort */
+  }
 }
 
 write('start', {});
 
 const originalExit = process.exit.bind(process);
+/**
+ * Patched wrapper around `process.exit` that synchronously records the exit code
+ * and redacted caller stack before invoking the original `process.exit`.
+ *
+ * @param {number} [code] - The process exit code.
+ * @returns {never}
+ */
 process.exit = function patchedExit(code) {
   write('process.exit', { code, callerStack: redact(new Error('exit-call-site').stack) });
   return originalExit(code);
 };
 
+const originalAbort = typeof process.abort === 'function' ? process.abort.bind(process) : null;
+if (originalAbort) {
+  /**
+   * Patched wrapper around `process.abort` that synchronously records the abort event
+   * and redacted caller stack before invoking the original `process.abort`.
+   *
+   * @param {...unknown} args - Any arguments forwarded to process.abort.
+   * @returns {never}
+   */
+  process.abort = function patchedAbort(...args) {
+    write('process.abort', { callerStack: redact(new Error('abort-call-site').stack) });
+    return originalAbort(...args);
+  };
+}
+
 const originalKill = process.kill.bind(process);
+/**
+ * Patched wrapper around `process.kill` that synchronously records target PID and signal
+ * before delegating to the original `process.kill`.
+ *
+ * @param {number} pid - Target process ID.
+ * @param {string | number} [signal] - Signal to send.
+ * @returns {boolean} Result of original process.kill.
+ */
 process.kill = function patchedKill(pid, signal) {
   write('process.kill', { targetPid: pid, signal, callerStack: redact(new Error('kill-call-site').stack) });
   return originalKill(pid, signal);
