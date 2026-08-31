@@ -328,6 +328,9 @@ test('diagnostic preload: redacts postgres/postgresql credentials, tokens, Autho
       "password_hash='$2b$12$snakecasehash1234567890abcdefghijklmn'",
       'password hash: "spacedhash1234567890abcdefghijklmn"',
       '{"authorization": "Bearer json_auth_token_xyz", "cookie": "session=json_cookie_val", "password": "json_password_secret", "password_hash": "$2b$12$json_hash_val"}',
+      '{"cookie":["theme=dark","session=raw-secret-cookie-val"]}',
+      '{"token":["tok1","secret-array-token-val"]}',
+      '{"authorization":{"type":"Bearer","token":"nested-secret-auth-token"}}',
       'Authorization: Basic dXNlcjpwYXNzd29yZA==,',
       'Cookie: session=xyz123; token=abc456; other=789',
     ];
@@ -356,6 +359,7 @@ test('diagnostic preload: redacts postgres/postgresql credentials, tokens, Autho
   assert.ok(msg.includes('"cookie"=[REDACTED]'), 'redacts JSON-quoted cookie');
   assert.ok(msg.includes('"password"=[REDACTED]'), 'redacts JSON-quoted password');
   assert.ok(msg.includes('"password_hash"=[REDACTED]'), 'redacts JSON-quoted password_hash');
+  assert.ok(msg.includes('"token"=[REDACTED]'), 'redacts JSON array-valued token');
   assert.ok(msg.includes('Authorization=[REDACTED]'), 'redacts Basic authorization header');
   assert.ok(msg.includes('Cookie=[REDACTED]'), 'redacts multi-cookie header');
   assert.ok(!msg.includes('s3cr3tpass'), 'raw password 1 not present');
@@ -369,6 +373,9 @@ test('diagnostic preload: redacts postgres/postgresql credentials, tokens, Autho
   assert.ok(!msg.includes('json_cookie_val'), 'raw JSON cookie absent from message');
   assert.ok(!msg.includes('json_password_secret'), 'raw JSON password absent from message');
   assert.ok(!msg.includes('$2b$12$json_hash_val'), 'raw JSON password_hash absent from message');
+  assert.ok(!msg.includes('raw-secret-cookie-val'), 'raw array cookie value absent from message');
+  assert.ok(!msg.includes('secret-array-token-val'), 'raw array token value absent from message');
+  assert.ok(!msg.includes('nested-secret-auth-token'), 'raw nested object auth token absent from message');
   assert.ok(!stack.includes('$2b$12$e8uq4abcdefghijklmnopqrstuvwxyz1234567890'), 'raw passwordHash absent from stack');
   assert.ok(!stack.includes('$2b$12$snakecasehash1234567890abcdefghijklmn'), 'raw password_hash absent from stack');
   assert.ok(!stack.includes('spacedhash1234567890abcdefghijklmn'), 'raw password hash absent from stack');
@@ -376,6 +383,9 @@ test('diagnostic preload: redacts postgres/postgresql credentials, tokens, Autho
   assert.ok(!stack.includes('json_cookie_val'), 'raw JSON cookie absent from stack');
   assert.ok(!stack.includes('json_password_secret'), 'raw JSON password absent from stack');
   assert.ok(!stack.includes('$2b$12$json_hash_val'), 'raw JSON password_hash absent from stack');
+  assert.ok(!stack.includes('raw-secret-cookie-val'), 'raw array cookie value absent from stack');
+  assert.ok(!stack.includes('secret-array-token-val'), 'raw array token value absent from stack');
+  assert.ok(!stack.includes('nested-secret-auth-token'), 'raw nested object auth token absent from stack');
   assert.ok(!msg.includes('dXNlcjpwYXNzd29yZA=='), 'raw basic auth credential not present');
   assert.ok(!msg.includes('session=xyz123'), 'raw cookie session not present');
   assert.ok(!msg.includes('token=abc456'), 'raw cookie token not present');
