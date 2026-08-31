@@ -20,6 +20,7 @@ import {
   effectiveLookupVariants,
   effectiveStudyVariantConstraint,
   effectiveStudyVariantForeignKey,
+  collectMirrors,
   disagreements,
   ROOT,
   TS_MIRRORS,
@@ -378,6 +379,42 @@ test('effectiveStudyVariantForeignKey tracks explicit inline constraint names an
     assert.equal(effectiveStudyVariantForeignKey(dir), false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('effectiveStudyVariantForeignKey does not match subsequent column referencing variants', () => {
+  const dir = migrations({
+    '0001_distinct_columns.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL,
+      source TEXT REFERENCES variants(code)
+    );`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dir), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('collectMirrors exposes whether effective studies.variant foreign key is present', () => {
+  const committed = collectMirrors(MIGRATIONS_DIR);
+  assert.equal(committed.studyConstraint, null);
+  assert.equal(committed.hasStudyVariantFk, true);
+
+  const dropOnlyDir = migrations({
+    '0001_variants.sql': `INSERT INTO variants (code) VALUES ('standard');`,
+    '0022_study_variant.sql': `ALTER TABLE studies
+  ADD COLUMN variant TEXT NOT NULL DEFAULT 'standard'
+  CHECK (variant IN ('standard', 'atomic'));`,
+    '0025_drop_only.sql': `ALTER TABLE studies DROP CONSTRAINT studies_variant_check;`,
+  });
+  try {
+    const dropOnly = collectMirrors(dropOnlyDir);
+    assert.equal(dropOnly.studyConstraint, null);
+    assert.equal(dropOnly.hasStudyVariantFk, false);
+  } finally {
+    rmSync(dropOnlyDir, { recursive: true, force: true });
   }
 });
 

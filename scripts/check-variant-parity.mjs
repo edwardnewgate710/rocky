@@ -260,7 +260,7 @@ const VARIANT_FK_TABLE =
 
 /** Inline-column `variant TEXT ... [CONSTRAINT name] REFERENCES variants(code)`. */
 const VARIANT_FK_INLINE =
-  /(?:ADD\s+COLUMN|CREATE\s+TABLE)\s+[\s\S]*?"?variant"?\s+TEXT[\s\S]*?(?:CONSTRAINT\s+"?(\w+)"?\s+)?REFERENCES\s+variants\s*\(\s*code\s*\)/i;
+  /(?:ADD\s+COLUMN|CREATE\s+TABLE)\s+[^;]*?\bvariant\b\s+TEXT\b[^,;)]*?(?:CONSTRAINT\s+"?(\w+)"?\s+)?REFERENCES\s+variants\s*\(\s*code\s*\)/i;
 
 const normalise = (name) => name.replace(/"/g, '').toLowerCase();
 
@@ -422,6 +422,7 @@ export function collectMirrors(dir = MIGRATIONS_DIR) {
     variants: effectiveLookupVariants(dir),
   });
   const study = effectiveStudyVariantConstraint(dir);
+  const hasStudyVariantFk = effectiveStudyVariantForeignKey(dir);
   if (study !== null) {
     mirrors.push({
       label: '`studies.variant` CHECK constraint, after all migrations',
@@ -429,12 +430,12 @@ export function collectMirrors(dir = MIGRATIONS_DIR) {
       variants: study.variants,
     });
   }
-  return { mirrors, studyConstraint: study };
+  return { mirrors, studyConstraint: study, hasStudyVariantFk };
 }
 
 function main() {
   const root = extractRegion(ROOT);
-  const { mirrors, studyConstraint } = collectMirrors();
+  const { mirrors, studyConstraint, hasStudyVariantFk } = collectMirrors();
   const failures = [];
 
   console.log(`root: ${root.label} (${root.file})`);
@@ -451,9 +452,16 @@ function main() {
   }
 
   if (studyConstraint === null) {
-    console.log(
-      '  --    `studies.variant` has no CHECK left; it derives from `variants(code)`, nothing to compare',
-    );
+    if (hasStudyVariantFk) {
+      console.log(
+        '  --    `studies.variant` has no CHECK left; it derives from `variants(code)`, nothing to compare',
+      );
+    } else {
+      console.log(
+        '  FAIL  `studies.variant` has no CHECK constraint and no foreign key referencing `variants(code)`',
+      );
+      failures.push('`studies.variant` missing foreign key');
+    }
   }
 
   if (failures.length > 0) {
