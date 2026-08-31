@@ -177,7 +177,7 @@ follow-up investigation (below) has since ruled it out as the mechanism behind
 the observed signature specifically, even though it remained a real defect
 worth fixing on its own merits.
 
-### Follow-up investigation: the mechanism is now proven, the trigger is not
+### Follow-up investigation: the failure mode is characterized, the trigger is not
 
 A later increment (`claude/node-test-signature-b`) instrumented selected
 termination and error paths a child process can raise and captured three
