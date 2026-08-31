@@ -42,14 +42,17 @@ export type CreateGamePrefs =
       readonly color: SeekColor;
     };
 
+/** Compare untrusted input against a readonly canonical catalog without widening its values. */
 function includesString<T extends string>(values: readonly T[], value: unknown): value is T {
   return typeof value === 'string' && values.some((candidate) => candidate === value);
 }
 
+/** Narrow untrusted persisted or DOM input to a player-facing offered variant. */
 export function isOfferedVariant(value: unknown): value is Variant {
   return includesString(OFFERED_VARIANTS, value);
 }
 
+/** Narrow untrusted persisted or DOM input to a canonical seek color preference. */
 export function isSeekColor(value: unknown): value is SeekColor {
   return includesString(SEEK_COLORS, value);
 }
