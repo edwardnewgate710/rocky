@@ -1306,6 +1306,26 @@ test('shadow table recreation and drop preserves original renamed table constrai
   }
 });
 
+test('creating or altering table in another schema does not overwrite public.studies constraints', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_archive_schema.sql': `CREATE TABLE archive.studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL CHECK (variant IN ('standard', 'atomic'))
+    );`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dir), true);
+    assert.equal(effectiveStudyVariantConstraint(dir), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
 
 
 

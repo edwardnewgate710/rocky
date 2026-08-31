@@ -607,8 +607,13 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
    */
   const tables = new Map();
 
-  function getOrCreateTable(tableName) {
-    let t = tables.get(tableName);
+  function tableKey(ref) {
+    const schema = ref.schema || 'public';
+    return `${schema}.${ref.table}`;
+  }
+
+  function getOrCreateTable(key) {
+    let t = tables.get(key);
     if (!t) {
       t = {
         hasVariantColumn: false,
@@ -617,7 +622,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
         activeChecks: new Map(),
         activeFks: new Set(),
       };
-      tables.set(tableName, t);
+      tables.set(key, t);
     }
     return t;
   }
@@ -650,7 +655,9 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
           if (ref === null) break;
           idx = ref.nextIndex;
 
-          if (isTableTarget(ref, 'variants') && hasCascade) {
+          const key = tableKey(ref);
+
+          if (key === 'public.variants' && hasCascade) {
             for (const tbl of tables.values()) {
               for (const fkName of tbl.activeFks) {
                 tbl.constraintNamespace.delete(fkName);
@@ -660,7 +667,9 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
             }
           }
 
-          tables.delete(ref.table);
+          if (key === 'public.studies' || tables.has(key)) {
+            tables.delete(key);
+          }
 
           if (stmt[idx]?.type === 'punct' && stmt[idx].value === ',') {
             idx++;
@@ -683,23 +692,29 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
         }
 
         const ref = parseQualifiedTableTarget(stmt, idx);
-        if (ref === null || (!isTableTarget(ref, 'studies') && !tables.has(ref.table))) {
+        if (ref === null) {
           continue;
         }
 
-        if (isTableIfExists && !tables.has(ref.table)) {
+        const key = tableKey(ref);
+        if (key !== 'public.studies' && !tables.has(key)) {
           continue;
         }
 
-        const currentTable = getOrCreateTable(ref.table);
+        if (isTableIfExists && !tables.has(key)) {
+          continue;
+        }
+
+        const currentTable = getOrCreateTable(key);
         idx = ref.nextIndex;
 
         // Table rename: ALTER TABLE target RENAME TO new_name
         if (stmt[idx]?.value === 'rename' && stmt[idx + 1]?.value === 'to') {
           const newName = stmt[idx + 2]?.value;
           if (newName) {
-            tables.delete(ref.table);
-            tables.set(newName, currentTable);
+            const newKey = `${ref.schema || 'public'}.${newName}`;
+            tables.delete(key);
+            tables.set(newKey, currentTable);
           }
           continue;
         }
@@ -909,11 +924,16 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
           idx += 3;
         }
         const ref = parseQualifiedTableTarget(stmt, idx);
-        if (ref === null || (!isTableTarget(ref, 'studies') && !tables.has(ref.table))) {
+        if (ref === null) {
           continue;
         }
 
-        if (tables.has(ref.table) && isTableIfNotExists) {
+        const key = tableKey(ref);
+        if (key !== 'public.studies' && !tables.has(key)) {
+          continue;
+        }
+
+        if (tables.has(key) && isTableIfNotExists) {
           continue;
         }
 
@@ -924,7 +944,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
           activeChecks: new Map(),
           activeFks: new Set(),
         };
-        tables.set(ref.table, currentTable);
+        tables.set(key, currentTable);
 
         const openParen = stmt.findIndex((t) => t.type === 'punct' && t.value === '(');
         if (openParen === -1) continue;
@@ -1036,7 +1056,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
     }
   }
 
-  const studiesTable = tables.get('studies');
+  const studiesTable = tables.get('public.studies');
   if (!studiesTable) {
     return {
       check: null,
