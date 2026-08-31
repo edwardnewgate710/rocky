@@ -48,13 +48,20 @@ function runChild(
   readonly stdout: string;
   readonly stderr: string;
   readonly logDir: string;
+  readonly targetLogDir: string;
   readonly records: readonly DiagnosticRecord[];
 } {
   const generatedLogDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-test-'));
   const rawLogDir = envOverride.SIGB_LOG_DIR;
-  const targetLogDir = rawLogDir
-    ? path.resolve(generatedLogDir, rawLogDir)
-    : generatedLogDir;
+  const defaultPreloadLogDir = path.join(os.tmpdir(), 'sigb-diag');
+  const targetLogDir =
+    rawLogDir === undefined
+      ? generatedLogDir
+      : rawLogDir === ''
+        ? defaultPreloadLogDir
+        : path.isAbsolute(rawLogDir)
+          ? rawLogDir
+          : path.resolve(generatedLogDir, rawLogDir);
   const scriptPath = path.join(generatedLogDir, 'test-target.cjs');
   fs.writeFileSync(scriptPath, code, 'utf8');
 
@@ -68,7 +75,8 @@ function runChild(
 
   const env: Record<string, string | undefined> = {
     ...process.env,
-    SIGB_LOG_DIR: rawLogDir ?? targetLogDir,
+    ...envOverride,
+    SIGB_LOG_DIR: rawLogDir !== undefined ? rawLogDir : targetLogDir,
   };
   delete env.NODE_TEST_CONTEXT;
   for (const [k, v] of Object.entries(envOverride)) {
@@ -83,7 +91,13 @@ function runChild(
   });
 
   const files = fs.existsSync(targetLogDir)
-    ? fs.readdirSync(targetLogDir).filter((f) => f.endsWith('.jsonl'))
+    ? fs
+        .readdirSync(targetLogDir)
+        .filter(
+          (f) =>
+            f.endsWith('.jsonl') &&
+            (rawLogDir === '' && result.pid ? f.startsWith(`run-${result.pid}-`) : true),
+        )
     : [];
   const records: DiagnosticRecord[] = [];
   for (const file of files) {
@@ -100,6 +114,7 @@ function runChild(
     stdout: result.stdout,
     stderr: result.stderr,
     logDir: generatedLogDir,
+    targetLogDir,
     records,
   };
 }
@@ -301,7 +316,7 @@ test('diagnostic preload: process.kill records target PID and signal', (t) => {
   assert.ok(killRecord?.callerStack?.includes('kill-call-site'), 'traces kill call site');
 });
 
-test('diagnostic preload: redacts postgres/postgresql credentials, tokens, Authorization headers, cookies, and quoted secrets with spaces or escaped quotes', (t) => {
+test('diagnostic preload: redacts postgres/postgresql credentials, tokens, Authorization headers, cookies, quoted secrets, and password hashes', (t) => {
   const { records, logDir } = runWithPreload(`
     const parts = [
       'Connect failed to postgresql://app_user:s3cr3tpass@db.internal:5432/chess',
@@ -309,6 +324,9 @@ test('diagnostic preload: redacts postgres/postgresql credentials, tokens, Autho
       'sk-1234567890abcdef12345',
       'password="correct \\\\\\"horse\\\\\\" battery staple"',
       "secret='top \\\\\\'secret\\\\\\' key phrase'",
+      'passwordHash="$2b$12$e8uq4abcdefghijklmnopqrstuvwxyz1234567890"',
+      "password_hash='$2b$12$snakecasehash1234567890abcdefghijklmn'",
+      'password hash: "spacedhash1234567890abcdefghijklmn"',
       'Authorization: Basic dXNlcjpwYXNzd29yZA==,',
       'Cookie: session=xyz123; token=abc456; other=789',
     ];
@@ -321,6 +339,7 @@ test('diagnostic preload: redacts postgres/postgresql credentials, tokens, Autho
   const uncaught = records.find((r) => r.kind === 'uncaughtExceptionMonitor');
   assert.ok(uncaught, 'uncaught record exists');
   const msg = uncaught?.err?.message ?? '';
+  const stack = uncaught?.err?.stack ?? '';
   const errName = uncaught?.err?.name ?? '';
   assert.ok(errName.includes('password=[REDACTED]'), 'redacts password in error name');
   assert.ok(!errName.includes('supersecretname'), 'raw password not present in error name');
@@ -329,12 +348,21 @@ test('diagnostic preload: redacts postgres/postgresql credentials, tokens, Autho
   assert.ok(msg.includes('[REDACTED_API_KEY]'), 'redacts OpenAI-style api key');
   assert.ok(msg.includes('password=[REDACTED]'), 'redacts double-quoted password with escaped quotes');
   assert.ok(msg.includes('secret=[REDACTED]'), 'redacts single-quoted secret with escaped quotes');
+  assert.ok(msg.includes('passwordHash=[REDACTED]'), 'redacts passwordHash');
+  assert.ok(msg.includes('password_hash=[REDACTED]'), 'redacts password_hash');
+  assert.ok(msg.includes('password hash=[REDACTED]'), 'redacts password hash');
   assert.ok(msg.includes('Authorization=[REDACTED]'), 'redacts Basic authorization header');
   assert.ok(msg.includes('Cookie=[REDACTED]'), 'redacts multi-cookie header');
   assert.ok(!msg.includes('s3cr3tpass'), 'raw password 1 not present');
   assert.ok(!msg.includes('supersecret'), 'raw password 2 not present');
   assert.ok(!msg.includes('horse'), 'raw quoted password content with escaped quotes not present');
   assert.ok(!msg.includes('key phrase'), 'raw single-quoted secret content with escaped quotes not present');
+  assert.ok(!msg.includes('$2b$12$e8uq4abcdefghijklmnopqrstuvwxyz1234567890'), 'raw passwordHash absent from message');
+  assert.ok(!msg.includes('$2b$12$snakecasehash1234567890abcdefghijklmn'), 'raw password_hash absent from message');
+  assert.ok(!msg.includes('spacedhash1234567890abcdefghijklmn'), 'raw password hash absent from message');
+  assert.ok(!stack.includes('$2b$12$e8uq4abcdefghijklmnopqrstuvwxyz1234567890'), 'raw passwordHash absent from stack');
+  assert.ok(!stack.includes('$2b$12$snakecasehash1234567890abcdefghijklmn'), 'raw password_hash absent from stack');
+  assert.ok(!stack.includes('spacedhash1234567890abcdefghijklmn'), 'raw password hash absent from stack');
   assert.ok(!msg.includes('dXNlcjpwYXNzd29yZA=='), 'raw basic auth credential not present');
   assert.ok(!msg.includes('session=xyz123'), 'raw cookie session not present');
   assert.ok(!msg.includes('token=abc456'), 'raw cookie token not present');
@@ -391,6 +419,25 @@ test('diagnostic preload: relative SIGB_LOG_DIR resolves correctly', (t) => {
 
   assert.ok(fs.existsSync(absDir), 'creates directory at resolved relative path in child cwd');
   assert.ok(records.length > 0, 'reads child diagnostic records from relative SIGB_LOG_DIR');
+});
+
+test('diagnostic preload: empty SIGB_LOG_DIR falls back to default directory without path split', (t) => {
+  const { status, records, logDir, targetLogDir } = runWithPreload('const ok = true;', { SIGB_LOG_DIR: '' });
+  t.after(() => {
+    fs.rmSync(logDir, { recursive: true, force: true });
+    if (fs.existsSync(targetLogDir) && targetLogDir !== logDir) {
+      const files = fs.readdirSync(targetLogDir).filter((f) => f.endsWith('.jsonl'));
+      for (const file of files) {
+        if (records.some((r) => file.includes(String(r.pid)))) {
+          fs.rmSync(path.join(targetLogDir, file), { force: true });
+        }
+      }
+    }
+  });
+
+  assert.equal(status, 0, 'runs cleanly with empty SIGB_LOG_DIR override');
+  assert.ok(records.length > 0, 'wrote and read diagnostic records from fallback default directory');
+  assert.ok(records.some((r) => r.kind === 'preload-installed'), 'records preload-installed in fallback directory');
 });
 
 test('diagnostic preload: usage glob pattern matches test files without literal backslash and excludes diag files', () => {

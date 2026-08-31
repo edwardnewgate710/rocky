@@ -40,13 +40,20 @@ function runDiagnosticChild(
   readonly status: number | null;
   readonly signal: NodeJS.Signals | null;
   readonly logDir: string;
+  readonly targetLogDir: string;
   readonly records: readonly DiagnosticRecord[];
 } {
   const generatedLogDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-abort-diag-'));
   const rawLogDir = envOverride.SIGB_LOG_DIR;
-  const targetLogDir = rawLogDir
-    ? path.resolve(generatedLogDir, rawLogDir)
-    : generatedLogDir;
+  const defaultPreloadLogDir = path.join(os.tmpdir(), 'sigb-diag');
+  const targetLogDir =
+    rawLogDir === undefined
+      ? generatedLogDir
+      : rawLogDir === ''
+        ? defaultPreloadLogDir
+        : path.isAbsolute(rawLogDir)
+          ? rawLogDir
+          : path.resolve(generatedLogDir, rawLogDir);
   const scriptPath = path.join(generatedLogDir, 'abort-target.cjs');
   fs.writeFileSync(scriptPath, code, 'utf8');
 
@@ -54,7 +61,7 @@ function runDiagnosticChild(
   const env = {
     ...process.env,
     ...envOverride,
-    SIGB_LOG_DIR: rawLogDir ?? targetLogDir,
+    SIGB_LOG_DIR: rawLogDir !== undefined ? rawLogDir : targetLogDir,
   };
 
   const result =
@@ -73,7 +80,13 @@ function runDiagnosticChild(
         });
 
   const files = fs.existsSync(targetLogDir)
-    ? fs.readdirSync(targetLogDir).filter((f) => f.endsWith('.jsonl'))
+    ? fs
+        .readdirSync(targetLogDir)
+        .filter(
+          (f) =>
+            f.endsWith('.jsonl') &&
+            (rawLogDir === '' && result.pid ? f.startsWith(`run-${result.pid}-`) : true),
+        )
     : [];
   const records: DiagnosticRecord[] = [];
   for (const file of files) {
@@ -88,6 +101,7 @@ function runDiagnosticChild(
     status: result.status,
     signal: result.signal,
     logDir: generatedLogDir,
+    targetLogDir,
     records,
   };
 }
@@ -109,4 +123,28 @@ test('explicit diagnostic integration: real native process.abort() records synch
   // Verify process.on('exit') does NOT fire on process.abort()
   const exitRecord = records.find((r) => r.kind === 'exit');
   assert.equal(exitRecord, undefined, 'exit event must not fire on process.abort');
+});
+
+test('explicit diagnostic integration: empty SIGB_LOG_DIR falls back to default directory without path split', (t) => {
+  const { status, signal, records, logDir, targetLogDir } = runDiagnosticChild(
+    `
+      process.abort();
+    `,
+    { SIGB_LOG_DIR: '' },
+  );
+  t.after(() => {
+    fs.rmSync(logDir, { recursive: true, force: true });
+    if (fs.existsSync(targetLogDir) && targetLogDir !== logDir) {
+      const files = fs.readdirSync(targetLogDir).filter((f) => f.endsWith('.jsonl'));
+      for (const file of files) {
+        if (records.some((r) => file.includes(String(r.pid)))) {
+          fs.rmSync(path.join(targetLogDir, file), { force: true });
+        }
+      }
+    }
+  });
+
+  assert.ok(status !== 0 || signal !== null, 'process terminates abnormally');
+  assert.ok(records.some((r) => r.kind === 'preload-installed'), 'records preload-installed in default log dir');
+  assert.ok(records.some((r) => r.kind === 'process.abort'), 'records process.abort in default log dir');
 });
