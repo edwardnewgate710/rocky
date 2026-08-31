@@ -9,11 +9,17 @@
  * no subtest recorded a failure — see `internal/test_runner/runner.js`.
  *
  * This module distinguishes the JS-catchable causes of that shape
- * (`process.exit`, `process.abort`, an uncaught exception, an unhandled
- * rejection, an EventEmitter `'error'` event with no listener) from an external,
- * uncatchable termination of the child (an OS-level kill or native crash),
- * by hooking every relevant process-level event and writing what fired to a
- * structured log.
+ * (`process.exit`, `process.abort`, an uncaught exception, a fatal unhandled
+ * rejection promoted by Node, an EventEmitter `'error'` event with no listener)
+ * from an external, uncatchable termination of the child (an OS-level kill or native crash),
+ * by hooking process-level lifecycle events and writing what fired to a structured log.
+ *
+ * Passive fatal rejection observation: Deliberately does NOT register active
+ * `unhandledRejection` or `rejectionHandled` listeners, because in Node.js
+ * attaching an `unhandledRejection` listener alters runtime semantics and suppresses
+ * default fatal crash behavior. Instead, `uncaughtExceptionMonitor` is registered
+ * to passively observe both `origin === 'uncaughtException'` and `origin === 'unhandledRejection'`
+ * without changing process exit codes or suppressing crash paths.
  *
  * Set SIGB_LOG_DIR to control where logs land (defaults under the OS temp
  * dir). Logs are structured JSONL, one line per event, one file per child
@@ -61,7 +67,7 @@ const REDACT_PATTERNS = [
   [/sk-[a-zA-Z0-9_-]{10,}/g, '[REDACTED_API_KEY]'],
   [/Bearer\s+[A-Za-z0-9._~+/-]+=*/g, 'Bearer [REDACTED_TOKEN]'],
   [/(?:postgres|postgresql):\/\/[^:]+:[^@]+@/g, 'postgres://[REDACTED_CREDS]@'],
-  [/(password|secret|token|authorization|cookie)\s*[:=]\s*["']?[^"',\s]+["']?/gi, '$1=[REDACTED]'],
+  [/(password|secret|token|authorization|cookie)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^,\s]+)/gi, '$1=[REDACTED]'],
 ];
 
 /**
@@ -79,23 +85,48 @@ function redact(value) {
 }
 
 /**
+ * Safely normalizes error metadata values (code, syscall, errno) into a JSON-safe primitive or string.
+ * Prevents BigInt, circular references, or large object metadata from breaking diagnostic serialization.
+ *
+ * @param {unknown} val - The metadata value to normalize.
+ * @returns {string | number | boolean | null | undefined} A JSON-safe primitive representation.
+ */
+function normalizeMeta(val) {
+  if (val == null) return val;
+  if (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean') return val;
+  if (typeof val === 'bigint') return String(val);
+  try {
+    return redact(String(val));
+  } catch {
+    return '[UNSERIALIZABLE]';
+  }
+}
+
+/**
  * Safely serializes an Error or error-like object into a redacted, JSON-safe structure.
- * Prevents circular reference crashes and strips credentials from error messages and stacks.
+ * Prevents circular reference crashes, BigInt serialization failures, and strips credentials.
  *
  * @param {unknown} err - The error or rejection value to serialize.
  * @returns {unknown} A serialized error object or redacted primitive.
  */
 function safeErr(err) {
   if (err == null) return err;
-  if (typeof err !== 'object') return redact(String(err));
-  return {
-    name: err.name,
-    message: redact(String(err.message ?? '')),
-    stack: redact(String(err.stack ?? '')),
-    code: err.code,
-    syscall: err.syscall,
-    errno: err.errno,
-  };
+  if (typeof err !== 'object') {
+    if (typeof err === 'bigint') return String(err);
+    return redact(String(err));
+  }
+  try {
+    return {
+      name: typeof err.name === 'string' ? err.name : undefined,
+      message: redact(String(err.message ?? '')),
+      stack: redact(String(err.stack ?? '')),
+      code: normalizeMeta(err.code),
+      syscall: normalizeMeta(err.syscall),
+      errno: normalizeMeta(err.errno),
+    };
+  } catch {
+    return { name: 'SerializationError', message: '[UNSERIALIZABLE_ERROR]' };
+  }
 }
 
 /**
@@ -118,6 +149,7 @@ function activeResourceCounts() {
 /**
  * Synchronously appends a structured JSONL diagnostic record to the active log file.
  * Synchronous writes ensure diagnostic records survive abrupt process termination.
+ * Serialization is guarded with BigInt replacer and try/catch to prevent dropped diagnostics.
  *
  * @param {string} kind - The event or lifecycle hook kind (e.g. 'start', 'process.abort').
  * @param {Record<string, unknown>} fields - Event-specific payload fields.
@@ -125,20 +157,23 @@ function activeResourceCounts() {
  */
 function write(kind, fields) {
   if (!fd) return;
-  const line = JSON.stringify({
-    kind,
-    pid: process.pid,
-    ppid: process.ppid,
-    testFile: process.env.NODE_TEST_CONTEXT === 'child-v8' ? (process.argv[1] || null) : null,
-    nodeTestContext: process.env.NODE_TEST_CONTEXT || null,
-    timeIso: new Date().toISOString(),
-    timeNs: process.hrtime.bigint().toString(),
-    ...fields,
-  });
   try {
+    const line = JSON.stringify(
+      {
+        kind,
+        pid: process.pid,
+        ppid: process.ppid,
+        testFile: process.env.NODE_TEST_CONTEXT === 'child-v8' ? (process.argv[1] || null) : null,
+        nodeTestContext: process.env.NODE_TEST_CONTEXT || null,
+        timeIso: new Date().toISOString(),
+        timeNs: process.hrtime.bigint().toString(),
+        ...fields,
+      },
+      (_key, value) => (typeof value === 'bigint' ? value.toString() : value),
+    );
     fs.writeSync(fd, line + '\n');
   } catch {
-    /* best-effort */
+    /* best-effort; serialization or write failure dropped safely */
   }
 }
 

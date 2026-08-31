@@ -193,8 +193,7 @@ accident of this run. It is why the failure is confined to exactly one file
 per occurrence with no effect on any other file in the same run.
 
 **The bare `'test failed'` with no stack is what Node's runner reports for a
-child that exits non-zero or signaled while none of its subtests recorded a
-failure.** This was reproduced directly: a synthetic file that calls
+child that exits non-zero or is signaled before any subtest result is recorded.** This was reproduced directly: a synthetic file that calls
 `process.exit(1)` before registering any test produces the identical reported
 shape as the real defect — `✖ <file> (Nms)` / `'test failed'`, zero individual
 tests in the summary, nothing on stderr. Every OTHER synthetic mechanism tried
@@ -221,8 +220,8 @@ for that file (not even the ones that would have run first).
 (`packages/api/test/diagnostics/signature-b-preload.cjs`) captures which of
 those mechanisms fire on real occurrences, not synthetic ones.** It hooks
 `process.exit`, `process.abort`, `process.kill`, `uncaughtExceptionMonitor` (a passive observer
-that, unlike `uncaughtException`, never alters Node's default crash handling),
-`unhandledRejection`, `rejectionHandled`, `warning`, `beforeExit`, and Node's
+that captures both uncaught exceptions and fatal unhandled rejections without registering active
+listeners that alter Node's default crash handling), `warning`, `beforeExit`, and Node's
 own unconditional `exit` event, writing a structured, redacted, timestamped
 line to disk before each fires — bypassing stdout/stderr entirely so the test
 reporter's own output is never touched. A bounded 20-run instrumented pass over
@@ -236,14 +235,13 @@ import, which confirms this is not a defect specific to any one file's logic.
 
 All three historical captures show the identical signature: **only the `start` and
 `preload-installed` lines were logged. None of the hooks active at that time fired —
-including `process.exit`, `process.kill`, `uncaughtExceptionMonitor`, `unhandledRejection`,
-`rejectionHandled`, `warning`, `beforeExit`, and Node's `exit` event.**
+including `process.exit`, `process.kill`, `uncaughtExceptionMonitor`, `warning`,
+`beforeExit`, and Node's `exit` event.**
 Crucially, however, the diagnostic preload in use during those historical runs did
 not yet wrap `process.abort()`. Because `process.abort()` terminates the process
 immediately without emitting Node's `exit` event, those historical captures directly
-ruled out `process.exit`, unhandled rejections, uncaught exceptions, and reaching an
-idle event loop, but could not categorically exclude an uninstrumented `process.abort()`
-or an external termination.
+ruled out `process.exit`, uncaught exceptions, and fatal unhandled rejections, but
+could not categorically exclude an uninstrumented `process.abort()` or an external termination.
 
 **This narrows Signature B's investigated possibilities while leaving its root cause unresolved:**
 `process.abort()` is now instrumented so any future occurrence will record whether an abort
