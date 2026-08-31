@@ -722,7 +722,7 @@ test('POST-AUD-001: deferred bot creation cannot navigate after disposal', async
   }
 });
 
-test('mountLobby: create-game V3 renders canonical time, variant, mode, and color groups', () => {
+test('mountLobby: create-game V4 renders canonical choices and labelled optional rating bounds', () => {
   const { doc, elements } = createTestDoc();
   const { client } = makeFakeClient();
 
@@ -751,8 +751,17 @@ test('mountLobby: create-game V3 renders canonical time, variant, mode, and colo
   assert.equal(form.querySelector<FakeDOMElement>('input[name="cg-color"]:checked')?.value, 'random');
   assert.deepEqual(
     form.querySelectorAll<FakeDOMElement>('legend').map((legend) => legend.textContent),
-    ['Time', 'Variant', 'Mode', 'Color'],
+    ['Time', 'Variant', 'Mode', 'Color', 'Opponent rating'],
   );
+  const minimum = form.querySelector<FakeDOMElement>('#cg-min-rating');
+  const maximum = form.querySelector<FakeDOMElement>('#cg-max-rating');
+  assert.equal(minimum?.type, 'text');
+  assert.equal(maximum?.type, 'text');
+  assert.equal(minimum?.getAttribute('inputmode'), 'numeric');
+  assert.equal(maximum?.getAttribute('inputmode'), 'numeric');
+  assert.equal(minimum?.getAttribute('aria-describedby'), 'cg-rating-hint cg-rating-error');
+  assert.equal(maximum?.getAttribute('aria-describedby'), 'cg-rating-hint cg-rating-error');
+  assert.equal(form.querySelector('#cg-rating-hint')?.textContent, 'Leave blank for no restriction.');
   assert.equal(form.querySelector('.cg-more-toggle'), null);
   assert.equal(form.querySelector('select'), null);
   assert.equal(form.querySelector('.cg-custom')?.hidden, true);
@@ -779,7 +788,140 @@ test('mountLobby: default submit sends the exact 10+0 casual request', async () 
     },
     rated: false,
     color: 'random',
+    minRating: null,
+    maxRating: null,
   }]);
+});
+
+test('mountLobby: unrestricted, one-sided, both, and endpoint rating bounds reach the exact request', async () => {
+  const { doc, elements } = createTestDoc();
+  const { client, createdSeeks } = makeFakeClient();
+  mountTestLobby({ doc, client, isAuthenticated: () => true });
+  const mount = elements.get('create-game')!;
+  const form = mount.querySelector('#create-game-form')!;
+  const minimum = form.querySelector<FakeDOMElement>('#cg-min-rating')!;
+  const maximum = form.querySelector<FakeDOMElement>('#cg-max-rating')!;
+  const cases = [
+    { min: '', max: '', expectedMin: null, expectedMax: null },
+    { min: '1500', max: '', expectedMin: 1500, expectedMax: null },
+    { min: '', max: '1800', expectedMin: null, expectedMax: 1800 },
+    { min: '1500', max: '1800', expectedMin: 1500, expectedMax: 1800 },
+    { min: '0', max: '4000', expectedMin: 0, expectedMax: 4000 },
+    { min: '1500', max: '1500', expectedMin: 1500, expectedMax: 1500 },
+  ] as const;
+
+  for (const ratingCase of cases) {
+    mount.querySelector('#create-seek')!.click();
+    selectRadio(form, 'cg-time', '5+3');
+    selectRadio(form, 'cg-mode', 'rated');
+    selectRadio(form, 'cg-variant', 'atomic');
+    selectRadio(form, 'cg-color', 'black');
+    minimum.value = ratingCase.min;
+    maximum.value = ratingCase.max;
+    submit(form);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(form.hidden, true, `${ratingCase.min}/${ratingCase.max}`);
+  }
+
+  assert.deepEqual(createdSeeks, cases.map((ratingCase) => ({
+    variant: 'atomic',
+    timeControl: {
+      initialMs: 300_000,
+      incrementMs: 3_000,
+      delayMs: 0,
+      kind: 'increment',
+    },
+    rated: true,
+    color: 'black',
+    minRating: ratingCase.expectedMin,
+    maxRating: ratingCase.expectedMax,
+  })));
+});
+
+test('mountLobby: malformed and out-of-range rating literals block submission at their field', async () => {
+  const { doc, elements } = createTestDoc();
+  const { client, createdSeeks } = makeFakeClient();
+  mountTestLobby({ doc, client, isAuthenticated: () => true });
+  const mount = elements.get('create-game')!;
+  mount.querySelector('#create-seek')!.click();
+  const form = mount.querySelector('#create-game-form')!;
+  const minimum = form.querySelector<FakeDOMElement>('#cg-min-rating')!;
+  const maximum = form.querySelector<FakeDOMElement>('#cg-max-rating')!;
+
+  for (const value of ['-1', '4001', '1.5', '1e3', 'rating']) {
+    minimum.value = value;
+    maximum.value = '';
+    submit(form);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(createdSeeks.length, 0, value);
+    assert.equal(minimum.getAttribute('aria-invalid'), 'true', value);
+    assert.equal(form.querySelector('#cg-rating-error')?.textContent, 'Enter a whole rating from 0 to 4000.');
+    minimum.value = '';
+    minimum.dispatchEvent(new Event('input'));
+  }
+
+  maximum.value = '4001';
+  submit(form);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(maximum.getAttribute('aria-invalid'), 'true');
+  assert.equal(createdSeeks.length, 0);
+});
+
+test('mountLobby: minimum above maximum blocks submission and owns the relationship error', async () => {
+  const { doc, elements } = createTestDoc();
+  const { client, createdSeeks } = makeFakeClient();
+  mountTestLobby({ doc, client, isAuthenticated: () => true });
+  const mount = elements.get('create-game')!;
+  mount.querySelector('#create-seek')!.click();
+  const form = mount.querySelector('#create-game-form')!;
+  const minimum = form.querySelector<FakeDOMElement>('#cg-min-rating')!;
+  const maximum = form.querySelector<FakeDOMElement>('#cg-max-rating')!;
+  minimum.value = '1800';
+  maximum.value = '1500';
+
+  submit(form);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(createdSeeks.length, 0);
+  assert.equal(minimum.getAttribute('aria-invalid'), 'true');
+  assert.equal(maximum.getAttribute('aria-invalid'), null);
+  assert.equal(form.querySelector('#cg-rating-error')?.textContent, 'Minimum rating must not exceed maximum rating.');
+});
+
+test('mountLobby: rating feedback is isolated from unrelated choices and custom-time feedback', async () => {
+  const { doc, elements } = createTestDoc();
+  const { client, createdSeeks } = makeFakeClient();
+  mountTestLobby({ doc, client, isAuthenticated: () => true });
+  const mount = elements.get('create-game')!;
+  mount.querySelector('#create-seek')!.click();
+  const form = mount.querySelector('#create-game-form')!;
+  const minimum = form.querySelector<FakeDOMElement>('#cg-min-rating')!;
+  minimum.value = '-1';
+  submit(form);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(minimum.getAttribute('aria-invalid'), 'true');
+
+  selectRadio(form, 'cg-variant', 'atomic');
+  selectRadio(form, 'cg-color', 'black');
+  selectRadio(form, 'cg-mode', 'rated');
+  selectRadio(form, 'cg-time', '5+3');
+  assert.equal(minimum.getAttribute('aria-invalid'), 'true');
+  assert.equal(form.querySelector('#cg-rating-error')?.hidden, false);
+
+  selectRadio(form, 'cg-time', 'custom');
+  form.querySelector<FakeDOMElement>('input[name="cg-time"]:checked')!.dispatchEvent(new Event('change'));
+  form.querySelector<FakeDOMElement>('#cg-increment')!.value = '';
+  submit(form);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(minimum.getAttribute('aria-invalid'), 'true');
+  assert.equal(form.querySelector('#cg-custom-error')?.hidden, false);
+  assert.equal(form.querySelector('#cg-rating-error')?.hidden, false);
+  assert.equal(createdSeeks.length, 0);
+
+  minimum.value = '1500';
+  minimum.dispatchEvent(new Event('input'));
+  assert.equal(form.querySelector('#cg-rating-error')?.hidden, true);
+  assert.equal(form.querySelector('#cg-custom-error')?.hidden, false);
 });
 
 test('mountLobby: creates the exact V1 seek request and collapses on success', async () => {
@@ -816,6 +958,8 @@ test('mountLobby: creates the exact V1 seek request and collapses on success', a
     },
     rated: true,
     color: 'random',
+    minRating: null,
+    maxRating: null,
   });
   assert.equal(form.hidden, true); // Collapses on successful create
 
@@ -845,6 +989,8 @@ test('mountLobby: a newly exposed preset changes the exact rated seek payload', 
     },
     rated: true,
     color: 'random',
+    minRating: null,
+    maxRating: null,
   }]);
 });
 
@@ -891,6 +1037,8 @@ test('mountLobby: selected variant and color reach the exact existing seek paylo
       kind: 'increment',
     },
     rated: true,
+    minRating: null,
+    maxRating: null,
   }]);
 });
 
@@ -919,6 +1067,8 @@ test('mountLobby: a second non-standard variant preserves White and casual mode'
       kind: 'increment',
     },
     rated: false,
+    minRating: null,
+    maxRating: null,
   }]);
 });
 
@@ -977,6 +1127,8 @@ test('mountLobby: valid Custom values create and persist the exact request', asy
     },
     rated: true,
     color: 'random',
+    minRating: null,
+    maxRating: null,
   }]);
   assert.deepEqual(JSON.parse(memoryStorage['gambit-create-game']!), {
     time: 'custom',
@@ -985,6 +1137,8 @@ test('mountLobby: valid Custom values create and persist the exact request', asy
     mode: 'rated',
     variant: 'standard',
     color: 'random',
+    minRating: null,
+    maxRating: null,
   });
 });
 
@@ -1084,6 +1238,8 @@ test('mountLobby: blocks duplicate seek submissions while the first is pending',
   const mount = elements.get('create-game')!;
   mount.querySelector('#create-seek')!.click();
   const form = mount.querySelector('#create-game-form')!;
+  const minimum = form.querySelector<FakeDOMElement>('#cg-min-rating')!;
+  const maximum = form.querySelector<FakeDOMElement>('#cg-max-rating')!;
 
   submit(form);
   submit(form);
@@ -1100,6 +1256,8 @@ test('mountLobby: blocks duplicate seek submissions while the first is pending',
   ];
   assert.ok(radios.length > 0);
   assert.ok(radios.every((input) => input.disabled));
+  assert.equal(minimum.disabled, true);
+  assert.equal(maximum.disabled, true);
   assert.equal(form.querySelector('.cg-cancel')?.disabled, true);
 
   pendingSeek.resolve(makeSeek({ id: 'pending-created' }));
@@ -1133,6 +1291,10 @@ test('mountLobby: failed create preserves choices, unlocks submit, and retries',
   selectRadio(form, 'cg-mode', 'rated');
   selectRadio(form, 'cg-variant', 'horde');
   selectRadio(form, 'cg-color', 'white');
+  const minimum = form.querySelector<FakeDOMElement>('#cg-min-rating')!;
+  const maximum = form.querySelector<FakeDOMElement>('#cg-max-rating')!;
+  minimum.value = '1400';
+  maximum.value = '1900';
 
   submit(form);
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1142,6 +1304,8 @@ test('mountLobby: failed create preserves choices, unlocks submit, and retries',
   assert.equal(form.querySelector<FakeDOMElement>('input[name="cg-mode"]:checked')?.value, 'rated');
   assert.equal(form.querySelector<FakeDOMElement>('input[name="cg-variant"]:checked')?.value, 'horde');
   assert.equal(form.querySelector<FakeDOMElement>('input[name="cg-color"]:checked')?.value, 'white');
+  assert.equal(minimum.value, '1400');
+  assert.equal(maximum.value, '1900');
   assert.deepEqual(savedPrefs, []);
   assert.equal(elements.get('lobby-error')?.textContent, 'Seek service unavailable');
   assert.equal(form.querySelector('.cg-submit')?.disabled, false);
@@ -1154,6 +1318,14 @@ test('mountLobby: failed create preserves choices, unlocks submit, and retries',
 
   assert.equal(createdSeeks.length, 2);
   assert.equal(savedPrefs.length, 1);
+  assert.deepEqual(JSON.parse(savedPrefs[0]!), {
+    time: '3+0',
+    mode: 'rated',
+    variant: 'horde',
+    color: 'white',
+    minRating: 1400,
+    maxRating: 1900,
+  });
   assert.equal(form.hidden, true);
 });
 
@@ -1227,6 +1399,26 @@ test('mountLobby: a valid V3 preset preference restores every choice', () => {
   assert.equal(form?.querySelector<FakeDOMElement>('input[name="cg-mode"]:checked')?.value, 'rated');
   assert.equal(form?.querySelector<FakeDOMElement>('input[name="cg-variant"]:checked')?.value, 'horde');
   assert.equal(form?.querySelector<FakeDOMElement>('input[name="cg-color"]:checked')?.value, 'white');
+  assert.equal(form?.querySelector<FakeDOMElement>('#cg-min-rating')?.value, '');
+  assert.equal(form?.querySelector<FakeDOMElement>('#cg-max-rating')?.value, '');
+});
+
+test('mountLobby: a valid V4 preference restores its exact rating range', () => {
+  const { doc } = createTestDoc();
+  const { client } = makeFakeClient();
+  const storage: KeyValueStorage = {
+    getItem: () => JSON.stringify({
+      time: '5+3', mode: 'rated', variant: 'atomic', color: 'black',
+      minRating: 1500, maxRating: 1800,
+    }),
+    setItem: () => {},
+    removeItem: () => {},
+  };
+  mountTestLobby({ doc, client, isAuthenticated: () => true, storage });
+  const form = (doc.getElementById('create-game') as unknown as FakeDOMElement)
+    .querySelector('#create-game-form');
+  assert.equal(form?.querySelector<FakeDOMElement>('#cg-min-rating')?.value, '1500');
+  assert.equal(form?.querySelector<FakeDOMElement>('#cg-max-rating')?.value, '1800');
 });
 
 test('mountLobby: a valid Custom preference restores its inputs and mode', () => {

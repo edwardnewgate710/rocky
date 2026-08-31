@@ -1,7 +1,8 @@
 /**
  * Create-a-game panel — the lobby's focused seek builder.
  *
- * The collapsed trigger opens one short form for time, variant, mode, and color.
+ * The collapsed trigger opens one short form for time, variant, mode, color,
+ * and optional opponent-rating bounds.
  * The component owns only DOM and form state; the lobby wiring remains
  * responsible for the network request.
  */
@@ -29,6 +30,7 @@ import {
   isOfferedVariant,
   isSeekColor,
   parseCreateGamePrefs,
+  parseRatingBound,
   serializeCreateGamePrefs,
   type CreateGamePrefs,
   type SeekMode,
@@ -53,6 +55,8 @@ export interface CreateGameParams {
   readonly timeControl: TimeControl;
   readonly rated: boolean;
   readonly color: SeekColor;
+  readonly minRating: number | null;
+  readonly maxRating: number | null;
 }
 
 export interface CreateGamePanelCallbacks {
@@ -67,7 +71,7 @@ export interface CreateGamePanelOptions {
   readonly mount: HTMLElement;
   readonly callbacks: CreateGamePanelCallbacks;
   readonly initialAuthenticated?: boolean;
-  /** Persists the last successful V3 settings. */
+  /** Persists the last successful V4 settings. */
   readonly storage?: KeyValueStorage;
 }
 
@@ -82,6 +86,9 @@ export class CreateGamePanel {
   private readonly customMinutes: HTMLInputElement;
   private readonly customIncrement: HTMLInputElement;
   private readonly customError: HTMLParagraphElement;
+  private readonly minRating: HTMLInputElement;
+  private readonly maxRating: HTMLInputElement;
+  private readonly ratingError: HTMLParagraphElement;
   private readonly timeSummary: HTMLParagraphElement;
   private readonly storage: KeyValueStorage | undefined;
 
@@ -122,6 +129,14 @@ export class CreateGamePanel {
       role: 'alert',
       hidden: '',
     });
+    this.minRating = this.ratingInput('cg-min-rating');
+    this.maxRating = this.ratingInput('cg-max-rating');
+    this.ratingError = el(this.doc, 'p', {
+      class: 'cg-field-error',
+      id: 'cg-rating-error',
+      role: 'alert',
+      hidden: '',
+    });
     this.customFields = this.createCustomFields(
       prefs?.time === CUSTOM_PRESET_ID ? prefs.minutes : 5,
       prefs?.time === CUSTOM_PRESET_ID ? prefs.increment : 0,
@@ -139,6 +154,7 @@ export class CreateGamePanel {
       this.createVariantField(prefs?.variant ?? DEFAULT_CREATE_GAME_VARIANT),
       this.createModeField(prefs?.mode ?? 'casual'),
       this.createColorField(prefs?.color ?? DEFAULT_CREATE_GAME_COLOR),
+      this.createRatingField(prefs?.minRating ?? null, prefs?.maxRating ?? null),
       el(this.doc, 'div', { class: 'cg-actions' }, this.submitBtn, this.cancelBtn),
     );
     this.bindEvents();
@@ -225,6 +241,18 @@ export class CreateGamePanel {
     });
   }
 
+  /** Create a text input so browser number coercion cannot admit exponent notation. */
+  private ratingInput(id: string): HTMLInputElement {
+    return el(this.doc, 'input', {
+      id,
+      type: 'text',
+      inputmode: 'numeric',
+      autocomplete: 'off',
+      dir: 'ltr',
+      'aria-describedby': 'cg-rating-hint cg-rating-error',
+    });
+  }
+
   /** Build the mutually exclusive Casual/Rated radio group and its explanation. */
   private createModeField(initialMode: SeekMode): HTMLFieldSetElement {
     const modeHint = el(
@@ -286,6 +314,47 @@ export class CreateGamePanel {
     );
   }
 
+  /** Build optional exact opponent-rating bounds; blank is the unrestricted state. */
+  private createRatingField(
+    initialMinimum: number | null,
+    initialMaximum: number | null,
+  ): HTMLFieldSetElement {
+    this.minRating.value = initialMinimum === null ? '' : String(initialMinimum);
+    this.maxRating.value = initialMaximum === null ? '' : String(initialMaximum);
+    return el(
+      this.doc,
+      'fieldset',
+      { class: 'cg-field' },
+      el(this.doc, 'legend', {}, 'Opponent rating'),
+      el(
+        this.doc,
+        'div',
+        { class: 'cg-rating' },
+        el(
+          this.doc,
+          'label',
+          { class: 'cg-num' },
+          el(this.doc, 'span', {}, 'Minimum'),
+          this.minRating,
+        ),
+        el(
+          this.doc,
+          'label',
+          { class: 'cg-num' },
+          el(this.doc, 'span', {}, 'Maximum'),
+          this.maxRating,
+        ),
+        el(
+          this.doc,
+          'p',
+          { class: 'cg-hint', id: 'cg-rating-hint' },
+          'Leave blank for no restriction.',
+        ),
+        this.ratingError,
+      ),
+    );
+  }
+
   /** Bind disclosure, cancellation, submission, and Escape behavior once. */
   private bindEvents(): void {
     this.trigger.addEventListener('click', () => this.setExpanded(true));
@@ -295,6 +364,8 @@ export class CreateGamePanel {
     }
     this.customMinutes.addEventListener('input', () => this.clearCustomError(this.customMinutes));
     this.customIncrement.addEventListener('input', () => this.clearCustomError(this.customIncrement));
+    this.minRating.addEventListener('input', () => this.clearRatingError(this.minRating));
+    this.maxRating.addEventListener('input', () => this.clearRatingError(this.maxRating));
     this.form.addEventListener('submit', (event) => {
       event.preventDefault();
       void this.submit();
@@ -349,6 +420,7 @@ export class CreateGamePanel {
     const variant = this.readChecked('cg-variant');
     const color = this.readChecked('cg-color');
     if (!isOfferedVariant(variant) || !isSeekColor(color)) return null;
+    const ratings = this.readRatingRange();
     if (selected === CUSTOM_PRESET_ID) {
       const minutes = this.customMinutes.value.trim() === '' ? Number.NaN : Number(this.customMinutes.value);
       const increment =
@@ -358,12 +430,15 @@ export class CreateGamePanel {
         this.showCustomError(validation.message, validation.field);
         return null;
       }
+      this.clearCustomError();
+      if (ratings === null) return null;
       return {
         params: {
           variant,
           timeControl: validation.timeControl,
           rated: mode === 'rated',
           color,
+          ...ratings,
         },
         prefs: {
           time: CUSTOM_PRESET_ID,
@@ -372,12 +447,14 @@ export class CreateGamePanel {
           mode,
           variant,
           color,
+          ...ratings,
         },
       };
     }
 
     const preset = CREATE_GAME_PRESETS.find((candidate) => candidate.id === selected);
     if (!preset) return null;
+    if (ratings === null) return null;
 
     return {
       params: {
@@ -385,14 +462,39 @@ export class CreateGamePanel {
         timeControl: presetToTimeControl(preset.minutes, preset.increment),
         rated: mode === 'rated',
         color,
+        ...ratings,
       },
       prefs: {
         time: preset.id,
         mode,
         variant,
         color,
+        ...ratings,
       },
     };
+  }
+
+  /** Parse both optional rating fields and enforce their inclusive relationship. */
+  private readRatingRange(): {
+    readonly minRating: number | null;
+    readonly maxRating: number | null;
+  } | null {
+    const minimum = parseRatingBound(this.minRating.value);
+    const maximum = parseRatingBound(this.maxRating.value);
+    if (!minimum.ok) {
+      this.showRatingError('Enter a whole rating from 0 to 4000.', this.minRating);
+      return null;
+    }
+    if (!maximum.ok) {
+      this.showRatingError('Enter a whole rating from 0 to 4000.', this.maxRating);
+      return null;
+    }
+    if (minimum.value !== null && maximum.value !== null && minimum.value > maximum.value) {
+      this.showRatingError('Minimum rating must not exceed maximum rating.', this.minRating);
+      return null;
+    }
+    this.clearRatingError();
+    return { minRating: minimum.value, maxRating: maximum.value };
   }
 
   /** Read only preferences that still belong to the approved choice sets. */
@@ -462,6 +564,8 @@ export class CreateGamePanel {
     this.form.setAttribute('aria-busy', String(pending));
     this.submitBtn.disabled = pending;
     this.cancelBtn.disabled = pending;
+    this.minRating.disabled = pending;
+    this.maxRating.disabled = pending;
     for (const name of ['cg-time', 'cg-variant', 'cg-mode', 'cg-color']) {
       for (const radio of this.form.querySelectorAll<HTMLInputElement>(`input[name="${name}"]`)) {
         radio.disabled = pending;
@@ -514,6 +618,29 @@ export class CreateGamePanel {
     } else {
       this.customMinutes.removeAttribute('aria-invalid');
       this.customIncrement.removeAttribute('aria-invalid');
+    }
+  }
+
+  /** Surface one rating validation error at its deterministic owning field. */
+  private showRatingError(message: string, input: HTMLInputElement): void {
+    this.ratingError.textContent = message;
+    this.ratingError.hidden = false;
+    this.minRating.removeAttribute('aria-invalid');
+    this.maxRating.removeAttribute('aria-invalid');
+    input.setAttribute('aria-invalid', 'true');
+    input.focus();
+  }
+
+  /** Clear only the rating validation channel, preserving custom-time feedback. */
+  private clearRatingError(input?: HTMLInputElement): void {
+    if (input && !input.hasAttribute('aria-invalid')) return;
+    this.ratingError.textContent = '';
+    this.ratingError.hidden = true;
+    if (input) {
+      input.removeAttribute('aria-invalid');
+    } else {
+      this.minRating.removeAttribute('aria-invalid');
+      this.maxRating.removeAttribute('aria-invalid');
     }
   }
 
