@@ -318,12 +318,13 @@ test('diagnostic preload: process.kill records target PID and signal', (t) => {
   assert.ok(killRecord?.callerStack?.includes('kill-call-site'), 'traces kill call site');
 });
 
-test('diagnostic preload: redacts postgres/postgresql credentials, tokens, and quoted secrets with spaces', (t) => {
+test('diagnostic preload: redacts postgres/postgresql credentials, tokens, Authorization headers, cookies, and quoted secrets with spaces', (t) => {
   const { records, logDir } = runWithPreload(`
     const err = new Error(
       'Connect failed to postgresql://app_user:s3cr3tpass@db.internal:5432/chess and ' +
       'postgres://admin:supersecret@10.0.0.1:5432/main and sk-1234567890abcdef12345 and ' +
-      'password="correct horse battery staple" and secret=\\'top secret key phrase\\''
+      'password="correct horse battery staple" and secret=\\'top secret key phrase\\' and ' +
+      'Authorization: Basic dXNlcjpwYXNzd29yZA==, Cookie: session=xyz123; token=abc456; other=789'
     );
     throw err;
   `);
@@ -337,10 +338,15 @@ test('diagnostic preload: redacts postgres/postgresql credentials, tokens, and q
   assert.ok(msg.includes('[REDACTED_API_KEY]'), 'redacts OpenAI-style api key');
   assert.ok(msg.includes('password=[REDACTED]'), 'redacts double-quoted password with spaces');
   assert.ok(msg.includes('secret=[REDACTED]'), 'redacts single-quoted secret with spaces');
+  assert.ok(msg.includes('Authorization=[REDACTED]'), 'redacts Basic authorization header');
+  assert.ok(msg.includes('Cookie=[REDACTED]'), 'redacts multi-cookie header');
   assert.ok(!msg.includes('s3cr3tpass'), 'raw password 1 not present');
   assert.ok(!msg.includes('supersecret'), 'raw password 2 not present');
   assert.ok(!msg.includes('correct horse battery staple'), 'raw quoted password with spaces not present');
   assert.ok(!msg.includes('top secret key phrase'), 'raw single-quoted secret with spaces not present');
+  assert.ok(!msg.includes('dXNlcjpwYXNzd29yZA=='), 'raw basic auth credential not present');
+  assert.ok(!msg.includes('session=xyz123'), 'raw cookie session not present');
+  assert.ok(!msg.includes('token=abc456'), 'raw cookie token not present');
   assert.ok(!msg.includes('sk-1234567890abcdef12345'), 'raw key not present');
 });
 

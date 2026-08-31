@@ -67,7 +67,7 @@ const REDACT_PATTERNS = [
   [/sk-[a-zA-Z0-9_-]{10,}/g, '[REDACTED_API_KEY]'],
   [/Bearer\s+[A-Za-z0-9._~+/-]+=*/g, 'Bearer [REDACTED_TOKEN]'],
   [/(?:postgres|postgresql):\/\/[^:]+:[^@]+@/g, 'postgres://[REDACTED_CREDS]@'],
-  [/(password|secret|token|authorization|cookie)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^,\s]+)/gi, '$1=[REDACTED]'],
+  [/(password|secret|token|authorization|cookie)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^,\r\n]+)/gi, '$1=[REDACTED]'],
 ];
 
 /**

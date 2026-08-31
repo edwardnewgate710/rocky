@@ -246,8 +246,10 @@ could not categorically exclude an uninstrumented `process.abort()` or an extern
 
 **This narrows Signature B's investigated possibilities while leaving its root cause unresolved:**
 `process.abort()` is now instrumented so any future occurrence will record whether an abort
-was invoked or whether termination originated outside the JS runtime entirely (e.g. an OS-level
-kill, uncatchable signal, or native crash). Two observations remain consistent with an
+was invoked through JS; an absent record narrows in-runtime JS termination but cannot alone
+prove external termination without corroborating child exit status/signal data or OS-level
+evidence (e.g. distinguishing an external kill or uncatchable signal from a native C++/V8 crash).
+Two observations remain consistent with an
 environmental (not code) origin: at the time of capture this development machine had roughly
 2.5 GB of 15.7 GB RAM free, with several unrelated concurrent processes (other agents' worktrees
 and dev servers) running; and `node --test` spawns dozens of child processes across a full
