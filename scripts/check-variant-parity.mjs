@@ -248,8 +248,19 @@ const TARGETS_STUDIES =
  */
 const IMPLICIT_CONSTRAINT_NAME = 'studies_variant_check';
 
+/** The name PostgreSQL gives a foreign key on `studies.variant` written without an explicit name. */
+const IMPLICIT_FK_CONSTRAINT_NAME = 'studies_variant_fkey';
+
 /** A `CHECK (variant IN (...))`, with the constraint name when the statement gives one. */
 const VARIANT_CHECK = /(?:CONSTRAINT\s+"?(\w+)"?\s+)?CHECK\s*\(\s*variant\s+IN\s*\(([\s\S]*?)\)\s*\)/gi;
+
+/** Table-level `FOREIGN KEY (variant) REFERENCES variants(code)`. */
+const VARIANT_FK_TABLE =
+  /(?:CONSTRAINT\s+"?(\w+)"?\s+)?FOREIGN\s+KEY\s*\(\s*"?variant"?\s*\)\s*REFERENCES\s+variants\s*\(\s*code\s*\)/i;
+
+/** Inline-column `variant TEXT ... REFERENCES variants(code)`. */
+const VARIANT_FK_INLINE =
+  /(?:ADD\s+COLUMN|CREATE\s+TABLE)\s+[\s\S]*?"?variant"?\s+TEXT[\s\S]*?REFERENCES\s+variants\s*\(\s*code\s*\)/i;
 
 const normalise = (name) => name.replace(/"/g, '').toLowerCase();
 
@@ -299,7 +310,7 @@ export function effectiveStudyVariantConstraint(dir = MIGRATIONS_DIR) {
       }
 
       // Once the column derives from the lookup table there is no second list left to drift.
-      if (/\bvariant\b[\s\S]*?REFERENCES\s+variants\s*\(\s*code\s*\)/i.test(statement)) {
+      if (VARIANT_FK_TABLE.test(statement) || VARIANT_FK_INLINE.test(statement)) {
         current = null;
       }
     }
@@ -308,29 +319,46 @@ export function effectiveStudyVariantConstraint(dir = MIGRATIONS_DIR) {
 }
 
 /**
- * Returns true if the effective migration schema defines a foreign key from studies.variant to variants(code).
+ * Returns true if the effective migration schema defines an active foreign key on studies.variant referencing variants(code).
  *
  * @param {string} dir The migrations directory to replay.
  * @returns {boolean} Whether studies.variant has an active foreign key referencing variants(code).
  */
 export function effectiveStudyVariantForeignKey(dir = MIGRATIONS_DIR) {
-  let fkFound = false;
+  let activeFk = null;
   for (const file of migrationFiles(dir)) {
     const sql = stripComments(readFileSync(join(dir, file), 'utf8'), 'sql');
     for (const statement of splitStatements(sql)) {
       if (!TARGETS_STUDIES.test(statement)) continue;
-      if (/\bvariant\b[\s\S]*?REFERENCES\s+variants\s*\(\s*code\s*\)/i.test(statement)) {
-        fkFound = true;
+
+      const renamed = /RENAME\s+CONSTRAINT\s+"?(\w+)"?\s+TO\s+"?(\w+)"?/i.exec(statement);
+      if (renamed !== null && activeFk !== null && normalise(renamed[1]) === activeFk.name) {
+        activeFk = { file, name: normalise(renamed[2]) };
       }
-      if (/DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?"?studies_variant_fk"?/i.test(statement)) {
-        fkFound = false;
+
+      const dropped = /DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?"?(\w+)"?/i.exec(statement);
+      if (dropped !== null && activeFk !== null && normalise(dropped[1]) === activeFk.name) {
+        activeFk = null;
       }
       if (/DROP\s+COLUMN\s+(?:IF\s+EXISTS\s+)?"?variant"?/i.test(statement)) {
-        fkFound = false;
+        activeFk = null;
+      }
+
+      const tableMatch = VARIANT_FK_TABLE.exec(statement);
+      if (tableMatch !== null) {
+        activeFk = {
+          file,
+          name: normalise(tableMatch[1] ?? IMPLICIT_FK_CONSTRAINT_NAME),
+        };
+      } else if (VARIANT_FK_INLINE.test(statement)) {
+        activeFk = {
+          file,
+          name: IMPLICIT_FK_CONSTRAINT_NAME,
+        };
       }
     }
   }
-  return fkFound;
+  return activeFk !== null;
 }
 
 /** The root. Everything else is measured against this one. */

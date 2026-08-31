@@ -329,6 +329,38 @@ test('dropping the CHECK without adding a foreign key leaves effectiveStudyVaria
   }
 });
 
+test('effectiveStudyVariantForeignKey tracks named foreign keys through drop and rename', () => {
+  const dir = migrations({
+    '0001_fk.sql': `ALTER TABLE studies ADD CONSTRAINT custom_fk FOREIGN KEY (variant) REFERENCES variants(code);`,
+    '0002_rename.sql': `ALTER TABLE studies RENAME CONSTRAINT custom_fk TO renamed_fk;`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dir), true);
+    // Dropping under the old name does nothing because it was renamed
+    writeFileSync(join(dir, '0003_drop_old.sql'), `ALTER TABLE studies DROP CONSTRAINT custom_fk;`, 'utf8');
+    assert.equal(effectiveStudyVariantForeignKey(dir), true);
+    // Dropping under the new name clears active FK
+    writeFileSync(join(dir, '0004_drop_new.sql'), `ALTER TABLE studies DROP CONSTRAINT renamed_fk;`, 'utf8');
+    assert.equal(effectiveStudyVariantForeignKey(dir), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('effectiveStudyVariantForeignKey recognizes inline column references on studies', () => {
+  const dir = migrations({
+    '0001_inline.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dir), true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('a renamed declaration fails loudly instead of checking nothing', () => {
   // The failure mode that makes a guard worse than no guard: it keeps passing having stopped
   // looking at anything.
