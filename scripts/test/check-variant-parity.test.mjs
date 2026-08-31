@@ -1129,6 +1129,142 @@ test('table rename round-trip preserves CHECK constraint when renamed back to st
   }
 });
 
+test('inline column definition with REFERENCES and CHECK in reverse order records both', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL DEFAULT 'standard'
+        REFERENCES variants(code)
+        CHECK (variant IN ('standard', 'atomic'))
+    );`,
+  });
+  try {
+    const replayed = replayStudiesSchema(dir);
+    assert.equal(replayed.checks.length, 1);
+    assert.equal(replayed.checks[0].name, 'studies_variant_check');
+    assert.deepEqual(replayed.checks[0].variants, ['standard', 'atomic']);
+    assert.equal(replayed.hasForeignKey, true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('inline column definition with explicit CONSTRAINT names on both CHECK and REFERENCES', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL
+        CONSTRAINT chk_study_variant CHECK (variant IN ('standard', 'atomic'))
+        CONSTRAINT fk_study_variant REFERENCES variants(code)
+    );`,
+  });
+  try {
+    const replayed = replayStudiesSchema(dir);
+    assert.equal(replayed.checks.length, 1);
+    assert.equal(replayed.checks[0].name, 'chk_study_variant');
+    assert.deepEqual(replayed.checks[0].variants, ['standard', 'atomic']);
+    assert.equal(replayed.hasForeignKey, true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('dropping only FK constraint leaves CHECK active when both defined on same column', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL
+        CONSTRAINT chk_variant CHECK (variant IN ('standard', 'atomic'))
+        CONSTRAINT fk_variant REFERENCES variants(code)
+    );`,
+    '0002_drop_fk.sql': `ALTER TABLE studies DROP CONSTRAINT fk_variant;`,
+  });
+  try {
+    const replayed = replayStudiesSchema(dir);
+    assert.notEqual(replayed.check, null);
+    assert.equal(replayed.check?.name, 'chk_variant');
+    assert.deepEqual(replayed.check?.variants, ['standard', 'atomic']);
+    assert.equal(replayed.hasForeignKey, false);
+    assert.equal(effectiveStudyVariantForeignKey(dir), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('parity evaluation succeeds when surviving FK provides integrity after CHECK drop', () => {
+  const dir = migrations({
+    '0001_variants.sql': `CREATE TABLE variants (code TEXT PRIMARY KEY);
+INSERT INTO variants (code) VALUES
+  ('standard'), ('chess960'), ('kingofthehill'), ('atomic'),
+  ('crazyhouse'), ('threecheck'), ('horde'), ('racingkings');`,
+    '0002_studies.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL
+        CONSTRAINT chk_v CHECK (variant IN ('standard', 'atomic'))
+        CONSTRAINT fk_v REFERENCES variants(code)
+    );`,
+    '0003_drop_chk.sql': `ALTER TABLE studies DROP CONSTRAINT chk_v;`,
+  });
+  try {
+    const { mirrors, studyConstraint, hasStudyVariantFk } = collectMirrors(dir);
+    assert.equal(studyConstraint, null);
+    assert.equal(hasStudyVariantFk, true);
+    const lookupMirror = mirrors.find((m) => m.label.includes('variants'));
+    assert.notEqual(lookupMirror, undefined);
+    assert.deepEqual(disagreements(extractRegion(ROOT).variants, lookupMirror.variants), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('parity evaluation succeeds when surviving CHECK provides integrity after FK drop', () => {
+  const dir = migrations({
+    '0001_variants.sql': `CREATE TABLE variants (code TEXT PRIMARY KEY);
+INSERT INTO variants (code) VALUES
+  ('standard'), ('chess960'), ('kingofthehill'), ('atomic'),
+  ('crazyhouse'), ('threecheck'), ('horde'), ('racingkings');`,
+    '0002_studies.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL
+        CONSTRAINT chk_v CHECK (variant IN ('standard', 'chess960', 'kingofthehill', 'atomic', 'crazyhouse', 'threecheck', 'horde', 'racingkings'))
+        CONSTRAINT fk_v REFERENCES variants(code)
+    );`,
+    '0003_drop_fk.sql': `ALTER TABLE studies DROP CONSTRAINT fk_v;`,
+  });
+  try {
+    const { mirrors, studyConstraint, hasStudyVariantFk } = collectMirrors(dir);
+    assert.notEqual(studyConstraint, null);
+    assert.equal(hasStudyVariantFk, false);
+    const studyMirror = mirrors.find((m) => m.label.includes('studies.variant') && m.label.includes('CHECK'));
+    assert.notEqual(studyMirror, undefined);
+    assert.deepEqual(disagreements(extractRegion(ROOT).variants, studyMirror?.variants ?? []), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('parity evaluation flags failure when both CHECK and FK are removed from studies.variant', () => {
+  const dir = migrations({
+    '0001_variants.sql': `CREATE TABLE variants (code TEXT PRIMARY KEY);
+INSERT INTO variants (code) VALUES ('standard');`,
+    '0002_studies.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL
+        CONSTRAINT chk_v CHECK (variant IN ('standard'))
+        CONSTRAINT fk_v REFERENCES variants(code)
+    );`,
+    '0003_drop_both.sql': `ALTER TABLE studies DROP CONSTRAINT chk_v, DROP CONSTRAINT fk_v;`,
+  });
+  try {
+    const { studyConstraint, hasStudyVariantFk } = collectMirrors(dir);
+    assert.equal(studyConstraint, null);
+    assert.equal(hasStudyVariantFk, false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
 
 
 
