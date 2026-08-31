@@ -498,6 +498,13 @@ function scanColumnConstraints(clause, file, constraintNamespace, variantConstra
           }
           vIdx++;
         }
+        if (clause[vIdx + 1]?.value !== ')') {
+          throw new Error(
+            `${file} defines a compound or non-standard CHECK predicate on \`studies.variant\` ` +
+              `(\`${clause.map((t) => t.raw).join(' ')}\`). Teach this guard compound CHECK predicates ` +
+              `rather than ignoring suffix expressions.`,
+          );
+        }
         const name = inlineName ?? nextImplicitConstraintName(constraintNamespace, 'studies_variant_check');
         constraintNamespace.add(name);
         variantConstraints.add(name);
@@ -539,6 +546,8 @@ function scanColumnConstraints(clause, file, constraintNamespace, variantConstra
  * }} Effective check constraint on studies.variant and whether an active foreign key referencing variants(code) exists.
  */
 export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
+  let hasStudiesTable = false;
+  let hasVariantColumn = false;
   const constraintNamespace = new Set();
   const variantConstraints = new Set();
   /** @type {Map<string, { file: string, name: string, variants: string[] }>} */
@@ -575,6 +584,8 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
           idx = ref.nextIndex;
 
           if (isTableTarget(ref, 'studies')) {
+            hasStudiesTable = false;
+            hasVariantColumn = false;
             constraintNamespace.clear();
             variantConstraints.clear();
             activeChecks.clear();
@@ -615,6 +626,8 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
 
         // Table rename: ALTER TABLE studies RENAME TO new_name
         if (stmt[idx]?.value === 'rename' && stmt[idx + 1]?.value === 'to') {
+          hasStudiesTable = false;
+          hasVariantColumn = false;
           constraintNamespace.clear();
           variantConstraints.clear();
           activeChecks.clear();
@@ -678,6 +691,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
             if (action[cIdx]?.value === 'column') cIdx++;
             if (action[cIdx]?.value === 'if' && action[cIdx + 1]?.value === 'exists') cIdx += 2;
             if (action[cIdx]?.value === 'variant') {
+              hasVariantColumn = false;
               // Drops all constraints depending on variant
               for (const name of variantConstraints) {
                 constraintNamespace.delete(name);
@@ -694,6 +708,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
             let cIdx = 1;
             if (action[cIdx]?.value === 'column') cIdx++;
             if (action[cIdx]?.value === 'variant' && action[cIdx + 1]?.value === 'to') {
+              hasVariantColumn = false;
               // variant column is renamed away; constraints remain on renamed column in namespace
               variantConstraints.clear();
               activeChecks.clear();
@@ -702,14 +717,20 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
             continue;
           }
 
-          // Action E: ADD [COLUMN] variant ...
+          // Action E: ADD [COLUMN] [IF NOT EXISTS] variant ...
           let colIdx = 0;
           if (action[colIdx]?.value === 'add') colIdx++;
           if (action[colIdx]?.value === 'column') colIdx++;
+          let isColIfNotExists = false;
           if (action[colIdx]?.value === 'if' && action[colIdx + 1]?.value === 'not' && action[colIdx + 2]?.value === 'exists') {
+            isColIfNotExists = true;
             colIdx += 3;
           }
           if (action[colIdx]?.value === 'variant') {
+            if (hasVariantColumn && isColIfNotExists) {
+              continue;
+            }
+            hasVariantColumn = true;
             scanColumnConstraints(action.slice(colIdx), file, constraintNamespace, variantConstraints, activeChecks, activeFks);
             continue;
           }
@@ -742,6 +763,13 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
                     variantTokens.push(action[vIdx].value);
                   }
                   vIdx++;
+                }
+                if (action[vIdx + 1]?.value !== ')') {
+                  throw new Error(
+                    `${file} defines a compound or non-standard CHECK predicate on \`studies.variant\` ` +
+                      `(\`${action.map((t) => t.raw).join(' ')}\`). Teach this guard compound CHECK predicates ` +
+                      `rather than ignoring suffix expressions.`,
+                  );
                 }
                 constraintNamespace.add(assignedName);
                 variantConstraints.add(assignedName);
@@ -791,7 +819,9 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
       // -----------------------------------------------------------------------
       if (stmt[0].value === 'create' && stmt[1].value === 'table') {
         let idx = 2;
+        let isTableIfNotExists = false;
         if (stmt[idx]?.value === 'if' && stmt[idx + 1]?.value === 'not' && stmt[idx + 2]?.value === 'exists') {
+          isTableIfNotExists = true;
           idx += 3;
         }
         const ref = parseQualifiedTableTarget(stmt, idx);
@@ -799,7 +829,13 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
           continue;
         }
 
+        if (hasStudiesTable && isTableIfNotExists) {
+          continue;
+        }
+
         // Fresh table creation clears prior state
+        hasStudiesTable = true;
+        hasVariantColumn = false;
         constraintNamespace.clear();
         variantConstraints.clear();
         activeChecks.clear();
@@ -816,6 +852,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
 
           // Column-level: variant <TYPE> ...
           if (clause[0]?.value === 'variant') {
+            hasVariantColumn = true;
             scanColumnConstraints(clause, file, constraintNamespace, variantConstraints, activeChecks, activeFks);
             continue;
           }
@@ -846,6 +883,13 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
                     variantTokens.push(clause[vIdx].value);
                   }
                   vIdx++;
+                }
+                if (clause[vIdx + 1]?.value !== ')') {
+                  throw new Error(
+                    `${file} defines a compound or non-standard CHECK predicate on \`studies.variant\` ` +
+                      `(\`${clause.map((t) => t.raw).join(' ')}\`). Teach this guard compound CHECK predicates ` +
+                      `rather than ignoring suffix expressions.`,
+                  );
                 }
                 constraintNamespace.add(assignedName);
                 variantConstraints.add(assignedName);

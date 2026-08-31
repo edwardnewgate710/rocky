@@ -974,4 +974,57 @@ test('dropping column variant releases dependent constraint names from namespace
   }
 });
 
+test('CREATE TABLE IF NOT EXISTS studies skips constraints when table already exists', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      title TEXT NOT NULL
+    );`,
+    '0002_conditional_recreate.sql': `CREATE TABLE IF NOT EXISTS studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+  });
+  try {
+    // The second CREATE TABLE IF NOT EXISTS is a no-op in PostgreSQL because studies already exists.
+    assert.equal(effectiveStudyVariantForeignKey(dir), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('ALTER TABLE ADD COLUMN IF NOT EXISTS variant skips constraints when variant already exists', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL
+    );`,
+    '0002_conditional_add.sql': `ALTER TABLE studies ADD COLUMN IF NOT EXISTS variant TEXT NOT NULL REFERENCES variants(code);`,
+  });
+  try {
+    // The conditional column add is a no-op in PostgreSQL because variant already exists.
+    assert.equal(effectiveStudyVariantForeignKey(dir), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('compound CHECK predicate with suffix fails loudly rather than ignoring predicate', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL CHECK (variant IN ('standard', 'atomic') AND variant <> 'atomic')
+    );`,
+  });
+  try {
+    assert.throws(
+      () => replayStudiesSchema(dir),
+      /defines a compound or non-standard CHECK predicate on `studies.variant`/,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
 
