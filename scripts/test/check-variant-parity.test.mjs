@@ -361,6 +361,26 @@ test('effectiveStudyVariantForeignKey recognizes inline column references on stu
   }
 });
 
+test('effectiveStudyVariantForeignKey tracks explicit inline constraint names and clears on drop', () => {
+  const dir = migrations({
+    '0001_inline_named.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL CONSTRAINT custom_inline_fk REFERENCES variants(code)
+    );`,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dir), true);
+    writeFileSync(
+      join(dir, '0002_drop_inline.sql'),
+      `ALTER TABLE studies DROP CONSTRAINT custom_inline_fk;`,
+      'utf8',
+    );
+    assert.equal(effectiveStudyVariantForeignKey(dir), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('a renamed declaration fails loudly instead of checking nothing', () => {
   // The failure mode that makes a guard worse than no guard: it keeps passing having stopped
   // looking at anything.

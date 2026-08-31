@@ -258,9 +258,9 @@ const VARIANT_CHECK = /(?:CONSTRAINT\s+"?(\w+)"?\s+)?CHECK\s*\(\s*variant\s+IN\s
 const VARIANT_FK_TABLE =
   /(?:CONSTRAINT\s+"?(\w+)"?\s+)?FOREIGN\s+KEY\s*\(\s*"?variant"?\s*\)\s*REFERENCES\s+variants\s*\(\s*code\s*\)/i;
 
-/** Inline-column `variant TEXT ... REFERENCES variants(code)`. */
+/** Inline-column `variant TEXT ... [CONSTRAINT name] REFERENCES variants(code)`. */
 const VARIANT_FK_INLINE =
-  /(?:ADD\s+COLUMN|CREATE\s+TABLE)\s+[\s\S]*?"?variant"?\s+TEXT[\s\S]*?REFERENCES\s+variants\s*\(\s*code\s*\)/i;
+  /(?:ADD\s+COLUMN|CREATE\s+TABLE)\s+[\s\S]*?"?variant"?\s+TEXT[\s\S]*?(?:CONSTRAINT\s+"?(\w+)"?\s+)?REFERENCES\s+variants\s*\(\s*code\s*\)/i;
 
 const normalise = (name) => name.replace(/"/g, '').toLowerCase();
 
@@ -345,15 +345,16 @@ export function effectiveStudyVariantForeignKey(dir = MIGRATIONS_DIR) {
       }
 
       const tableMatch = VARIANT_FK_TABLE.exec(statement);
+      const inlineMatch = VARIANT_FK_INLINE.exec(statement);
       if (tableMatch !== null) {
         activeFk = {
           file,
           name: normalise(tableMatch[1] ?? IMPLICIT_FK_CONSTRAINT_NAME),
         };
-      } else if (VARIANT_FK_INLINE.test(statement)) {
+      } else if (inlineMatch !== null) {
         activeFk = {
           file,
-          name: IMPLICIT_FK_CONSTRAINT_NAME,
+          name: normalise(inlineMatch[1] ?? IMPLICIT_FK_CONSTRAINT_NAME),
         };
       }
     }
