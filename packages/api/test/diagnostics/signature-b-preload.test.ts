@@ -93,6 +93,84 @@ function runWithPreload(
   };
 }
 
+/**
+ * Executes a synthetic child script with a test-only safe abort shim loaded BEFORE the real preload.
+ *
+ * Execution order:
+ * 1. `safe-abort-shim.cjs` replaces native `process.abort` with a harmless sentinel that logs to stdout and calls `process.exit(99)`.
+ * 2. `signature-b-preload.cjs` loads second, capturing the sentinel function as `originalAbort` and installing `patchedAbort`.
+ * 3. The child script runs and calls `process.abort()`.
+ * 4. `patchedAbort` synchronously writes the `process.abort` JSONL diagnostic record and delegates to `originalAbort`.
+ * 5. The harmless sentinel runs and calls `process.exit(99)`, preventing native `process.abort()` / OS crash dumps.
+ */
+function runWithSafeAbortShimAndPreload(
+  code: string,
+  envOverride: Record<string, string> = {},
+): {
+  readonly status: number | null;
+  readonly signal: NodeJS.Signals | null;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly logDir: string;
+  readonly records: readonly DiagnosticRecord[];
+} {
+  const generatedLogDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-test-'));
+  const targetLogDir = envOverride.SIGB_LOG_DIR ? path.resolve(envOverride.SIGB_LOG_DIR) : generatedLogDir;
+  const shimPath = path.join(generatedLogDir, 'safe-abort-shim.cjs');
+  const scriptPath = path.join(generatedLogDir, 'test-target.cjs');
+
+  fs.writeFileSync(
+    shimPath,
+    `
+      const fs = require('node:fs');
+      process.abort = function harmlessSentinelAbort(...args) {
+        fs.writeSync(1, '__SAFE_ABORT_SENTINEL_INVOKED__\\n');
+        process.exit(99);
+      };
+    `,
+    'utf8',
+  );
+
+  fs.writeFileSync(scriptPath, code, 'utf8');
+
+  const args = ['--require', shimPath, '--require', PRELOAD_PATH, scriptPath];
+
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    ...envOverride,
+    SIGB_LOG_DIR: targetLogDir,
+  };
+  delete env.NODE_TEST_CONTEXT;
+
+  const result = spawnSync(process.execPath, args, {
+    cwd: generatedLogDir,
+    env,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+
+  const files = fs.existsSync(targetLogDir)
+    ? fs.readdirSync(targetLogDir).filter((f) => f.endsWith('.jsonl'))
+    : [];
+  const records: DiagnosticRecord[] = [];
+  for (const file of files) {
+    const content = fs.readFileSync(path.join(targetLogDir, file), 'utf8');
+    const lines = content.split('\n').map((l) => l.trim()).filter(Boolean);
+    for (const line of lines) {
+      records.push(JSON.parse(line) as DiagnosticRecord);
+    }
+  }
+
+  return {
+    status: result.status,
+    signal: result.signal,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    logDir: generatedLogDir,
+    records,
+  };
+}
+
 test('diagnostic preload: normal shutdown records lifecycle events', (t) => {
   const { status, records, logDir } = runWithPreload(`
     // clean normal execution
@@ -122,14 +200,37 @@ test('diagnostic preload: process.exit(42) records exit code and call-site stack
   assert.ok(exitRecord?.callerStack?.includes('exit-call-site'), 'stack traces exit invocation site');
 });
 
-test('diagnostic preload: process.abort wrapper is installed by preload without executing native abort in routine suite', () => {
-  // Routine test: verifies the patched process.abort wrapper is declared and registered by preload.
-  // Destructive native process.abort execution is isolated to the explicit diagnostic fixture
-  // (signature-b-preload-abort.diag.ts) to prevent core dumps and OS crash reporting during routine test runs.
-  const preloadSource = fs.readFileSync(PRELOAD_PATH, 'utf8');
-  assert.ok(preloadSource.includes('function patchedAbort'), 'preload defines patchedAbort wrapper');
-  assert.ok(preloadSource.includes("write('process.abort'"), 'patchedAbort records process.abort event');
-  assert.ok(preloadSource.includes('return originalAbort(...args)'), 'patchedAbort delegates to originalAbort');
+test('diagnostic preload: process.abort wrapper synchronously writes record and delegates at runtime without native abort', (t) => {
+  // Safe runtime execution test:
+  // 1. safe-abort-shim.cjs preloads first and overrides native process.abort with harmless sentinel.
+  // 2. signature-b-preload.cjs preloads second, capturing the sentinel as originalAbort and installing patchedAbort.
+  // 3. Child script calls process.abort().
+  // 4. patchedAbort synchronously writes the JSONL diagnostic record to SIGB_LOG_DIR before delegating to the sentinel.
+  // 5. Sentinel receives delegation and exits with status 99.
+  // 6. Child process does NOT execute native abort (no core dumps or OS crash handlers).
+  const { status, signal, stdout, records, logDir } = runWithSafeAbortShimAndPreload(`
+    // Verify runtime wrapper identity before calling
+    if (process.abort.name !== 'patchedAbort') {
+      process.exit(101);
+    }
+    // Call process.abort()
+    process.abort();
+  `);
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+
+  // Process exited cleanly via harmless sentinel delegation
+  assert.equal(signal, null, 'must not be terminated by signal');
+  assert.equal(status, 99, 'harmless sentinel was executed via originalAbort delegation');
+  assert.ok(stdout.includes('__SAFE_ABORT_SENTINEL_INVOKED__'), 'sentinel output verified on stdout');
+
+  // Preload lifecycle and abort records were written
+  const kinds = records.map((r) => r.kind);
+  assert.ok(kinds.includes('start'), 'records start');
+  assert.ok(kinds.includes('preload-installed'), 'records preload-installed');
+  const abortRecord = records.find((r) => r.kind === 'process.abort');
+  assert.ok(abortRecord, 'synchronously records process.abort event to JSONL');
+  assert.ok(typeof abortRecord?.callerStack === 'string', 'includes callerStack in abort record');
+  assert.ok(abortRecord?.callerStack?.includes('test-target'), 'callerStack traces abort invocation site');
 });
 
 test('diagnostic preload: uncaughtExceptionMonitor passively captures error without suppressing crash', (t) => {
