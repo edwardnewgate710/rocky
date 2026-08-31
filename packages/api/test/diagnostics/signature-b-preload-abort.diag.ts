@@ -97,6 +97,7 @@ test('explicit diagnostic integration: real native process.abort() records synch
 
   // On Windows/POSIX, abort causes abnormal termination
   assert.ok(status !== 0 || signal !== null, 'process terminates abnormally');
+  assert.ok(records.some((r) => r.kind === 'preload-installed'), 'records preload-installed');
   const abortRecord = records.find((r) => r.kind === 'process.abort');
   assert.ok(abortRecord, 'synchronously records process.abort event');
   assert.ok(typeof abortRecord?.callerStack === 'string', 'includes callerStack in abort record');

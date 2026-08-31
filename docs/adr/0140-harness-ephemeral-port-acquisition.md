@@ -229,9 +229,10 @@ the full `packages/api` suite (chosen the same way as the original 20-run
 sample: enough for >90% detection odds at the historically observed ~1-in-5
 rate) reproduced the defect 3 times, on **three files never previously
 implicated** — `rate-limit-atomicity`, `dependency-parity`, `studies-api` — none
-of the original four. Combined with the original four, that is **seven
-different files**, sharing nothing but the shared harness's `startHarness`
-import, which confirms this is not a defect specific to any one file's logic.
+of the original four. Combined with the original four, that is **seven distinct files** observed with this symptom
+to date. Occurrences across seven distinct files make a shared or cross-cutting path more
+plausible and make a defect confined to one test file less likely, but do not exclude
+file-specific inputs or lifecycle interactions.
 
 All three historical captures show the identical signature: **only the `start` and
 `preload-installed` lines were logged. None of the hooks active at that time fired —
