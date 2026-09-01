@@ -37,9 +37,30 @@
  *
  * Run: node scripts/check-variant-parity.mjs
  */
+import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+
+/**
+ * Pinned allowlist of reviewed, immutable historical migrations containing top-level PostgreSQL DO blocks.
+ *
+ * Deterministic variant-parity replay cannot evaluate arbitrary procedural PL/pgSQL code.
+ * Any migration file containing a top-level DO block that is not explicitly pinned by both
+ * its relative filename, its canonical UTF-8 SHA-256 digest, and its expected DO statement count
+ * will fail closed immediately.
+ *
+ * @type {ReadonlyMap<string, { sha256: string, expectedDoCount: number }>}
+ */
+export const KNOWN_HISTORICAL_PROCEDURAL_MIGRATIONS = new Map([
+  [
+    '0021_engine_bots.sql',
+    {
+      sha256: 'a59b1e4e9cefed19bca7de45cbd5f7d533a85f13fa197300d6bad9226c255508',
+      expectedDoCount: 1,
+    },
+  ],
+]);
 
 /**
  * Directory holding the database migration SQL scripts.
@@ -701,24 +722,27 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
     const tokens = tokenizeSql(stripped);
     const statements = splitSqlStatements(tokens);
 
+    const doStatements = statements.filter((stmt) => stmt[0]?.value === 'do');
+    if (doStatements.length > 0) {
+      const known = KNOWN_HISTORICAL_PROCEDURAL_MIGRATIONS.get(file);
+      const canonicalSql = rawSql.replace(/\r\n/g, '\n');
+      const fileHash = createHash('sha256').update(canonicalSql, 'utf8').digest('hex');
+      if (
+        !known ||
+        fileHash !== known.sha256 ||
+        doStatements.length !== known.expectedDoCount
+      ) {
+        throw new Error(
+          `${file} contains an unsupported top-level PostgreSQL DO block. ` +
+            `The deterministic variant-parity replay cannot prove schema state across procedural execution. ` +
+            `Use declarative DDL or explicitly review and pin the immutable historical migration.`,
+        );
+      }
+    }
+
     for (const stmt of statements) {
       if (stmt.length === 0) continue;
-
-      // Fail loudly on procedural DO migration blocks that could mutate schema state
-      if (stmt[0]?.value === 'do') {
-        const bodyToken = stmt.find((t) => t.type === 'string');
-        const bodyText = bodyToken ? bodyToken.value : '';
-        const codeOnly = bodyText.replace(/'(?:[^']|'')*'/g, ' ');
-        if (/\b(?:execute|alter|drop|create|truncate)\b/i.test(codeOnly) || /studies|variants/i.test(codeOnly)) {
-          throw new Error(
-            `${file} contains an unsupported procedural DO block modifying or referencing schema state. ` +
-              `The deterministic variant parity replay cannot statically verify procedural schema mutations. ` +
-              `Use declarative DDL in migrations or model the change explicitly.`,
-          );
-        }
-        continue;
-      }
-
+      if (stmt[0]?.value === 'do') continue;
       if (stmt.length < 2) continue;
 
       // -----------------------------------------------------------------------

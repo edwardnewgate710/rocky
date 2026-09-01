@@ -12,6 +12,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { createHash } from 'node:crypto';
 import {
   stripComments,
   splitStatements,
@@ -30,6 +31,7 @@ import {
   tableKey,
   STUDIES_TABLE_KEY,
   VARIANTS_TABLE_KEY,
+  KNOWN_HISTORICAL_PROCEDURAL_MIGRATIONS,
   disagreements,
   ROOT,
   TS_MIRRORS,
@@ -1387,26 +1389,64 @@ test('tokenizeSql and splitSqlStatements treat tagged dollar-quoted body with se
   assert.equal(tokens[1].type, 'string');
 });
 
-test('top-level DO statement with static ALTER TABLE fails loudly as unsupported procedural migration block', () => {
+test('unknown harmless DO statement fails closed', () => {
   const dir = migrations({
     '0001_initial.sql': `CREATE TABLE studies (
       id UUID PRIMARY KEY,
       variant TEXT NOT NULL REFERENCES variants(code)
     );`,
-    '0002_procedural_drop.sql': `DO $$
+    '0002_harmless_do.sql': `DO $$
+    BEGIN
+      RAISE NOTICE 'hello';
+    END
+    $$;`,
+  });
+  try {
+    assert.throws(() => replayStudiesSchema(dir), /contains an unsupported top-level PostgreSQL DO block/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('stored-function invocation inside DO statement fails closed', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_stored_proc.sql': `DO $$
+    BEGIN
+      PERFORM remove_variant_fk();
+    END
+    $$;`,
+  });
+  try {
+    assert.throws(() => replayStudiesSchema(dir), /contains an unsupported top-level PostgreSQL DO block/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('top-level DO statement with direct DDL fails closed', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_direct_ddl.sql': `DO $$
     BEGIN
       ALTER TABLE studies DROP CONSTRAINT studies_variant_fk;
     END
     $$;`,
   });
   try {
-    assert.throws(() => replayStudiesSchema(dir), /contains an unsupported procedural DO block/);
+    assert.throws(() => replayStudiesSchema(dir), /contains an unsupported top-level PostgreSQL DO block/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('top-level DO statement with DROP TABLE studies fails loudly', () => {
+test('top-level DO statement with DROP TABLE studies fails closed', () => {
   const dir = migrations({
     '0001_initial.sql': `CREATE TABLE studies (
       id UUID PRIMARY KEY,
@@ -1419,13 +1459,13 @@ test('top-level DO statement with DROP TABLE studies fails loudly', () => {
     $$;`,
   });
   try {
-    assert.throws(() => replayStudiesSchema(dir), /contains an unsupported procedural DO block/);
+    assert.throws(() => replayStudiesSchema(dir), /contains an unsupported top-level PostgreSQL DO block/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('top-level DO statement with DROP TABLE variants CASCADE fails loudly', () => {
+test('top-level DO statement with DROP TABLE variants CASCADE fails closed', () => {
   const dir = migrations({
     '0001_initial.sql': `CREATE TABLE studies (
       id UUID PRIMARY KEY,
@@ -1438,13 +1478,13 @@ test('top-level DO statement with DROP TABLE variants CASCADE fails loudly', () 
     $$;`,
   });
   try {
-    assert.throws(() => replayStudiesSchema(dir), /contains an unsupported procedural DO block/);
+    assert.throws(() => replayStudiesSchema(dir), /contains an unsupported top-level PostgreSQL DO block/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('top-level DO statement with dynamic SQL EXECUTE fails loudly', () => {
+test('top-level DO statement with dynamic SQL EXECUTE fails closed', () => {
   const dir = migrations({
     '0001_initial.sql': `CREATE TABLE studies (
       id UUID PRIMARY KEY,
@@ -1457,13 +1497,13 @@ test('top-level DO statement with dynamic SQL EXECUTE fails loudly', () => {
     $$;`,
   });
   try {
-    assert.throws(() => replayStudiesSchema(dir), /contains an unsupported procedural DO block/);
+    assert.throws(() => replayStudiesSchema(dir), /contains an unsupported top-level PostgreSQL DO block/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('tagged top-level DO statement fails loudly', () => {
+test('tagged top-level DO statement fails closed', () => {
   const dir = migrations({
     '0001_initial.sql': `CREATE TABLE studies (
       id UUID PRIMARY KEY,
@@ -1471,12 +1511,123 @@ test('tagged top-level DO statement fails loudly', () => {
     );`,
     '0002_tagged_do.sql': `DO $migration$
     BEGIN
-      ALTER TABLE studies DROP CONSTRAINT studies_variant_fk;
+      PERFORM 1;
     END
     $migration$;`,
   });
   try {
-    assert.throws(() => replayStudiesSchema(dir), /contains an unsupported procedural DO block/);
+    assert.throws(() => replayStudiesSchema(dir), /contains an unsupported top-level PostgreSQL DO block/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('Unicode-tagged top-level DO statement fails closed', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_unicode_do.sql': `DO $函数$
+    BEGIN
+      PERFORM 1;
+    END
+    $函数$;`,
+  });
+  try {
+    assert.throws(() => replayStudiesSchema(dir), /contains an unsupported top-level PostgreSQL DO block/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('canonical 0021_engine_bots.sql migration matches allowlist fingerprint and passes replay', () => {
+  const realFile = join(MIGRATIONS_DIR, '0021_engine_bots.sql');
+  const rawSql = readFileSync(realFile, 'utf8');
+  const canonicalSql = rawSql.replace(/\r\n/g, '\n');
+  const hash = createHash('sha256').update(canonicalSql, 'utf8').digest('hex');
+  const entry = KNOWN_HISTORICAL_PROCEDURAL_MIGRATIONS.get('0021_engine_bots.sql');
+  assert.ok(entry);
+  assert.equal(hash, entry.sha256);
+  assert.equal(entry.expectedDoCount, 1);
+
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0021_engine_bots.sql': rawSql,
+  });
+  try {
+    assert.equal(effectiveStudyVariantForeignKey(dir), true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('0021_engine_bots.sql with ONE modified byte is rejected', () => {
+  const realFile = join(MIGRATIONS_DIR, '0021_engine_bots.sql');
+  const rawSql = readFileSync(realFile, 'utf8');
+  const modifiedSql = rawSql + ' '; // one changed byte
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0021_engine_bots.sql': modifiedSql,
+  });
+  try {
+    assert.throws(() => replayStudiesSchema(dir), /contains an unsupported top-level PostgreSQL DO block/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('0021_engine_bots.sql filename with different file content is rejected', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0021_engine_bots.sql': `DO $$ BEGIN PERFORM 1; END $$;`,
+  });
+  try {
+    assert.throws(() => replayStudiesSchema(dir), /contains an unsupported top-level PostgreSQL DO block/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('same safe DO content copied into a different migration filename is rejected', () => {
+  const realFile = join(MIGRATIONS_DIR, '0021_engine_bots.sql');
+  const rawSql = readFileSync(realFile, 'utf8');
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0030_copied_engine_bots.sql': rawSql,
+  });
+  try {
+    assert.throws(() => replayStudiesSchema(dir), /contains an unsupported top-level PostgreSQL DO block/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('new second DO added to allowlisted migration causes rejection via fingerprint and count mismatch', () => {
+  const realFile = join(MIGRATIONS_DIR, '0021_engine_bots.sql');
+  const rawSql = readFileSync(realFile, 'utf8');
+  const twoDoSql = rawSql + '\nDO $$ BEGIN PERFORM 1; END $$;';
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0021_engine_bots.sql': twoDoSql,
+  });
+  try {
+    assert.throws(() => replayStudiesSchema(dir), /contains an unsupported top-level PostgreSQL DO block/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
