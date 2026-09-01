@@ -1066,6 +1066,12 @@ button:disabled {
   align-items: start;
 }
 .cg-custom[hidden] { display: none; }
+.cg-rating {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  max-width: 20rem;
+}
 .cg-num {
   display: flex;
   flex-direction: column;
@@ -1074,8 +1080,15 @@ button:disabled {
   font-size: 0.75rem;
   color: var(--muted);
 }
-.cg-num input { box-sizing: border-box; width: 100%; }
+.cg-num input {
+  box-sizing: border-box;
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+}
 .cg-custom .cg-field-error { grid-column: 1 / -1; min-block-size: 1.2em; }
+.cg-rating .cg-hint,
+.cg-rating .cg-field-error { grid-column: 1 / -1; }
+.cg-rating .cg-field-error { min-block-size: 1.2em; }
 
 .auth-field input,
 .cg-num input,

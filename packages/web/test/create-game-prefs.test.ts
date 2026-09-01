@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseCreateGamePrefs,
+  parseRatingBound,
   serializeCreateGamePrefs,
   PREFS_STORAGE_KEY,
 } from '../src/app/create-game-prefs.js';
@@ -16,6 +17,18 @@ test('parse returns null for missing / malformed input', () => {
   assert.equal(parseCreateGamePrefs('null'), null);
 });
 
+test('rating-bound parser keeps blank unrestricted and accepts only literal integers from 0 to 4000', () => {
+  for (const raw of ['', ' ', '\t\n']) {
+    assert.deepEqual(parseRatingBound(raw), { ok: true, value: null }, JSON.stringify(raw));
+  }
+  for (const [raw, value] of [['0', 0], ['1', 1], ['1500', 1500], ['4000', 4000]] as const) {
+    assert.deepEqual(parseRatingBound(raw), { ok: true, value }, raw);
+  }
+  for (const raw of ['-1', '4001', '1.5', '1e3', 'Infinity', 'NaN', 'rating', '+1']) {
+    assert.deepEqual(parseRatingBound(raw), { ok: false }, raw);
+  }
+});
+
 test('parse restores every canonical V2 preset with V3 defaults', () => {
   for (const time of ['1+0', '2+1', '3+0', '3+2', '5+0', '5+3', '10+0', '10+5', '15+10', '30+20']) {
     assert.deepEqual(parseCreateGamePrefs(JSON.stringify({ time, mode: 'rated' })), {
@@ -23,6 +36,8 @@ test('parse restores every canonical V2 preset with V3 defaults', () => {
       mode: 'rated',
       variant: 'standard',
       color: 'random',
+      minRating: null,
+      maxRating: null,
     });
   }
 });
@@ -46,6 +61,8 @@ test('parse restores valid V2 custom time with V3 defaults and rejects unsafe va
       mode: 'casual',
       variant: 'standard',
       color: 'random',
+      minRating: null,
+      maxRating: null,
     },
   );
 
@@ -82,15 +99,21 @@ test('parse rejects explicitly unknown variant and color values', () => {
 test('parse defaults either individually missing V3 field without overwriting the other', () => {
   assert.deepEqual(
     parseCreateGamePrefs('{"time":"5+3","mode":"rated","variant":"atomic"}'),
-    { time: '5+3', mode: 'rated', variant: 'atomic', color: 'random' },
+    {
+      time: '5+3', mode: 'rated', variant: 'atomic', color: 'random',
+      minRating: null, maxRating: null,
+    },
   );
   assert.deepEqual(
     parseCreateGamePrefs('{"time":"5+3","mode":"rated","color":"black"}'),
-    { time: '5+3', mode: 'rated', variant: 'standard', color: 'black' },
+    {
+      time: '5+3', mode: 'rated', variant: 'standard', color: 'black',
+      minRating: null, maxRating: null,
+    },
   );
 });
 
-test('serialize round-trips V3 variant and color through parse', () => {
+test('serialize round-trips V4 variant, color, and rating range through parse', () => {
   const prefs = {
     time: 'custom' as const,
     minutes: 3.5,
@@ -98,8 +121,49 @@ test('serialize round-trips V3 variant and color through parse', () => {
     mode: 'rated' as const,
     variant: 'crazyhouse' as const,
     color: 'white' as const,
+    minRating: 0,
+    maxRating: 4000,
   };
   assert.deepEqual(parseCreateGamePrefs(serializeCreateGamePrefs(prefs)), prefs);
+});
+
+test('parse restores V3 and partial V4 preferences as unrestricted missing bounds', () => {
+  assert.deepEqual(
+    parseCreateGamePrefs('{"time":"10+0","mode":"casual","variant":"standard","color":"random"}'),
+    {
+      time: '10+0', mode: 'casual', variant: 'standard', color: 'random',
+      minRating: null, maxRating: null,
+    },
+  );
+  assert.deepEqual(
+    parseCreateGamePrefs('{"time":"5+3","mode":"rated","variant":"atomic","color":"black","minRating":1500}'),
+    {
+      time: '5+3', mode: 'rated', variant: 'atomic', color: 'black',
+      minRating: 1500, maxRating: null,
+    },
+  );
+  assert.deepEqual(
+    parseCreateGamePrefs('{"time":"5+3","mode":"rated","variant":"atomic","color":"black","maxRating":1800}'),
+    {
+      time: '5+3', mode: 'rated', variant: 'atomic', color: 'black',
+      minRating: null, maxRating: 1800,
+    },
+  );
+});
+
+test('parse rejects unsafe or contradictory persisted rating bounds', () => {
+  for (const ratings of [
+    { minRating: -1 },
+    { maxRating: 4001 },
+    { minRating: 1.5 },
+    { maxRating: '1800' },
+    { minRating: 1800, maxRating: 1500 },
+    { minRating: {}, maxRating: null },
+  ]) {
+    assert.equal(parseCreateGamePrefs(JSON.stringify({
+      time: '10+0', mode: 'casual', variant: 'standard', color: 'random', ...ratings,
+    })), null, JSON.stringify(ratings));
+  }
 });
 
 test('storage key is stable', () => {
