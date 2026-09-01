@@ -285,6 +285,7 @@ test('rating and custom-time validation coexist without clearing each other', as
   await form.locator('.cg-submit').click();
   await expect(form.locator('#cg-custom-error')).toBeVisible();
   await expect(form.locator('#cg-rating-error')).toBeVisible();
+  await expect(form.locator('#cg-increment')).toBeFocused();
 
   await form.locator('#cg-min-rating').fill('1500');
   await expect(form.locator('#cg-rating-error')).toBeHidden();

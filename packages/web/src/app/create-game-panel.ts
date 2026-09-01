@@ -364,8 +364,8 @@ export class CreateGamePanel {
     }
     this.customMinutes.addEventListener('input', () => this.clearCustomError(this.customMinutes));
     this.customIncrement.addEventListener('input', () => this.clearCustomError(this.customIncrement));
-    this.minRating.addEventListener('input', () => this.clearRatingError());
-    this.maxRating.addEventListener('input', () => this.clearRatingError());
+    this.minRating.addEventListener('input', () => this.refreshRatingError());
+    this.maxRating.addEventListener('input', () => this.refreshRatingError());
     this.form.addEventListener('submit', (event) => {
       event.preventDefault();
       void this.submit();
@@ -420,6 +420,8 @@ export class CreateGamePanel {
     const variant = this.readChecked('cg-variant');
     const color = this.readChecked('cg-color');
     if (!isOfferedVariant(variant) || !isSeekColor(color)) return null;
+    // Validate the later rating fields first so the earlier custom-time field
+    // owns final focus when both independent validation channels fail.
     const ratings = this.readRatingRange();
     if (selected === CUSTOM_PRESET_ID) {
       const minutes = this.customMinutes.value.trim() === '' ? Number.NaN : Number(this.customMinutes.value);
@@ -479,22 +481,38 @@ export class CreateGamePanel {
     readonly minRating: number | null;
     readonly maxRating: number | null;
   } | null {
-    const minimum = parseRatingBound(this.minRating.value);
-    const maximum = parseRatingBound(this.maxRating.value);
-    if (!minimum.ok) {
-      this.showRatingError('Enter a whole rating from 0 to 4000.', this.minRating);
-      return null;
-    }
-    if (!maximum.ok) {
-      this.showRatingError('Enter a whole rating from 0 to 4000.', this.maxRating);
-      return null;
-    }
-    if (minimum.value !== null && maximum.value !== null && minimum.value > maximum.value) {
-      this.showRatingError('Minimum rating must not exceed maximum rating.', this.minRating);
+    const validation = this.validateRatingRange();
+    if (!validation.ok) {
+      this.showRatingError(validation.message, validation.input);
       return null;
     }
     this.clearRatingError();
-    return { minRating: minimum.value, maxRating: maximum.value };
+    return validation.value;
+  }
+
+  /** Validate the complete range without changing focus or rendered feedback. */
+  private validateRatingRange():
+    | {
+        readonly ok: true;
+        readonly value: { readonly minRating: number | null; readonly maxRating: number | null };
+      }
+    | { readonly ok: false; readonly message: string; readonly input: HTMLInputElement } {
+    const minimum = parseRatingBound(this.minRating.value);
+    const maximum = parseRatingBound(this.maxRating.value);
+    if (!minimum.ok) {
+      return { ok: false, message: 'Enter a whole rating from 0 to 4000.', input: this.minRating };
+    }
+    if (!maximum.ok) {
+      return { ok: false, message: 'Enter a whole rating from 0 to 4000.', input: this.maxRating };
+    }
+    if (minimum.value !== null && maximum.value !== null && minimum.value > maximum.value) {
+      return {
+        ok: false,
+        message: 'Minimum rating must not exceed maximum rating.',
+        input: this.minRating,
+      };
+    }
+    return { ok: true, value: { minRating: minimum.value, maxRating: maximum.value } };
   }
 
   /** Read only preferences that still belong to the approved choice sets. */
@@ -623,12 +641,28 @@ export class CreateGamePanel {
 
   /** Surface one rating validation error at its deterministic owning field. */
   private showRatingError(message: string, input: HTMLInputElement): void {
+    this.setRatingError(message, input);
+    input.focus();
+  }
+
+  /** Refresh an existing rating error without moving focus while the player types. */
+  private refreshRatingError(): void {
+    if (this.ratingError.hidden) return;
+    const validation = this.validateRatingRange();
+    if (!validation.ok) {
+      this.setRatingError(validation.message, validation.input);
+      return;
+    }
+    this.clearRatingError();
+  }
+
+  /** Render shared rating feedback and mark only its current owning field. */
+  private setRatingError(message: string, input: HTMLInputElement): void {
     this.ratingError.textContent = message;
     this.ratingError.hidden = false;
     this.minRating.removeAttribute('aria-invalid');
     this.maxRating.removeAttribute('aria-invalid');
     input.setAttribute('aria-invalid', 'true');
-    input.focus();
   }
 
   /** Clear only the rating validation channel, preserving custom-time feedback. */

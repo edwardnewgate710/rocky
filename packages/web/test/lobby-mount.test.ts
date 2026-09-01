@@ -865,6 +865,25 @@ test('mountLobby: malformed and out-of-range rating literals block submission at
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(maximum.getAttribute('aria-invalid'), 'true');
   assert.equal(createdSeeks.length, 0);
+
+  minimum.value = '1000';
+  minimum.dispatchEvent(new Event('input'));
+  assert.equal(maximum.getAttribute('aria-invalid'), 'true');
+  assert.equal(form.querySelector('#cg-rating-error')?.hidden, false);
+
+  maximum.value = '3000';
+  maximum.dispatchEvent(new Event('input'));
+  assert.equal(maximum.getAttribute('aria-invalid'), null);
+  assert.equal(form.querySelector('#cg-rating-error')?.hidden, true);
+
+  minimum.value = '-1';
+  maximum.value = '2000';
+  submit(form);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  maximum.value = '3000';
+  maximum.dispatchEvent(new Event('input'));
+  assert.equal(minimum.getAttribute('aria-invalid'), 'true');
+  assert.equal(form.querySelector('#cg-rating-error')?.hidden, false);
 });
 
 test('mountLobby: minimum above maximum blocks submission and owns the relationship error', async () => {
