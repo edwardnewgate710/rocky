@@ -282,10 +282,22 @@ test('rating and custom-time validation coexist without clearing each other', as
   await form.locator('.cg-chip:has(input[value="custom"])').click();
   await form.locator('#cg-increment').fill('');
   await form.locator('#cg-min-rating').fill('-1');
+  await page.evaluate(() => {
+    const validationFocusOrder: string[] = [];
+    for (const id of ['cg-increment', 'cg-min-rating']) {
+      document.querySelector(`#${id}`)?.addEventListener('focus', () => validationFocusOrder.push(id));
+    }
+    (window as Window & { validationFocusOrder?: string[] }).validationFocusOrder = validationFocusOrder;
+  });
   await form.locator('.cg-submit').click();
   await expect(form.locator('#cg-custom-error')).toBeVisible();
   await expect(form.locator('#cg-rating-error')).toBeVisible();
   await expect(form.locator('#cg-increment')).toBeFocused();
+  expect(
+    await page.evaluate(
+      () => (window as Window & { validationFocusOrder?: string[] }).validationFocusOrder,
+    ),
+  ).toEqual(['cg-increment']);
 
   await form.locator('#cg-min-rating').fill('1500');
   await expect(form.locator('#cg-rating-error')).toBeHidden();

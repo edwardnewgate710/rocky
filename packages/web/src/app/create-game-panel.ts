@@ -420,9 +420,13 @@ export class CreateGamePanel {
     const variant = this.readChecked('cg-variant');
     const color = this.readChecked('cg-color');
     if (!isOfferedVariant(variant) || !isSeekColor(color)) return null;
-    // Validate the later rating fields first so the earlier custom-time field
-    // owns final focus when both independent validation channels fail.
-    const ratings = this.readRatingRange();
+    const ratingValidation = this.validateRatingRange();
+    if (ratingValidation.ok) {
+      this.clearRatingError();
+    } else {
+      // Render both independent channels before focusing the first invalid field once.
+      this.setRatingError(ratingValidation.message, ratingValidation.input);
+    }
     if (selected === CUSTOM_PRESET_ID) {
       const minutes = this.customMinutes.value.trim() === '' ? Number.NaN : Number(this.customMinutes.value);
       const increment =
@@ -433,7 +437,11 @@ export class CreateGamePanel {
         return null;
       }
       this.clearCustomError();
-      if (ratings === null) return null;
+      if (!ratingValidation.ok) {
+        ratingValidation.input.focus();
+        return null;
+      }
+      const ratings = ratingValidation.value;
       return {
         params: {
           variant,
@@ -456,7 +464,11 @@ export class CreateGamePanel {
 
     const preset = CREATE_GAME_PRESETS.find((candidate) => candidate.id === selected);
     if (!preset) return null;
-    if (ratings === null) return null;
+    if (!ratingValidation.ok) {
+      ratingValidation.input.focus();
+      return null;
+    }
+    const ratings = ratingValidation.value;
 
     return {
       params: {
@@ -474,20 +486,6 @@ export class CreateGamePanel {
         ...ratings,
       },
     };
-  }
-
-  /** Parse both optional rating fields and enforce their inclusive relationship. */
-  private readRatingRange(): {
-    readonly minRating: number | null;
-    readonly maxRating: number | null;
-  } | null {
-    const validation = this.validateRatingRange();
-    if (!validation.ok) {
-      this.showRatingError(validation.message, validation.input);
-      return null;
-    }
-    this.clearRatingError();
-    return validation.value;
   }
 
   /** Validate the complete range without changing focus or rendered feedback. */
@@ -637,12 +635,6 @@ export class CreateGamePanel {
       this.customMinutes.removeAttribute('aria-invalid');
       this.customIncrement.removeAttribute('aria-invalid');
     }
-  }
-
-  /** Surface one rating validation error at its deterministic owning field. */
-  private showRatingError(message: string, input: HTMLInputElement): void {
-    this.setRatingError(message, input);
-    input.focus();
   }
 
   /** Refresh an existing rating error without moving focus while the player types. */
