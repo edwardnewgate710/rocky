@@ -18,6 +18,7 @@ import {
   tokenizeSql,
   splitSqlStatements,
   parseQualifiedTableTarget,
+  readDollarQuoteDelimiter,
   replayStudiesSchema,
   extractRegion,
   migrationFiles,
@@ -1386,37 +1387,114 @@ test('tokenizeSql and splitSqlStatements treat tagged dollar-quoted body with se
   assert.equal(tokens[1].type, 'string');
 });
 
-test('fake DDL inside dollar-quoted body does not alter replay state', () => {
+test('top-level DO statement with static ALTER TABLE fails loudly as unsupported procedural migration block', () => {
   const dir = migrations({
     '0001_initial.sql': `CREATE TABLE studies (
       id UUID PRIMARY KEY,
       variant TEXT NOT NULL REFERENCES variants(code)
     );`,
-    '0002_fake_ddl.sql': `DO $$
+    '0002_procedural_drop.sql': `DO $$
     BEGIN
-      DROP TABLE studies;
-      ALTER TABLE studies ADD COLUMN variant TEXT;
+      ALTER TABLE studies DROP CONSTRAINT studies_variant_fk;
     END
     $$;`,
   });
   try {
-    assert.equal(effectiveStudyVariantForeignKey(dir), true);
+    assert.throws(() => replayStudiesSchema(dir), /contains an unsupported procedural DO block/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('fake DROP TABLE variants CASCADE inside dollar-quoted body does not clear active studies FK', () => {
+test('top-level DO statement with DROP TABLE studies fails loudly', () => {
   const dir = migrations({
     '0001_initial.sql': `CREATE TABLE studies (
       id UUID PRIMARY KEY,
       variant TEXT NOT NULL REFERENCES variants(code)
     );`,
-    '0002_fake_cascade.sql': `DO $fn$
+    '0002_procedural_drop.sql': `DO $$
+    BEGIN
+      DROP TABLE studies;
+    END
+    $$;`,
+  });
+  try {
+    assert.throws(() => replayStudiesSchema(dir), /contains an unsupported procedural DO block/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('top-level DO statement with DROP TABLE variants CASCADE fails loudly', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_procedural_cascade.sql': `DO $$
     BEGIN
       DROP TABLE variants CASCADE;
     END
-    $fn$;`,
+    $$;`,
+  });
+  try {
+    assert.throws(() => replayStudiesSchema(dir), /contains an unsupported procedural DO block/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('top-level DO statement with dynamic SQL EXECUTE fails loudly', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_dynamic_ddl.sql': `DO $$
+    BEGIN
+      EXECUTE 'ALTER TABLE studies DROP CONSTRAINT studies_variant_fk';
+    END
+    $$;`,
+  });
+  try {
+    assert.throws(() => replayStudiesSchema(dir), /contains an unsupported procedural DO block/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('tagged top-level DO statement fails loudly', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_tagged_do.sql': `DO $migration$
+    BEGIN
+      ALTER TABLE studies DROP CONSTRAINT studies_variant_fk;
+    END
+    $migration$;`,
+  });
+  try {
+    assert.throws(() => replayStudiesSchema(dir), /contains an unsupported procedural DO block/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('non-DO dollar-quoted function body remains lexically atomic and is ignored by replay', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+    '0002_func.sql': `CREATE OR REPLACE FUNCTION log_change() RETURNS trigger AS $$
+    BEGIN
+      -- Semicolons inside function do not split top-level statements
+      PERFORM 1;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;`,
   });
   try {
     assert.equal(effectiveStudyVariantForeignKey(dir), true);
@@ -1431,6 +1509,62 @@ test('dollar-quoted string requires exact matching tag and does not stop on mism
   assert.equal(tokens.length, 3); // DO, string, ;
   assert.equal(tokens[1].type, 'string');
   assert.equal(tokens[1].value, ' body with $inner$ inner text $inner$ more body ');
+});
+
+test('Unicode dollar tag with CJK characters is tokenized as one atomic string', () => {
+  const sql = `$函数$\nSELECT 1;\nSELECT 2;\n$函数$;`;
+  const tokens = tokenizeSql(sql);
+  const statements = splitSqlStatements(tokens);
+  assert.equal(statements.length, 1);
+  assert.equal(tokens[0].type, 'string');
+  assert.equal(tokens[0].value, '\nSELECT 1;\nSELECT 2;\n');
+});
+
+test('Unicode dollar tag with accented Latin characters is tokenized as one atomic string', () => {
+  const sql = `$étiquette$\nSELECT 1;\n$étiquette$;`;
+  const tokens = tokenizeSql(sql);
+  const statements = splitSqlStatements(tokens);
+  assert.equal(statements.length, 1);
+  assert.equal(tokens[0].type, 'string');
+  assert.equal(tokens[0].value, '\nSELECT 1;\n');
+});
+
+test('dollar tag starting with underscore and containing alphanumeric characters works', () => {
+  const sql = `$_tag123$\nSELECT 1;\n$_tag123$;`;
+  const tokens = tokenizeSql(sql);
+  const statements = splitSqlStatements(tokens);
+  assert.equal(statements.length, 1);
+  assert.equal(tokens[0].type, 'string');
+});
+
+test('Unicode dollar tag requires exact matching tag and does not stop on different tag', () => {
+  const sql = `$函数$\nSELECT 1;\n$different$\nSELECT 2;\n$函数$;`;
+  const tokens = tokenizeSql(sql);
+  assert.equal(tokens.length, 2); // string, ;
+  assert.equal(tokens[0].type, 'string');
+  assert.equal(tokens[0].value, '\nSELECT 1;\n$different$\nSELECT 2;\n');
+});
+
+test('unterminated Unicode-tagged dollar quote throws explicit error', () => {
+  assert.throws(() => tokenizeSql('$函数$ SELECT 1;'), /unterminated dollar-quoted string/);
+  assert.throws(() => tokenizeSql('$étiquette$ SELECT 1; $different$'), /unterminated dollar-quoted string/);
+});
+
+test('dollar tag starting with digit like $9bad$ is rejected by readDollarQuoteDelimiter', () => {
+  assert.equal(readDollarQuoteDelimiter('$9bad$', 0), null);
+  const tokens = tokenizeSql('$9bad$');
+  assert.equal(tokens[0].type, 'punct');
+  assert.equal(tokens[0].value, '$');
+  assert.equal(tokens[1].type, 'punct');
+  assert.equal(tokens[1].value, '9');
+});
+
+test('comment stripping and tokenizer recognize the exact same dollar delimiter set', () => {
+  const codeWithComment = `$étiquette$\n-- this is not a comment line\nSELECT 1;\n$étiquette$;`;
+  const stripped = stripComments(codeWithComment, 'sql');
+  const tokens = tokenizeSql(stripped);
+  assert.equal(tokens[0].type, 'string');
+  assert.match(tokens[0].value, /-- this is not a comment line/);
 });
 
 test('unterminated dollar-quoted string throws explicit error', () => {

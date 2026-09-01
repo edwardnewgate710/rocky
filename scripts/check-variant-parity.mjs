@@ -47,6 +47,29 @@ import { pathToFileURL } from 'node:url';
  */
 export const MIGRATIONS_DIR = 'packages/persistence/migrations';
 
+const DOLLAR_QUOTE_REGEX = /^\$(?:[_\p{L}\p{Nl}][_\p{L}\p{Nl}\p{Nd}\p{Mn}\p{Mc}]*)?\$/u;
+
+/**
+ * Scans a valid PostgreSQL dollar-quote delimiter at the given source offset.
+ *
+ * PostgreSQL dollar tags follow unquoted identifier rules except that `$` is forbidden
+ * within the tag. Delimiters can be untagged `$$` or tagged `$tag$`.
+ *
+ * @param {string} source Source text.
+ * @param {number} offset Starting character offset in source text.
+ * @returns {{ delimiter: string, end: number } | null} Delimiter metadata or null if invalid.
+ */
+export function readDollarQuoteDelimiter(source, offset) {
+  if (source[offset] !== '$') return null;
+  const match = DOLLAR_QUOTE_REGEX.exec(source.slice(offset));
+  if (match === null) return null;
+  const delimiter = match[0];
+  return {
+    delimiter,
+    end: offset + delimiter.length,
+  };
+}
+
 /**
  * Blanks out comments, leaving everything else at its original offset.
  *
@@ -89,10 +112,10 @@ export function stripComments(text, dialect) {
     }
 
     if (dialect === 'sql' && ch === '$') {
-      const match = /^\$([a-zA-Z0-9_]*)\$/.exec(text.slice(i));
-      if (match !== null) {
-        const tag = match[0];
-        const endStr = text.indexOf(tag, i + tag.length);
+      const delim = readDollarQuoteDelimiter(text, i);
+      if (delim !== null) {
+        const tag = delim.delimiter;
+        const endStr = text.indexOf(tag, delim.end);
         if (endStr !== -1) {
           const fullDollar = text.slice(i, endStr + tag.length);
           out += fullDollar;
@@ -158,11 +181,11 @@ export function tokenizeSql(sql) {
     }
 
     if (ch === '$') {
-      const match = /^\$([a-zA-Z0-9_]*)\$/.exec(sql.slice(i));
-      if (match !== null) {
-        const tag = match[0];
+      const delim = readDollarQuoteDelimiter(sql, i);
+      if (delim !== null) {
+        const tag = delim.delimiter;
         const start = i;
-        const endStr = sql.indexOf(tag, start + tag.length);
+        const endStr = sql.indexOf(tag, delim.end);
         if (endStr === -1) {
           throw new Error(`unterminated dollar-quoted string at position ${start}`);
         }
@@ -679,6 +702,23 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
     const statements = splitSqlStatements(tokens);
 
     for (const stmt of statements) {
+      if (stmt.length === 0) continue;
+
+      // Fail loudly on procedural DO migration blocks that could mutate schema state
+      if (stmt[0]?.value === 'do') {
+        const bodyToken = stmt.find((t) => t.type === 'string');
+        const bodyText = bodyToken ? bodyToken.value : '';
+        const codeOnly = bodyText.replace(/'(?:[^']|'')*'/g, ' ');
+        if (/\b(?:execute|alter|drop|create|truncate)\b/i.test(codeOnly) || /studies|variants/i.test(codeOnly)) {
+          throw new Error(
+            `${file} contains an unsupported procedural DO block modifying or referencing schema state. ` +
+              `The deterministic variant parity replay cannot statically verify procedural schema mutations. ` +
+              `Use declarative DDL in migrations or model the change explicitly.`,
+          );
+        }
+        continue;
+      }
+
       if (stmt.length < 2) continue;
 
       // -----------------------------------------------------------------------
