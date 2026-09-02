@@ -1539,6 +1539,13 @@ CREATE TABLE studies (id UUID PRIMARY KEY, variant TEXT NOT NULL);`,
   variant TEXT NOT NULL CHECK (variant IN ('standard')) NOT ENFORCED
 );`,
   });
+  const inlineStudyFkDir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+  id UUID PRIMARY KEY,
+  variant TEXT NOT NULL REFERENCES variants(code)
+    ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED NOT ENFORCED
+);`,
+  });
   try {
     assert.throws(() => replayStudiesSchema(checkDir), /NOT ENFORCED.*variants\.code.*protect writes/i);
     assert.throws(() => replayStudiesSchema(fkDir), /NOT ENFORCED.*studies\.variant.*protect writes/i);
@@ -1554,12 +1561,17 @@ CREATE TABLE studies (id UUID PRIMARY KEY, variant TEXT NOT NULL);`,
       () => replayStudiesSchema(inlineStudyCheckDir),
       /NOT ENFORCED.*studies\.variant.*protect writes/i,
     );
+    assert.throws(
+      () => replayStudiesSchema(inlineStudyFkDir),
+      /NOT ENFORCED.*studies\.variant.*protect writes/i,
+    );
   } finally {
     rmSync(checkDir, { recursive: true, force: true });
     rmSync(fkDir, { recursive: true, force: true });
     rmSync(alteredStudyCheckDir, { recursive: true, force: true });
     rmSync(tableStudyCheckDir, { recursive: true, force: true });
     rmSync(inlineStudyCheckDir, { recursive: true, force: true });
+    rmSync(inlineStudyFkDir, { recursive: true, force: true });
   }
 });
 

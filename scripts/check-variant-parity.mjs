@@ -627,19 +627,36 @@ function parseCheckAddSuffix(tokens, file, target) {
   return addedNotValid;
 }
 
+const INLINE_CONSTRAINT_STARTERS = new Set([
+  'check',
+  'constraint',
+  'generated',
+  'primary',
+  'references',
+  'unique',
+]);
+
 /**
- * Rejects an inline CHECK that PostgreSQL marks NOT ENFORCED without consuming later constraints.
+ * Rejects an inline constraint that PostgreSQL marks NOT ENFORCED without consuming later constraints.
  *
  * @param {SqlToken[]} tokens Full column-definition tokens.
- * @param {number} startIndex First token after the CHECK expression.
+ * @param {number} startIndex First token after the inline constraint.
  * @param {string} file Current migration filename.
  * @param {string} target Human-readable constrained column.
  */
-function assertInlineCheckEnforced(tokens, startIndex, file, target) {
-  let idx = startIndex;
-  if (tokens[idx]?.value === 'no' && tokens[idx + 1]?.value === 'inherit') idx += 2;
-  if (tokens[idx]?.value === 'not' && tokens[idx + 1]?.value === 'enforced') {
-    throw new Error(`${file} adds a NOT ENFORCED constraint on \`${target}\`, which cannot protect writes.`);
+function assertInlineConstraintEnforced(tokens, startIndex, file, target) {
+  for (let idx = startIndex; idx < tokens.length; idx++) {
+    const token = tokens[idx]?.value;
+    const next = tokens[idx + 1]?.value;
+    const previous = tokens[idx - 1]?.value;
+    if (token === 'not' && next === 'enforced') {
+      throw new Error(`${file} adds a NOT ENFORCED constraint on \`${target}\`, which cannot protect writes.`);
+    }
+    if (
+      INLINE_CONSTRAINT_STARTERS.has(token) ||
+      (token === 'not' && next === 'null') ||
+      ((token === 'default' || token === 'null') && previous !== 'set')
+    ) return;
   }
 }
 
@@ -758,7 +775,7 @@ function scanColumnConstraints(clause, file, constraintNamespace, variantConstra
       const checkTokens = clause.slice(i + 2, endIdx - 1);
       const referencesVariant = checkTokens.some((t) => (t.type === 'word' || t.type === 'ident') && t.value === 'variant');
       if (referencesVariant) {
-        assertInlineCheckEnforced(clause, endIdx, file, 'studies.variant');
+        assertInlineConstraintEnforced(clause, endIdx, file, 'studies.variant');
         const pIdx = i + 2;
         if (clause[pIdx]?.value === 'variant' && clause[pIdx + 1]?.value === 'in' && clause[pIdx + 2]?.value === '(') {
           let inlineName = null;
@@ -800,6 +817,7 @@ function scanColumnConstraints(clause, file, constraintNamespace, variantConstra
       if (inlineRef && isTableTarget(inlineRef, 'variants')) {
         const afterRef = inlineRef.nextIndex;
         if (clause[afterRef]?.value === '(' && clause[afterRef + 1]?.value === 'code' && clause[afterRef + 2]?.value === ')') {
+          assertInlineConstraintEnforced(clause, afterRef + 3, file, 'studies.variant');
           let inlineName = null;
           if (i >= 2 && clause[i - 2]?.value === 'constraint') {
             inlineName = clause[i - 1]?.value;
