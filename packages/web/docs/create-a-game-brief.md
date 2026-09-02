@@ -1,5 +1,5 @@
 ---
-surface: lobby / create-a-game
+surface: lobby
 mode: Operate
 ---
 
