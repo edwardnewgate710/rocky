@@ -1,3 +1,8 @@
+---
+surface: lobby / create-a-game
+mode: Operate
+---
+
 # Design Brief: Create-a-Game Flow
 
 > Produced with `/impeccable shape`. Status: **confirmed** (direction locked;
