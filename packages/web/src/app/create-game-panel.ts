@@ -437,6 +437,13 @@ export class CreateGamePanel {
       // re-opens and re-reports. Clearing it outright would hide a real problem.
       if (this.advancedOpen) this.clearRatingError();
       this.setAdvancedOpen(!this.advancedOpen);
+      // Claim focus rather than inspect it. Browsers disagree about what a click
+      // does to focus — Chromium focuses the button, Safari and Firefox on macOS
+      // do not and blur to the document instead — so reading activeElement to
+      // decide would be wrong on the engines that need this most. Collapsing
+      // hides whatever the player was editing; the control they just operated is
+      // where focus belongs either way, and re-focusing it is a no-op elsewhere.
+      this.moreToggle.focus();
     });
     this.form.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -679,13 +686,6 @@ export class CreateGamePanel {
    * the panel is showing.
    */
   private setAdvancedOpen(open: boolean): void {
-    // Chromium focuses a button when it is clicked, so focus is usually already
-    // out of the region by now. Firefox and Safari do not, which leaves focus on
-    // whatever the player was editing — and hiding that node drops them to the
-    // document body. Costs one comparison; saves the keyboard flow on two of the
-    // three engines.
-    const focused = this.doc.activeElement;
-    if (!open && focused !== null && this.advancedRegion.contains(focused)) this.moreToggle.focus();
     this.advancedOpen = open;
     this.moreToggle.setAttribute('aria-expanded', String(open));
     this.advancedRegion.hidden = !open;

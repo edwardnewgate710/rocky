@@ -2054,35 +2054,43 @@ test('mountLobby: submitting a hidden invalid range opens the section before rep
 });
 
 /**
- * Chromium moves focus to the toggle on click, so this branch only bites on
- * Firefox and Safari — which the Playwright project does not run. Pinned here,
- * where the active element can be placed directly.
+ * Collapsing hides whatever the player was editing. Browsers disagree about what
+ * a click does to focus — Chromium focuses the button, Safari and Firefox on
+ * macOS blur to the document — so the panel claims focus rather than inspecting
+ * it, and the result has to hold from either starting point.
  */
-test('mountLobby: collapsing from inside the section hands focus back to the toggle', () => {
-  const { doc, elements } = createTestDoc();
-  const { client } = makeFakeClient();
+test('mountLobby: toggling the section always leaves focus on the toggle', () => {
+  for (const startInside of [true, false]) {
+    const { doc, elements } = createTestDoc();
+    const { client } = makeFakeClient();
 
-  mountTestLobby({ doc, client, isAuthenticated: () => true });
-  const mount = elements.get('create-game')!;
-  mount.querySelector('#create-seek')!.click();
-  const form = mount.querySelector('#create-game-form')!;
-  const toggle = moreToggle(form);
-  toggle.click();
+    mountTestLobby({ doc, client, isAuthenticated: () => true });
+    const mount = elements.get('create-game')!;
+    mount.querySelector('#create-seek')!.click();
+    const form = mount.querySelector('#create-game-form')!;
+    const toggle = moreToggle(form);
+    toggle.click();
+    assert.equal(advancedRegion(form).hidden, false);
 
-  const minimum = form.querySelector<FakeDOMElement>('#cg-min-rating')!;
-  minimum.focus();
-  assert.equal((doc as unknown as { activeElement: unknown }).activeElement, minimum);
-  const before = toggle.focusCount;
+    // Either the browser left focus on the field being edited, or it dropped it
+    // somewhere outside the region entirely.
+    const origin = startInside
+      ? form.querySelector<FakeDOMElement>('#cg-min-rating')!
+      : form.querySelector<FakeDOMElement>('.cg-submit')!;
+    origin.focus();
+    const before = toggle.focusCount;
 
-  toggle.click();
+    toggle.click();
 
-  assert.equal(advancedRegion(form).hidden, true);
-  assert.equal(toggle.focusCount, before + 1);
-  assert.equal((doc as unknown as { activeElement: unknown }).activeElement, toggle);
+    const where = startInside ? 'from inside' : 'from outside';
+    assert.equal(advancedRegion(form).hidden, true, where);
+    assert.equal(toggle.focusCount, before + 1, where);
+    assert.equal((doc as unknown as { activeElement: unknown }).activeElement, toggle, where);
+  }
 });
 
-/** Focus outside the region is left exactly where it was. */
-test('mountLobby: collapsing from outside the section moves nobody', () => {
+/** Opening ends on the toggle too, so Tab walks straight into the region. */
+test('mountLobby: opening the section leaves focus on the toggle', () => {
   const { doc, elements } = createTestDoc();
   const { client } = makeFakeClient();
 
@@ -2091,17 +2099,11 @@ test('mountLobby: collapsing from outside the section moves nobody', () => {
   mount.querySelector('#create-seek')!.click();
   const form = mount.querySelector('#create-game-form')!;
   const toggle = moreToggle(form);
-  toggle.click();
-
-  const submitButton = form.querySelector<FakeDOMElement>('.cg-submit')!;
-  submitButton.focus();
-  const before = toggle.focusCount;
 
   toggle.click();
 
-  assert.equal(advancedRegion(form).hidden, true);
-  assert.equal(toggle.focusCount, before);
-  assert.equal((doc as unknown as { activeElement: unknown }).activeElement, submitButton);
+  assert.equal(advancedRegion(form).hidden, false);
+  assert.equal((doc as unknown as { activeElement: unknown }).activeElement, toggle);
 });
 
 test('mountLobby: a pending create locks the disclosure with every other control', async () => {
