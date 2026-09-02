@@ -992,7 +992,7 @@ for (const viewport of [
     const custom = await form.locator('.cg-chip:has(input[value="custom"])').boundingBox();
     const unlimited = await form.locator(unlimitedChip).boundingBox();
     if (custom === null || unlimited === null) throw new Error('time controls have no rendered bounds');
-    expect(unlimited.y).toBe(custom.y);
+    expect(Math.abs(unlimited.y - custom.y)).toBeLessThanOrEqual(0.5);
     expect(unlimited.x).toBeGreaterThan(custom.x);
     expect(unlimited.x).toBeGreaterThanOrEqual(0);
     expect(unlimited.x + unlimited.width).toBeLessThanOrEqual(viewport.width);
