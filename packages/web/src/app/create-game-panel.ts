@@ -55,18 +55,19 @@ const COLOR_LABELS: Record<SeekColor, string> = {
 /** Id of the disclosure region, referenced by the toggle's `aria-controls`. */
 const ADVANCED_REGION_ID = 'cg-more-options';
 
-/**
- * Describe the advanced choices for the collapsed disclosure.
- *
- * An active variant or rating bound must never be invisible, so this is what
- * the closed row says instead. It is worded rather than glyphed — a screen
- * reader gets the same sentence the eye does. `ratingInvalid` exists so a range
- * the panel would reject can never be summarised as though it were valid.
- */
+/** A rating range as the panel would submit it, or the fact that it is unusable. */
 export type RatingSummary =
   | { readonly ok: true; readonly minRating: number | null; readonly maxRating: number | null }
   | { readonly ok: false };
 
+/**
+ * Describe the advanced choices for the collapsed disclosure.
+ *
+ * An active variant or rating bound must never be invisible, so this is what the
+ * closed row says instead. It is worded rather than glyphed — a screen reader
+ * gets the same sentence the eye does — and a range the panel would reject says
+ * so, rather than reading as a settled choice.
+ */
 export function formatMoreOptionsSummary(variant: Variant, rating: RatingSummary): string {
   const label = VARIANT_LABELS[variant];
   if (!rating.ok) return `${label} · Opponent rating needs attention`;

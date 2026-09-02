@@ -202,6 +202,11 @@ class FakeDOMElement {
 
   focusCount = 0;
 
+  /**
+   * Take focus, as the real DOM does: count the call and become the document's
+   * active element. Both matter — the panel's disclosure claims focus on every
+   * toggle, and the tests assert where it ended up.
+   */
   focus(): void {
     this.focusCount++;
     if (this._doc) (this._doc as unknown as { activeElement: unknown }).activeElement = this;
