@@ -4,7 +4,34 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-08-29 — M15 Increment 41: Chess960 production integration (ADR-0137)._
+_Last updated: 2026-09-02 — M15 Increment 42: Closed variant catalog and studies FK integrity._
+
+## M15 Increment 42 — Closed variant catalog and studies FK integrity
+
+`variants(code)` is now a closed database domain matching the application's eight canonical
+variants, and `studies.variant` derives from that catalog via `studies_variant_fk`. Migration `0028`
+idempotently restores missing canonical catalog rows and adds `variants_code_check NOT VALID`;
+`0029` validates the catalog before `0030` installs the studies FK and removes the duplicated inline
+CHECK from migration `0022`; `0031` validates the FK.
+
+This completes the database integrity conversion candidate originally deferred in M15 Increment 10
+("Decided and not done: studies.variant stays a CHECK, for now"). Historical entries in earlier
+increment logs record the pre-migration state when the column was governed by a CHECK constraint.
+
+All database variant columns (`games.variant`, `ratings.variant`, `seeks.variant`, and
+`studies.variant`) now share identical relational integrity semantics:
+- Inserting a noncanonical `variants.code` is rejected with SQLSTATE `23514`; a lookup insert cannot
+  silently broaden the application's variant domain.
+- Inserting an unsupported variant code into `studies.variant` is rejected by PostgreSQL with SQLSTATE
+  `23503` (`foreign_key_violation`) referencing `studies_variant_fk`.
+- Missing canonical lookup rows are reconstructed without overwriting existing metadata. Existing
+  noncanonical rows fail catalog validation and are neither deleted nor rewritten.
+- Existing study rows retain `NOT NULL DEFAULT 'standard'`.
+- Foreign key semantics use default `NO ACTION` to protect `variants(code)` against accidental deletions
+  while referenced by active studies.
+- `scripts/check-variant-parity.mjs` verifies the lookup seed and catalog CHECK against `Variant`,
+  requires the catalog CHECK and studies FK to be validated in later migrations, rejects unsafe
+  ordering, and forbids a surviving studies-specific CHECK mirror.
 
 ## M15 Increment 41 — Chess960 production integration (ADR-0137)
 
