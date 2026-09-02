@@ -293,8 +293,9 @@ function createTestDoc(): {
       return el;
     },
     getElementById: (id: string): FakeDOMElement | null => elements.get(id) ?? null,
-    // Writable: the panel reads this before deciding whether a collapse would
-    // strand focus, so a test can put the active element inside the region.
+    // Writable so `focus()` can record it, which is how a test asserts where
+    // focus ended up. The panel itself never reads it — the toggle claims focus
+    // rather than inspecting it.
     activeElement: null as FakeDOMElement | null,
   } as unknown as Document;
 
