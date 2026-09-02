@@ -602,6 +602,123 @@ function parseStrictVariantInList(tokens, startIndex) {
 }
 
 /**
+ * Parses the ALTER TABLE suffix allowed after a table-level CHECK constraint.
+ *
+ * `NO INHERIT` belongs to the CHECK definition, while `NOT VALID` belongs to the ALTER TABLE
+ * action. `NOT ENFORCED` is deliberately rejected because it would not protect new writes.
+ *
+ * @param {SqlToken[]} tokens Tokens following the CHECK expression.
+ * @param {string} file Current migration filename.
+ * @param {string} target Human-readable constrained column.
+ * @returns {boolean} Whether the constraint was added NOT VALID.
+ */
+function parseCheckAddSuffix(tokens, file, target) {
+  let idx = 0;
+  if (tokens[idx]?.value === 'no' && tokens[idx + 1]?.value === 'inherit') idx += 2;
+  if (tokens[idx]?.value === 'enforced') idx++;
+  if (tokens[idx]?.value === 'not' && tokens[idx + 1]?.value === 'enforced') {
+    throw new Error(`${file} adds a NOT ENFORCED constraint on \`${target}\`, which cannot protect writes.`);
+  }
+  const addedNotValid = tokens[idx]?.value === 'not' && tokens[idx + 1]?.value === 'valid';
+  if (addedNotValid) idx += 2;
+  if (idx !== tokens.length) {
+    throw new Error(`${file} adds an unsupported suffix to the \`${target}\` CHECK constraint.`);
+  }
+  return addedNotValid;
+}
+
+/**
+ * Parses PostgreSQL's optional table-level foreign-key attributes and trailing NOT VALID marker.
+ *
+ * The parser stays fail-closed: every token must belong to a supported MATCH, referential-action,
+ * deferrability, timing, enforcement, or validation clause. `NOT ENFORCED` is rejected because the
+ * parity invariant requires the FK to protect new writes.
+ *
+ * @param {SqlToken[]} tokens Tokens following the referenced column list.
+ * @param {string} file Current migration filename.
+ * @returns {boolean} Whether the foreign key was added NOT VALID.
+ */
+function parseForeignKeyAddSuffix(tokens, file) {
+  let idx = 0;
+  let addedNotValid = false;
+  const seen = new Set();
+
+  while (idx < tokens.length) {
+    const token = tokens[idx]?.value;
+    let clause = null;
+
+    if (token === 'match') {
+      clause = 'match';
+      if (!['full', 'partial', 'simple'].includes(tokens[idx + 1]?.value)) break;
+      idx += 2;
+    } else if (token === 'on' && ['delete', 'update'].includes(tokens[idx + 1]?.value)) {
+      clause = `on ${tokens[idx + 1].value}`;
+      idx += 2;
+      const action = tokens[idx]?.value;
+      if (action === 'no' && tokens[idx + 1]?.value === 'action') {
+        idx += 2;
+      } else if (action === 'restrict' || action === 'cascade') {
+        idx++;
+      } else if (action === 'set' && ['null', 'default'].includes(tokens[idx + 1]?.value)) {
+        idx += 2;
+        if (tokens[idx]?.value === '(') {
+          idx++;
+          let expectColumn = true;
+          while (idx < tokens.length && tokens[idx]?.value !== ')') {
+            const current = tokens[idx];
+            if (expectColumn) {
+              if (current?.type !== 'word' && current?.type !== 'ident') break;
+            } else if (current?.value !== ',') {
+              break;
+            }
+            expectColumn = !expectColumn;
+            idx++;
+          }
+          if (expectColumn || tokens[idx]?.value !== ')') break;
+          idx++;
+        }
+      } else {
+        break;
+      }
+    } else if (token === 'deferrable') {
+      clause = 'deferrable';
+      idx++;
+    } else if (token === 'not' && tokens[idx + 1]?.value === 'deferrable') {
+      clause = 'deferrable';
+      idx += 2;
+    } else if (token === 'initially' && ['deferred', 'immediate'].includes(tokens[idx + 1]?.value)) {
+      clause = 'initially';
+      idx += 2;
+    } else if (token === 'enforced') {
+      clause = 'enforced';
+      idx++;
+    } else if (token === 'not' && tokens[idx + 1]?.value === 'enforced') {
+      throw new Error(
+        `${file} adds a NOT ENFORCED \`studies.variant\` foreign key, which cannot protect writes.`,
+      );
+    } else if (
+      token === 'not' &&
+      tokens[idx + 1]?.value === 'valid' &&
+      idx + 2 === tokens.length
+    ) {
+      clause = 'not valid';
+      addedNotValid = true;
+      idx += 2;
+    } else {
+      break;
+    }
+
+    if (seen.has(clause)) break;
+    seen.add(clause);
+  }
+
+  if (idx !== tokens.length) {
+    throw new Error(`${file} adds an unsupported suffix to the \`studies.variant\` foreign key.`);
+  }
+  return addedNotValid;
+}
+
+/**
  * Scans a column definition clause for CHECK and REFERENCES constraints on variant.
  *
  * @param {SqlToken[]} clause Tokens making up the column definition.
@@ -1107,13 +1224,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
                 );
               }
               const suffix = action.slice(parsedIn.nextIndex + 1);
-              const addedNotValid =
-                suffix.length === 2 && suffix[0]?.value === 'not' && suffix[1]?.value === 'valid';
-              if (suffix.length !== 0 && !addedNotValid) {
-                throw new Error(
-                  `${file} adds an unsupported suffix to the \`variants.code\` CHECK constraint.`,
-                );
-              }
+              const addedNotValid = parseCheckAddSuffix(suffix, file, 'variants.code');
               const name =
                 explicitName ?? nextImplicitConstraintName(currentTable.constraintNamespace, 'variants_code_check');
               currentTable.constraintNamespace.add(name);
@@ -1200,8 +1311,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
                   currentTable.activeFks.add(name);
                   currentTable.fkAddedFiles.set(name, file);
                   const suffix = action.slice(afterRef + 3);
-                  const addedNotValid =
-                    suffix.length === 2 && suffix[0]?.value === 'not' && suffix[1]?.value === 'valid';
+                  const addedNotValid = parseForeignKeyAddSuffix(suffix, file);
                   if (!addedNotValid) {
                     currentTable.validatedFks.add(name);
                     currentTable.fkValidatedFiles.set(name, file);

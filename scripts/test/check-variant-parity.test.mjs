@@ -1419,6 +1419,102 @@ INSERT INTO variants (code) VALUES
   }
 });
 
+test('parity evaluation recognizes PostgreSQL FK options before trailing NOT VALID', () => {
+  const dir = migrations({
+    '0001_variants.sql': `CREATE TABLE variants (code TEXT PRIMARY KEY);
+INSERT INTO variants (code) VALUES
+  ('standard'), ('chess960'), ('kingofthehill'), ('atomic'),
+  ('crazyhouse'), ('threecheck'), ('horde'), ('racingkings');`,
+    '0002_domain.sql': `ALTER TABLE variants ADD CONSTRAINT variants_code_check
+  CHECK (code IN ('standard', 'chess960', 'kingofthehill', 'atomic', 'crazyhouse', 'threecheck', 'horde', 'racingkings')) NOT VALID;`,
+    '0003_validate_domain.sql': `ALTER TABLE variants VALIDATE CONSTRAINT variants_code_check;`,
+    '0004_studies.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL CHECK (variant IN ('standard', 'chess960', 'kingofthehill', 'atomic', 'crazyhouse', 'threecheck', 'horde', 'racingkings'))
+    );`,
+    '0005_stage_fk.sql': `ALTER TABLE studies ADD CONSTRAINT studies_variant_fk
+  FOREIGN KEY (variant) REFERENCES variants(code)
+  MATCH FULL ON DELETE RESTRICT ON UPDATE NO ACTION
+  DEFERRABLE INITIALLY DEFERRED NOT VALID;`,
+    '0006_replace_check.sql': `ALTER TABLE studies DROP CONSTRAINT studies_variant_check;`,
+    '0007_validate_fk.sql': `ALTER TABLE studies VALIDATE CONSTRAINT studies_variant_fk;`,
+  });
+  try {
+    const { failures, studyForeignKeys } = evaluateParity(dir);
+    assert.deepEqual(failures, []);
+    assert.equal(studyForeignKeys[0]?.file, '0005_stage_fk.sql');
+    assert.equal(studyForeignKeys[0]?.validatedFile, '0007_validate_fk.sql');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('parity evaluation recognizes CHECK NO INHERIT before trailing NOT VALID', () => {
+  const dir = migrations({
+    '0001_variants.sql': `CREATE TABLE variants (code TEXT PRIMARY KEY);
+INSERT INTO variants (code) VALUES
+  ('standard'), ('chess960'), ('kingofthehill'), ('atomic'),
+  ('crazyhouse'), ('threecheck'), ('horde'), ('racingkings');`,
+    '0002_domain.sql': `ALTER TABLE variants ADD CONSTRAINT variants_code_check
+  CHECK (code IN ('standard', 'chess960', 'kingofthehill', 'atomic', 'crazyhouse', 'threecheck', 'horde', 'racingkings')) NO INHERIT NOT VALID;`,
+    '0003_validate_domain.sql': `ALTER TABLE variants VALIDATE CONSTRAINT variants_code_check;`,
+    '0004_studies.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL CHECK (variant IN ('standard', 'chess960', 'kingofthehill', 'atomic', 'crazyhouse', 'threecheck', 'horde', 'racingkings'))
+    );`,
+    '0005_stage_fk.sql': `ALTER TABLE studies ADD CONSTRAINT studies_variant_fk
+  FOREIGN KEY (variant) REFERENCES variants(code) NOT VALID;`,
+    '0006_replace_check.sql': `ALTER TABLE studies DROP CONSTRAINT studies_variant_check;`,
+    '0007_validate_fk.sql': `ALTER TABLE studies VALIDATE CONSTRAINT studies_variant_fk;`,
+  });
+  try {
+    const { failures, variantDomainConstraint } = evaluateParity(dir);
+    assert.deepEqual(failures, []);
+    assert.equal(variantDomainConstraint?.addedNotValid, true);
+    assert.equal(variantDomainConstraint?.validatedFile, '0003_validate_domain.sql');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('parity replay fails closed on an unknown foreign-key suffix', () => {
+  const dir = migrations({
+    '0001_initial.sql': `CREATE TABLE variants (code TEXT PRIMARY KEY);
+CREATE TABLE studies (id UUID PRIMARY KEY, variant TEXT NOT NULL);`,
+    '0002_fk.sql': `ALTER TABLE studies ADD CONSTRAINT studies_variant_fk
+  FOREIGN KEY (variant) REFERENCES variants(code) MATCH UNKNOWN NOT VALID;`,
+  });
+  try {
+    assert.throws(
+      () => replayStudiesSchema(dir),
+      /unsupported suffix.*studies\.variant.*foreign key/i,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('parity replay rejects NOT ENFORCED variant integrity constraints', () => {
+  const checkDir = migrations({
+    '0001_variants.sql': `CREATE TABLE variants (code TEXT PRIMARY KEY);`,
+    '0002_domain.sql': `ALTER TABLE variants ADD CONSTRAINT variants_code_check
+  CHECK (code IN ('standard')) NOT ENFORCED NOT VALID;`,
+  });
+  const fkDir = migrations({
+    '0001_initial.sql': `CREATE TABLE variants (code TEXT PRIMARY KEY);
+CREATE TABLE studies (id UUID PRIMARY KEY, variant TEXT NOT NULL);`,
+    '0002_fk.sql': `ALTER TABLE studies ADD CONSTRAINT studies_variant_fk
+  FOREIGN KEY (variant) REFERENCES variants(code) NOT ENFORCED NOT VALID;`,
+  });
+  try {
+    assert.throws(() => replayStudiesSchema(checkDir), /NOT ENFORCED.*variants\.code.*protect writes/i);
+    assert.throws(() => replayStudiesSchema(fkDir), /NOT ENFORCED.*studies\.variant.*protect writes/i);
+  } finally {
+    rmSync(checkDir, { recursive: true, force: true });
+    rmSync(fkDir, { recursive: true, force: true });
+  }
+});
+
 test('parity evaluation rejects a broad validated domain CHECK as transition authorization', () => {
   const dir = migrations({
     '0001_variants.sql': `CREATE TABLE variants (code TEXT PRIMARY KEY);
