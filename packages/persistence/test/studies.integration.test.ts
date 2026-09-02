@@ -13,10 +13,12 @@ const DATABASE_URL = process.env['DATABASE_URL'];
 const skip = DATABASE_URL ? false : 'DATABASE_URL not set';
 
 class CorePositionReader implements PositionReader {
+  /** Returns legal SAN moves for the supplied position and variant. */
   legalSans(fen: string, variant: StudyVariant = 'standard'): readonly string[] {
     const pos = Position.fromFen(fen, variant);
     return pos.legalMoves().map((m) => pos.toSan(m));
   }
+  /** Applies one legal SAN move and returns the resulting FEN. */
   play(fen: string, san: string, variant: StudyVariant = 'standard'): string {
     const pos = Position.fromFen(fen, variant);
     const moves = pos.legalMoves();
@@ -33,6 +35,7 @@ interface PgErrorShape {
   constraint?: string;
 }
 
+/** Identifies a PostgreSQL constraint violation without assuming every thrown value is an Error. */
 function isPgConstraintViolation(err: unknown, code: string, constraint?: string): boolean {
   if (typeof err !== 'object' || err === null) return false;
   const pgErr = err as PgErrorShape;
@@ -49,6 +52,7 @@ test('pg studies repository integration tests', { skip }, async () => {
   const reader = new CorePositionReader();
 
   const createdUserIds: string[] = [];
+  /** Inserts and tracks a disposable integration-test user. */
   const createUser = async (name: string): Promise<string> => {
     const id = uuidv7();
     const handle = `usr-${name.toLowerCase()}-${id.slice(0, 8)}`;

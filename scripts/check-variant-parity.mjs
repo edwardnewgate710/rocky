@@ -697,6 +697,8 @@ function scanColumnConstraints(clause, file, constraintNamespace, variantConstra
  * }} Effective variant-domain and studies constraint state.
  */
 export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
+  const canonicalVariants = extractRegion(ROOT).variants;
+  const canonicalVariantSet = new Set(canonicalVariants);
   /**
    * @type {Map<string, {
    *   hasVariantColumn: boolean,
@@ -714,6 +716,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
   const tables = new Map();
   let unsafeStudyConstraintTransition = false;
 
+  /** Creates empty replay state for one PostgreSQL table. */
   function newTableState() {
     return {
       hasVariantColumn: false,
@@ -729,12 +732,24 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
     };
   }
 
+  /** Whether the effective catalog has a validated CHECK equal to the canonical Variant domain. */
   function hasValidatedVariantDomain() {
     const variantsTable = tables.get(VARIANTS_TABLE_KEY);
     return variantsTable !== undefined &&
-      Array.from(variantsTable.activeCodeChecks.values()).some((check) => check.validated);
+      Array.from(variantsTable.activeCodeChecks.values()).some(
+        (check) => check.validated && disagreements(canonicalVariants, check.variants).length === 0,
+      );
   }
 
+  /** Whether an active studies CHECK excludes every non-canonical variant. */
+  function hasSafeStudyCheck(table) {
+    return Array.from(table.activeChecks.values()).some(
+      (check) =>
+        check.variants.length > 0 && check.variants.every((variant) => canonicalVariantSet.has(variant)),
+    );
+  }
+
+  /** Returns existing replay state for a table or creates it on first use. */
   function getOrCreateTable(key) {
     let t = tables.get(key);
     if (!t) {
@@ -1029,7 +1044,11 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
               currentTable.validatedFks.add(name);
               currentTable.fkAddedFiles.set(name, file);
               currentTable.fkValidatedFiles.set(name, file);
-              if (key === STUDIES_TABLE_KEY && !hasValidatedVariantDomain()) {
+              if (
+                key === STUDIES_TABLE_KEY &&
+                !hasValidatedVariantDomain() &&
+                !hasSafeStudyCheck(currentTable)
+              ) {
                 unsafeStudyConstraintTransition = true;
               }
             }
@@ -1187,7 +1206,11 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
                     currentTable.validatedFks.add(name);
                     currentTable.fkValidatedFiles.set(name, file);
                   }
-                  if (key === STUDIES_TABLE_KEY && !hasValidatedVariantDomain()) {
+                  if (
+                    key === STUDIES_TABLE_KEY &&
+                    !hasValidatedVariantDomain() &&
+                    !hasSafeStudyCheck(currentTable)
+                  ) {
                     unsafeStudyConstraintTransition = true;
                   }
                   handled = true;
@@ -1350,7 +1373,11 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
             currentTable.fkAddedFiles.set(name, file);
             currentTable.fkValidatedFiles.set(name, file);
           }
-          if (currentTable.activeFks.size > 0 && !hasValidatedVariantDomain()) {
+          if (
+            currentTable.activeFks.size > 0 &&
+            !hasValidatedVariantDomain() &&
+            !hasSafeStudyCheck(currentTable)
+          ) {
             unsafeStudyConstraintTransition = true;
           }
         }
@@ -1571,6 +1598,7 @@ export function evaluateParity(dir = MIGRATIONS_DIR) {
   return { failures, ...collected };
 }
 
+/** Prints the parity report and exits unsuccessfully when any invariant disagrees. */
 function main() {
   const root = extractRegion(ROOT);
   const {
@@ -1606,7 +1634,7 @@ function main() {
   }
 
   const invariantFailures = failures.filter(
-    (failure) => !mirrors.some((mirror) => failure.startsWith(`${mirror.label}:`)),
+    (failure) => !mirrors.some((mirror) => failure.startsWith(`${mirror.label} (`)),
   );
   for (const failure of invariantFailures) console.log(`  FAIL  ${failure}`);
 

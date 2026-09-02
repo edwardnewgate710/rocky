@@ -33,18 +33,21 @@ interface ConstraintRow {
   readonly definition: string;
 }
 
+/** Returns whether an unknown thrown value is the expected PostgreSQL constraint violation. */
 function isConstraintViolation(error: unknown, code: string, constraint: string): boolean {
   if (typeof error !== 'object' || error === null) return false;
   const pgError = error as PgErrorShape;
   return pgError.code === code && pgError.constraint === constraint;
 }
 
+/** Replaces the database path in the configured PostgreSQL connection URL. */
 function databaseUrlFor(database: string): string {
   const url = new URL(DATABASE_URL!);
   url.pathname = `/${database}`;
   return url.toString();
 }
 
+/** Copies migrations through the requested version into a disposable directory. */
 function migrationsThrough(version: number): { readonly dir: string; cleanup(): void } {
   const dir = mkdtempSync(join(tmpdir(), `variant-migrations-${version}-`));
   for (const migration of migrationFiles(MIGRATIONS_DIR)) {
@@ -54,20 +57,32 @@ function migrationsThrough(version: number): { readonly dir: string; cleanup(): 
   return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
+/** Runs a callback in an isolated database and always releases its pools and database. */
 async function withDatabase(run: (pool: Pool) => Promise<void>): Promise<void> {
   const admin = createPool({ connectionString: DATABASE_URL, max: 2 });
   const database = `variant_migration_${randomUUID().replaceAll('-', '')}`;
-  await admin.query(`CREATE DATABASE "${database}"`);
-  const pool = createPool({ connectionString: databaseUrlFor(database), max: 4 });
+  let databaseCreated = false;
   try {
-    await run(pool);
+    await admin.query(`CREATE DATABASE "${database}"`);
+    databaseCreated = true;
+    const pool = createPool({ connectionString: databaseUrlFor(database), max: 4 });
+    try {
+      await run(pool);
+    } finally {
+      await pool.end();
+    }
   } finally {
-    await pool.end();
-    await admin.query(`DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`);
-    await admin.end();
+    try {
+      if (databaseCreated) {
+        await admin.query(`DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`);
+      }
+    } finally {
+      await admin.end();
+    }
   }
 }
 
+/** Reads one named constraint from PostgreSQL's catalog. */
 async function constraint(
   pool: Pool,
   table: 'variants' | 'studies',
@@ -82,6 +97,7 @@ async function constraint(
   return found.rows[0];
 }
 
+/** Inserts the minimum user row needed to own a study and returns its id. */
 async function insertUser(pool: Pool): Promise<string> {
   const id = randomUUID();
   await pool.query(
@@ -91,6 +107,7 @@ async function insertUser(pool: Pool): Promise<string> {
   return id;
 }
 
+/** Inserts a study with the requested variant and returns its id. */
 async function insertStudy(pool: Pool, ownerId: string, variant: string): Promise<string> {
   const id = randomUUID();
   await pool.query(

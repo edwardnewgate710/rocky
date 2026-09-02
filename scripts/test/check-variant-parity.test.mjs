@@ -49,6 +49,7 @@ test('a commented-out variant does not count as present', () => {
   // The defect this replaced: quoted tokens were matched in raw source, so commenting an entry out
   // left the guard green while the executable array no longer held it. Raised in the Qodo review of
   // PR #141.
+  /** Extracts variants from a synthetic TypeScript declaration body. */
   const region = (body) =>
     extractRegion({
       label: 'test',
@@ -1377,6 +1378,66 @@ INSERT INTO variants (code) VALUES
     '0004_unsafe.sql': `ALTER TABLE studies DROP CONSTRAINT studies_variant_check;
 ALTER TABLE studies ADD CONSTRAINT studies_variant_fk FOREIGN KEY (variant) REFERENCES variants(code) NOT VALID;`,
     '0005_too_late.sql': `ALTER TABLE variants VALIDATE CONSTRAINT variants_code_check;
+ALTER TABLE studies VALIDATE CONSTRAINT studies_variant_fk;`,
+  });
+  try {
+    const { failures, unsafeStudyConstraintTransition } = evaluateParity(dir);
+    assert.equal(unsafeStudyConstraintTransition, true);
+    assert.ok(
+      failures.some((failure) => /before the variants domain CHECK was validated/.test(failure)),
+      failures.join('\n'),
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('parity evaluation permits staging the studies FK while its canonical CHECK remains active', () => {
+  const dir = migrations({
+    '0001_variants.sql': `CREATE TABLE variants (code TEXT PRIMARY KEY);
+INSERT INTO variants (code) VALUES
+  ('standard'), ('chess960'), ('kingofthehill'), ('atomic'),
+  ('crazyhouse'), ('threecheck'), ('horde'), ('racingkings');`,
+    '0002_studies.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL CHECK (variant IN ('standard', 'chess960', 'kingofthehill', 'atomic', 'crazyhouse', 'threecheck', 'horde', 'racingkings'))
+    );`,
+    '0003_domain.sql': `ALTER TABLE variants ADD CONSTRAINT variants_code_check
+  CHECK (code IN ('standard', 'chess960', 'kingofthehill', 'atomic', 'crazyhouse', 'threecheck', 'horde', 'racingkings')) NOT VALID;`,
+    '0004_stage_fk.sql': `ALTER TABLE studies ADD CONSTRAINT studies_variant_fk
+  FOREIGN KEY (variant) REFERENCES variants(code) NOT VALID;`,
+    '0005_validate_domain.sql': `ALTER TABLE variants VALIDATE CONSTRAINT variants_code_check;`,
+    '0006_replace_check.sql': `ALTER TABLE studies DROP CONSTRAINT studies_variant_check;`,
+    '0007_validate_fk.sql': `ALTER TABLE studies VALIDATE CONSTRAINT studies_variant_fk;`,
+  });
+  try {
+    const { failures, unsafeStudyConstraintTransition } = evaluateParity(dir);
+    assert.equal(unsafeStudyConstraintTransition, false);
+    assert.deepEqual(failures, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('parity evaluation rejects a broad validated domain CHECK as transition authorization', () => {
+  const dir = migrations({
+    '0001_variants.sql': `CREATE TABLE variants (code TEXT PRIMARY KEY);
+INSERT INTO variants (code) VALUES
+  ('standard'), ('chess960'), ('kingofthehill'), ('atomic'),
+  ('crazyhouse'), ('threecheck'), ('horde'), ('racingkings');`,
+    '0002_broad_domain.sql': `ALTER TABLE variants ADD CONSTRAINT variants_code_legacy_check
+  CHECK (code IN ('standard', 'chess960', 'kingofthehill', 'atomic', 'crazyhouse', 'threecheck', 'horde', 'racingkings', 'antichess')) NOT VALID;
+ALTER TABLE variants VALIDATE CONSTRAINT variants_code_legacy_check;`,
+    '0003_canonical_domain.sql': `ALTER TABLE variants ADD CONSTRAINT variants_code_check
+  CHECK (code IN ('standard', 'chess960', 'kingofthehill', 'atomic', 'crazyhouse', 'threecheck', 'horde', 'racingkings')) NOT VALID;`,
+    '0004_studies.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL CHECK (variant IN ('standard', 'chess960', 'kingofthehill', 'atomic', 'crazyhouse', 'threecheck', 'horde', 'racingkings'))
+    );`,
+    '0005_unsafe.sql': `ALTER TABLE studies DROP CONSTRAINT studies_variant_check;
+ALTER TABLE studies ADD CONSTRAINT studies_variant_fk FOREIGN KEY (variant) REFERENCES variants(code) NOT VALID;`,
+    '0006_too_late.sql': `ALTER TABLE variants VALIDATE CONSTRAINT variants_code_check;
+ALTER TABLE variants DROP CONSTRAINT variants_code_legacy_check;
 ALTER TABLE studies VALIDATE CONSTRAINT studies_variant_fk;`,
   });
   try {
