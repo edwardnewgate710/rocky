@@ -1,8 +1,18 @@
+---
+surface: lobby
+mode: Operate
+---
+
 # Design Brief: Create-a-Game Flow
 
 > Produced with `/impeccable shape`. Status: **confirmed** (direction locked;
 > color selection kept in scope but sequenced behind an API change — see §10 /
 > Color sequencing). Scope: design brief only — no code written yet.
+
+Design mode: **Operate** — the visitor is posting a seek, so scanability and
+consistency outrank expression. `packages/web/CLAUDE.md` requires each surface's
+mode to be recorded in its own brief, and names the lobby among the Operate
+surfaces; this brief predated that convention and never carried the field.
 
 ## 1. Feature Summary
 
