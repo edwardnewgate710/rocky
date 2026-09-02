@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import {
   CREATE_GAME_PRESETS,
   CUSTOM_LIMITS,
+  CUSTOM_PRESET_ID,
   DEFAULT_PRESET_ID,
+  UNLIMITED_TIME_CONTROL,
+  UNLIMITED_TIME_ID,
   validateCustomTime,
   presetToTimeControl,
   estimateSpeed,
@@ -99,8 +102,37 @@ test('custom bounds retain the repository-established product limits', () => {
   });
 });
 
-test('Unlimited is not exposed by the create-game catalog', () => {
-  assert.equal(CREATE_GAME_PRESETS.some((preset) => preset.id.toLowerCase().includes('unlimited')), false);
+/**
+ * Unlimited is a choice the panel offers, but it is deliberately *not* a preset:
+ * `CREATE_GAME_PRESETS` is `TIME_PRESETS`, which the play-vs-computer dialog
+ * also renders, and a `TimePreset` has no minutes/increment that could describe
+ * an untimed game. Keeping it out of the catalog is what keeps that dialog
+ * unchanged by this feature.
+ */
+test('the untimed choice is a sentinel id, not an entry in the preset ladder', () => {
+  assert.equal(UNLIMITED_TIME_ID, 'unlimited');
+  assert.notEqual(UNLIMITED_TIME_ID, CUSTOM_PRESET_ID);
+  // `CreateGamePresetId` already excludes the id by construction — tsc rejects
+  // comparing the two — so what is left to check at runtime is the looser case:
+  // no entry named after it either.
+  assert.equal(
+    CREATE_GAME_PRESETS.some((preset) => preset.id.toLowerCase().includes('unlimited')),
+    false,
+  );
+});
+
+/**
+ * `parseTimeControl` in packages/api/src/domain.ts rejects `kind: 'unlimited'`
+ * carrying any non-zero duration with a 422, so these four fields are the whole
+ * contract — pinned here rather than only at the panel that sends them.
+ */
+test('the untimed control is exactly the zero-duration wire shape the server accepts', () => {
+  assert.deepEqual(UNLIMITED_TIME_CONTROL, {
+    initialMs: 0,
+    incrementMs: 0,
+    delayMs: 0,
+    kind: 'unlimited',
+  });
 });
 
 test('estimateSpeed buckets the ladder the way players expect', () => {
@@ -112,4 +144,14 @@ test('estimateSpeed buckets the ladder the way players expect', () => {
   assert.equal(speedOf(10, 0), 'Rapid');
   assert.equal(speedOf(15, 10), 'Rapid');
   assert.equal(speedOf(30, 20), 'Classical');
+});
+
+/**
+ * Arithmetically the untimed control estimates at zero seconds, which is the
+ * *shortest* bucket — the opposite of what it means. The kind has to win, as it
+ * does in the server's `classifySpeed`.
+ */
+test('estimateSpeed reads the untimed control as correspondence, not bullet', () => {
+  assert.equal(estimateSpeed(UNLIMITED_TIME_CONTROL), 'Correspondence');
+  assert.equal(estimateSpeed({ ...UNLIMITED_TIME_CONTROL, kind: 'sudden_death' }), 'Bullet');
 });
