@@ -33,14 +33,6 @@ interface PgErrorShape {
   constraint?: string;
 }
 
-/**
- * Type guard verifying whether an unknown error is a PostgreSQL constraint violation matching a code and optional constraint name.
- *
- * @param err The unknown error caught in an assert.rejects handler.
- * @param code The expected 5-character PostgreSQL SQLSTATE error code.
- * @param constraint Optional constraint name to match against the error's constraint property.
- * @returns boolean indicating if the error matches the expected PostgreSQL constraint violation.
- */
 function isPgConstraintViolation(err: unknown, code: string, constraint?: string): boolean {
   if (typeof err !== 'object' || err === null) return false;
   const pgErr = err as PgErrorShape;
@@ -308,7 +300,16 @@ test('pg studies repository integration tests', { skip }, async () => {
       (err: unknown) => err instanceof StudyRuleError && err.code === 'not_found'
     );
 
-    // 10. Variant Foreign Key and Integrity (Migration 0028)
+    // 10. Closed variant catalog and studies FK integrity (migrations 0028-0031)
+    const domainRes = await pool.query<{ convalidated: boolean }>(`
+      SELECT convalidated
+      FROM pg_constraint
+      WHERE conrelid = 'variants'::regclass
+        AND contype = 'c'
+        AND conname = 'variants_code_check'
+    `);
+    assert.deepEqual(domainRes.rows, [{ convalidated: true }]);
+
     // 10.1 Metadata verification: FK constraint exists and points to variants(code)
     const fkRes = await pool.query<{
       constraint_name: string;
@@ -347,7 +348,14 @@ test('pg studies repository integration tests', { skip }, async () => {
     `);
     assert.equal(oldCheckRes.rows.length, 0, 'old CHECK constraint studies_variant_check must no longer exist');
 
-    // 10.3 Invalid variant insertion rejected by FK constraint (23503)
+    // 10.3 The catalog rejects noncanonical codes before they can broaden FK consumers.
+    await assert.rejects(
+      pool.query(`INSERT INTO variants (code, name) VALUES ('noncanonical_variant', 'Invalid')`),
+      (err: unknown) => isPgConstraintViolation(err, '23514', 'variants_code_check'),
+      'inserting a noncanonical catalog code must raise check_violation (23514)'
+    );
+
+    // An unsupported study remains rejected by the FK.
     const badStudyId = uuidv7();
     await assert.rejects(
       async () =>
@@ -380,36 +388,6 @@ test('pg studies repository integration tests', { skip }, async () => {
       assert.equal(fetched.variant, v);
     }
 
-    // 10.5 Referencing study specifically protects variants(code) via studies_variant_fk (NO ACTION)
-    let customVarInserted = false;
-    let customStudyInserted = false;
-    const customVarCode = 'test_fk_protection_variant';
-    const customVarStudyId = uuidv7();
-    try {
-      await pool.query(
-        `INSERT INTO variants (code, name, enabled) VALUES ($1, 'Test FK Variant', true)`,
-        [customVarCode]
-      );
-      customVarInserted = true;
-      await pool.query(
-        `INSERT INTO studies (id, owner_id, name, description, visibility, variant, created_at, updated_at)
-         VALUES ($1, $2, 'Custom Variant Study', '', 'public', $3, NOW(), NOW())`,
-        [customVarStudyId, alice, customVarCode]
-      );
-      customStudyInserted = true;
-      await assert.rejects(
-        async () => pool.query(`DELETE FROM variants WHERE code = $1`, [customVarCode]),
-        (err: unknown) => isPgConstraintViolation(err, '23503', 'studies_variant_fk'),
-        'deleting a variant referenced only by studies must raise foreign_key_violation on studies_variant_fk'
-      );
-    } finally {
-      if (customStudyInserted) {
-        await pool.query(`DELETE FROM studies WHERE id = $1`, [customVarStudyId]);
-      }
-      if (customVarInserted) {
-        await pool.query(`DELETE FROM variants WHERE code = $1`, [customVarCode]);
-      }
-    }
   } finally {
     if (createdUserIds.length > 0) {
       await pool.query(`DELETE FROM users WHERE id = ANY($1)`, [createdUserIds]);

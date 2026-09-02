@@ -91,6 +91,24 @@ INSERT INTO variants (code, name) VALUES
   }
 });
 
+test('an idempotent canonical re-seed preserves lookup set semantics', () => {
+  const dir = migrations({
+    '0001_init.sql': `CREATE TABLE variants (code TEXT PRIMARY KEY, name TEXT NOT NULL);
+INSERT INTO variants (code, name) VALUES
+  ('standard', 'Standard'),
+  ('atomic',   'Atomic');`,
+    '0028_reseed.sql': `INSERT INTO variants (code, name) VALUES
+  ('standard', 'Standard'),
+  ('atomic',   'Atomic')
+ON CONFLICT (code) DO NOTHING;`,
+  });
+  try {
+    assert.deepEqual(effectiveLookupVariants(dir), ['standard', 'atomic']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('migrations replay in the order the runner applies them, which is lexicographic', () => {
   // `pg/migrate.ts` sorts with a plain `.sort()`, so that is the order the database ends up in and
   // the order this must model. Zero-padded names make lexicographic and numeric order coincide, so
@@ -1204,16 +1222,22 @@ test('parity evaluation succeeds when surviving FK provides integrity after CHEC
 INSERT INTO variants (code) VALUES
   ('standard'), ('chess960'), ('kingofthehill'), ('atomic'),
   ('crazyhouse'), ('threecheck'), ('horde'), ('racingkings');`,
-    '0002_studies.sql': `CREATE TABLE studies (
+    '0002_domain.sql': `ALTER TABLE variants ADD CONSTRAINT variants_code_check
+  CHECK (code IN ('standard', 'chess960', 'kingofthehill', 'atomic', 'crazyhouse', 'threecheck', 'horde', 'racingkings')) NOT VALID;`,
+    '0003_validate_domain.sql': `ALTER TABLE variants VALIDATE CONSTRAINT variants_code_check;`,
+    '0004_studies.sql': `CREATE TABLE studies (
       id UUID PRIMARY KEY,
       variant TEXT NOT NULL
         CONSTRAINT chk_v CHECK (variant IN ('standard', 'atomic'))
-        CONSTRAINT fk_v REFERENCES variants(code)
     );`,
-    '0003_drop_chk.sql': `ALTER TABLE studies DROP CONSTRAINT chk_v;`,
+    '0005_add_fk.sql': `ALTER TABLE studies ADD CONSTRAINT fk_v
+  FOREIGN KEY (variant) REFERENCES variants(code) NOT VALID;`,
+    '0006_drop_chk.sql': `ALTER TABLE studies DROP CONSTRAINT chk_v;`,
+    '0007_validate_fk.sql': `ALTER TABLE studies VALIDATE CONSTRAINT fk_v;`,
   });
   try {
-    const { mirrors, studyConstraint, hasStudyVariantFk } = collectMirrors(dir);
+    const { failures, mirrors, studyConstraint, hasStudyVariantFk } = evaluateParity(dir);
+    assert.deepEqual(failures, []);
     assert.equal(studyConstraint, null);
     assert.equal(hasStudyVariantFk, true);
     const lookupMirror = mirrors.find((m) => m.label.includes('variants'));
@@ -1224,12 +1248,15 @@ INSERT INTO variants (code) VALUES
   }
 });
 
-test('parity evaluation succeeds when surviving CHECK provides integrity after FK drop', () => {
+test('parity evaluation rejects a surviving studies CHECK even when its values match Variant', () => {
   const dir = migrations({
     '0001_variants.sql': `CREATE TABLE variants (code TEXT PRIMARY KEY);
 INSERT INTO variants (code) VALUES
   ('standard'), ('chess960'), ('kingofthehill'), ('atomic'),
-  ('crazyhouse'), ('threecheck'), ('horde'), ('racingkings');`,
+  ('crazyhouse'), ('threecheck'), ('horde'), ('racingkings');
+ALTER TABLE variants ADD CONSTRAINT variants_code_check
+  CHECK (code IN ('standard', 'chess960', 'kingofthehill', 'atomic', 'crazyhouse', 'threecheck', 'horde', 'racingkings')) NOT VALID;
+ALTER TABLE variants VALIDATE CONSTRAINT variants_code_check;`,
     '0002_studies.sql': `CREATE TABLE studies (
       id UUID PRIMARY KEY,
       variant TEXT NOT NULL
@@ -1239,12 +1266,126 @@ INSERT INTO variants (code) VALUES
     '0003_drop_fk.sql': `ALTER TABLE studies DROP CONSTRAINT fk_v;`,
   });
   try {
-    const { mirrors, studyConstraint, hasStudyVariantFk } = collectMirrors(dir);
+    const { failures, studyConstraint, hasStudyVariantFk } = evaluateParity(dir);
     assert.notEqual(studyConstraint, null);
     assert.equal(hasStudyVariantFk, false);
-    const studyMirror = mirrors.find((m) => m.label.includes('studies.variant') && m.label.includes('CHECK'));
-    assert.notEqual(studyMirror, undefined);
-    assert.deepEqual(disagreements(extractRegion(ROOT).variants, studyMirror?.variants ?? []), []);
+    assert.ok(
+      failures.some((failure) => /retains obsolete CHECK constraint/.test(failure)),
+      failures.join('\n'),
+    );
+    assert.ok(
+      failures.some((failure) => /has no foreign key referencing `variants\(code\)`/.test(failure)),
+      failures.join('\n'),
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('parity evaluation detects seed and domain disagreement independently', () => {
+  const dir = migrations({
+    '0001_variants.sql': `CREATE TABLE variants (code TEXT PRIMARY KEY);
+INSERT INTO variants (code) VALUES
+  ('standard'), ('chess960'), ('kingofthehill'), ('atomic'),
+  ('crazyhouse'), ('threecheck'), ('racingkings');`,
+    '0002_domain.sql': `ALTER TABLE variants ADD CONSTRAINT variants_code_check
+  CHECK (code IN ('standard', 'chess960', 'kingofthehill', 'atomic', 'crazyhouse', 'threecheck', 'horde', 'racingkings')) NOT VALID;`,
+    '0003_validate_domain.sql': `ALTER TABLE variants VALIDATE CONSTRAINT variants_code_check;`,
+    '0004_studies.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+  });
+  try {
+    const { failures } = evaluateParity(dir);
+    assert.ok(
+      failures.some((failure) => /variants.*lookup table.*missing `horde`/.test(failure)),
+      failures.join('\n'),
+    );
+    assert.ok(
+      !failures.some((failure) => /variants\.code.*missing `horde`/.test(failure)),
+      failures.join('\n'),
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('parity evaluation requires a validated variants domain CHECK matching Variant', () => {
+  const dir = migrations({
+    '0001_variants.sql': `CREATE TABLE variants (code TEXT PRIMARY KEY);
+INSERT INTO variants (code) VALUES
+  ('standard'), ('chess960'), ('kingofthehill'), ('atomic'),
+  ('crazyhouse'), ('threecheck'), ('horde'), ('racingkings');`,
+    '0002_domain.sql': `ALTER TABLE variants ADD CONSTRAINT variants_code_check
+  CHECK (code IN ('standard', 'chess960', 'kingofthehill', 'atomic', 'crazyhouse', 'threecheck', 'horde', 'racingkings')) NOT VALID;`,
+    '0003_studies.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+  });
+  try {
+    const { failures, variantDomainConstraint } = evaluateParity(dir);
+    assert.equal(variantDomainConstraint?.name, 'variants_code_check');
+    assert.equal(variantDomainConstraint?.validated, false);
+    assert.ok(
+      failures.some((failure) => /variants\.code.*not validated/.test(failure)),
+      failures.join('\n'),
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('parity evaluation detects missing and unknown values in variants domain CHECK', () => {
+  const dir = migrations({
+    '0001_variants.sql': `CREATE TABLE variants (code TEXT PRIMARY KEY);
+INSERT INTO variants (code) VALUES
+  ('standard'), ('chess960'), ('kingofthehill'), ('atomic'),
+  ('crazyhouse'), ('threecheck'), ('horde'), ('racingkings');`,
+    '0002_domain.sql': `ALTER TABLE variants ADD CONSTRAINT variants_code_check
+  CHECK (code IN ('standard', 'chess960', 'kingofthehill', 'atomic', 'crazyhouse', 'threecheck', 'antichess', 'racingkings')) NOT VALID;
+ALTER TABLE variants VALIDATE CONSTRAINT variants_code_check;`,
+    '0003_studies.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL REFERENCES variants(code)
+    );`,
+  });
+  try {
+    const { failures } = evaluateParity(dir);
+    assert.ok(
+      failures.some((failure) => /variants\.code.*missing `horde`.*unknown `antichess`/.test(failure)),
+      failures.join('\n'),
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('parity evaluation detects studies CHECK removal before variants domain validation', () => {
+  const dir = migrations({
+    '0001_variants.sql': `CREATE TABLE variants (code TEXT PRIMARY KEY);
+INSERT INTO variants (code) VALUES
+  ('standard'), ('chess960'), ('kingofthehill'), ('atomic'),
+  ('crazyhouse'), ('threecheck'), ('horde'), ('racingkings');`,
+    '0002_studies.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL CHECK (variant IN ('standard', 'chess960', 'kingofthehill', 'atomic', 'crazyhouse', 'threecheck', 'horde', 'racingkings'))
+    );`,
+    '0003_domain.sql': `ALTER TABLE variants ADD CONSTRAINT variants_code_check
+  CHECK (code IN ('standard', 'chess960', 'kingofthehill', 'atomic', 'crazyhouse', 'threecheck', 'horde', 'racingkings')) NOT VALID;`,
+    '0004_unsafe.sql': `ALTER TABLE studies DROP CONSTRAINT studies_variant_check;
+ALTER TABLE studies ADD CONSTRAINT studies_variant_fk FOREIGN KEY (variant) REFERENCES variants(code) NOT VALID;`,
+    '0005_too_late.sql': `ALTER TABLE variants VALIDATE CONSTRAINT variants_code_check;
+ALTER TABLE studies VALIDATE CONSTRAINT studies_variant_fk;`,
+  });
+  try {
+    const { failures, unsafeStudyConstraintTransition } = evaluateParity(dir);
+    assert.equal(unsafeStudyConstraintTransition, true);
+    assert.ok(
+      failures.some((failure) => /before the variants domain CHECK was validated/.test(failure)),
+      failures.join('\n'),
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -1256,20 +1397,23 @@ test('parity evaluation flags failure when both CHECK and FK are removed from st
 INSERT INTO variants (code) VALUES
   ('standard'), ('chess960'), ('kingofthehill'), ('atomic'),
   ('crazyhouse'), ('threecheck'), ('horde'), ('racingkings');`,
-    '0002_studies.sql': `CREATE TABLE studies (
+    '0002_domain.sql': `ALTER TABLE variants ADD CONSTRAINT variants_code_check
+  CHECK (code IN ('standard', 'chess960', 'kingofthehill', 'atomic', 'crazyhouse', 'threecheck', 'horde', 'racingkings')) NOT VALID;`,
+    '0003_validate_domain.sql': `ALTER TABLE variants VALIDATE CONSTRAINT variants_code_check;`,
+    '0004_studies.sql': `CREATE TABLE studies (
       id UUID PRIMARY KEY,
       variant TEXT NOT NULL
         CONSTRAINT chk_v CHECK (variant IN ('standard', 'chess960', 'kingofthehill', 'atomic', 'crazyhouse', 'threecheck', 'horde', 'racingkings'))
         CONSTRAINT fk_v REFERENCES variants(code)
     );`,
-    '0003_drop_both.sql': `ALTER TABLE studies DROP CONSTRAINT chk_v, DROP CONSTRAINT fk_v;`,
+    '0005_drop_both.sql': `ALTER TABLE studies DROP CONSTRAINT chk_v, DROP CONSTRAINT fk_v;`,
   });
   try {
     const { failures, studyConstraint, hasStudyVariantFk } = evaluateParity(dir);
     assert.equal(studyConstraint, null);
     assert.equal(hasStudyVariantFk, false);
     assert.equal(failures.length, 1);
-    assert.match(failures[0], /`studies\.variant` has no CHECK constraint and no foreign key referencing `variants\(code\)`/);
+    assert.match(failures[0], /`studies\.variant` has no foreign key referencing `variants\(code\)`/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -1757,11 +1901,14 @@ test('end-to-end parity failure when colliding-under-old-model table has variant
 INSERT INTO variants (code) VALUES
   ('standard'), ('chess960'), ('kingofthehill'), ('atomic'),
   ('crazyhouse'), ('threecheck'), ('horde'), ('racingkings');`,
-    '0002_unconstrained_studies.sql': `CREATE TABLE studies (
+    '0002_domain.sql': `ALTER TABLE variants ADD CONSTRAINT variants_code_check
+  CHECK (code IN ('standard', 'chess960', 'kingofthehill', 'atomic', 'crazyhouse', 'threecheck', 'horde', 'racingkings')) NOT VALID;`,
+    '0003_validate_domain.sql': `ALTER TABLE variants VALIDATE CONSTRAINT variants_code_check;`,
+    '0004_unconstrained_studies.sql': `CREATE TABLE studies (
       id UUID PRIMARY KEY,
       variant TEXT NOT NULL
     );`,
-    '0003_colliding_archive.sql': `CREATE TABLE "public.studies" (
+    '0005_colliding_archive.sql': `CREATE TABLE "public.studies" (
       id UUID PRIMARY KEY,
       variant TEXT NOT NULL REFERENCES variants(code)
     );`,
@@ -1771,7 +1918,7 @@ INSERT INTO variants (code) VALUES
     assert.equal(studyConstraint, null);
     assert.equal(hasStudyVariantFk, false);
     assert.equal(failures.length, 1);
-    assert.match(failures[0], /`studies\.variant` has no CHECK constraint and no foreign key referencing `variants\(code\)`/);
+    assert.match(failures[0], /`studies\.variant` has no foreign key referencing `variants\(code\)`/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

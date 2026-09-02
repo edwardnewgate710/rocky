@@ -118,9 +118,10 @@ constraints**, and *deliberately not* native Postgres `ENUM` types.
   enum ordering is definition-order, not semantic. For a platform that will add
   variants and refine terminations over years, this rigidity is a liability.
 - **Lookup tables** (a `code TEXT PRIMARY KEY` catalog + FK) for vocabularies that
-  **evolve or carry metadata**: `variants` (add a variant → one seed row, referential
-  integrity everywhere it's used) and `terminations`. This gives FK enforcement,
-  a natural place for display names/flags, and trivial extension.
+  carry metadata: `variants` and `terminations`. The variants catalog also has a
+  canonical-domain `CHECK`, so adding a variant is a coordinated application +
+  constraint + seed migration, not an arbitrary catalog insert. This keeps FK
+  enforcement and display metadata without allowing database/application drift.
 - **`CHECK` constraints** for **small, fixed, security- or protocol-defined** sets
   where a whole table is overkort and the set changes only with a code+migration
   change anyway: `speed`, `result`, `role`, credential `kind`. A `CHECK` is easy to
@@ -236,10 +237,14 @@ game was recorded, and keeps upgrades backward-compatible and reversible.
 ### 4.1 Lookup / catalog tables
 
 ```sql
-CREATE TABLE variants (          -- evolving vocabulary (add a variant = 1 seed row)
+CREATE TABLE variants (          -- closed application vocabulary, migration-evolved
   code        TEXT PRIMARY KEY,  -- 'standard','chess960','kingofthehill',...
   name        TEXT NOT NULL,
-  enabled     BOOLEAN NOT NULL DEFAULT true
+  enabled     BOOLEAN NOT NULL DEFAULT true,
+  CONSTRAINT variants_code_check CHECK (code IN (
+    'standard', 'chess960', 'kingofthehill', 'atomic',
+    'crazyhouse', 'threecheck', 'horde', 'racingkings'
+  ))
 );
 CREATE TABLE terminations (      -- evolving/annotated vocabulary
   code        TEXT PRIMARY KEY,  -- 'checkmate','resignation','timeout',...

@@ -1,8 +1,26 @@
--- Migration 0028: Replace studies.variant CHECK constraint with FOREIGN KEY referencing variants(code)
+-- Migration 0028: Restore the canonical variant catalog and install its closed domain constraint.
 
-ALTER TABLE studies
-    DROP CONSTRAINT studies_variant_check;
+INSERT INTO variants (code, name) VALUES
+    ('standard',      'Standard'),
+    ('chess960',      'Chess960'),
+    ('kingofthehill', 'King of the Hill'),
+    ('atomic',        'Atomic'),
+    ('crazyhouse',    'Crazyhouse'),
+    ('threecheck',    'Three-check'),
+    ('horde',         'Horde'),
+    ('racingkings',   'Racing Kings')
+ON CONFLICT (code) DO NOTHING;
 
-ALTER TABLE studies
-    ADD CONSTRAINT studies_variant_fk
-    FOREIGN KEY (variant) REFERENCES variants(code) NOT VALID;
+-- NOT VALID closes the domain for new writes immediately while deferring the legacy-row scan.
+ALTER TABLE variants
+    ADD CONSTRAINT variants_code_check
+    CHECK (code IN (
+        'standard',
+        'chess960',
+        'kingofthehill',
+        'atomic',
+        'crazyhouse',
+        'threecheck',
+        'horde',
+        'racingkings'
+    )) NOT VALID;

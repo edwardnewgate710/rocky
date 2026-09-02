@@ -2,16 +2,13 @@
 /**
  * Fails when the hand-maintained copies of the supported-variant list stop agreeing.
  *
- * The set of rule sets this platform supports is written out in six places, in two languages, and
- * nothing derives from anything else. That is survivable only while they match, and there was no
- * check that they do.
+ * The set of rule sets this platform supports is written out in six active mirrors, in two
+ * languages. That is survivable only while they match.
  *
- * The database variant columns (games, ratings, seeks, and studies via migrations 0028/0029) are
- * `variant TEXT NOT NULL REFERENCES variants(code)`, so once a row exists in the `variants` lookup
- * table the database accepts that value uniformly. `studies.variant` was initially governed by an
- * inline `CHECK (variant IN (...))` in migration 0022 and converted to `REFERENCES variants(code)`
- * in migration 0028 (validated in 0029). The application-level declarations below still need their
- * own updates in either case — the lookup row settles what the *database* will store.
+ * The database variant columns reference `variants(code)`. Migrations 0028/0029 close and validate
+ * that catalog's canonical domain; migrations 0030/0031 then replace the historical
+ * `studies.variant` CHECK with a validated FK. The guard replays both the catalog seed and its
+ * database CHECK, so a lookup row alone cannot widen the domain.
  *
  * `chess-core`'s `Variant` is treated as the root: it is the type the engine actually branches on,
  * so a variant that is not there is not a variant at all. Every other list is compared to it.
@@ -487,6 +484,7 @@ export function splitStatements(sql) {
  */
 export function effectiveLookupVariants(dir = MIGRATIONS_DIR) {
   const codes = [];
+  const presentCodes = new Set();
   for (const file of migrationFiles(dir)) {
     const sql = stripComments(readFileSync(join(dir, file), 'utf8'), 'sql');
 
@@ -499,10 +497,16 @@ export function effectiveLookupVariants(dir = MIGRATIONS_DIR) {
       );
     }
 
-    for (const insert of sql.matchAll(/INSERT\s+INTO\s+variants\s*\([^)]*\)\s*VALUES([\s\S]*?);/gi)) {
+    for (const insert of sql.matchAll(/INSERT\s+INTO\s+variants\s*\([^)]*\)\s*VALUES[\s\S]*?;/gi)) {
+      const idempotentReseed = /\bON\s+CONFLICT\s*\(\s*code\s*\)\s+DO\s+NOTHING\b/i.test(insert[0]);
       // The first column of each tuple is `code`; the second is a display name that is capitalised
       // or hyphenated, so taking the leading element of each `(...)` keeps them apart reliably.
-      for (const tuple of insert[1].matchAll(/\(\s*'([^']+)'/g)) codes.push(tuple[1]);
+      for (const tuple of insert[0].matchAll(/\(\s*'([^']+)'/g)) {
+        const code = tuple[1];
+        if (idempotentReseed && presentCodes.has(code)) continue;
+        codes.push(code);
+        presentCodes.add(code);
+      }
     }
   }
   if (codes.length === 0) throw new Error(`no INSERT INTO variants found under ${dir}`);
@@ -686,31 +690,55 @@ function scanColumnConstraints(clause, file, constraintNamespace, variantConstra
  * @returns {{
  *   check: { file: string, name: string, variants: string[] } | null,
  *   checks: Array<{ file: string, name: string, variants: string[] }>,
- *   hasForeignKey: boolean
- * }} Effective check constraint on studies.variant and whether an active foreign key referencing variants(code) exists.
+ *   hasForeignKey: boolean,
+ *   foreignKeys: Array<{ name: string, file: string, validated: boolean, validatedFile: string | null }>,
+ *   variantDomainChecks: Array<{ file: string, name: string, variants: string[], validated: boolean, addedNotValid: boolean, validatedFile: string | null }>,
+ *   unsafeStudyConstraintTransition: boolean
+ * }} Effective variant-domain and studies constraint state.
  */
 export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
   /**
    * @type {Map<string, {
    *   hasVariantColumn: boolean,
+   *   hasCodeColumn: boolean,
    *   constraintNamespace: Set<string>,
    *   variantConstraints: Set<string>,
    *   activeChecks: Map<string, { file: string, name: string, variants: string[] }>,
-   *   activeFks: Set<string>
+   *   activeCodeChecks: Map<string, { file: string, name: string, variants: string[], validated: boolean, addedNotValid: boolean, validatedFile: string | null }>,
+   *   activeFks: Set<string>,
+   *   validatedFks: Set<string>,
+   *   fkAddedFiles: Map<string, string>,
+   *   fkValidatedFiles: Map<string, string>
    * }>}
    */
   const tables = new Map();
+  let unsafeStudyConstraintTransition = false;
+
+  function newTableState() {
+    return {
+      hasVariantColumn: false,
+      hasCodeColumn: false,
+      constraintNamespace: new Set(),
+      variantConstraints: new Set(),
+      activeChecks: new Map(),
+      activeCodeChecks: new Map(),
+      activeFks: new Set(),
+      validatedFks: new Set(),
+      fkAddedFiles: new Map(),
+      fkValidatedFiles: new Map(),
+    };
+  }
+
+  function hasValidatedVariantDomain() {
+    const variantsTable = tables.get(VARIANTS_TABLE_KEY);
+    return variantsTable !== undefined &&
+      Array.from(variantsTable.activeCodeChecks.values()).some((check) => check.validated);
+  }
 
   function getOrCreateTable(key) {
     let t = tables.get(key);
     if (!t) {
-      t = {
-        hasVariantColumn: false,
-        constraintNamespace: new Set(),
-        variantConstraints: new Set(),
-        activeChecks: new Map(),
-        activeFks: new Set(),
-      };
+      t = newTableState();
       tables.set(key, t);
     }
     return t;
@@ -773,6 +801,9 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
                 tbl.variantConstraints.delete(fkName);
               }
               tbl.activeFks.clear();
+              tbl.validatedFks.clear();
+              tbl.fkAddedFiles.clear();
+              tbl.fkValidatedFiles.clear();
             }
           }
 
@@ -806,7 +837,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
         }
 
         const key = tableKey(ref);
-        if (key !== STUDIES_TABLE_KEY && !tables.has(key)) {
+        if (key !== STUDIES_TABLE_KEY && key !== VARIANTS_TABLE_KEY && !tables.has(key)) {
           continue;
         }
 
@@ -853,20 +884,49 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
             }
             if (action[cIdx]?.type === 'word' || action[cIdx]?.type === 'ident') {
               const name = action[cIdx].value;
+              if (
+                key === STUDIES_TABLE_KEY &&
+                currentTable.activeChecks.has(name) &&
+                !hasValidatedVariantDomain()
+              ) {
+                unsafeStudyConstraintTransition = true;
+              }
               currentTable.constraintNamespace.delete(name);
               currentTable.variantConstraints.delete(name);
               currentTable.activeChecks.delete(name);
+              currentTable.activeCodeChecks.delete(name);
               currentTable.activeFks.delete(name);
+              currentTable.validatedFks.delete(name);
+              currentTable.fkAddedFiles.delete(name);
+              currentTable.fkValidatedFiles.delete(name);
             }
             continue;
           }
 
-          // Action B: RENAME CONSTRAINT <old_name> TO <new_name>
+          // Action B: VALIDATE CONSTRAINT <name>
+          if (action[0].value === 'validate' && action[1]?.value === 'constraint') {
+            const name = action[2]?.value;
+            const codeCheck = name === undefined ? undefined : currentTable.activeCodeChecks.get(name);
+            if (codeCheck !== undefined) {
+              codeCheck.validated = true;
+              codeCheck.validatedFile = file;
+            }
+            if (name !== undefined && currentTable.activeFks.has(name)) {
+              currentTable.validatedFks.add(name);
+              currentTable.fkValidatedFiles.set(name, file);
+            }
+            continue;
+          }
+
+          // Action C: RENAME CONSTRAINT <old_name> TO <new_name>
           if (action[0].value === 'rename' && action[1]?.value === 'constraint') {
             const oldName = action[2]?.value;
-            if (oldName && currentTable.activeChecks.has(oldName)) {
+            if (
+              oldName &&
+              (currentTable.activeChecks.has(oldName) || currentTable.activeCodeChecks.has(oldName))
+            ) {
               throw new Error(
-                `${file} renames the constraint governing \`studies.variant\` ` +
+                `${file} renames a constraint governing the variant domain ` +
                   `(\`${oldName}\`). Teach this guard \`RENAME CONSTRAINT\` rather than leaving it ` +
                   `tracking a name nothing answers to.`,
               );
@@ -885,11 +945,23 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
                 currentTable.activeFks.delete(oldName);
                 currentTable.activeFks.add(newName);
               }
+              if (currentTable.validatedFks.has(oldName)) {
+                currentTable.validatedFks.delete(oldName);
+                currentTable.validatedFks.add(newName);
+              }
+              if (currentTable.fkAddedFiles.has(oldName)) {
+                currentTable.fkAddedFiles.set(newName, currentTable.fkAddedFiles.get(oldName));
+                currentTable.fkAddedFiles.delete(oldName);
+              }
+              if (currentTable.fkValidatedFiles.has(oldName)) {
+                currentTable.fkValidatedFiles.set(newName, currentTable.fkValidatedFiles.get(oldName));
+                currentTable.fkValidatedFiles.delete(oldName);
+              }
             }
             continue;
           }
 
-          // Action C: DROP [COLUMN] [IF EXISTS] <col_name>
+          // Action D: DROP [COLUMN] [IF EXISTS] <col_name>
           if (action[0].value === 'drop') {
             let cIdx = 1;
             if (action[cIdx]?.value === 'column') cIdx++;
@@ -902,11 +974,21 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
               currentTable.variantConstraints.clear();
               currentTable.activeChecks.clear();
               currentTable.activeFks.clear();
+              currentTable.validatedFks.clear();
+              currentTable.fkAddedFiles.clear();
+              currentTable.fkValidatedFiles.clear();
+            }
+            if (action[cIdx]?.value === 'code') {
+              currentTable.hasCodeColumn = false;
+              for (const name of currentTable.activeCodeChecks.keys()) {
+                currentTable.constraintNamespace.delete(name);
+              }
+              currentTable.activeCodeChecks.clear();
             }
             continue;
           }
 
-          // Action D: RENAME [COLUMN] <old_col> TO <new_col>
+          // Action E: RENAME [COLUMN] <old_col> TO <new_col>
           if (action[0].value === 'rename') {
             let cIdx = 1;
             if (action[cIdx]?.value === 'column') cIdx++;
@@ -915,11 +997,18 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
               currentTable.variantConstraints.clear();
               currentTable.activeChecks.clear();
               currentTable.activeFks.clear();
+              currentTable.validatedFks.clear();
+              currentTable.fkAddedFiles.clear();
+              currentTable.fkValidatedFiles.clear();
+            }
+            if (action[cIdx]?.value === 'code' && action[cIdx + 1]?.value === 'to') {
+              currentTable.hasCodeColumn = false;
+              currentTable.activeCodeChecks.clear();
             }
             continue;
           }
 
-          // Action E: ADD [COLUMN] [IF NOT EXISTS] variant ...
+          // Action F: ADD [COLUMN] [IF NOT EXISTS] variant/code ...
           let colIdx = 0;
           if (action[colIdx]?.value === 'add') colIdx++;
           if (action[colIdx]?.value === 'column') colIdx++;
@@ -933,11 +1022,26 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
               continue;
             }
             currentTable.hasVariantColumn = true;
+            const previousFks = new Set(currentTable.activeFks);
             scanColumnConstraints(action.slice(colIdx), file, currentTable.constraintNamespace, currentTable.variantConstraints, currentTable.activeChecks, currentTable.activeFks);
+            for (const name of currentTable.activeFks) {
+              if (previousFks.has(name)) continue;
+              currentTable.validatedFks.add(name);
+              currentTable.fkAddedFiles.set(name, file);
+              currentTable.fkValidatedFiles.set(name, file);
+              if (key === STUDIES_TABLE_KEY && !hasValidatedVariantDomain()) {
+                unsafeStudyConstraintTransition = true;
+              }
+            }
+            continue;
+          }
+          if (action[colIdx]?.value === 'code') {
+            if (currentTable.hasCodeColumn && isColIfNotExists) continue;
+            currentTable.hasCodeColumn = true;
             continue;
           }
 
-          // Action F: Table-level ADD [CONSTRAINT <name>] CHECK (variant IN (...)) or FOREIGN KEY
+          // Action G: Table-level ADD [CONSTRAINT <name>] CHECK or FOREIGN KEY
           let explicitName = null;
           let aIdx = 0;
           if (action[aIdx]?.value === 'add') aIdx++;
@@ -947,6 +1051,64 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
           }
 
           let handled = false;
+
+          // Search for the table-level variants(code) domain CHECK.
+          if (key === VARIANTS_TABLE_KEY) {
+            for (let i = 0; i < action.length; i++) {
+              if (action[i].value !== 'check' || action[i + 1]?.value !== '(') continue;
+              let depth = 1;
+              let endIdx = i + 2;
+              while (endIdx < action.length && depth > 0) {
+                if (action[endIdx].value === '(') depth++;
+                else if (action[endIdx].value === ')') depth--;
+                endIdx++;
+              }
+              const checkTokens = action.slice(i + 2, endIdx - 1);
+              const referencesCode = checkTokens.some(
+                (token) =>
+                  (token.type === 'word' || token.type === 'ident') && token.value === 'code',
+              );
+              if (!referencesCode) continue;
+              const predicateIndex = i + 2;
+              if (
+                action[predicateIndex]?.value !== 'code' ||
+                action[predicateIndex + 1]?.value !== 'in' ||
+                action[predicateIndex + 2]?.value !== '('
+              ) {
+                throw new Error(
+                  `${file} defines an unsupported CHECK predicate shape on \`variants.code\`. ` +
+                    `Teach this guard that predicate rather than ignoring the domain constraint.`,
+                );
+              }
+              const parsedIn = parseStrictVariantInList(action, predicateIndex + 3);
+              if (parsedIn === null || action[parsedIn.nextIndex]?.value !== ')') {
+                throw new Error(
+                  `${file} defines an unsupported CHECK predicate shape on \`variants.code\`. ` +
+                    `Teach this guard that predicate rather than extracting a partial domain.`,
+                );
+              }
+              const suffix = action.slice(parsedIn.nextIndex + 1);
+              const addedNotValid =
+                suffix.length === 2 && suffix[0]?.value === 'not' && suffix[1]?.value === 'valid';
+              if (suffix.length !== 0 && !addedNotValid) {
+                throw new Error(
+                  `${file} adds an unsupported suffix to the \`variants.code\` CHECK constraint.`,
+                );
+              }
+              const name =
+                explicitName ?? nextImplicitConstraintName(currentTable.constraintNamespace, 'variants_code_check');
+              currentTable.constraintNamespace.add(name);
+              currentTable.activeCodeChecks.set(name, {
+                file,
+                name,
+                variants: parsedIn.variants,
+                validated: !addedNotValid,
+                addedNotValid,
+                validatedFile: addedNotValid ? null : file,
+              });
+              handled = true;
+            }
+          }
 
           // Search for table-level CHECK (variant ...)
           for (let i = 0; i < action.length; i++) {
@@ -1017,6 +1179,17 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
                   currentTable.constraintNamespace.add(name);
                   currentTable.variantConstraints.add(name);
                   currentTable.activeFks.add(name);
+                  currentTable.fkAddedFiles.set(name, file);
+                  const suffix = action.slice(afterRef + 3);
+                  const addedNotValid =
+                    suffix.length === 2 && suffix[0]?.value === 'not' && suffix[1]?.value === 'valid';
+                  if (!addedNotValid) {
+                    currentTable.validatedFks.add(name);
+                    currentTable.fkValidatedFiles.set(name, file);
+                  }
+                  if (key === STUDIES_TABLE_KEY && !hasValidatedVariantDomain()) {
+                    unsafeStudyConstraintTransition = true;
+                  }
                   handled = true;
                 }
               }
@@ -1049,7 +1222,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
         }
 
         const key = tableKey(ref);
-        if (key !== STUDIES_TABLE_KEY && !tables.has(key)) {
+        if (key !== STUDIES_TABLE_KEY && key !== VARIANTS_TABLE_KEY && !tables.has(key)) {
           continue;
         }
 
@@ -1057,13 +1230,7 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
           continue;
         }
 
-        const currentTable = {
-          hasVariantColumn: false,
-          constraintNamespace: new Set(),
-          variantConstraints: new Set(),
-          activeChecks: new Map(),
-          activeFks: new Set(),
-        };
+        const currentTable = newTableState();
         tables.set(key, currentTable);
 
         const openParen = stmt.findIndex((t) => t.type === 'punct' && t.value === '(');
@@ -1079,6 +1246,10 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
           if (clause[0]?.value === 'variant') {
             currentTable.hasVariantColumn = true;
             scanColumnConstraints(clause, file, currentTable.constraintNamespace, currentTable.variantConstraints, currentTable.activeChecks, currentTable.activeFks);
+            continue;
+          }
+          if (clause[0]?.value === 'code') {
+            currentTable.hasCodeColumn = true;
             continue;
           }
 
@@ -1172,16 +1343,43 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
             currentTable.constraintNamespace.add(explicitName);
           }
         }
+
+        if (key === STUDIES_TABLE_KEY) {
+          for (const name of currentTable.activeFks) {
+            currentTable.validatedFks.add(name);
+            currentTable.fkAddedFiles.set(name, file);
+            currentTable.fkValidatedFiles.set(name, file);
+          }
+          if (currentTable.activeFks.size > 0 && !hasValidatedVariantDomain()) {
+            unsafeStudyConstraintTransition = true;
+          }
+        }
       }
     }
   }
 
   const studiesTable = tables.get(STUDIES_TABLE_KEY);
+  const variantsTable = tables.get(VARIANTS_TABLE_KEY);
+  const variantDomainChecks =
+    variantsTable === undefined ? [] : Array.from(variantsTable.activeCodeChecks.values());
+  const foreignKeys =
+    studiesTable === undefined
+      ? []
+      : Array.from(studiesTable.activeFks).map((name) => ({
+          name,
+          file: studiesTable.fkAddedFiles.get(name) ?? '',
+          validated: studiesTable.validatedFks.has(name),
+          validatedFile: studiesTable.fkValidatedFiles.get(name) ?? null,
+        }));
+
   if (!studiesTable) {
     return {
       check: null,
       checks: [],
       hasForeignKey: false,
+      foreignKeys,
+      variantDomainChecks,
+      unsafeStudyConstraintTransition,
     };
   }
 
@@ -1194,6 +1392,9 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
     check: latestCheck,
     checks: Array.from(studiesTable.activeChecks.values()),
     hasForeignKey: studiesTable.activeFks.size > 0,
+    foreignKeys,
+    variantDomainChecks,
+    unsafeStudyConstraintTransition,
   };
 }
 
@@ -1278,14 +1479,24 @@ export function collectMirrors(dir = MIGRATIONS_DIR) {
     variants: effectiveLookupVariants(dir),
   });
   const replayed = replayStudiesSchema(dir);
-  for (const checkItem of replayed.checks) {
+  for (const checkItem of replayed.variantDomainChecks) {
     mirrors.push({
-      label: `\`studies.variant\` CHECK constraint (${checkItem.name}), after all migrations`,
+      label: `\`variants.code\` CHECK constraint (${checkItem.name}), after all migrations`,
       file: join(dir, checkItem.file),
       variants: checkItem.variants,
     });
   }
-  return { mirrors, studyConstraint: replayed.check, hasStudyVariantFk: replayed.hasForeignKey };
+  return {
+    mirrors,
+    studyConstraint: replayed.check,
+    studyChecks: replayed.checks,
+    hasStudyVariantFk: replayed.hasForeignKey,
+    studyForeignKeys: replayed.foreignKeys,
+    variantDomainConstraint:
+      replayed.variantDomainChecks.length === 1 ? replayed.variantDomainChecks[0] : null,
+    variantDomainConstraints: replayed.variantDomainChecks,
+    unsafeStudyConstraintTransition: replayed.unsafeStudyConstraintTransition,
+  };
 }
 
 /**
@@ -1301,7 +1512,17 @@ export function collectMirrors(dir = MIGRATIONS_DIR) {
  */
 export function evaluateParity(dir = MIGRATIONS_DIR) {
   const root = extractRegion(ROOT);
-  const { mirrors, studyConstraint, hasStudyVariantFk } = collectMirrors(dir);
+  const collected = collectMirrors(dir);
+  const {
+    mirrors,
+    studyConstraint,
+    studyChecks,
+    hasStudyVariantFk,
+    studyForeignKeys,
+    variantDomainConstraint,
+    variantDomainConstraints,
+    unsafeStudyConstraintTransition,
+  } = collected;
   const failures = [];
 
   for (const mirror of mirrors) {
@@ -1311,16 +1532,54 @@ export function evaluateParity(dir = MIGRATIONS_DIR) {
     }
   }
 
-  if (studyConstraint === null && !hasStudyVariantFk) {
-    failures.push('`studies.variant` has no CHECK constraint and no foreign key referencing `variants(code)`');
+  if (variantDomainConstraints.length === 0) {
+    failures.push('`variants.code` has no CHECK constraint enforcing the canonical variant domain');
+  } else if (variantDomainConstraints.length > 1) {
+    failures.push('`variants.code` has multiple active domain CHECK constraints');
+  }
+  if (variantDomainConstraint !== null) {
+    if (!variantDomainConstraint.addedNotValid) {
+      failures.push('`variants.code` domain CHECK was not added with `NOT VALID`');
+    }
+    if (!variantDomainConstraint.validated) {
+      failures.push('`variants.code` domain CHECK is not validated');
+    } else if (variantDomainConstraint.validatedFile === variantDomainConstraint.file) {
+      failures.push('`variants.code` domain CHECK must be validated in a later migration');
+    }
   }
 
-  return { failures, mirrors, studyConstraint, hasStudyVariantFk };
+  if (studyChecks.length > 0) {
+    failures.push(
+      `\`studies.variant\` retains obsolete CHECK constraint(s): ${studyChecks.map((check) => check.name).join(', ')}`,
+    );
+  }
+  if (!hasStudyVariantFk) {
+    failures.push('`studies.variant` has no foreign key referencing `variants(code)`');
+  } else if (studyForeignKeys.length > 1) {
+    failures.push('`studies.variant` has multiple active foreign keys referencing `variants(code)`');
+  } else if (studyForeignKeys[0]?.validated !== true) {
+    failures.push('`studies.variant` foreign key referencing `variants(code)` is not validated');
+  } else if (studyForeignKeys[0]?.validatedFile === studyForeignKeys[0]?.file) {
+    failures.push('`studies.variant` foreign key must be validated in a later migration');
+  }
+  if (unsafeStudyConstraintTransition) {
+    failures.push(
+      '`studies.variant` protection changed before the variants domain CHECK was validated',
+    );
+  }
+
+  return { failures, ...collected };
 }
 
 function main() {
   const root = extractRegion(ROOT);
-  const { failures, mirrors, studyConstraint, hasStudyVariantFk } = evaluateParity();
+  const {
+    failures,
+    mirrors,
+    studyConstraint,
+    hasStudyVariantFk,
+    variantDomainConstraint,
+  } = evaluateParity();
 
   console.log(`root: ${root.label} (${root.file})`);
   console.log(`      ${root.variants.join(', ')}\n`);
@@ -1334,17 +1593,22 @@ function main() {
     }
   }
 
+  if (variantDomainConstraint !== null && variantDomainConstraint.validated) {
+    console.log('  ok    `variants.code` domain CHECK is validated');
+  }
+
   if (studyConstraint === null) {
     if (hasStudyVariantFk) {
       console.log(
         '  --    `studies.variant` has no CHECK left; it derives from `variants(code)`, nothing to compare',
       );
-    } else {
-      console.log(
-        '  FAIL  `studies.variant` has no CHECK constraint and no foreign key referencing `variants(code)`',
-      );
     }
   }
+
+  const invariantFailures = failures.filter(
+    (failure) => !mirrors.some((mirror) => failure.startsWith(`${mirror.label}:`)),
+  );
+  for (const failure of invariantFailures) console.log(`  FAIL  ${failure}`);
 
   if (failures.length > 0) {
     console.log(
