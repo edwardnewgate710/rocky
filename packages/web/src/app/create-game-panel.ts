@@ -679,8 +679,11 @@ export class CreateGamePanel {
    * the panel is showing.
    */
   private setAdvancedOpen(open: boolean): void {
-    // Focus would otherwise be stranded on a node that is about to be hidden,
-    // dropping the keyboard user to the top of the document.
+    // Chromium focuses a button when it is clicked, so focus is usually already
+    // out of the region by now. Firefox and Safari do not, which leaves focus on
+    // whatever the player was editing — and hiding that node drops them to the
+    // document body. Costs one comparison; saves the keyboard flow on two of the
+    // three engines.
     const focused = this.doc.activeElement;
     if (!open && focused !== null && this.advancedRegion.contains(focused)) this.moreToggle.focus();
     this.advancedOpen = open;

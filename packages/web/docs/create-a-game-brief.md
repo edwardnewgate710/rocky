@@ -4,6 +4,11 @@
 > color selection kept in scope but sequenced behind an API change — see §10 /
 > Color sequencing). Scope: design brief only — no code written yet.
 
+Design mode: **Operate** — the visitor is posting a seek, so scanability and
+consistency outrank expression. `packages/web/CLAUDE.md` requires each surface's
+mode to be recorded in its own brief, and names the lobby among the Operate
+surfaces; this brief predated that convention and never carried the field.
+
 ## 1. Feature Summary
 
 A first-class way for a signed-in player to post a game offer ("seek") with the

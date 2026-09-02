@@ -200,7 +200,12 @@ class FakeDOMElement {
     }
   }
 
-  focus(): void {}
+  focusCount = 0;
+
+  focus(): void {
+    this.focusCount++;
+    if (this._doc) (this._doc as unknown as { activeElement: unknown }).activeElement = this;
+  }
 
   showModal(): void {
     this.open = true;
@@ -288,9 +293,9 @@ function createTestDoc(): {
       return el;
     },
     getElementById: (id: string): FakeDOMElement | null => elements.get(id) ?? null,
-    // Nothing is focused in the fake tree; the panel reads this before deciding
-    // whether a collapse would strand focus.
-    activeElement: null,
+    // Writable: the panel reads this before deciding whether a collapse would
+    // strand focus, so a test can put the active element inside the region.
+    activeElement: null as FakeDOMElement | null,
   } as unknown as Document;
 
   const ids = [
@@ -2046,6 +2051,57 @@ test('mountLobby: submitting a hidden invalid range opens the section before rep
   assert.equal(toggle.getAttribute('aria-expanded'), 'true');
   assert.equal(form.querySelector<FakeDOMElement>('#cg-rating-error')?.hidden, false);
   assert.equal(minimum.getAttribute('aria-invalid'), 'true');
+});
+
+/**
+ * Chromium moves focus to the toggle on click, so this branch only bites on
+ * Firefox and Safari — which the Playwright project does not run. Pinned here,
+ * where the active element can be placed directly.
+ */
+test('mountLobby: collapsing from inside the section hands focus back to the toggle', () => {
+  const { doc, elements } = createTestDoc();
+  const { client } = makeFakeClient();
+
+  mountTestLobby({ doc, client, isAuthenticated: () => true });
+  const mount = elements.get('create-game')!;
+  mount.querySelector('#create-seek')!.click();
+  const form = mount.querySelector('#create-game-form')!;
+  const toggle = moreToggle(form);
+  toggle.click();
+
+  const minimum = form.querySelector<FakeDOMElement>('#cg-min-rating')!;
+  minimum.focus();
+  assert.equal((doc as unknown as { activeElement: unknown }).activeElement, minimum);
+  const before = toggle.focusCount;
+
+  toggle.click();
+
+  assert.equal(advancedRegion(form).hidden, true);
+  assert.equal(toggle.focusCount, before + 1);
+  assert.equal((doc as unknown as { activeElement: unknown }).activeElement, toggle);
+});
+
+/** Focus outside the region is left exactly where it was. */
+test('mountLobby: collapsing from outside the section moves nobody', () => {
+  const { doc, elements } = createTestDoc();
+  const { client } = makeFakeClient();
+
+  mountTestLobby({ doc, client, isAuthenticated: () => true });
+  const mount = elements.get('create-game')!;
+  mount.querySelector('#create-seek')!.click();
+  const form = mount.querySelector('#create-game-form')!;
+  const toggle = moreToggle(form);
+  toggle.click();
+
+  const submitButton = form.querySelector<FakeDOMElement>('.cg-submit')!;
+  submitButton.focus();
+  const before = toggle.focusCount;
+
+  toggle.click();
+
+  assert.equal(advancedRegion(form).hidden, true);
+  assert.equal(toggle.focusCount, before);
+  assert.equal((doc as unknown as { activeElement: unknown }).activeElement, submitButton);
 });
 
 test('mountLobby: a pending create locks the disclosure with every other control', async () => {
