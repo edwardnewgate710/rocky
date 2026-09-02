@@ -1494,6 +1494,21 @@ CREATE TABLE studies (id UUID PRIMARY KEY, variant TEXT NOT NULL);`,
   }
 });
 
+test('CREATE TABLE replay accepts a final table-level studies variant CHECK', () => {
+  const dir = migrations({
+    '0001_studies.sql': `CREATE TABLE studies (
+      id UUID PRIMARY KEY,
+      variant TEXT NOT NULL,
+      CONSTRAINT studies_variant_check CHECK (variant IN ('standard'))
+    );`,
+  });
+  try {
+    assert.deepEqual(replayStudiesSchema(dir).check?.variants, ['standard']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('parity replay rejects NOT ENFORCED variant integrity constraints', () => {
   const checkDir = migrations({
     '0001_variants.sql': `CREATE TABLE variants (code TEXT PRIMARY KEY);`,

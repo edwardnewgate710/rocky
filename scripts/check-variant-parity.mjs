@@ -1391,7 +1391,24 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
         const openParen = stmt.findIndex((t) => t.type === 'punct' && t.value === '(');
         if (openParen === -1) continue;
 
-        const bodyTokens = stmt.slice(openParen + 1);
+        let closeParen = -1;
+        let bodyDepth = 0;
+        for (let i = openParen; i < stmt.length; i++) {
+          if (stmt[i].type !== 'punct') continue;
+          if (stmt[i].value === '(') bodyDepth++;
+          else if (stmt[i].value === ')') {
+            bodyDepth--;
+            if (bodyDepth === 0) {
+              closeParen = i;
+              break;
+            }
+          }
+        }
+        if (closeParen === -1) {
+          throw new Error(`${file} has an unterminated CREATE TABLE column list.`);
+        }
+
+        const bodyTokens = stmt.slice(openParen + 1, closeParen);
         const clauses = splitAlterActions(bodyTokens);
 
         for (const clause of clauses) {
