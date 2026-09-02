@@ -49,6 +49,22 @@ async function openCreateGame(page: Page, prefs: Record<string, unknown> | null 
 }
 
 /**
+ * Assert the page does not scroll sideways.
+ *
+ * Comparing `scrollWidth` to the viewport width is a near-enough proxy only
+ * while no classic scrollbar is present — one narrows the viewport, and the
+ * equality then fails on a page that never overflowed. Measuring the root
+ * against its own client width states the invariant the test is actually about.
+ */
+async function expectNoHorizontalOverflow(page: Page, label: string): Promise<void> {
+  const overflow = await page.evaluate(() => {
+    const root = document.documentElement;
+    return root.scrollWidth - root.clientWidth;
+  });
+  expect(overflow, `horizontal overflow ${label}`).toBeLessThanOrEqual(1);
+}
+
+/**
  * Reveal the advanced controls. Idempotent, because restored advanced
  * preferences open the section on their own.
  */
@@ -1503,11 +1519,11 @@ for (const viewport of [
 
     const clipped = await toggle.evaluate((button) => button.scrollWidth > button.clientWidth + 1);
     expect(clipped, `summary clipped at ${viewport.width}px`).toBe(false);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(viewport.width);
+    await expectNoHorizontalOverflow(page, `collapsed at ${viewport.width}px`);
 
     // And again with the section open, which is the taller, denser state.
     await toggle.click();
-    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(viewport.width);
+    await expectNoHorizontalOverflow(page, `open at ${viewport.width}px`);
     const box = await form.boundingBox();
     if (box === null) throw new Error('create-game form has no rendered bounds');
     expect(box.x).toBeGreaterThanOrEqual(0);
@@ -1539,14 +1555,14 @@ for (const viewport of [
     await expect(form.locator(moreSummary)).toHaveAttribute('dir', 'ltr');
     await expect(form.locator('#cg-min-rating')).toHaveAttribute('dir', 'ltr');
 
-    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(viewport.width);
+    await expectNoHorizontalOverflow(page, `RTL collapsed at ${viewport.width}px`);
     const box = await toggle.boundingBox();
     if (box === null) throw new Error('disclosure row has no rendered bounds');
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
 
     await toggle.click();
-    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(viewport.width);
+    await expectNoHorizontalOverflow(page, `RTL open at ${viewport.width}px`);
   });
 }
 
