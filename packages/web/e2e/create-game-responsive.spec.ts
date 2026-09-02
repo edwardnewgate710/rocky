@@ -48,6 +48,16 @@ async function openCreateGame(page: Page, prefs: Record<string, unknown> | null 
   await expect(page.locator('#create-game-form')).toBeVisible();
 }
 
+/**
+ * Reveal the advanced controls. Idempotent, because restored advanced
+ * preferences open the section on their own.
+ */
+async function openAdvanced(page: Page): Promise<void> {
+  const toggle = page.locator('.cg-more-toggle');
+  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
+  await expect(page.locator('#cg-more-options')).toBeVisible();
+}
+
 for (const viewport of [
   { name: 'desktop', width: 1440, height: 900 },
   { name: 'laptop', width: 1024, height: 768 },
@@ -67,8 +77,10 @@ for (const viewport of [
     await expect(createForm.locator('input[name="cg-color"]')).toHaveCount(3);
     await expect(createForm.locator('#cg-min-rating')).toHaveAttribute('inputmode', 'numeric');
     await expect(createForm.locator('#cg-max-rating')).toHaveAttribute('inputmode', 'numeric');
-    await expect(createForm.locator('.cg-more-toggle')).toHaveCount(0);
+    await expect(createForm.locator('.cg-more-toggle')).toHaveCount(1);
+    await expect(createForm.locator('#cg-more-options')).toBeHidden();
     await expect(createForm.locator('select')).toHaveCount(0);
+    await openAdvanced(page);
     await expect(createForm.locator('.cg-submit')).toHaveText('Create seek');
 
     expect(await createForm.locator('input[name="cg-time"]').evaluateAll((radios) =>
@@ -124,6 +136,9 @@ test('create-game radios keep native keyboard selection and a visible focus ring
   expect(outline.style).not.toBe('none');
   expect(Number.parseFloat(outline.width)).toBeGreaterThanOrEqual(3);
 
+  // Opening the section here rather than up front: clicking the toggle takes
+  // focus, which would defeat the time-group assertions above.
+  await openAdvanced(page);
   const variant = page.locator('input[name="cg-variant"]:checked');
   await variant.focus();
   await page.keyboard.press('ArrowRight');
@@ -189,6 +204,7 @@ test('default Standard and Random reach the exact seek payload', async ({ page }
 
 test('Atomic and Black reach the exact existing seek payload', async ({ page }) => {
   await openCreateGame(page);
+  await openAdvanced(page);
   const form = page.locator('#create-game-form');
   await form.locator('.cg-chip:has(input[name="cg-time"][value="5+3"])').click();
   await form.locator('.cg-chip:has(input[name="cg-variant"][value="atomic"])').click();
@@ -214,6 +230,7 @@ test('Atomic and Black reach the exact existing seek payload', async ({ page }) 
 
 test('optional rating combinations and exact endpoints preserve the complete seek payload', async ({ page }) => {
   await openCreateGame(page);
+  await openAdvanced(page);
   const form = page.locator('#create-game-form');
   const cases = [
     { min: '1500', max: '', expectedMin: 1500, expectedMax: null },
@@ -248,6 +265,7 @@ test('optional rating combinations and exact endpoints preserve the complete see
 
 test('rating validation blocks malformed ranges and survives unrelated choice changes', async ({ page }) => {
   await openCreateGame(page);
+  await openAdvanced(page);
   const form = page.locator('#create-game-form');
   let postCount = 0;
   page.on('request', (request) => {
@@ -281,6 +299,7 @@ test('rating validation blocks malformed ranges and survives unrelated choice ch
 
 test('rating and custom-time validation coexist without clearing each other', async ({ page }) => {
   await openCreateGame(page);
+  await openAdvanced(page);
   const form = page.locator('#create-game-form');
   await form.locator('.cg-chip:has(input[value="custom"])').click();
   await form.locator('#cg-increment').fill('');
@@ -335,6 +354,7 @@ test('V3 restores unrestricted while V4 restores an exact rating range', async (
 
 test('failed seek preserves the range but does not persist attempted V4 preferences', async ({ page }) => {
   await openCreateGame(page);
+  await openAdvanced(page);
   await page.unroute('**/v1/seeks');
   await page.route('**/v1/seeks', async (route) => {
     if (route.request().method() === 'POST') {
@@ -355,6 +375,7 @@ test('failed seek preserves the range but does not persist attempted V4 preferen
 
 test('pending creation disables both rating controls', async ({ page }) => {
   await openCreateGame(page);
+  await openAdvanced(page);
   await page.unroute('**/v1/seeks');
   let release!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
@@ -376,6 +397,7 @@ test('pending creation disables both rating controls', async ({ page }) => {
 
 test('rating bounds support keyboard-only entry and submission', async ({ page }) => {
   await openCreateGame(page);
+  await openAdvanced(page);
   const form = page.locator('#create-game-form');
   for (let index = 0; index < 40 && !(await form.locator('#cg-min-rating').evaluate((input) => input === document.activeElement)); index++) {
     await page.keyboard.press('Tab');
@@ -398,6 +420,7 @@ test('rating bounds support keyboard-only entry and submission', async ({ page }
 
 test('Custom validates before request and preserves exact integer-millisecond payload', async ({ page }) => {
   await openCreateGame(page);
+  await openAdvanced(page);
   const form = page.locator('#create-game-form');
   const presetHeight = await form.evaluate((element) => element.getBoundingClientRect().height);
   await form.locator('.cg-chip:has(input[value="custom"])').click();
@@ -572,6 +595,7 @@ test('Unlimited is offered as Rated as well as Casual, and both reach the reques
 test('Unlimited with a non-standard variant keeps both choices in the request', async ({ page }) => {
   await openCreateGame(page);
   const form = page.locator('#create-game-form');
+  await openAdvanced(page);
   await form.locator('.cg-chip:has(input[name="cg-variant"][value="crazyhouse"])').click();
   await form.locator(unlimitedChip).click();
 
@@ -591,6 +615,7 @@ test('Unlimited with a non-standard variant keeps both choices in the request', 
 test('every rating-bound combination survives an Unlimited seek unchanged', async ({ page }) => {
   await openCreateGame(page);
   const form = page.locator('#create-game-form');
+  await openAdvanced(page);
   await form.locator(unlimitedChip).click();
 
   for (const [minimum, maximum, expected] of [
@@ -601,6 +626,9 @@ test('every rating-bound combination survives an Unlimited seek unchanged', asyn
     ['1600', '1600', { minRating: 1600, maxRating: 1600 }],
     ['0', '4000', { minRating: 0, maxRating: 4000 }],
   ] as const) {
+    // Reopening derives the disclosure from the live values, so an unrestricted
+    // round leaves it closed for the next one.
+    await openAdvanced(page);
     await form.locator('#cg-min-rating').fill(minimum);
     await form.locator('#cg-max-rating').fill(maximum);
     const request = seekRequest(page);
@@ -621,6 +649,7 @@ test('every rating-bound combination survives an Unlimited seek unchanged', asyn
 test('a rating range error blocks an Unlimited seek without becoming a clock error', async ({ page }) => {
   await openCreateGame(page);
   const form = page.locator('#create-game-form');
+  await openAdvanced(page);
   await form.locator(unlimitedChip).click();
   await form.locator('#cg-min-rating').fill('1800');
   await form.locator('#cg-max-rating').fill('1500');
@@ -813,6 +842,7 @@ test('without a session the create trigger is gated, Unlimited included', async 
 test('a session resumed on a fresh load restores the Unlimited seek in full', async ({ page }) => {
   await openCreateGame(page);
   const form = page.locator('#create-game-form');
+  await openAdvanced(page);
   await form.locator(unlimitedChip).click();
   await form.locator('.cg-chip:has(input[name="cg-variant"][value="horde"])').click();
   await form.locator('.cg-seg:has(input[name="cg-mode"][value="rated"])').click();
@@ -1020,6 +1050,519 @@ test('coarse pointers get a 44px Unlimited target', async ({ browser }) => {
   }
 });
 
+// ── More options disclosure ──────────────────────────────────────────
+
+const moreToggle = '.cg-more-toggle';
+const advancedRegion = '#cg-more-options';
+const moreSummary = '.cg-more-summary';
+
+test('the advanced controls start behind a collapsed disclosure', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+
+  await expect(form.locator(advancedRegion)).toBeHidden();
+  await expect(form.locator('input[name="cg-variant"][value="atomic"]')).toBeHidden();
+  await expect(form.locator('#cg-min-rating')).toBeHidden();
+  await expect(form.locator('#cg-max-rating')).toBeHidden();
+  // The choices that stay are the ones the brief keeps loud.
+  await expect(form.locator('input[name="cg-time"]:checked')).toHaveValue('10+0');
+  await expect(form.locator('.cg-seg:has(input[name="cg-mode"][value="rated"])')).toBeVisible();
+  await expect(form.locator('.cg-seg:has(input[name="cg-color"][value="white"])')).toBeVisible();
+  await expect(form.locator('.cg-submit')).toBeVisible();
+});
+
+test('the disclosure button is a real button naming itself and its region', async ({ page }) => {
+  await openCreateGame(page);
+  const toggle = page.locator(moreToggle);
+
+  await expect(toggle).toHaveRole('button');
+  await expect(toggle).toHaveAttribute('type', 'button');
+  await expect(toggle).toHaveAttribute('aria-controls', 'cg-more-options');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(toggle).toContainText('More options');
+  await expect(toggle).toBeEnabled();
+  // Closed, the button announces the filter it is standing in for; open, the
+  // controls speak for themselves and the name goes back to the plain label.
+  await expect(toggle).toHaveAccessibleName('More options Standard · Any rating');
+  await toggle.click();
+  await expect(toggle).toHaveAccessibleName('More options');
+});
+
+test('the disclosure opens, closes, and reports each state on the button', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+  const toggle = page.locator(moreToggle);
+
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(form.locator(advancedRegion)).toBeVisible();
+  await expect(form.locator('#cg-min-rating')).toBeVisible();
+
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(form.locator(advancedRegion)).toBeHidden();
+});
+
+/**
+ * Tabbed for real, rather than asserting an attribute and trusting the browser:
+ * a regression to `visibility`/`opacity`/zero height would still hide the
+ * controls visually while leaving them in the tab order.
+ */
+test('the advanced controls leave and rejoin the tab order with the disclosure', async ({ page }) => {
+  await openCreateGame(page);
+  const insideRegion = () =>
+    page.evaluate(() => {
+      const region = document.querySelector('#cg-more-options');
+      return region !== null && document.activeElement !== null && region.contains(document.activeElement);
+    });
+
+  // Closed: tabbing on from the toggle reaches the actions, never the region.
+  await page.locator('.cg-more-toggle').focus();
+  for (let step = 0; step < 6; step++) {
+    await page.keyboard.press('Tab');
+    expect(await insideRegion(), `closed, tab ${step + 1}`).toBe(false);
+  }
+
+  await openAdvanced(page);
+  await page.locator('.cg-more-toggle').focus();
+  let reached = false;
+  for (let step = 0; step < 6 && !reached; step++) {
+    await page.keyboard.press('Tab');
+    reached = await insideRegion();
+  }
+  expect(reached, 'open, the region is reachable by Tab').toBe(true);
+});
+
+test('the disclosure is fully operable from the keyboard', async ({ page }) => {
+  await openCreateGame(page);
+  const toggle = page.locator(moreToggle);
+
+  // Tabbed to, not focused programmatically: :focus-visible only arms on a real
+  // keyboard interaction, which is the state a keyboard user actually sees.
+  for (let step = 0; step < 40 && !(await toggle.evaluate((b) => b === document.activeElement)); step++) {
+    await page.keyboard.press('Tab');
+  }
+  await expect(toggle).toBeFocused();
+  const outline = await toggle.evaluate((button) => {
+    const style = getComputedStyle(button);
+    return { style: style.outlineStyle, width: style.outlineWidth };
+  });
+  expect(outline.style).not.toBe('none');
+  expect(Number.parseFloat(outline.width)).toBeGreaterThanOrEqual(3);
+
+  await page.keyboard.press('Enter');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await page.keyboard.press('Space');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+});
+
+test('every advanced value survives repeated open and close', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+  const toggle = page.locator(moreToggle);
+  await openAdvanced(page);
+
+  await form.locator('.cg-chip:has(input[name="cg-variant"][value="atomic"])').click();
+  await form.locator('#cg-min-rating').fill('1200');
+  await form.locator('#cg-max-rating').fill('1800');
+
+  for (let cycle = 0; cycle < 3; cycle++) {
+    await toggle.click();
+    await toggle.click();
+  }
+
+  await expect(form.locator('input[name="cg-variant"]:checked')).toHaveValue('atomic');
+  await expect(form.locator('#cg-min-rating')).toHaveValue('1200');
+  await expect(form.locator('#cg-max-rating')).toHaveValue('1800');
+
+  const request = seekRequest(page);
+  await form.locator('.cg-submit').click();
+  expect((await request).postDataJSON()).toEqual({
+    variant: 'atomic',
+    color: 'random',
+    timeControl: { initialMs: 600_000, incrementMs: 0, delayMs: 0, kind: 'sudden_death' },
+    rated: false,
+    minRating: 1200,
+    maxRating: 1800,
+  });
+});
+
+test('the collapsed summary reports whatever the advanced controls hold', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+  const toggle = page.locator(moreToggle);
+  const summary = form.locator(moreSummary);
+
+  await expect(summary).toHaveText('Standard · Any rating');
+
+  for (const [variant, minimum, maximum, expected] of [
+    ['atomic', '', '', 'Atomic · Any rating'],
+    ['atomic', '1200', '', 'Atomic · Rating 1200 and up'],
+    ['atomic', '', '1800', 'Atomic · Rating up to 1800'],
+    ['atomic', '1600', '1600', 'Atomic · Rating 1600 exactly'],
+    ['crazyhouse', '1200', '1800', 'Crazyhouse · Rating 1200 to 1800'],
+    ['standard', '0', '4000', 'Standard · Rating 0 to 4000'],
+  ] as const) {
+    await openAdvanced(page);
+    await form.locator(`.cg-chip:has(input[name="cg-variant"][value="${variant}"])`).click();
+    await form.locator('#cg-min-rating').fill(minimum);
+    await form.locator('#cg-max-rating').fill(maximum);
+    await toggle.click();
+    await expect(summary, `${variant} ${minimum}-${maximum}`).toHaveText(expected);
+  }
+});
+
+test('a collapsed invalid range is announced, never summarised as a real choice', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+  await openAdvanced(page);
+  await form.locator('#cg-min-rating').fill('2000');
+  await form.locator('#cg-max-rating').fill('1500');
+  await page.locator(moreToggle).click();
+
+  await expect(form.locator(moreSummary)).toHaveText('Standard · Opponent rating needs attention');
+  // What was typed is still there to correct.
+  await expect(form.locator('#cg-min-rating')).toHaveValue('2000');
+  await expect(form.locator('#cg-max-rating')).toHaveValue('1500');
+});
+
+/**
+ * Focusing a field inside a closed section would strand the player in front of a
+ * form that refuses to submit and explains nothing.
+ */
+test('submitting a hidden invalid range opens the section, then focuses the field', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+  await openAdvanced(page);
+  await form.locator('#cg-min-rating').fill('2000');
+  await form.locator('#cg-max-rating').fill('1500');
+  await page.locator(moreToggle).click();
+  await expect(form.locator(advancedRegion)).toBeHidden();
+
+  await form.locator('.cg-submit').click();
+
+  await expect(form.locator(advancedRegion)).toBeVisible();
+  await expect(page.locator(moreToggle)).toHaveAttribute('aria-expanded', 'true');
+  await expect(form.locator('#cg-rating-error')).toBeVisible();
+  await expect(form.locator('#cg-rating-error')).toHaveText('Minimum rating must not exceed maximum rating.');
+  await expect(form.locator('#cg-min-rating')).toHaveAttribute('aria-invalid', 'true');
+  await expect(form.locator('#cg-min-rating')).toBeFocused();
+});
+
+test('a malformed hidden rating literal also opens the section before reporting', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+  await openAdvanced(page);
+  await form.locator('#cg-min-rating').fill('4001');
+  await page.locator(moreToggle).click();
+
+  await form.locator('.cg-submit').click();
+
+  await expect(form.locator(advancedRegion)).toBeVisible();
+  await expect(form.locator('#cg-rating-error')).toHaveText('Enter a whole rating from 0 to 4000.');
+  await expect(form.locator('#cg-min-rating')).toBeFocused();
+});
+
+test('a pending create locks the disclosure against a second click', async ({ page }) => {
+  await openCreateGame(page);
+  await page.unroute('**/v1/seeks');
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route('**/v1/seeks', async (route) => {
+    if (route.request().method() === 'POST') {
+      await gate;
+      await route.fulfill({ status: 201, contentType: 'application/json', body: '{"id":"pending-more"}' });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
+
+  const form = page.locator('#create-game-form');
+  const toggle = page.locator(moreToggle);
+  await form.locator('.cg-submit').click();
+
+  await expect(toggle).toBeDisabled();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  // A forced click on a disabled control must not move the disclosure.
+  await toggle.click({ force: true }).catch(() => undefined);
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(form.locator(advancedRegion)).toBeHidden();
+
+  release();
+  await expect(form).toBeHidden();
+});
+
+test('restored advanced preferences open the section instead of hiding a filter', async ({ page }) => {
+  await openCreateGame(page, {
+    time: '5+3', mode: 'rated', variant: 'atomic', color: 'black',
+    minRating: 1200, maxRating: 1800,
+  });
+  const form = page.locator('#create-game-form');
+
+  await expect(page.locator(moreToggle)).toHaveAttribute('aria-expanded', 'true');
+  await expect(form.locator(advancedRegion)).toBeVisible();
+  await expect(form.locator('input[name="cg-variant"]:checked')).toHaveValue('atomic');
+  await expect(form.locator('#cg-min-rating')).toHaveValue('1200');
+
+  // Closing it by hand still leaves the filter described.
+  await page.locator(moreToggle).click();
+  await expect(form.locator(moreSummary)).toHaveText('Atomic · Rating 1200 to 1800');
+});
+
+test('a single restored rating bound is enough to open the section', async ({ browser }) => {
+  for (const [stored, expected] of [
+    [{ minRating: 1200 }, 'Standard · Rating 1200 and up'],
+    [{ maxRating: 1800 }, 'Standard · Rating up to 1800'],
+    [{ variant: 'horde' }, 'Horde · Any rating'],
+  ] as const) {
+    const context = await browser.newContext();
+    try {
+      const page = await context.newPage();
+      await openCreateGame(page, { time: '10+0', mode: 'casual', ...stored });
+      await expect(page.locator(moreToggle), JSON.stringify(stored))
+        .toHaveAttribute('aria-expanded', 'true');
+      await page.locator(moreToggle).click();
+      await expect(page.locator(moreSummary), JSON.stringify(stored)).toHaveText(expected);
+    } finally {
+      await context.close();
+    }
+  }
+});
+
+test('default preferences leave the section closed and quiet', async ({ page }) => {
+  await openCreateGame(page, {
+    time: '5+3', mode: 'rated', variant: 'standard', color: 'white',
+    minRating: null, maxRating: null,
+  });
+
+  await expect(page.locator(moreToggle)).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('#cg-more-options')).toBeHidden();
+  await expect(page.locator(moreSummary)).toHaveText('Standard · Any rating');
+});
+
+test('a malformed preference produces no hidden advanced state', async ({ browser }) => {
+  for (const stored of [
+    { time: 'infinite', mode: 'casual', variant: 'atomic' },
+    { time: '7+7', mode: 'rated', minRating: 1200 },
+    { time: '10+0', mode: 'casual', variant: 'not-a-variant' },
+  ]) {
+    const context = await browser.newContext();
+    try {
+      const page = await context.newPage();
+      await openCreateGame(page, stored);
+      await expect(page.locator(moreToggle), JSON.stringify(stored))
+        .toHaveAttribute('aria-expanded', 'false');
+      await expect(page.locator(moreSummary), JSON.stringify(stored)).toHaveText('Standard · Any rating');
+      await expect(page.locator('input[name="cg-variant"]:checked')).toHaveValue('standard');
+    } finally {
+      await context.close();
+    }
+  }
+});
+
+test('reopening after an advanced create shows the settings it used', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+  await openAdvanced(page);
+  await form.locator('.cg-chip:has(input[name="cg-variant"][value="atomic"])').click();
+  await form.locator('#cg-min-rating').fill('1200');
+  await page.locator(moreToggle).click();
+
+  const request = seekRequest(page);
+  await form.locator('.cg-submit').click();
+  expect((await request).postDataJSON().variant).toBe('atomic');
+  await expect(form).toBeHidden();
+
+  await page.locator('#create-seek').click();
+  await expect(form).toBeVisible();
+  await expect(page.locator(moreToggle)).toHaveAttribute('aria-expanded', 'true');
+  await expect(form.locator('input[name="cg-variant"]:checked')).toHaveValue('atomic');
+  await expect(form.locator('#cg-min-rating')).toHaveValue('1200');
+});
+
+test('the disclosure never disturbs the time control', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+  const toggle = page.locator(moreToggle);
+  const timeSummary = form.locator('.cg-time-summary');
+
+  await form.locator(unlimitedChip).click();
+  await expect(timeSummary).toHaveText(UNLIMITED_SUMMARY);
+  await toggle.click();
+  await toggle.click();
+  await expect(form.locator('input[name="cg-time"]:checked')).toHaveValue('unlimited');
+  await expect(timeSummary).toHaveText(UNLIMITED_SUMMARY);
+
+  await form.locator('.cg-chip:has(input[value="custom"])').click();
+  await form.locator('#cg-minutes').fill('7.5');
+  await form.locator('#cg-increment').fill('4');
+  await toggle.click();
+  await toggle.click();
+  await expect(form.locator('#cg-minutes')).toHaveValue('7.5');
+  await expect(form.locator('#cg-increment')).toHaveValue('4');
+
+  const request = seekRequest(page);
+  await form.locator('.cg-submit').click();
+  expect((await request).postDataJSON().timeControl).toEqual({
+    initialMs: 450_000, incrementMs: 4_000, delayMs: 0, kind: 'increment',
+  });
+});
+
+test('the disclosure never disturbs mode or color', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+  const toggle = page.locator(moreToggle);
+
+  for (const [mode, color] of [['casual', 'white'], ['rated', 'black'], ['rated', 'random']] as const) {
+    await form.locator(`.cg-seg:has(input[name="cg-mode"][value="${mode}"])`).click();
+    await form.locator(`.cg-seg:has(input[name="cg-color"][value="${color}"])`).click();
+    await toggle.click();
+    await toggle.click();
+    await expect(form.locator('input[name="cg-mode"]:checked'), `${mode}/${color}`).toHaveValue(mode);
+    await expect(form.locator('input[name="cg-color"]:checked'), `${mode}/${color}`).toHaveValue(color);
+  }
+
+  const request = seekRequest(page);
+  await form.locator('.cg-submit').click();
+  const body = (await request).postDataJSON();
+  expect(body.rated).toBe(true);
+  expect(body.color).toBe('random');
+});
+
+test('Cancel and Escape still close the whole panel, disclosure open or not', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+  await openAdvanced(page);
+
+  await form.locator('.cg-cancel').click();
+  await expect(form).toBeHidden();
+  await expect(page.locator('#create-seek')).toBeFocused();
+
+  await page.locator('#create-seek').click();
+  await expect(form).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(form).toBeHidden();
+  await expect(page.locator('#create-seek')).toBeFocused();
+});
+
+test('a failed advanced create stays retryable with its section open', async ({ page }) => {
+  await openCreateGame(page);
+  await page.unroute('**/v1/seeks');
+  let attempt = 0;
+  await page.route('**/v1/seeks', async (route) => {
+    if (route.request().method() !== 'POST') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+      return;
+    }
+    attempt++;
+    await route.fulfill(
+      attempt === 1
+        ? { status: 503, contentType: 'application/json', body: '{"error":"unavailable"}' }
+        : { status: 201, contentType: 'application/json', body: '{"id":"retried-more"}' },
+    );
+  });
+
+  const form = page.locator('#create-game-form');
+  await openAdvanced(page);
+  await form.locator('.cg-chip:has(input[name="cg-variant"][value="horde"])').click();
+  await form.locator('#cg-min-rating').fill('1200');
+  await form.locator('.cg-submit').click();
+
+  await expect(page.locator('#lobby-error')).not.toHaveText('');
+  await expect(form).toBeVisible();
+  await expect(form.locator('input[name="cg-variant"]:checked')).toHaveValue('horde');
+  await expect(form.locator('#cg-min-rating')).toHaveValue('1200');
+  expect(await page.evaluate(() => localStorage.getItem('gambit-create-game'))).toBeNull();
+
+  await form.locator('.cg-submit').click();
+  await expect(form).toBeHidden();
+});
+
+for (const viewport of [
+  { name: 'desktop', width: 1440, height: 900 },
+  { name: 'laptop', width: 1024, height: 768 },
+  { name: 'tablet', width: 768, height: 1024 },
+  { name: 'mid', width: 480, height: 900 },
+  { name: 'narrow', width: 420, height: 900 },
+  { name: 'mobile', width: 390, height: 844 },
+  { name: 'small mobile', width: 320, height: 640 },
+] as const) {
+  test(`the disclosure row fits and wraps at ${viewport.name} (${viewport.width}px)`, async ({ page }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await openCreateGame(page);
+    const form = page.locator('#create-game-form');
+    const toggle = page.locator(moreToggle);
+
+    // A long summary is the widest this row ever gets.
+    await openAdvanced(page);
+    await form.locator('.cg-chip:has(input[name="cg-variant"][value="kingofthehill"])').click();
+    await form.locator('#cg-min-rating').fill('1200');
+    await form.locator('#cg-max-rating').fill('1800');
+    await toggle.click();
+    await expect(form.locator(moreSummary)).toHaveText('King of the Hill · Rating 1200 to 1800');
+
+    const clipped = await toggle.evaluate((button) => button.scrollWidth > button.clientWidth + 1);
+    expect(clipped, `summary clipped at ${viewport.width}px`).toBe(false);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(viewport.width);
+
+    // And again with the section open, which is the taller, denser state.
+    await toggle.click();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(viewport.width);
+    const box = await form.boundingBox();
+    if (box === null) throw new Error('create-game form has no rendered bounds');
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+  });
+}
+
+for (const viewport of [
+  { name: 'desktop', width: 1440, height: 900 },
+  { name: 'mobile', width: 320, height: 640 },
+] as const) {
+  test(`the disclosure mirrors under ${viewport.name} RTL without overflow`, async ({ page }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await page.addInitScript(() => {
+      document.addEventListener('DOMContentLoaded', () => document.documentElement.setAttribute('dir', 'rtl'));
+    });
+    await openCreateGame(page);
+    const form = page.locator('#create-game-form');
+    const toggle = page.locator(moreToggle);
+
+    await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+    await openAdvanced(page);
+    await form.locator('#cg-min-rating').fill('1200');
+    await form.locator('#cg-max-rating').fill('1800');
+    await toggle.click();
+
+    // The bounds keep their order: the summary is an isolated LTR run.
+    await expect(form.locator(moreSummary)).toHaveText('Standard · Rating 1200 to 1800');
+    await expect(form.locator(moreSummary)).toHaveAttribute('dir', 'ltr');
+    await expect(form.locator('#cg-min-rating')).toHaveAttribute('dir', 'ltr');
+
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(viewport.width);
+    const box = await toggle.boundingBox();
+    if (box === null) throw new Error('disclosure row has no rendered bounds');
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+
+    await toggle.click();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(viewport.width);
+  });
+}
+
+test('coarse pointers get a 44px disclosure target', async ({ browser }) => {
+  const context = await browser.newContext({ hasTouch: true, viewport: { width: 390, height: 844 } });
+  const page = await context.newPage();
+  try {
+    await openCreateGame(page);
+    const box = await page.locator(moreToggle).boundingBox();
+    if (box === null) throw new Error('disclosure row has no rendered bounds');
+    expect(box.height).toBeGreaterThanOrEqual(44);
+  } finally {
+    await context.close();
+  }
+});
+
 test('coarse pointers get 44px create-game targets', async ({ browser }) => {
   const context = await browser.newContext({ hasTouch: true, viewport: { width: 390, height: 844 } });
   const page = await context.newPage();
@@ -1029,6 +1572,7 @@ test('coarse pointers get 44px create-game targets', async ({ browser }) => {
     expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
 
     await createForm.locator('.cg-chip:has(input[value="custom"])').click();
+    await openAdvanced(page);
     for (const selector of ['.cg-chip', '.cg-seg', '.cg-num input', '.cg-submit', '.cg-cancel']) {
       const heights = await createForm.locator(selector).evaluateAll((elements) =>
         elements.map((element) => element.getBoundingClientRect().height),
