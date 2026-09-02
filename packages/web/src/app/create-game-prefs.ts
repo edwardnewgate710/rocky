@@ -6,6 +6,11 @@
  * their last settings back. Unknown or out-of-range values are rejected
  * (returns `null`), while V2/V3 blobs without later fields are normalized to
  * the current defaults.
+ *
+ * `time` is the discriminant, and every accepted value is matched literally: a
+ * blob naming a time control this build does not know is rejected outright
+ * rather than falling back to any particular one. That is what keeps an
+ * unrecognized `time` from silently resolving to the untimed choice.
  */
 import {
   OFFERED_VARIANTS,
@@ -16,6 +21,7 @@ import {
 import {
   CREATE_GAME_PRESETS,
   CUSTOM_PRESET_ID,
+  UNLIMITED_TIME_ID,
   validateCustomTime,
   type CreateGamePresetId,
 } from './time-presets.js';
@@ -30,6 +36,14 @@ export type SeekMode = 'casual' | 'rated';
 export type CreateGamePrefs =
   | {
       readonly time: CreateGamePresetId;
+      readonly mode: SeekMode;
+      readonly variant: Variant;
+      readonly color: SeekColor;
+      readonly minRating: number | null;
+      readonly maxRating: number | null;
+    }
+  | {
+      readonly time: typeof UNLIMITED_TIME_ID;
       readonly mode: SeekMode;
       readonly variant: Variant;
       readonly color: SeekColor;
@@ -135,6 +149,12 @@ export function parseCreateGamePrefs(raw: string | null): CreateGamePrefs | null
 
   const time = o.time;
   if (typeof time !== 'string') return null;
+
+  if (time === UNLIMITED_TIME_ID) {
+    // No minutes/increment to read: the untimed choice carries no durations, and
+    // any that a stored blob happens to hold are deliberately dropped here.
+    return { time, mode, variant, color, minRating, maxRating };
+  }
 
   if (time === CUSTOM_PRESET_ID) {
     const minutes = o.minutes;

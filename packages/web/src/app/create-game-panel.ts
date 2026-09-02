@@ -19,6 +19,8 @@ import {
   CUSTOM_LIMITS,
   CUSTOM_PRESET_ID,
   DEFAULT_PRESET_ID,
+  UNLIMITED_TIME_CONTROL,
+  UNLIMITED_TIME_ID,
   estimateSpeed,
   presetToTimeControl,
   validateCustomTime,
@@ -71,7 +73,7 @@ export interface CreateGamePanelOptions {
   readonly mount: HTMLElement;
   readonly callbacks: CreateGamePanelCallbacks;
   readonly initialAuthenticated?: boolean;
-  /** Persists the last successful V4 settings. */
+  /** Persists the last successful settings. */
   readonly storage?: KeyValueStorage;
 }
 
@@ -184,6 +186,13 @@ export class CreateGamePanel {
       presets.append(this.radio('cg-time', preset.id, preset.id, preset.id === initialTimeId, speed));
     }
     presets.append(
+      this.radio(
+        'cg-time',
+        UNLIMITED_TIME_ID,
+        'Unlimited',
+        initialTimeId === UNLIMITED_TIME_ID,
+        estimateSpeed(UNLIMITED_TIME_CONTROL),
+      ),
       this.radio('cg-time', CUSTOM_PRESET_ID, 'Custom', initialTimeId === CUSTOM_PRESET_ID),
     );
     return el(
@@ -462,6 +471,27 @@ export class CreateGamePanel {
       };
     }
 
+    if (selected === UNLIMITED_TIME_ID) {
+      // The custom fields are deliberately not read: they belong to a choice that
+      // is not selected, so whatever they hold — valid or not — cannot reach the
+      // request or block it.
+      if (!ratingValidation.ok) {
+        ratingValidation.input.focus();
+        return null;
+      }
+      const ratings = ratingValidation.value;
+      return {
+        params: {
+          variant,
+          timeControl: UNLIMITED_TIME_CONTROL,
+          rated: mode === 'rated',
+          color,
+          ...ratings,
+        },
+        prefs: { time: UNLIMITED_TIME_ID, mode, variant, color, ...ratings },
+      };
+    }
+
     const preset = CREATE_GAME_PRESETS.find((candidate) => candidate.id === selected);
     if (!preset) return null;
     if (!ratingValidation.ok) {
@@ -605,6 +635,11 @@ export class CreateGamePanel {
       return;
     }
     this.clearCustomError();
+    if (selected === UNLIMITED_TIME_ID) {
+      this.timeSummary.textContent =
+        `${estimateSpeed(UNLIMITED_TIME_CONTROL)} — no clock, so neither side can run out of time.`;
+      return;
+    }
     const preset = CREATE_GAME_PRESETS.find((candidate) => candidate.id === selected);
     if (!preset) return;
     const speed = estimateSpeed(presetToTimeControl(preset.minutes, preset.increment));

@@ -166,6 +166,76 @@ test('parse rejects unsafe or contradictory persisted rating bounds', () => {
   }
 });
 
+test('parse restores the untimed choice, defaulting the fields older blobs lack', () => {
+  assert.deepEqual(parseCreateGamePrefs('{"time":"unlimited","mode":"casual"}'), {
+    time: 'unlimited',
+    mode: 'casual',
+    variant: 'standard',
+    color: 'random',
+    minRating: null,
+    maxRating: null,
+  });
+  assert.deepEqual(
+    parseCreateGamePrefs(
+      '{"time":"unlimited","mode":"rated","variant":"atomic","color":"black","minRating":1500,"maxRating":1800}',
+    ),
+    {
+      time: 'unlimited', mode: 'rated', variant: 'atomic', color: 'black',
+      minRating: 1500, maxRating: 1800,
+    },
+  );
+});
+
+test('serialize round-trips the untimed choice through parse', () => {
+  const prefs = {
+    time: 'unlimited' as const,
+    mode: 'rated' as const,
+    variant: 'crazyhouse' as const,
+    color: 'white' as const,
+    minRating: null,
+    maxRating: 2000,
+  };
+  assert.deepEqual(parseCreateGamePrefs(serializeCreateGamePrefs(prefs)), prefs);
+});
+
+/**
+ * The untimed choice is reachable only by naming it. Every other rejection path
+ * has to keep rejecting rather than resolve to it, because a blob that arrives
+ * from storage is untrusted and silently starting an untimed game is a real
+ * surprise — so this asserts `null`, not merely "not unlimited".
+ */
+test('parse never resolves an unrecognized or malformed blob to the untimed choice', () => {
+  for (const raw of [
+    '{"time":"infinite","mode":"casual"}',
+    '{"time":"0+0","mode":"casual"}',
+    '{"time":"Unlimited","mode":"casual"}',
+    '{"time":"unlimited ","mode":"casual"}',
+    '{"time":"","mode":"casual"}',
+    '{"time":null,"mode":"casual"}',
+    '{"time":true,"mode":"casual"}',
+    '{"mode":"casual"}',
+    '{"time":"unlimited"}',
+    '{"time":"unlimited","mode":"ranked"}',
+    '{"time":"unlimited","mode":"casual","variant":"shogi"}',
+    '{"time":"unlimited","mode":"casual","color":"green"}',
+    '{"time":"unlimited","mode":"casual","minRating":4001}',
+    '{"time":"unlimited","mode":"casual","minRating":1800,"maxRating":1500}',
+  ]) {
+    assert.equal(parseCreateGamePrefs(raw), null, raw);
+  }
+});
+
+/** Durations belong to the timed choices; a stored blob cannot smuggle them in. */
+test('parse drops durations a stored untimed blob happens to carry', () => {
+  assert.deepEqual(
+    parseCreateGamePrefs('{"time":"unlimited","mode":"casual","minutes":12,"increment":3}'),
+    {
+      time: 'unlimited', mode: 'casual', variant: 'standard', color: 'random',
+      minRating: null, maxRating: null,
+    },
+  );
+});
+
 test('storage key is stable', () => {
   assert.equal(PREFS_STORAGE_KEY, 'gambit-create-game');
 });

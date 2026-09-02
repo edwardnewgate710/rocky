@@ -1,5 +1,5 @@
 /**
- * Static browser contract for the focused Create-a-Game Web V4 surface.
+ * Static browser contract for the focused Create-a-Game Web surface.
  *
  * The API calls needed to restore a signed-in lobby are stubbed, so this runs with Vite preview
  * only. Real seek creation and matching remain covered by seek-acceptance.spec.ts.
@@ -61,7 +61,7 @@ for (const viewport of [
     await openCreateGame(page);
     const createForm = page.locator('#create-game-form');
 
-    await expect(createForm.locator('input[name="cg-time"]')).toHaveCount(11);
+    await expect(createForm.locator('input[name="cg-time"]')).toHaveCount(12);
     await expect(createForm.locator('input[name="cg-mode"]')).toHaveCount(2);
     await expect(createForm.locator('input[name="cg-variant"]')).toHaveCount(8);
     await expect(createForm.locator('input[name="cg-color"]')).toHaveCount(3);
@@ -73,7 +73,10 @@ for (const viewport of [
 
     expect(await createForm.locator('input[name="cg-time"]').evaluateAll((radios) =>
       radios.map((radio) => (radio as HTMLInputElement).value),
-    )).toEqual(['1+0', '2+1', '3+0', '3+2', '5+0', '5+3', '10+0', '10+5', '15+10', '30+20', 'custom']);
+    )).toEqual([
+      '1+0', '2+1', '3+0', '3+2', '5+0', '5+3',
+      '10+0', '10+5', '15+10', '30+20', 'unlimited', 'custom',
+    ]);
     expect(await createForm.locator('input[name="cg-mode"]').evaluateAll((radios) =>
       radios.map((radio) => (radio as HTMLInputElement).value),
     )).toEqual(['casual', 'rated']);
@@ -443,6 +446,578 @@ test('Custom validates before request and preserves exact integer-millisecond pa
     minRating: null,
     maxRating: null,
   });
+});
+
+// ── Unlimited ────────────────────────────────────────────────────────
+
+/** The one wire shape `parseTimeControl` accepts for an untimed seek. */
+const UNLIMITED_WIRE = { initialMs: 0, incrementMs: 0, delayMs: 0, kind: 'unlimited' } as const;
+
+const UNLIMITED_SUMMARY = 'Correspondence — no clock, so neither side can run out of time.';
+
+const unlimitedChip = '.cg-chip:has(input[name="cg-time"][value="unlimited"])';
+
+/** Resolve once the panel has posted a seek, so the body can be asserted exactly. */
+function seekRequest(page: Page): Promise<import('@playwright/test').Request> {
+  return page.waitForRequest(
+    (request) => request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/v1/seeks'),
+  );
+}
+
+test('Unlimited is offered among the time controls with a readable name', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+
+  await expect(form.locator(unlimitedChip)).toHaveCount(1);
+  await expect(form.locator(`${unlimitedChip} .cg-chip-label`)).toHaveText('Unlimited');
+  await expect(form.locator(`${unlimitedChip} .cg-chip-speed`)).toHaveText('Correspondence');
+  // No infinity glyph anywhere in the group: the word is the whole affordance.
+  expect(await form.locator('.cg-presets').innerText()).not.toContain('∞');
+});
+
+test('selecting Unlimited exposes the selection and describes it in the live region', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+  const summary = form.locator('.cg-time-summary');
+  await expect(summary).toHaveText('Rapid — 10 minutes per side, no increment.');
+
+  await form.locator(unlimitedChip).click();
+
+  await expect(form.locator('input[name="cg-time"]:checked')).toHaveValue('unlimited');
+  await expect(summary).toBeVisible();
+  await expect(summary).toHaveText(UNLIMITED_SUMMARY);
+  await expect(summary).toHaveAttribute('aria-live', 'polite');
+  await expect(form.locator('.cg-custom')).toBeHidden();
+});
+
+test('Unlimited is reachable and selectable by keyboard alone, with a visible focus ring', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+  await form.locator('input[name="cg-time"]:checked').focus();
+  // 10+0 → 10+5 → 15+10 → 30+20 → unlimited, in DOM order within the group.
+  for (let step = 0; step < 4; step++) await page.keyboard.press('ArrowRight');
+
+  await expect(form.locator('input[name="cg-time"]:checked')).toHaveValue('unlimited');
+  await expect(form.locator('.cg-time-summary')).toHaveText(UNLIMITED_SUMMARY);
+
+  const outline = await form.locator(unlimitedChip).evaluate((label) => {
+    const style = getComputedStyle(label);
+    return { style: style.outlineStyle, width: style.outlineWidth };
+  });
+  expect(outline.style).not.toBe('none');
+  expect(Number.parseFloat(outline.width)).toBeGreaterThanOrEqual(3);
+});
+
+test('Unlimited with Random and Casual reaches the exact zero-duration payload', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+  await form.locator(unlimitedChip).click();
+
+  const request = seekRequest(page);
+  await form.locator('.cg-submit').click();
+  expect((await request).postDataJSON()).toEqual({
+    variant: 'standard',
+    color: 'random',
+    timeControl: UNLIMITED_WIRE,
+    rated: false,
+    minRating: null,
+    maxRating: null,
+  });
+});
+
+for (const color of ['white', 'black'] as const) {
+  test(`Unlimited with ${color} carries the color and no clock durations`, async ({ page }) => {
+    await openCreateGame(page);
+    const form = page.locator('#create-game-form');
+    await form.locator(unlimitedChip).click();
+    await form.locator(`.cg-seg:has(input[name="cg-color"][value="${color}"])`).click();
+
+    const request = seekRequest(page);
+    await form.locator('.cg-submit').click();
+    expect((await request).postDataJSON()).toEqual({
+      variant: 'standard',
+      color,
+      timeControl: UNLIMITED_WIRE,
+      rated: false,
+      minRating: null,
+      maxRating: null,
+    });
+  });
+}
+
+/**
+ * Rated and Unlimited are both permitted: nothing in `POST /v1/seeks` or in the
+ * acceptance path couples `rated` to a speed bucket, and an untimed game simply
+ * classifies as correspondence.
+ */
+test('Unlimited is offered as Rated as well as Casual, and both reach the request', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+  await form.locator(unlimitedChip).click();
+  await expect(form.locator('.cg-seg:has(input[name="cg-mode"][value="rated"]) input')).toBeEnabled();
+  await form.locator('.cg-seg:has(input[name="cg-mode"][value="rated"])').click();
+
+  const request = seekRequest(page);
+  await form.locator('.cg-submit').click();
+  expect((await request).postDataJSON()).toEqual({
+    variant: 'standard',
+    color: 'random',
+    timeControl: UNLIMITED_WIRE,
+    rated: true,
+    minRating: null,
+    maxRating: null,
+  });
+});
+
+test('Unlimited with a non-standard variant keeps both choices in the request', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+  await form.locator('.cg-chip:has(input[name="cg-variant"][value="crazyhouse"])').click();
+  await form.locator(unlimitedChip).click();
+
+  await expect(form.locator('input[name="cg-variant"]:checked')).toHaveValue('crazyhouse');
+  const request = seekRequest(page);
+  await form.locator('.cg-submit').click();
+  expect((await request).postDataJSON()).toEqual({
+    variant: 'crazyhouse',
+    color: 'random',
+    timeControl: UNLIMITED_WIRE,
+    rated: false,
+    minRating: null,
+    maxRating: null,
+  });
+});
+
+test('every rating-bound combination survives an Unlimited seek unchanged', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+  await form.locator(unlimitedChip).click();
+
+  for (const [minimum, maximum, expected] of [
+    ['', '', { minRating: null, maxRating: null }],
+    ['1200', '', { minRating: 1200, maxRating: null }],
+    ['', '2200', { minRating: null, maxRating: 2200 }],
+    ['1500', '1800', { minRating: 1500, maxRating: 1800 }],
+    ['1600', '1600', { minRating: 1600, maxRating: 1600 }],
+    ['0', '4000', { minRating: 0, maxRating: 4000 }],
+  ] as const) {
+    await form.locator('#cg-min-rating').fill(minimum);
+    await form.locator('#cg-max-rating').fill(maximum);
+    const request = seekRequest(page);
+    await form.locator('.cg-submit').click();
+    expect((await request).postDataJSON(), `${minimum}-${maximum}`).toEqual({
+      variant: 'standard',
+      color: 'random',
+      timeControl: UNLIMITED_WIRE,
+      rated: false,
+      ...expected,
+    });
+    // Success collapses the panel; reopen for the next combination.
+    await page.locator('#create-seek').click();
+    await expect(form).toBeVisible();
+  }
+});
+
+test('a rating range error blocks an Unlimited seek without becoming a clock error', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+  await form.locator(unlimitedChip).click();
+  await form.locator('#cg-min-rating').fill('1800');
+  await form.locator('#cg-max-rating').fill('1500');
+
+  await form.locator('.cg-submit').click();
+  await expect(form.locator('#cg-rating-error')).toHaveText('Minimum rating must not exceed maximum rating.');
+  await expect(form.locator('#cg-min-rating')).toHaveAttribute('aria-invalid', 'true');
+  await expect(form.locator('#cg-custom-error')).toBeHidden();
+  await expect(form.locator('input[name="cg-time"]:checked')).toHaveValue('unlimited');
+  await expect(form).toBeVisible();
+});
+
+test('a timed preset and Unlimited replace each other cleanly in both directions', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+  const summary = form.locator('.cg-time-summary');
+
+  await form.locator('.cg-chip:has(input[name="cg-time"][value="5+3"])').click();
+  await expect(summary).toHaveText('Blitz — 5 minutes per side, 3 second increment.');
+
+  await form.locator(unlimitedChip).click();
+  await expect(summary).toHaveText(UNLIMITED_SUMMARY);
+  await expect(form.locator('input[name="cg-time"]:checked')).toHaveCount(1);
+
+  await form.locator('.cg-chip:has(input[name="cg-time"][value="30+20"])').click();
+  await expect(summary).toHaveText('Classical — 30 minutes per side, 20 second increment.');
+
+  const request = seekRequest(page);
+  await form.locator('.cg-submit').click();
+  expect((await request).postDataJSON().timeControl).toEqual({
+    initialMs: 1_800_000, incrementMs: 20_000, delayMs: 0, kind: 'increment',
+  });
+});
+
+test('Custom values survive a detour through Unlimited and still reach the request', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+
+  await form.locator('.cg-chip:has(input[value="custom"])').click();
+  await form.locator('#cg-minutes').fill('12');
+  await form.locator('#cg-increment').fill('3');
+
+  await form.locator(unlimitedChip).click();
+  await expect(form.locator('.cg-custom')).toBeHidden();
+  await expect(form.locator('#cg-minutes')).toHaveValue('12');
+  await expect(form.locator('#cg-increment')).toHaveValue('3');
+
+  await form.locator('.cg-chip:has(input[value="custom"])').click();
+  await expect(form.locator('.cg-custom')).toBeVisible();
+  await expect(form.locator('#cg-minutes')).toHaveValue('12');
+  await expect(form.locator('#cg-increment')).toHaveValue('3');
+
+  const request = seekRequest(page);
+  await form.locator('.cg-submit').click();
+  expect((await request).postDataJSON().timeControl).toEqual({
+    initialMs: 720_000, incrementMs: 3_000, delayMs: 0, kind: 'increment',
+  });
+});
+
+test('invalid Custom values left behind neither block nor reach an Unlimited seek', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+
+  await form.locator('.cg-chip:has(input[value="custom"])').click();
+  await form.locator('#cg-minutes').fill('0');
+  await form.locator('.cg-submit').click();
+  await expect(form.locator('#cg-minutes')).toHaveAttribute('aria-invalid', 'true');
+  await expect(form.locator('#cg-custom-error')).toBeVisible();
+
+  await form.locator(unlimitedChip).click();
+  await expect(form.locator('#cg-custom-error')).toBeHidden();
+  await expect(form.locator('#cg-minutes')).not.toHaveAttribute('aria-invalid', 'true');
+
+  const request = seekRequest(page);
+  await form.locator('.cg-submit').click();
+  // The stale "0" is nowhere in the body.
+  expect((await request).postDataJSON()).toEqual({
+    variant: 'standard',
+    color: 'random',
+    timeControl: UNLIMITED_WIRE,
+    rated: false,
+    minRating: null,
+    maxRating: null,
+  });
+});
+
+test('a pending Unlimited create disables every control and admits one request', async ({ page }) => {
+  await openCreateGame(page);
+  await page.unroute('**/v1/seeks');
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const posted: string[] = [];
+  await page.route('**/v1/seeks', async (route) => {
+    if (route.request().method() === 'POST') {
+      posted.push(route.request().postData() ?? '');
+      await gate;
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({ id: 'unlimited-seek' }),
+      });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
+
+  const form = page.locator('#create-game-form');
+  await form.locator(unlimitedChip).click();
+  await form.locator('.cg-submit').click();
+
+  await expect(form).toHaveAttribute('aria-busy', 'true');
+  await expect(form.locator(`${unlimitedChip} input`)).toBeDisabled();
+  await expect(form.locator('.cg-submit')).toBeDisabled();
+  await expect(form.locator('.cg-cancel')).toBeDisabled();
+  await expect(form.locator('#cg-min-rating')).toBeDisabled();
+  await expect(form.locator('#cg-max-rating')).toBeDisabled();
+  for (const group of ['cg-time', 'cg-variant', 'cg-mode', 'cg-color']) {
+    const enabled = await form.locator(`input[name="${group}"]`).evaluateAll((inputs) =>
+      inputs.filter((input) => !(input as HTMLInputElement).disabled).length,
+    );
+    expect(enabled, group).toBe(0);
+  }
+
+  // Submit the form directly, bypassing the disabled button, so the guard in the
+  // handler itself is what has to stop the second request.
+  await form.evaluate((element) => (element as HTMLFormElement).requestSubmit());
+  release();
+  await expect(form).toHaveAttribute('aria-busy', 'false');
+  expect(posted).toHaveLength(1);
+});
+
+test('Cancel and Escape close an Unlimited form, restore focus, and send nothing', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+  let posts = 0;
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().includes('/v1/seeks')) posts++;
+  });
+
+  await form.locator(unlimitedChip).click();
+  await form.locator('.cg-cancel').click();
+  await expect(form).toBeHidden();
+  await expect(page.locator('#create-seek')).toBeFocused();
+  await expect(page.locator('#create-seek')).toHaveAttribute('aria-expanded', 'false');
+
+  await page.locator('#create-seek').click();
+  await expect(form).toBeVisible();
+  // Reopening keeps the choice, and puts focus on it.
+  await expect(form.locator('input[name="cg-time"]:checked')).toHaveValue('unlimited');
+  await expect(form.locator(`${unlimitedChip} input`)).toBeFocused();
+
+  await page.keyboard.press('Escape');
+  await expect(form).toBeHidden();
+  await expect(page.locator('#create-seek')).toBeFocused();
+
+  await page.locator('#create-seek').click();
+  await expect(form.locator('input[name="cg-time"]:checked')).toHaveValue('unlimited');
+  expect(posts).toBe(0);
+});
+
+/**
+ * Unlimited gets no authentication path of its own: the panel is reached through
+ * the same gated trigger as every other choice, and cannot be opened without a
+ * session at all.
+ */
+test('without a session the create trigger is gated, Unlimited included', async ({ page }) => {
+  await page.route('**/v1/auth/refresh', async (route) => {
+    await route.fulfill({ status: 401, contentType: 'application/json', body: '{"error":"unauthorized"}' });
+  });
+  await page.route('**/v1/capabilities', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{"capabilities":{}}' });
+  });
+  await page.route('**/v1/seeks', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
+  await page.goto('/');
+
+  const trigger = page.locator('#create-seek');
+  await expect(trigger).toBeDisabled();
+  await expect(trigger).toHaveAttribute('title', 'Sign in to create a seek');
+  await expect(page.locator('#create-game-form')).toBeHidden();
+  await expect(page.locator(unlimitedChip)).toBeHidden();
+});
+
+/**
+ * The resumed-session path a player actually takes: sign in elsewhere, come back,
+ * and the panel rebuilds from the last successful create. Every choice that rode
+ * on the Unlimited seek has to come back with it.
+ */
+test('a session resumed on a fresh load restores the Unlimited seek in full', async ({ page }) => {
+  await openCreateGame(page);
+  const form = page.locator('#create-game-form');
+  await form.locator(unlimitedChip).click();
+  await form.locator('.cg-chip:has(input[name="cg-variant"][value="horde"])').click();
+  await form.locator('.cg-seg:has(input[name="cg-mode"][value="rated"])').click();
+  await form.locator('.cg-seg:has(input[name="cg-color"][value="white"])').click();
+  await form.locator('#cg-min-rating').fill('1400');
+
+  const first = seekRequest(page);
+  await form.locator('.cg-submit').click();
+  const firstBody = {
+    variant: 'horde',
+    color: 'white',
+    timeControl: UNLIMITED_WIRE,
+    rated: true,
+    minRating: 1400,
+    maxRating: null,
+  };
+  expect((await first).postDataJSON()).toEqual(firstBody);
+  await expect(form).toBeHidden();
+
+  await page.reload();
+  await expect(page.locator('#create-seek')).toBeEnabled();
+  await page.locator('#create-seek').click();
+  await expect(form).toBeVisible();
+
+  await expect(form.locator('input[name="cg-time"]:checked')).toHaveValue('unlimited');
+  await expect(form.locator('input[name="cg-variant"]:checked')).toHaveValue('horde');
+  await expect(form.locator('input[name="cg-mode"]:checked')).toHaveValue('rated');
+  await expect(form.locator('input[name="cg-color"]:checked')).toHaveValue('white');
+  await expect(form.locator('#cg-min-rating')).toHaveValue('1400');
+  await expect(form.locator('.cg-time-summary')).toHaveText(UNLIMITED_SUMMARY);
+
+  const second = seekRequest(page);
+  await form.locator('.cg-submit').click();
+  expect((await second).postDataJSON()).toEqual(firstBody);
+});
+
+test('a rejected Unlimited seek surfaces the error, stays retryable, and persists nothing', async ({ page }) => {
+  await openCreateGame(page);
+  await page.unroute('**/v1/seeks');
+  let attempt = 0;
+  await page.route('**/v1/seeks', async (route) => {
+    if (route.request().method() !== 'POST') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+      return;
+    }
+    attempt++;
+    if (attempt === 1) {
+      await route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"unavailable"}' });
+      return;
+    }
+    await route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({ id: 'unlimited-retry' }),
+    });
+  });
+
+  const form = page.locator('#create-game-form');
+  await form.locator(unlimitedChip).click();
+  await form.locator('.cg-submit').click();
+
+  await expect(page.locator('#lobby-error')).not.toHaveText('');
+  await expect(form).toBeVisible();
+  // No silent fall back to a timed control, and nothing written yet.
+  await expect(form.locator('input[name="cg-time"]:checked')).toHaveValue('unlimited');
+  await expect(form.locator('.cg-submit')).toBeEnabled();
+  expect(await page.evaluate(() => localStorage.getItem('gambit-create-game'))).toBeNull();
+
+  await form.locator('.cg-submit').click();
+  await expect(form).toBeHidden();
+  expect(JSON.parse(await page.evaluate(() => localStorage.getItem('gambit-create-game') ?? 'null'))).toEqual({
+    time: 'unlimited',
+    mode: 'casual',
+    variant: 'standard',
+    color: 'random',
+    minRating: null,
+    maxRating: null,
+  });
+});
+
+test('a stored Unlimited preference restores every choice it recorded', async ({ page }) => {
+  await openCreateGame(page, {
+    time: 'unlimited', mode: 'rated', variant: 'atomic', color: 'black',
+    minRating: 1500, maxRating: 1800,
+  });
+  const form = page.locator('#create-game-form');
+
+  await expect(form.locator('input[name="cg-time"]:checked')).toHaveValue('unlimited');
+  await expect(form.locator('input[name="cg-mode"]:checked')).toHaveValue('rated');
+  await expect(form.locator('input[name="cg-variant"]:checked')).toHaveValue('atomic');
+  await expect(form.locator('input[name="cg-color"]:checked')).toHaveValue('black');
+  await expect(form.locator('#cg-min-rating')).toHaveValue('1500');
+  await expect(form.locator('#cg-max-rating')).toHaveValue('1800');
+  await expect(form.locator('.cg-time-summary')).toHaveText(UNLIMITED_SUMMARY);
+  await expect(form.locator('.cg-custom')).toBeHidden();
+});
+
+test('an older timed preference still restores as itself, unrestricted', async ({ page }) => {
+  await openCreateGame(page, { time: '5+3', mode: 'rated', variant: 'atomic', color: 'black' });
+  const form = page.locator('#create-game-form');
+
+  await expect(form.locator('input[name="cg-time"]:checked')).toHaveValue('5+3');
+  await expect(form.locator('#cg-min-rating')).toHaveValue('');
+  await expect(form.locator('#cg-max-rating')).toHaveValue('');
+  await expect(form.locator('.cg-time-summary')).toHaveText('Blitz — 5 minutes per side, 3 second increment.');
+});
+
+test('a malformed preference falls back to the default preset, never to Unlimited', async ({ browser }) => {
+  for (const stored of [
+    { time: 'infinite', mode: 'casual' },
+    { time: '0+0', mode: 'casual' },
+    { time: 'Unlimited', mode: 'casual' },
+    { time: 'unlimited', mode: 'ranked' },
+    { time: 'unlimited', mode: 'casual', minRating: 1800, maxRating: 1500 },
+  ]) {
+    const context = await browser.newContext();
+    try {
+      const page = await context.newPage();
+      await openCreateGame(page, stored);
+      const checked = page.locator('#create-game-form input[name="cg-time"]:checked');
+      await expect(checked, JSON.stringify(stored)).toHaveValue('10+0');
+    } finally {
+      await context.close();
+    }
+  }
+});
+
+for (const viewport of [
+  { name: 'desktop', width: 1440, height: 900 },
+  { name: 'laptop', width: 1024, height: 768 },
+  { name: 'tablet', width: 768, height: 1024 },
+  { name: 'mid', width: 480, height: 900 },
+  { name: 'narrow', width: 420, height: 900 },
+  { name: 'mobile', width: 390, height: 844 },
+  { name: 'small mobile', width: 320, height: 640 },
+] as const) {
+  test(`the Unlimited chip fits its column at ${viewport.name} (${viewport.width}px)`, async ({ page }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await openCreateGame(page);
+    const form = page.locator('#create-game-form');
+    await form.locator(unlimitedChip).click();
+
+    const fits = await form.locator(`${unlimitedChip} .cg-chip-label`).evaluate((element) =>
+      element.scrollWidth <= element.clientWidth && element.scrollHeight <= element.clientHeight,
+    );
+    expect(fits, `Unlimited label at ${viewport.width}px`).toBe(true);
+
+    const chip = await form.locator(unlimitedChip).boundingBox();
+    const presets = await form.locator('.cg-presets').boundingBox();
+    if (chip === null || presets === null) throw new Error('time controls have no rendered bounds');
+    expect(chip.x).toBeGreaterThanOrEqual(presets.x - 0.5);
+    expect(chip.x + chip.width).toBeLessThanOrEqual(presets.x + presets.width + 0.5);
+
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(viewport.width);
+    await expect(form.locator('.cg-time-summary')).toHaveText(UNLIMITED_SUMMARY);
+  });
+}
+
+for (const viewport of [
+  { name: 'desktop', width: 1440, height: 900 },
+  { name: 'mobile', width: 320, height: 640 },
+] as const) {
+  test(`Unlimited mirrors under ${viewport.name} RTL without overflow`, async ({ page }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await page.addInitScript(() => {
+      document.addEventListener('DOMContentLoaded', () => document.documentElement.setAttribute('dir', 'rtl'));
+    });
+    await openCreateGame(page);
+    const form = page.locator('#create-game-form');
+    await form.locator(unlimitedChip).click();
+
+    await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(viewport.width);
+
+    // Unlimited precedes Custom in DOM order and they are the last two chips, so
+    // they share a row at every column count; mirrored, Unlimited sits to its right.
+    const custom = await form.locator('.cg-chip:has(input[value="custom"])').boundingBox();
+    const unlimited = await form.locator(unlimitedChip).boundingBox();
+    if (custom === null || unlimited === null) throw new Error('time controls have no rendered bounds');
+    expect(Math.abs(unlimited.y - custom.y)).toBeLessThanOrEqual(0.5);
+    expect(unlimited.x).toBeGreaterThan(custom.x);
+    expect(unlimited.x).toBeGreaterThanOrEqual(0);
+    expect(unlimited.x + unlimited.width).toBeLessThanOrEqual(viewport.width);
+
+    const fits = await form.locator(`${unlimitedChip} .cg-chip-label`).evaluate((element) =>
+      element.scrollWidth <= element.clientWidth && element.scrollHeight <= element.clientHeight,
+    );
+    expect(fits).toBe(true);
+    await expect(form.locator(`${unlimitedChip} .cg-chip-label`)).toHaveText('Unlimited');
+  });
+}
+
+test('coarse pointers get a 44px Unlimited target', async ({ browser }) => {
+  const context = await browser.newContext({ hasTouch: true, viewport: { width: 390, height: 844 } });
+  const page = await context.newPage();
+  try {
+    await openCreateGame(page);
+    const form = page.locator('#create-game-form');
+    await form.locator(unlimitedChip).click();
+    const box = await form.locator(unlimitedChip).boundingBox();
+    if (box === null) throw new Error('Unlimited chip has no rendered bounds');
+    expect(box.height).toBeGreaterThanOrEqual(44);
+  } finally {
+    await context.close();
+  }
 });
 
 test('coarse pointers get 44px create-game targets', async ({ browser }) => {
