@@ -628,6 +628,22 @@ function parseCheckAddSuffix(tokens, file, target) {
 }
 
 /**
+ * Rejects an inline CHECK that PostgreSQL marks NOT ENFORCED without consuming later constraints.
+ *
+ * @param {SqlToken[]} tokens Full column-definition tokens.
+ * @param {number} startIndex First token after the CHECK expression.
+ * @param {string} file Current migration filename.
+ * @param {string} target Human-readable constrained column.
+ */
+function assertInlineCheckEnforced(tokens, startIndex, file, target) {
+  let idx = startIndex;
+  if (tokens[idx]?.value === 'no' && tokens[idx + 1]?.value === 'inherit') idx += 2;
+  if (tokens[idx]?.value === 'not' && tokens[idx + 1]?.value === 'enforced') {
+    throw new Error(`${file} adds a NOT ENFORCED constraint on \`${target}\`, which cannot protect writes.`);
+  }
+}
+
+/**
  * Parses PostgreSQL's optional table-level foreign-key attributes and trailing NOT VALID marker.
  *
  * The parser stays fail-closed: every token must belong to a supported MATCH, referential-action,
@@ -742,6 +758,7 @@ function scanColumnConstraints(clause, file, constraintNamespace, variantConstra
       const checkTokens = clause.slice(i + 2, endIdx - 1);
       const referencesVariant = checkTokens.some((t) => (t.type === 'word' || t.type === 'ident') && t.value === 'variant');
       if (referencesVariant) {
+        assertInlineCheckEnforced(clause, endIdx, file, 'studies.variant');
         const pIdx = i + 2;
         if (clause[pIdx]?.value === 'variant' && clause[pIdx + 1]?.value === 'in' && clause[pIdx + 2]?.value === '(') {
           let inlineName = null;
@@ -1274,6 +1291,11 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
                         `rather than ignoring suffix expressions.`,
                     );
                   }
+                  parseCheckAddSuffix(
+                    action.slice(parsedIn.nextIndex + 1),
+                    file,
+                    'studies.variant',
+                  );
                   const assignedName = name ?? nextImplicitConstraintName(currentTable.constraintNamespace, 'studies_variant_check');
                   currentTable.constraintNamespace.add(assignedName);
                   currentTable.variantConstraints.add(assignedName);
@@ -1427,6 +1449,16 @@ export function replayStudiesSchema(dir = MIGRATIONS_DIR) {
                       `${file} defines a compound or non-standard CHECK predicate on \`studies.variant\` ` +
                         `(\`${clause.map((t) => t.raw).join(' ')}\`). Teach this guard compound CHECK predicates ` +
                         `rather than ignoring suffix expressions.`,
+                    );
+                  }
+                  const addedNotValid = parseCheckAddSuffix(
+                    clause.slice(parsedIn.nextIndex + 1),
+                    file,
+                    'studies.variant',
+                  );
+                  if (addedNotValid) {
+                    throw new Error(
+                      `${file} adds NOT VALID to a \`studies.variant\` CHECK during CREATE TABLE.`,
                     );
                   }
                   const assignedName = name ?? nextImplicitConstraintName(currentTable.constraintNamespace, 'studies_variant_check');

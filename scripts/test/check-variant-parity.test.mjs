@@ -1506,12 +1506,45 @@ CREATE TABLE studies (id UUID PRIMARY KEY, variant TEXT NOT NULL);`,
     '0002_fk.sql': `ALTER TABLE studies ADD CONSTRAINT studies_variant_fk
   FOREIGN KEY (variant) REFERENCES variants(code) NOT ENFORCED NOT VALID;`,
   });
+  const alteredStudyCheckDir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (id UUID PRIMARY KEY, variant TEXT NOT NULL);`,
+    '0002_check.sql': `ALTER TABLE studies ADD CONSTRAINT studies_variant_check
+  CHECK (variant IN ('standard')) NOT ENFORCED NOT VALID;`,
+  });
+  const tableStudyCheckDir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+  id UUID PRIMARY KEY,
+  variant TEXT NOT NULL,
+  CONSTRAINT studies_variant_check CHECK (variant IN ('standard')) NOT ENFORCED
+);`,
+  });
+  const inlineStudyCheckDir = migrations({
+    '0001_initial.sql': `CREATE TABLE studies (
+  id UUID PRIMARY KEY,
+  variant TEXT NOT NULL CHECK (variant IN ('standard')) NOT ENFORCED
+);`,
+  });
   try {
     assert.throws(() => replayStudiesSchema(checkDir), /NOT ENFORCED.*variants\.code.*protect writes/i);
     assert.throws(() => replayStudiesSchema(fkDir), /NOT ENFORCED.*studies\.variant.*protect writes/i);
+    assert.throws(
+      () => replayStudiesSchema(alteredStudyCheckDir),
+      /NOT ENFORCED.*studies\.variant.*protect writes/i,
+    );
+    assert.throws(
+      () => replayStudiesSchema(tableStudyCheckDir),
+      /NOT ENFORCED.*studies\.variant.*protect writes/i,
+    );
+    assert.throws(
+      () => replayStudiesSchema(inlineStudyCheckDir),
+      /NOT ENFORCED.*studies\.variant.*protect writes/i,
+    );
   } finally {
     rmSync(checkDir, { recursive: true, force: true });
     rmSync(fkDir, { recursive: true, force: true });
+    rmSync(alteredStudyCheckDir, { recursive: true, force: true });
+    rmSync(tableStudyCheckDir, { recursive: true, force: true });
+    rmSync(inlineStudyCheckDir, { recursive: true, force: true });
   }
 });
 
