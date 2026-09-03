@@ -1,0 +1,218 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+const DIAGNOSTICS_DIR = path.resolve(__dirname, '../../../test/diagnostics');
+const CORRELATE_PATH = path.join(DIAGNOSTICS_DIR, 'signature-b-correlate.cjs');
+const PRELOAD_PATH = path.join(DIAGNOSTICS_DIR, 'signature-b-preload.cjs');
+
+/* eslint-disable @typescript-eslint/no-var-requires */
+const correlator = require(CORRELATE_PATH) as {
+  EXIT_CODE_TABLE: ReadonlyArray<{ code: number; id: string; conclusive: boolean }>;
+  MAX_RECORDS: number;
+  classifyTermination(t: { exitCode: number | null; signal: string | null }): {
+    id: string;
+    meaning: string;
+    conclusive: boolean;
+  };
+  correlate(failures: unknown[], childLogs: Map<string, unknown>): Array<Record<string, never>>;
+  narrowFromChildEvidence(
+    c: { id: string; conclusive: boolean },
+    kinds: readonly string[],
+  ): { narrowed: boolean; statement: string };
+  parseTapFailures(tap: string): Array<{
+    file: string;
+    exitCode: number | null;
+    signal: string | null;
+    failureType: string | null;
+    durationMs: number | null;
+  }>;
+  readChildLogs(dir: string): Map<string, { pid: number | null; kinds: string[] }>;
+};
+
+/** A TAP block in the exact shape Node's built-in reporter emits for a file-level failure. */
+function tapFailure(file: string, exitCode: string, signal = '~'): string {
+  return [
+    `# Subtest: ${file}`,
+    `not ok 1 - ${file}`,
+    '  ---',
+    '  duration_ms: 612.4',
+    "  type: 'test'",
+    `  location: 'C:\\repo\\${file}:1:1'`,
+    "  failureType: 'testCodeFailure'",
+    `  exitCode: ${exitCode}`,
+    `  signal: ${signal}`,
+    "  error: 'test failed'",
+    "  code: 'ERR_TEST_FAILURE'",
+    '  ...',
+  ].join('\n');
+}
+
+test('correlator: reads the exit status the spec reporter discards out of a TAP block', () => {
+  const failures = correlator.parseTapFailures(tapFailure('studies-api.test.js', '3221225477'));
+
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0]?.exitCode, 3221225477, 'the NTSTATUS code survives as an unsigned integer');
+  assert.equal(failures[0]?.signal, null, 'a YAML ~ is null, not the string "~"');
+  assert.equal(failures[0]?.failureType, 'testCodeFailure');
+});
+
+test('correlator: ignores a test that failed on its own assertion', () => {
+  const realFailure = [
+    'not ok 1 - some genuine test',
+    '  ---',
+    '  duration_ms: 3.1',
+    "  error: 'Expected values to be strictly equal'",
+    '  ...',
+  ].join('\n');
+
+  assert.deepEqual(correlator.parseTapFailures(realFailure), [], 'only Node\'s bare fallback is Signature B');
+});
+
+test('correlator: classifies every termination code that was measured on this platform', () => {
+  assert.equal(correlator.classifyTermination({ exitCode: 134, signal: null }).id, 'native-abort-or-v8-fatal');
+  assert.equal(correlator.classifyTermination({ exitCode: 3221225477, signal: null }).id, 'native-access-violation');
+  assert.equal(correlator.classifyTermination({ exitCode: 4294967295, signal: null }).id, 'external-terminate-process');
+  assert.equal(
+    correlator.classifyTermination({ exitCode: 3221225786, signal: null }).id,
+    'native-ntstatus',
+    'an unlisted 0xC0000000-range code is still recognisably a native fault',
+  );
+  assert.equal(
+    correlator.classifyTermination({ exitCode: null, signal: 'SIGTERM' }).id,
+    'runner-initiated-kill',
+    'libuv reports a signal only when the parent handle did the killing',
+  );
+});
+
+test('correlator: refuses to identify exit code 1, which four different causes produce', () => {
+  const classification = correlator.classifyTermination({ exitCode: 1, signal: null });
+
+  assert.equal(classification.id, 'inconclusive');
+  assert.equal(classification.conclusive, false, 'claiming a cause from exit code 1 would be the wrong answer');
+});
+
+test('correlator: an unrun JS exit path narrows an inconclusive code without identifying it', () => {
+  const inconclusive = { id: 'inconclusive', conclusive: false };
+
+  const silent = correlator.narrowFromChildEvidence(inconclusive, ['start', 'preload-installed']);
+  assert.equal(silent.narrowed, true);
+  assert.match(silent.statement, /excludes process\.exit and an uncaught exception/);
+
+  const exited = correlator.narrowFromChildEvidence(inconclusive, ['start', 'preload-installed', 'exit']);
+  assert.equal(exited.narrowed, false, 'a child that ran an exit path explains itself');
+
+  const nothing = correlator.narrowFromChildEvidence(inconclusive, []);
+  assert.equal(nothing.narrowed, false, 'no child log is no evidence');
+});
+
+test('correlator: joins the parent record to the child that ran that file', () => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-correlate-'));
+  try {
+    // The unrelated child is written FIRST on purpose: a correlator that took whichever log came
+    // to hand rather than the one for this file would report PID 9999, and ordering it the other
+    // way round would let that mistake pass unnoticed.
+    const lines = [
+      { kind: 'start', pid: 9999, testFile: 'C:\\repo\\dist-test\\test\\other.test.js' },
+      { kind: 'exit', pid: 9999, testFile: 'C:\\repo\\dist-test\\test\\other.test.js' },
+      { kind: 'start', pid: 4242, testFile: 'C:\\repo\\dist-test\\test\\studies-api.test.js' },
+      { kind: 'preload-installed', pid: 4242, testFile: 'C:\\repo\\dist-test\\test\\studies-api.test.js' },
+    ];
+    fs.writeFileSync(path.join(logDir, 'run-1.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+
+    const records = correlator.correlate(
+      correlator.parseTapFailures(tapFailure('dist-test/test/studies-api.test.js', '1')),
+      correlator.readChildLogs(logDir),
+    ) as unknown as Array<{
+      child: { pid: number | null; kinds: string[]; logFound: boolean };
+      parent: { exitCode: number | null };
+      classification: string;
+      narrowed: boolean;
+    }>;
+
+    assert.equal(records.length, 1);
+    assert.equal(records[0]?.child.pid, 4242, 'the PID comes from the child that ran this file, not another');
+    assert.deepEqual(records[0]?.child.kinds, ['start', 'preload-installed']);
+    assert.equal(records[0]?.parent.exitCode, 1);
+    assert.equal(records[0]?.classification, 'inconclusive');
+    assert.equal(records[0]?.narrowed, true, 'silence on the child side is what makes exit code 1 informative');
+  } finally {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
+test('correlator: a malformed trailing line does not discard the record before it', () => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-correlate-'));
+  try {
+    const good = JSON.stringify({ kind: 'start', pid: 7, testFile: 'a.test.js' });
+    fs.writeFileSync(path.join(logDir, 'run-2.jsonl'), `${good}\n{"kind":"preload-inst`);
+
+    const logs = correlator.readChildLogs(logDir);
+
+    assert.equal(logs.get('a.test.js')?.pid, 7, 'a child killed mid-write still yields what it managed to log');
+  } finally {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
+test('correlator: bounds how many records one report can produce', () => {
+  const many = Array.from({ length: correlator.MAX_RECORDS + 25 }, (_, i) => tapFailure(`f${i}.test.js`, '1')).join('\n');
+
+  assert.equal(correlator.parseTapFailures(many).length, correlator.MAX_RECORDS);
+});
+
+test('correlator: captures a real child termination end to end through the parent reporter', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-e2e-'));
+  try {
+    // Reproduces Signature B's exact shape: the child dies before registering a single test, so
+    // the runner has no subtest failure to report and falls back to the bare 'test failed'.
+    fs.writeFileSync(path.join(dir, 'dies.test.cjs'), 'process.exit(3);\n');
+    const tapPath = path.join(dir, 'report.tap');
+    const logDir = path.join(dir, 'child-logs');
+    fs.mkdirSync(logDir, { recursive: true });
+
+    const run = spawnSync(
+      process.execPath,
+      [
+        '--require', PRELOAD_PATH,
+        '--test-reporter=tap', `--test-reporter-destination=${tapPath}`,
+        '--test', 'dies.test.cjs',
+      ],
+      {
+        cwd: dir,
+        encoding: 'utf8',
+        // NODE_TEST_CONTEXT is set in this process because a test runner spawned it. Inheriting it
+        // would tell the nested Node it is already a test child, so it would never act as a runner.
+        env: { ...process.env, NODE_TEST_CONTEXT: undefined, SIGB_LOG_DIR: logDir },
+      },
+    );
+
+    assert.notEqual(run.status, 0, 'the runner must report the file as failed');
+
+    const records = correlator.correlate(
+      correlator.parseTapFailures(fs.readFileSync(tapPath, 'utf8')),
+      correlator.readChildLogs(logDir),
+    ) as unknown as Array<{
+      parent: { exitCode: number | null; signal: string | null };
+      child: { pid: number | null; kinds: string[] };
+    }>;
+
+    assert.equal(records.length, 1, 'the file-level failure is correlated');
+    assert.equal(
+      records[0]?.parent.exitCode,
+      3,
+      'the exit code the spec reporter would have discarded is recovered from the parent',
+    );
+    assert.equal(records[0]?.parent.signal, null, 'Windows reports no signal for a self-terminating child');
+    assert.ok(typeof records[0]?.child.pid === 'number', 'the child that died is identified by PID');
+    assert.ok(
+      records[0]?.child.kinds.includes('process.exit'),
+      'and its own log agrees with the parent about how it went',
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

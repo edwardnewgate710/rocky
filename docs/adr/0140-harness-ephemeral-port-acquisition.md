@@ -268,6 +268,92 @@ whatever the root cause turns out to be. Signature B stays open and unresolved. 
 preload is committed so the next occurrence — on this machine, in CI, or elsewhere — can be
 captured with selected termination and error path instrumentation rather than re-deriving it.
 
+### Follow-up: the parent knew the exit status all along, and `spec` was discarding it
+
+The investigation above ends inside the child, because the child stops writing. This increment
+crossed to the other side of the process boundary and found the missing evidence was never missing —
+it was being thrown away by the reporter.
+
+Node's runner already computes it. `internal/test_runner/runner.js` waits on the child's `exit`
+event and, when the child failed, builds the error the file-level failure is reported through:
+
+```js
+if (code !== 0 || signal !== null) {
+  if (!err) {
+    const failureType = subtest.failedSubtests ? kSubtestsFailed : kTestCodeFailure;
+    err = ObjectAssign(new ERR_TEST_FAILURE('test failed', failureType), {
+      __proto__: null, exitCode: code, signal: signal, stack: undefined });
+  }
+  throw err;
+}
+```
+
+**The `spec` reporter discards `exitCode` and `signal`.** `formatError` in
+`internal/test_runner/reporter/utils.js` does `const err = error.code === 'ERR_TEST_FAILURE' ? error.cause : error`,
+and `cause` is the bare string `'test failed'` — so every own property of the error, the exit status
+included, is dropped before anything is printed. That is the whole reason this failure has looked
+information-free for three increments. **The built-in `tap` reporter does not discard them:** its
+`jsToYaml` walks the error's own enumerable properties and skips only `cause` and `code`, so
+`exitCode` and `signal` land in its YAML block.
+
+Both reporters can run at once, which is what makes this usable rather than a trade:
+
+```
+node --require ./test/diagnostics/signature-b-preload.cjs \
+     --test-reporter=spec --test-reporter-destination=stdout \
+     --test-reporter=tap  --test-reporter-destination=<file> \
+     --test --test-concurrency=1 "dist-test/test/**/*.test.js"
+```
+
+Human-facing stdout is unchanged, the exit status is captured to a file, no custom reporter is
+written and no Node internal is patched — which matters, because the last attempt to observe this
+system by patching `EventEmitter.prototype.emit` crashed the parent runner. The earlier TAP-only
+pass recorded above would have shown these fields had it caught an occurrence; it captured nothing,
+so nobody read them.
+
+**Exit codes were measured on this platform rather than assumed** (Windows 11, Node v24.15.0):
+
+| Mechanism | `exitCode` | `signal` | How it was measured |
+|---|---|---|---|
+| `process.exit(1)` before any test registers | `1` | `null` | run under the runner, read from the TAP block |
+| `process.abort()` | `134` | `null` | same; also prints a native + JS stack to stderr |
+| `taskkill /F /PID` | `1` | `null` | spawned a sleeper, killed it, read `child.on('exit')` |
+| `Stop-Process -Force` | `4294967295` | `null` | same |
+| `process.kill(pid)` | `1` | `null` | same |
+| `STATUS_ACCESS_VIOLATION` | `3221225477` | `null` | not reproduced here; NTSTATUS `0xC0000005` surfaced as a raw unsigned 32-bit value |
+
+Two consequences follow, and the second is the one that keeps the analysis honest.
+
+- **A native fault or a V8 fatal error is now identifiable.** `134`, `0xC0000005` and the rest of
+  the `0xC0000000` range each name a mechanism on sight.
+- **Exit code `1` identifies nothing.** An uncaught exception, `process.exit(1)`, `taskkill /F` and
+  `process.kill` all produce `1` with `signal: null`, because Windows has no POSIX signals and libuv
+  reports one only when the parent's own handle did the killing. Reading `1` as proof of an external
+  kill would be a wrong answer, and `signature-b-correlate.cjs` classifies it as `inconclusive`.
+
+What rescues `1` is the child-side log, which is why the two sides are correlated rather than read
+separately: `process.exit(1)` and an uncaught exception both leave a record and both fire Node's
+`exit` event, so a child that reached `preload-installed` and then logged **nothing** cannot have
+died either way. `packages/api/test/diagnostics/signature-b-correlate.cjs` joins the parent's TAP
+record to the child's JSONL log on the test file path — the preload records `testFile` on every
+line, which also yields the child's PID — and emits one record per failure carrying both views, the
+classification, and an explicit statement of what the pair does and does not establish.
+
+**Bounded pass: 20 runs, 0 captures.** Ceiling declared before starting at 20 full
+`packages/api` runs or 45 minutes, stopping at the first capture; 20 runs at ~28s each
+were executed and Signature B did not occur. That is not a fix and is not evidence of one. It bounds
+the rate and nothing else: at the historically observed ~1-in-5, zero in 20 runs happens about
+4% of the time, so ordinary bad luck is not excluded. One difference from the capture conditions is
+worth recording without being leaned on — this pass ran with 3084–3834 MB free of
+16 GB, where the three historical captures happened at roughly 2.5 GB free with several other agents'
+processes running. That is *consistent with* the standing resource-contention hypothesis and is not
+evidence for it; nothing here establishes a causal link, and the hypothesis stays untested.
+
+**Signature B remains UNRESOLVED.** No fix is proposed and none is disguised: no sleep, no retry, no
+lowered concurrency, no excluded file. What changed is that the next occurrence is readable. A
+capture now yields the child's PID, which JS lifecycle paths it did or did not run, the exit status
+the parent observed, and — for every mechanism except a bare `1` — the name of the mechanism.
+
 ## 5. `ApiServer.listen` rejects on a failed bind
 
 Raised by the Qodo review of PR #21 and **valid**. `packages/api/src/server.ts`

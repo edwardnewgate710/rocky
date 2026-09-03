@@ -25,6 +25,7 @@
     "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 \"dist-test/test/**/*.test.js\"",
     "test:analysis-smoke": "tsc -p tsconfig.test.json && node --test dist-test/test/analysis-stockfish-smoke.test.js dist-test/test/analysis-fairy-threecheck-smoke.test.js dist-test/test/analysis-real-stack.test.js",
     "test:diagnostics:abort": "tsc -p tsconfig.test.json && node --test dist-test/test/diagnostics/signature-b-preload-abort.diag.js",
+    "test:diagnostics:signature-b": "tsc -p tsconfig.test.json && node ./test/diagnostics/run-signature-b-pass.mjs",
     "lint": "tsc -p tsconfig.json --noEmit",
     "openapi": "node dist/scripts/generate-openapi.js",
     "reindex-search": "node dist/scripts/reindex-search.js",
