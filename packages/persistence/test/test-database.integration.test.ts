@@ -272,8 +272,16 @@ test('test database: a concurrent run is not blocked by another database’s bac
   const long = withTestDatabase(
     async ({ pool, database }) => {
       names.push(database);
-      await pool.query('SELECT 1');
-      await heldOpen;
+      // A leased client, not `pool.query`. `pool.query` returns its client to the pool as soon as it
+      // answers, and an idle client can be closed before the short run finishes — which would leave
+      // this run holding no backend at all, and the isolation this test claims to prove unproven.
+      const leased = await pool.connect();
+      try {
+        await leased.query('SELECT 1');
+        await heldOpen;
+      } finally {
+        leased.release();
+      }
     },
     { onQuiescenceCheck: (backends) => checksLong.push(backends) },
   ).then(() => {
@@ -288,11 +296,17 @@ test('test database: a concurrent run is not blocked by another database’s bac
     { onQuiescenceCheck: (backends) => checksShort.push(backends) },
   );
 
-  await short;
-  assert.equal(longFinished, false, 'the short run completed while the long one still held its database');
-
-  releaseLong();
-  await long;
+  try {
+    await short;
+    assert.equal(longFinished, false, 'the short run completed while the long one still held its database');
+  } finally {
+    // The gate has to open on every path. If the short run rejects or the ordering assertion fails,
+    // an unreleased latch leaves the long callback suspended forever: its teardown never runs, its
+    // database and pool stay alive, and the runner may not exit. A test that leaks the thing it is
+    // policing is the failure this whole file exists to prevent.
+    releaseLong();
+    await long;
+  }
 
   assert.equal(names.length, 2);
   assert.notEqual(names[0], names[1], 'each run gets its own database');

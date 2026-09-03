@@ -328,7 +328,9 @@ async function dropWhenFree(
       );
       return;
     } catch (error) {
-      if (sqlState(error) !== OBJECT_IN_USE || Date.now() >= deadline) throw error;
+      // Anything but "still in use" is a real database error and belongs to the caller untouched.
+      if (sqlState(error) !== OBJECT_IN_USE) throw error;
+
       const lingering = await waitForQuiescence(
         admin,
         database,
@@ -337,9 +339,11 @@ async function dropWhenFree(
         pollIntervalMs,
         onCheck,
       );
-      if (lingering.length > 0 && Date.now() >= deadline) {
-        // Giving up here still has to leave the server clean: reporting the timeout without dropping
-        // would leave the database behind, which is the outcome teardown works hardest to avoid.
+      if (Date.now() >= deadline) {
+        // 55006 arriving at or past the deadline is still a teardown timeout, not a raw SQL fault:
+        // rethrowing the PostgreSQL error would skip the snapshot that names what was holding the
+        // database and leave only the outer best-effort drop. Giving up here has to leave the server
+        // clean too, so the database goes before the report does.
         await forceDropAbandoned(admin, pool, clients, database, teardownTimeoutMs);
         throw new DatabaseTeardownTimeoutError(database, teardownTimeoutMs, lingering);
       }
