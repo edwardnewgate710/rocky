@@ -4,8 +4,47 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-09-03 — M15 Increment 43: Engine analysis fingerprint identity coverage._
+_Last updated: 2026-09-03 — M15 Increment 44: Signature B parent-side termination evidence._
 
+
+## M15 Increment 44 — Signature B parent-side termination evidence
+
+Signature B — a `packages/api` test-file subprocess dying with a bare `'test failed'`, no
+assertion, no stack, none of its own tests reported — **remains unresolved, and no fix is proposed.**
+What this increment changed is that the failure is no longer information-free.
+
+The previous increments instrumented the child and found silence: on three real captures no JS
+lifecycle hook fired, not even Node's unconditional `exit` event. That ruled out `process.exit`,
+uncaught exceptions and fatal unhandled rejections, and left the question of how the process actually
+died on the other side of a boundary the child cannot report from.
+
+The parent could answer it the whole time. Node's runner attaches the child's `exitCode` and
+`signal` to the `ERR_TEST_FAILURE` it throws, and the `spec` reporter discards both — `formatError`
+replaces the error with `error.cause`, which is the bare string `'test failed'`. The built-in `tap`
+reporter keeps them. Running `spec` to stdout and `tap` to a file at the same time recovers the exit
+status with no custom reporter, no patched Node internals, and no change to what a human sees.
+
+Exit codes were measured on this platform rather than assumed: `process.abort()` gives `134`,
+PowerShell `Stop-Process -Force` gives `4294967295`, NTSTATUS faults surface as raw unsigned values
+such as `3221225477` (`0xC0000005`). **Exit code `1` identifies nothing** — an uncaught exception,
+`process.exit(1)`, `taskkill /F` and `process.kill` all produce it with `signal: null`, since
+Windows has no POSIX signals — so the correlator classifies it `inconclusive` rather than guessing.
+Where it is ambiguous, the child log still narrows it: a child that reached `preload-installed` and
+then logged nothing cannot have exited through `process.exit` or an uncaught exception, because both
+leave a record and fire Node's `exit` event.
+
+`signature-b-correlate.cjs` joins the two sides on the test file path, which also yields the child
+PID, and emits one record per failure with both views, the classification, and an explicit statement
+of what the pair does and does not establish. `run-signature-b-pass.mjs` runs the pass under a
+declared ceiling and stops at the first capture.
+
+A bounded pass of 20 runs produced 0 captures. That bounds the rate and proves
+nothing: treating the historically observed ~1-in-5 as an independent per-run rate, zero captures in
+20 runs has probability `(4/5)^20 ≈ 1.2%` — small, but bad luck is not excluded, and independence is
+an assumption rather than something this data establishes.
+The pass ran at 3084–3834 MB free of 16 GB where the historical captures happened at
+roughly 2.5 GB free — consistent with the standing resource-contention hypothesis, and not evidence
+for it. Nothing here establishes a cause.
 ## M15 Increment 43 — Engine analysis fingerprint identity coverage
 
 The two-layer engine cache identity is now pinned by tests rather than only by prose, and writing
