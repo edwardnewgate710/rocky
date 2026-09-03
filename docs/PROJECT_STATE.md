@@ -28,8 +28,17 @@ it — so `pg` re-emitted it as `pool.emit('error')`, an unhandled EventEmitter 
 backend deliberately held open: plain `DROP DATABASE` fails with SQLSTATE 55006 and leaves that
 connection untouched, where `WITH (FORCE)` succeeds by killing it. The fix trades a quiet, harmful
 success for a loud, harmless failure — teardown waits for the database to be genuinely unused, then
-drops it ordinarily. FORCE survives only on the emergency path, where teardown has already given up
-and is removing the database so nothing leaks.
+drops it ordinarily, so the normal path terminates nothing.
+
+FORCE survives only on the emergency path, reached once teardown has already failed, and there it is
+**best effort in both directions**. It does terminate whatever is still attached — the helper
+installs an error listener on the pool and on every live client first, so the FATAL it causes cannot
+escape as an uncaught error — and the final fallback drop runs inside a `catch`, so a cleanup failure
+cannot bury the error being reported. A server that refuses that drop can therefore still leave a
+database behind. Which of the two happened is recorded rather than assumed:
+`DatabaseTeardownTimeoutError` carries `droppedDatabase`, with any failed drop attached as its
+`cause`. Anyone diagnosing a teardown should read that flag instead of taking a reported timeout to
+mean the server came out clean.
 
 **Shared helper.** `packages/persistence/src/test-support/database.ts` exposes `withTestDatabase`
 through the new `@chess-platform/persistence/test-support` subpath, kept off the driver-facing `./pg`
