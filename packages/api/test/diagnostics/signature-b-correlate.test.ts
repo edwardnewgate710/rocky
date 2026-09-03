@@ -229,12 +229,20 @@ test('pass runner: a pass whose every run was unreadable is refused, not reporte
   // readable report. The pass observed nothing and must say so rather than print the same summary
   // as a quiet one — the failure mode the ceiling and the collection check exist to prevent.
   //
-  // `--target` points the nested run at one trivial file. Without it the run would launch a second
-  // copy of the whole API suite against the same database as the suite running this very test.
+  // `--target` points the nested run at one file of this test's own making. Without it the run
+  // would launch a second copy of the whole API suite against the same database as the suite
+  // running this very test. That file blocks far longer than the ceiling rather than doing nothing,
+  // so the timeout is what ends it on every machine: a trivial child could beat a 6ms deadline on a
+  // fast runner, finish cleanly, and make this assertion flaky.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-target-'));
   try {
-    const trivial = path.join(dir, 'noop.test.cjs');
-    fs.writeFileSync(trivial, "require('node:test').test('noop', () => {});\n");
+    const trivial = path.join(dir, 'blocks.test.cjs');
+    fs.writeFileSync(
+      trivial,
+      "require('node:test').test('outlives the ceiling', async () => {\n" +
+        '  await new Promise((resolve) => setTimeout(resolve, 30_000));\n' +
+        '});\n',
+    );
 
     const result = spawnSync(
       process.execPath,
