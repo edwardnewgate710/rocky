@@ -4,7 +4,51 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-09-02 — M15 Increment 42: Closed variant catalog and studies FK integrity._
+_Last updated: 2026-09-03 — M15 Increment 43: Engine analysis fingerprint identity coverage._
+
+## M15 Increment 43 — Engine analysis fingerprint identity coverage
+
+The two-layer engine cache identity is now pinned by tests rather than only by prose, and writing
+the contract down surfaced one genuine correctness defect, fixed below. Fingerprint derivation itself
+is untouched: `computeFingerprint` and `analysisCacheFingerprint` behave exactly as they did on
+`b2eaf94`, so every fingerprint this build produces is byte-identical to the one before it and no
+migration, cache invalidation or rolling-deploy step is involved.
+
+What the tests pin is the contract ADR-0138 recorded as discharging ADR-0135 §7. Layer 2
+(`analysisCacheFingerprint`) had exactly one test — code-point ordering — so the property that
+motivated the whole precondition, that a changed `EvalFile` or `SyzygyPath` **value** changes the
+identity, was never asserted. Nine tests now cover: configured option values namespacing the build
+fingerprint, object-key-order invariance, adding and dropping an option, absent and empty
+configuration collapsing to the bare build fingerprint, name/value boundary and delimiter-collision
+traps, the deliberate equivalence between a dedicated `threads`/`hashMb` field and the same option
+supplied through `options`, and — on Layer 1 — advertised bounds participating in build identity
+while the engine author does not — and, on the applied side, that an out-of-range option is clamped
+identically whichever route configures it.
+
+Proven by mutation rather than asserted: nine mutations of the identity logic were applied one at a
+time to `packages/engine/src/cache.ts`, `capabilities.ts` and `instance.ts`, and every one was
+killed. Four are killed **only** by the new tests — collapsing absent with explicitly-empty configuration, dropping
+advertised bounds from the option descriptor, and folding the engine author into the build
+fingerprint, and reverting the new clamp — which is the evidence that those gaps were real rather
+than decorative.
+
+Writing the contract down exposed one real defect, and it is fixed here. Layer 2 gives
+`{ threads: n }` and `{ options: { Threads: n } }` a single identity, which is right because both
+emit `setoption name Threads value n` — but `UciEngineInstance.applyConfig` clamped only the
+dedicated field to the advertised spec. An out-of-range value routed through `options` was therefore
+sent to the engine raw while sharing a durable cache entry with a clamped one: two workers running
+different searches under one fingerprint, which is the false-hit direction the fingerprint exists to
+prevent. `applyConfig` now clamps numeric values on either route, so the shared identity is true
+rather than merely harmless. Nothing in `packages/api` populates `config.options` — it is built
+from `ANALYSIS_ENGINE_THREADS` and `ANALYSIS_ENGINE_HASH_MB` alone — so no deployed configuration
+could reach it, and no stored fingerprint changes.
+
+Every other requested-versus-applied divergence is left alone because each one fragments the cache
+rather than merging it: an unadvertised option is hashed but never sent, `16` and `"16"` hash
+apart though the engine receives the same text, and two spellings of one path are two identities.
+Each costs a recomputation, never a wrong answer. The residue ADR-0138 already recorded, an operator
+replacing the weights file behind an unchanged advertised `EvalFile` path, remains outside anything
+a handshake-derived fingerprint can see.
 
 ## M15 Increment 42 — Closed variant catalog and studies FK integrity
 

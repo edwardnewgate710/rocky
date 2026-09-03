@@ -8,6 +8,7 @@ import {
   EngineTimeoutError,
   EngineVersionError,
   type DeadInfo,
+  type EngineConfig,
 } from '../src/index.js';
 import { ManualClock, START_FEN, flush } from './helpers.js';
 
@@ -30,6 +31,32 @@ test('initializes and discovers capabilities', async () => {
   assert.equal(caps.version, '16');
   assert.ok(caps.variants.has('crazyhouse'));
   assert.equal(instance.alive, true);
+});
+
+test('an out-of-range option is clamped whichever route configures it', async () => {
+  const optionLines = ['option name Threads type spin default 1 min 1 max 16'];
+  const setOptions = (t: FakeEngineTransport): string[] => t.sent.filter((line) => line.startsWith('setoption'));
+  const start = async (config: EngineConfig): Promise<FakeEngineTransport> => {
+    const transport = new FakeEngineTransport({ optionLines });
+    await new UciEngineInstance(transport, {
+      id: 'test',
+      clock: new ManualClock(),
+      watchdogMs: 1000,
+      initTimeoutMs: 1000,
+      config,
+    }).init();
+    return transport;
+  };
+
+  const viaField = await start({ threads: 64 });
+  const viaOptions = await start({ options: { Threads: 64 } });
+
+  assert.deepEqual(setOptions(viaField), ['setoption name Threads value 16']);
+  assert.deepEqual(
+    setOptions(viaOptions),
+    setOptions(viaField),
+    'the two routes share one cache fingerprint, so they must apply one value',
+  );
 });
 
 test('analyze parses info into a structured result', async () => {

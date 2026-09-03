@@ -64,6 +64,25 @@ test('fingerprint changes when an advertised option contract changes', () => {
   assert.notEqual(first.fingerprint, second.fingerprint);
 });
 
+test('fingerprint changes when an advertised option bound changes', () => {
+  const first = buildCapabilities('Stockfish 16', 'the devs', specs([
+    'option name Hash type spin default 16 min 1 max 1024',
+  ]));
+  const second = buildCapabilities('Stockfish 16', 'the devs', specs([
+    'option name Hash type spin default 16 min 1 max 512',
+  ]));
+
+  assert.notEqual(first.fingerprint, second.fingerprint, 'bounds are part of the advertised contract');
+});
+
+test('the engine author is outside build identity', () => {
+  const line = 'option name Hash type spin default 16 min 1 max 1024';
+  const first = buildCapabilities('Stockfish 16', 'the devs', specs([line]));
+  const second = buildCapabilities('Stockfish 16', 'somebody else', specs([line]));
+
+  assert.equal(first.fingerprint, second.fingerprint, 'the credit line does not change a search');
+});
+
 test('capability fingerprint is stable across semantically irrelevant option ordering', () => {
   const first = buildCapabilities(
     'Fairy-Stockfish 14',
