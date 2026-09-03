@@ -245,7 +245,7 @@ function parseTapFailures(tapText) {
  * final line, and losing that line must not lose the rest of the record.
  *
  * @param {string} logDir
- * @returns {Map<string, { pid: number | null, kinds: string[] }>} keyed by test file basename
+ * @returns {Map<string, { pid: number | null, kinds: string[] }>} keyed by the child's whole normalised path
  */
 function readChildLogs(logDir) {
   const byFile = new Map();
@@ -318,10 +318,13 @@ function matchChild(childLogs, parentFile) {
 /**
  * Join parent-observed failures to child-observed lifecycle evidence, one record per failure.
  *
- * Matching is by file basename because the parent names the file as the runner received it while
- * the child records its own resolved `argv[1]`. Basenames are unique across the suite's compiled
- * output; a failure with no matching child log is reported with `childLogFound: false` rather than
- * being dropped, because "the child never wrote a log" is itself evidence.
+ * Matching is by whole normalised path, not by basename. The parent names the file as the runner
+ * received it while the child records its own resolved `argv[1]`, so the child's key is the longer
+ * path and the parent's name is a suffix of it; a basename comparison is the fallback, not the rule.
+ * Basenames are *not* unique across the suite's compiled output, which is why a name matching more
+ * than one child is reported `ambiguous` rather than resolved to whichever came first. A failure
+ * with no matching child log is reported with `child.logFound: false` rather than being dropped,
+ * because "the child never wrote a log" is itself evidence.
  *
  * @param {ReturnType<typeof parseTapFailures>} failures
  * @param {ReturnType<typeof readChildLogs>} childLogs

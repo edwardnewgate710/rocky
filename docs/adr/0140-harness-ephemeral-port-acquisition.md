@@ -357,8 +357,11 @@ evidence for it; nothing here establishes a causal link, and the hypothesis stay
 
 **Signature B remains UNRESOLVED.** No fix is proposed and none is disguised: no sleep, no retry, no
 lowered concurrency, no excluded file. What changed is that the next occurrence is readable. A
-capture now yields the child's PID, which JS lifecycle paths it did or did not run, the exit status
-the parent observed, and — for every mechanism except a bare `1` — the name of the mechanism.
+capture now yields the child's PID, which JS lifecycle paths it did or did not run, and the exit
+status the parent observed. Whether that status names anything depends on the status: a mapped code
+names a **candidate** mechanism, while a bare `1`, a signal — which names the signal that killed the
+child but never the party that sent it — and any code outside the measured table are all reported
+`specific: false` and name nothing on their own.
 
 ## 5. `ApiServer.listen` rejects on a failed bind
 

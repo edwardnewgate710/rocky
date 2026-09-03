@@ -9,6 +9,35 @@ const DIAGNOSTICS_DIR = path.resolve(__dirname, '../../../test/diagnostics');
 const CORRELATE_PATH = path.join(DIAGNOSTICS_DIR, 'signature-b-correlate.cjs');
 const PRELOAD_PATH = path.join(DIAGNOSTICS_DIR, 'signature-b-preload.cjs');
 
+/**
+ * One record per parent-observed failure, exactly as `correlate` emits it.
+ *
+ * Declared once so the tests assert against the contract instead of each call site casting to its
+ * own guess of the shape. A field that moves or is dropped then fails to compile here, rather than
+ * silently passing every test that did not happen to name it.
+ */
+interface CorrelatedRecord {
+  file: string;
+  parent: {
+    exitCode: number | null;
+    signal: string | null;
+    failureType: string | null;
+    durationMs: number | null;
+  };
+  child: {
+    logFound: boolean;
+    ambiguous: boolean;
+    candidates: number;
+    pid: number | null;
+    kinds: string[];
+  };
+  classification: string;
+  meaning: string;
+  specific: boolean;
+  narrowed: boolean;
+  statement: string;
+}
+
 /* eslint-disable @typescript-eslint/no-var-requires */
 const correlator = require(CORRELATE_PATH) as {
   EXIT_CODE_TABLE: ReadonlyArray<{ code: number; id: string; specific: boolean }>;
@@ -18,7 +47,7 @@ const correlator = require(CORRELATE_PATH) as {
     meaning: string;
     specific: boolean;
   };
-  correlate(failures: unknown[], childLogs: Map<string, unknown>): Array<Record<string, never>>;
+  correlate(failures: unknown[], childLogs: Map<string, unknown>): CorrelatedRecord[];
   narrowFromChildEvidence(
     c: { id: string; specific: boolean },
     kinds: readonly string[],
@@ -127,7 +156,7 @@ test('correlator: same-basename files in different directories are never merged'
     const resolved = correlator.correlate(
       correlator.parseTapFailures(tapFailure('dist-test/test/bar/a.test.js', '1')),
       logs,
-    ) as unknown as Array<{ child: { pid: number | null; ambiguous: boolean; kinds: string[] } }>;
+    );
     assert.equal(resolved[0]?.child.pid, 222, 'the full path picks the right one of two same-named files');
     assert.equal(resolved[0]?.child.ambiguous, false);
     assert.deepEqual(resolved[0]?.child.kinds, ['start', 'preload-installed']);
@@ -136,7 +165,7 @@ test('correlator: same-basename files in different directories are never merged'
     const ambiguous = correlator.correlate(
       correlator.parseTapFailures(tapFailure('a.test.js', '1')),
       logs,
-    ) as unknown as Array<{ child: { pid: number | null; ambiguous: boolean }; narrowed: boolean; statement: string }>;
+    );
     assert.equal(ambiguous[0]?.child.ambiguous, true, 'two candidates is not an answer');
     assert.equal(ambiguous[0]?.child.pid, null, 'and no PID may be attributed');
     assert.equal(ambiguous[0]?.narrowed, false, 'evidence that is not this file\'s narrows nothing');
@@ -232,12 +261,7 @@ test('correlator: joins the parent record to the child that ran that file', () =
     const records = correlator.correlate(
       correlator.parseTapFailures(tapFailure('dist-test/test/studies-api.test.js', '1')),
       correlator.readChildLogs(logDir),
-    ) as unknown as Array<{
-      child: { pid: number | null; kinds: string[]; logFound: boolean };
-      parent: { exitCode: number | null };
-      classification: string;
-      narrowed: boolean;
-    }>;
+    );
 
     assert.equal(records.length, 1);
     assert.equal(records[0]?.child.pid, 4242, 'the PID comes from the child that ran this file, not another');
@@ -271,11 +295,7 @@ test('correlator: joins a capture taken on either platform, read on either platf
     );
 
     const pidFor = (file: string): number | null =>
-      (
-        correlator.correlate(correlator.parseTapFailures(tapFailure(file, '1')), logs) as unknown as Array<{
-          child: { pid: number | null };
-        }>
-      )[0]?.child.pid ?? null;
+      correlator.correlate(correlator.parseTapFailures(tapFailure(file, '1')), logs)[0]?.child.pid ?? null;
 
     assert.equal(pidFor('dist-test/test/windows-style.test.js'), 111, 'a backslash-recorded child matches its parent');
     assert.equal(pidFor('dist-test/test/posix-style.test.js'), 222, 'so does a forward-slash one');
@@ -663,10 +683,7 @@ test('correlator: captures a real child termination end to end through the paren
     const records = correlator.correlate(
       correlator.parseTapFailures(fs.readFileSync(tapPath, 'utf8')),
       correlator.readChildLogs(logDir),
-    ) as unknown as Array<{
-      parent: { exitCode: number | null; signal: string | null };
-      child: { pid: number | null; kinds: string[] };
-    }>;
+    );
 
     assert.equal(records.length, 1, 'the file-level failure is correlated');
     assert.equal(
