@@ -139,9 +139,8 @@ test('configured option names and values cannot collide across the serialization
 });
 
 test('a dedicated config field and its named option are one identity', () => {
-  // Both routes send `setoption name Threads value n`, so sharing entries is correct — but only
-  // per field, and only in bounds: `UciEngineInstance.applyConfig` clamps `threads`/`hashMb` to
-  // the advertised spec and does not clamp the same option supplied through `options`.
+  // Both routes send `setoption name Threads value n` — `UciEngineInstance.applyConfig` clamps
+  // either route to the advertised spec — so sharing entries is correct. It holds per field only.
   assert.equal(
     analysisCacheFingerprint('build', { threads: 4 }),
     analysisCacheFingerprint('build', { options: { Threads: 4 } }),

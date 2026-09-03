@@ -386,7 +386,10 @@ export class UciEngineInstance implements EngineInstance {
     }
     if (this.config.options) {
       for (const [name, value] of Object.entries(this.config.options)) {
-        if (caps.options.has(name)) this.transport.send(buildSetOption(name, value));
+        const spec = caps.options.get(name);
+        // Clamped on this route too: `analysisCacheFingerprint` gives `{ threads: n }` and
+        // `{ options: { Threads: n } }` one identity, so they must apply one value.
+        if (spec) this.transport.send(buildSetOption(name, typeof value === 'number' ? clampToSpec(value, spec) : value));
       }
     }
   }
