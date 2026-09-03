@@ -189,11 +189,30 @@ test('correlator: an unrun JS exit path narrows an inconclusive code without ide
   assert.equal(silent.narrowed, true);
   assert.match(silent.statement, /excludes process\.exit and an uncaught exception/);
 
-  const exited = correlator.narrowFromChildEvidence(inconclusive, ['start', 'preload-installed', 'exit']);
-  assert.equal(exited.narrowed, false, 'a child that ran an exit path explains itself');
+  const exited = correlator.narrowFromChildEvidence(inconclusive, ['start', 'preload-installed', 'process.exit']);
+  assert.equal(exited.narrowed, false, 'a child whose own log names the cause explains itself');
 
   const nothing = correlator.narrowFromChildEvidence(inconclusive, []);
   assert.equal(nothing.narrowed, false, 'no child log is no evidence');
+});
+
+test('correlator: a shutdown event is not a cause, and is not reported as one', () => {
+  // `exit` and `beforeExit` fire for any orderly termination, so treating them as causal would let
+  // a child that merely finished be reported as having explained itself. What they do establish is
+  // narrower and still useful: neither fires for an external kill or a native fault.
+  const inconclusive = { id: 'inconclusive', specific: false };
+
+  const named = correlator.narrowFromChildEvidence(inconclusive, ['preload-installed', 'process.exit', 'exit']);
+  assert.equal(named.narrowed, false, 'a hook that names the cause explains the child');
+  assert.match(named.statement, /process\.exit, which names the cause/);
+
+  const shutdownOnly = correlator.narrowFromChildEvidence(inconclusive, ['preload-installed', 'exit']);
+  assert.equal(shutdownOnly.narrowed, true, 'reaching shutdown is evidence, just not of a cause');
+  assert.doesNotMatch(shutdownOnly.statement, /names the cause/, 'no cause may be claimed from a lifecycle event');
+  assert.match(shutdownOnly.statement, /does not say why it exited/);
+
+  const beforeOnly = correlator.narrowFromChildEvidence(inconclusive, ['preload-installed', 'beforeExit']);
+  assert.doesNotMatch(beforeOnly.statement, /names the cause/, 'beforeExit names nothing either');
 });
 
 test('correlator: joins the parent record to the child that ran that file', () => {

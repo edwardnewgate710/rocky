@@ -127,8 +127,22 @@ function classifyTermination({ exitCode, signal }) {
   return { id: 'unclassified', meaning: `exit code ${String(exitCode)} is not in the measured table`, specific: false };
 }
 
-/** JS lifecycle events whose absence proves the child never ran an exit path. */
-const JS_EXIT_KINDS = ['process.exit', 'process.abort', 'uncaughtExceptionMonitor', 'exit', 'beforeExit'];
+/**
+ * Events that name *why* the process ended: a call the preload intercepted, or a fault it observed.
+ */
+const CAUSAL_KINDS = ['process.exit', 'process.abort', 'uncaughtExceptionMonitor'];
+
+/**
+ * Events that prove the process reached Node's shutdown path but say nothing about why.
+ *
+ * `exit` and `beforeExit` fire for any orderly termination. Treating them as causal would let a
+ * child that merely finished be reported as having explained itself. What they do establish is
+ * real and worth separating: neither fires for an external `TerminateProcess` or a native fault.
+ */
+const LIFECYCLE_KINDS = ['exit', 'beforeExit'];
+
+/** Every event the preload records that implies the child was still running JS. */
+const JS_EXIT_KINDS = [...CAUSAL_KINDS, ...LIFECYCLE_KINDS];
 
 /**
  * State the strongest claim the combined evidence supports, and no stronger.
@@ -145,13 +159,28 @@ const JS_EXIT_KINDS = ['process.exit', 'process.abort', 'uncaughtExceptionMonito
  */
 function narrowFromChildEvidence(classification, childKinds) {
   const reachedPreload = childKinds.includes('preload-installed');
-  const ranAnyExitPath = JS_EXIT_KINDS.some((kind) => childKinds.includes(kind));
+  const causal = CAUSAL_KINDS.find((kind) => childKinds.includes(kind));
+  const lifecycle = LIFECYCLE_KINDS.some((kind) => childKinds.includes(kind));
 
   if (!reachedPreload) {
     return { narrowed: false, statement: 'the child never recorded preload-installed, so nothing is known about its JS lifecycle' };
   }
-  if (ranAnyExitPath) {
-    return { narrowed: false, statement: 'the child ran a JS exit path, so its own log identifies the cause and the exit status only corroborates it' };
+  if (causal !== undefined) {
+    return {
+      narrowed: false,
+      statement: `the child logged ${causal}, which names the cause; the exit status only corroborates it`,
+    };
+  }
+  if (lifecycle) {
+    // Worth stating separately rather than folding into either branch: reaching `exit` proves the
+    // child shut down through JS, which no external kill or native fault does — but no hook of ours
+    // fired, so nothing here says why it chose to exit.
+    return {
+      narrowed: true,
+      statement:
+        "the child reached Node's shutdown events without any hook naming a cause, which rules out an " +
+        'external termination and a native fault — both bypass them — but does not say why it exited',
+    };
   }
   if (classification.specific) {
     return {
