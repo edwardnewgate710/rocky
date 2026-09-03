@@ -72,8 +72,30 @@ function fatalMarkersIn(stderr) {
   return FATAL_MARKERS.filter((marker) => text.includes(marker));
 }
 
-const maxRuns = Number(flag('runs', 20));
-const maxMs = Number(flag('max-minutes', 45)) * 60_000;
+/**
+ * A ceiling that does not describe a real experiment must stop the run, not shrink it.
+ *
+ * `--runs 0`, a negative value or a typo would otherwise execute nothing and still print that
+ * Signature B was not observed — an empty experiment presented as a clean pass, which is the exact
+ * dishonesty this whole diagnostic exists to avoid.
+ *
+ * @param {string} name
+ * @param {unknown} raw
+ * @param {number} fallback
+ * @returns {number}
+ */
+function positiveNumber(name, raw, fallback) {
+  if (raw === fallback) return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    console.error(`--${name} must be a positive number; got ${JSON.stringify(raw)}`);
+    process.exit(2);
+  }
+  return value;
+}
+
+const maxRuns = positiveNumber('runs', flag('runs', 20), 20);
+const maxMs = positiveNumber('max-minutes', flag('max-minutes', 45), 45) * 60_000;
 const outDir = flag('out', fs.mkdtempSync(path.join(tmpdir(), 'sigb-pass-')));
 
 fs.mkdirSync(outDir, { recursive: true, mode: 0o700 });
@@ -171,15 +193,19 @@ for (let run = 1; run <= maxRuns; run++) {
 }
 
 const minutes = Math.round((Date.now() - startedAt) / 60_000);
-const failed = runs.filter((entry) => entry.collectionError !== null).length;
-console.log(`\n${runs.length} run(s), ${minutes} minute(s), ${capture ? 1 : 0} capture(s), ${failed} unreadable.`);
+const unreadable = runs.filter((entry) => entry.collectionError !== null).length;
+const readable = runs.length - unreadable;
+console.log(`\n${runs.length} run(s), ${minutes} minute(s), ${capture ? 1 : 0} capture(s), ${unreadable} unreadable.`);
 
-// Only a pass whose every run produced a readable report is entitled to say the defect was not
-// observed. Anything else is an unfinished experiment, and saying otherwise would be the same
-// mistake as calling a clean pass a fix.
+// Only a pass that actually observed something may say the defect was not observed. Counting the
+// runs that produced a readable report — rather than the runs that were started — covers an empty
+// experiment and a wholly unreadable one with the same test, and neither is a clean result.
 if (capture) {
   console.log('See capture.json. A single capture names a mechanism; it does not establish a cause.');
-} else if (failed > 0) {
+} else if (readable === 0) {
+  console.error('No run produced a readable result, so this pass observed nothing. It is not a clean result.');
+  process.exitCode = 1;
+} else if (unreadable > 0) {
   console.log('This pass is inconclusive: at least one run produced no readable diagnostic result.');
 } else {
   console.log('Signature B was not observed in this pass. That bounds its rate; it does not mean it is fixed.');

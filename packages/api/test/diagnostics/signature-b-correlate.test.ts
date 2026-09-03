@@ -203,6 +203,46 @@ test('correlator: bounds how many records one report can produce', () => {
   assert.equal(correlator.parseTapFailures(many).length, correlator.MAX_RECORDS);
 });
 
+test('pass runner: an experiment that runs nothing is refused, not reported clean', () => {
+  const runner = path.join(DIAGNOSTICS_DIR, 'run-signature-b-pass.mjs');
+  const attempt = (runs: string): ReturnType<typeof spawnSync> =>
+    spawnSync(process.execPath, [runner, '--runs', runs], {
+      cwd: path.resolve(DIAGNOSTICS_DIR, '../..'),
+      encoding: 'utf8',
+      env: { ...process.env, NODE_TEST_CONTEXT: undefined },
+    });
+
+  for (const runs of ['0', '-3', 'twenty']) {
+    const result = attempt(runs);
+    assert.notEqual(result.status, 0, `--runs ${runs} must not exit successfully`);
+    assert.match(`${result.stderr}`, /must be a positive number/, `--runs ${runs} must say why`);
+    assert.doesNotMatch(
+      `${result.stdout}`,
+      /was not observed/,
+      'an experiment that never ran must never claim the defect was not observed',
+    );
+  }
+});
+
+test('pass runner: a pass whose every run was unreadable is refused, not reported clean', () => {
+  // A wall-clock ceiling smaller than a single run makes the child time out, so the run yields no
+  // readable report. The pass observed nothing and must say so rather than print the same summary
+  // as a quiet one — the failure mode the ceiling and the collection check exist to prevent.
+  const result = spawnSync(
+    process.execPath,
+    [path.join(DIAGNOSTICS_DIR, 'run-signature-b-pass.mjs'), '--runs', '5', '--max-minutes', '0.0001'],
+    {
+      cwd: path.resolve(DIAGNOSTICS_DIR, '../..'),
+      encoding: 'utf8',
+      env: { ...process.env, NODE_TEST_CONTEXT: undefined },
+    },
+  );
+
+  assert.notEqual(result.status, 0, 'an unreadable pass must not exit successfully');
+  assert.doesNotMatch(`${result.stdout}`, /was not observed/, 'and must not claim the defect was not observed');
+  assert.match(`${result.stderr}`, /observed nothing/, 'and must say the pass observed nothing');
+});
+
 test('correlator: captures a real child termination end to end through the parent reporter', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-e2e-'));
   try {
