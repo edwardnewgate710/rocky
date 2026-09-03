@@ -107,6 +107,8 @@ async function withSchema(run: (fixture: Fixture) => Promise<void>): Promise<voi
 
       let http: Server | undefined;
       let shutdownAnalysis: (() => Promise<void>) | undefined;
+      let caseFailed = false;
+      let caseError: unknown;
       try {
         const composed = createPgApiServer({ pool, logger, config: { accessTokenSecret: TEST_SECRET } });
         shutdownAnalysis = composed.shutdownAnalysis;
@@ -122,17 +124,40 @@ async function withSchema(run: (fixture: Fixture) => Promise<void>): Promise<voi
           pool,
           migrateTo: (dir) => migrate(pool, dir),
         });
-      } finally {
-        // The server and the analysis worker both hold this pool, so they have to be shut down
-        // before the callback returns — teardown ends the pool the moment it does, and anything
-        // still using it would fail with "Cannot use a pool after calling end on the pool".
-        if (http) await closeServer(http);
-        if (shutdownAnalysis) await shutdownAnalysis();
-        for (const [key, value] of Object.entries(savedEnv)) {
-          if (value === undefined) delete process.env[key];
-          else process.env[key] = value;
-        }
+      } catch (error) {
+        caseFailed = true;
+        caseError = error;
       }
+
+      // The server and the analysis worker both hold this pool, so they have to be shut down before
+      // the callback returns — teardown ends the pool the moment it does, and anything still using
+      // it would fail with "Cannot use a pool after calling end on the pool".
+      //
+      // Each step runs whatever the one before it did. Chained with plain awaits, a server that
+      // failed to close would skip `shutdownAnalysis` entirely, leaving the analysis worker holding
+      // this pool while teardown tried to end it — turning a small close failure into a teardown
+      // timeout and a run of pool-after-end errors. Restoring the environment must not be skipped
+      // either, or the next test in the file inherits it.
+      const cleanupFailures: unknown[] = [];
+      const record = (error: unknown): void => {
+        cleanupFailures.push(error);
+      };
+      if (http) await closeServer(http).catch(record);
+      if (shutdownAnalysis) await shutdownAnalysis().catch(record);
+      for (const [key, value] of Object.entries(savedEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+
+      // Same precedence the helper itself uses: the case's own failure is the one worth reading, and
+      // a cleanup failure rides along rather than replacing it.
+      if (caseFailed) {
+        if (cleanupFailures.length > 0 && caseError instanceof Error && caseError.cause === undefined) {
+          caseError.cause = cleanupFailures[0];
+        }
+        throw caseError;
+      }
+      if (cleanupFailures.length > 0) throw cleanupFailures[0];
     },
     { connectionString: DATABASE_URL, max: 4 },
   );
