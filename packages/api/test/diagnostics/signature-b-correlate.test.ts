@@ -144,6 +144,27 @@ test('correlator: joins the parent record to the child that ran that file', () =
   }
 });
 
+test('correlator: joins a capture taken on either platform, read on either platform', () => {
+  // A capture is taken on the developer machine and may be read anywhere, CI included. `path.basename`
+  // splits only on the host's separator, so a Windows log read on Linux would yield the whole path as
+  // its own key and join nothing — which is exactly how CI caught this.
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-sep-'));
+  try {
+    const lines = [
+      { kind: 'start', pid: 111, testFile: 'C:\\repo\\dist-test\\test\\windows-style.test.js' },
+      { kind: 'start', pid: 222, testFile: '/home/runner/repo/dist-test/test/posix-style.test.js' },
+    ];
+    fs.writeFileSync(path.join(logDir, 'run-3.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+
+    const logs = correlator.readChildLogs(logDir);
+
+    assert.equal(logs.get('windows-style.test.js')?.pid, 111, 'a backslash path keys on its last segment');
+    assert.equal(logs.get('posix-style.test.js')?.pid, 222, 'so does a forward-slash path');
+  } finally {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
 test('correlator: a malformed trailing line does not discard the record before it', () => {
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-correlate-'));
   try {

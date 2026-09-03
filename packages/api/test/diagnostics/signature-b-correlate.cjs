@@ -40,6 +40,21 @@ const path = require('node:path');
 const MAX_RECORDS = 200;
 
 /**
+ * Last path segment, treating both separators as separators whatever platform this runs on.
+ *
+ * `path.basename` uses only the host's separator, so on Linux it returns a Windows path unchanged
+ * and the join silently finds nothing. Captures happen on the developer machine and may be read
+ * anywhere, including CI, so the key cannot depend on where the analysis runs.
+ *
+ * @param {string} filePath
+ * @returns {string}
+ */
+function fileKey(filePath) {
+  const segments = String(filePath).split(/[\\/]/);
+  return segments[segments.length - 1] ?? '';
+}
+
+/**
  * How a child process terminated, keyed by the exit status the parent observed.
  *
  * Every code below was measured on this platform (Windows 11, Node v24.15.0) rather than assumed:
@@ -202,7 +217,7 @@ function readChildLogs(logDir) {
         continue;
       }
       if (typeof record.testFile !== 'string' || record.testFile === '') continue;
-      const key = path.basename(record.testFile);
+      const key = fileKey(record.testFile);
       const existing = byFile.get(key) ?? { pid: null, kinds: [] };
       existing.pid = typeof record.pid === 'number' ? record.pid : existing.pid;
       if (typeof record.kind === 'string') existing.kinds.push(record.kind);
@@ -226,7 +241,7 @@ function readChildLogs(logDir) {
  */
 function correlate(failures, childLogs) {
   return failures.map((failure) => {
-    const child = childLogs.get(path.basename(failure.file)) ?? null;
+    const child = childLogs.get(fileKey(failure.file)) ?? null;
     const kinds = child?.kinds ?? [];
     const classification = classifyTermination(failure);
     const narrowing = narrowFromChildEvidence(classification, kinds);
