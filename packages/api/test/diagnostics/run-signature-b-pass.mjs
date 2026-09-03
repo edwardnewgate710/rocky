@@ -209,6 +209,26 @@ function killTree(child) {
  * @param {number} budgetMs
  * @returns {Promise<{ status: number|null, signal: string|null, timedOut: boolean, error: Error|null, stderr: string }>}
  */
+/**
+ * The run currently in flight, so an interrupted pass can take its process tree with it.
+ *
+ * Detaching the child is what makes the group killable on POSIX, and it is also what stops a
+ * terminal `SIGINT` reaching it: Ctrl-C goes to the foreground process group, which the detached
+ * runner is no longer in. Without these handlers, interrupting the pass would leave `node --test`
+ * and every per-file worker running against the suite database.
+ *
+ * @type {import('node:child_process').ChildProcess | null}
+ */
+let activeChild = null;
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => {
+    if (activeChild !== null) killTree(activeChild);
+    // 128 + signal number, the conventional shell encoding for "terminated by this signal".
+    process.exit(signal === 'SIGINT' ? 130 : 143);
+  });
+}
+
 function runOnce(tapPath, logDir, budgetMs) {
   return new Promise((resolve) => {
     const child = spawn(
@@ -230,6 +250,7 @@ function runOnce(tapPath, logDir, budgetMs) {
       },
     );
 
+    activeChild = child;
     let stderr = '';
     let timedOut = false;
     child.stderr?.on('data', (chunk) => {
@@ -244,10 +265,12 @@ function runOnce(tapPath, logDir, budgetMs) {
 
     child.on('error', (error) => {
       clearTimeout(deadline);
+      activeChild = null;
       resolve({ status: null, signal: null, timedOut, error, stderr });
     });
     child.on('close', (status, signal) => {
       clearTimeout(deadline);
+      activeChild = null;
       resolve({ status, signal, timedOut, error: null, stderr });
     });
   });

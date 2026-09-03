@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -410,6 +410,56 @@ test('pass runner: a completed run is not reported as timed out', () => {
     };
     assert.equal(summary.runs[0]?.timedOut, false, 'a run that finished inside its budget did not time out');
     assert.equal(summary.runs[0]?.collectionError, null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('pass runner: interrupting the pass takes the detached test tree with it', {
+  skip: process.platform === 'win32'
+    ? 'SIGTERM on Windows terminates without running handlers, and libuv already reaps the tree there'
+    : false,
+}, async () => {
+  // Detaching the run is what makes its group killable, and it is also what stops a terminal Ctrl-C
+  // reaching it: the runner is no longer in the foreground process group. Without the handlers this
+  // asserts, interrupting a pass would leave node --test and every per-file worker running against
+  // the suite database.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-signal-'));
+  try {
+    const pidFile = path.join(dir, 'child.pid');
+    const target = path.join(dir, 'blocks.test.cjs');
+    fs.writeFileSync(
+      target,
+      `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));\n` +
+        "require('node:test').test('blocks', async () => {\n" +
+        '  await new Promise((r) => setTimeout(r, 30000));\n' +
+        '});\n',
+    );
+
+    const pass = spawn(
+      process.execPath,
+      [path.join(DIAGNOSTICS_DIR, 'run-signature-b-pass.mjs'), '--runs', '1', '--target', target, '--out', path.join(dir, 'out')],
+      { cwd: path.resolve(DIAGNOSTICS_DIR, '../..'), env: { ...process.env, NODE_TEST_CONTEXT: undefined }, stdio: 'ignore' },
+    );
+
+    // Wait for the per-file worker to exist, so the interrupt has something to clean up.
+    const deadline = Date.now() + 20_000;
+    while (!fs.existsSync(pidFile) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    assert.ok(fs.existsSync(pidFile), 'the per-file worker started');
+    const workerPid = Number(fs.readFileSync(pidFile, 'utf8'));
+
+    pass.kill('SIGTERM');
+    await new Promise((resolve) => pass.on('close', resolve));
+
+    let alive = true;
+    try {
+      process.kill(workerPid, 0);
+    } catch {
+      alive = false;
+    }
+    assert.equal(alive, false, 'the detached per-file worker must not survive the interrupted pass');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
