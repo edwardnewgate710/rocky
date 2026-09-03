@@ -1115,6 +1115,29 @@ button:disabled {
 .step-san-input:focus-visible,
 .study-search input:focus-visible { outline: 3px solid var(--sel); outline-offset: 1px; }
 
+/* Quieter than Time and Mode: the row carries no border of its own, matching
+   the Cancel affordance, so the disclosure reads as secondary to the choices
+   above it. Focus ring, hover and disabled state come from the base button. */
+.cg-more-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 6px 0;
+  border-color: transparent;
+  text-align: start;
+}
+.cg-more-label { font-weight: 600; }
+.cg-more-summary {
+  min-width: 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.cg-more { display: flex; flex-direction: column; gap: 16px; }
+
 .cg-actions { display: flex; gap: 8px; align-items: center; }
 .cg-submit { font-weight: 600; }
 .cg-cancel { border-color: transparent; color: var(--muted); }
@@ -1124,6 +1147,7 @@ button:disabled {
   .cg-num input,
   .cg-chip,
   .cg-seg,
+  .cg-more-toggle,
   .nav-search input[type='search'],
   .composer-form input,
   .composer-form button,

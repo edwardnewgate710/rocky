@@ -1,6 +1,7 @@
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mountLobby, renderSeeks } from '../src/app/lobby-mount.js';
+import { formatMoreOptionsSummary } from '../src/app/create-game-panel.js';
 import { LobbyController } from '../src/app/lobby-controller.js';
 import { OFFERED_VARIANTS } from '../src/api/models.js';
 import { VARIANT_LABELS } from '../src/app/variant-labels.js';
@@ -199,7 +200,17 @@ class FakeDOMElement {
     }
   }
 
-  focus(): void {}
+  focusCount = 0;
+
+  /**
+   * Take focus, as the real DOM does: count the call and become the document's
+   * active element. Both matter — the panel's disclosure claims focus on every
+   * toggle, and the tests assert where it ended up.
+   */
+  focus(): void {
+    this.focusCount++;
+    if (this._doc) (this._doc as unknown as { activeElement: unknown }).activeElement = this;
+  }
 
   showModal(): void {
     this.open = true;
@@ -218,6 +229,14 @@ class FakeDOMElement {
   querySelector<T extends FakeDOMElement = FakeDOMElement>(selector: string): T | null {
     const matches = this.querySelectorAll<T>(selector);
     return matches[0] ?? null;
+  }
+
+  /** Node.contains: self-inclusive, walking up the parent chain. */
+  contains(other: unknown): boolean {
+    for (let node = other as FakeDOMElement | null; node; node = node.parentElement) {
+      if (node === this) return true;
+    }
+    return false;
   }
 
   querySelectorAll<T extends FakeDOMElement = FakeDOMElement>(selector: string): T[] {
@@ -279,6 +298,10 @@ function createTestDoc(): {
       return el;
     },
     getElementById: (id: string): FakeDOMElement | null => elements.get(id) ?? null,
+    // Writable so `focus()` can record it, which is how a test asserts where
+    // focus ended up. The panel itself never reads it — the toggle claims focus
+    // rather than inspecting it.
+    activeElement: null as FakeDOMElement | null,
   } as unknown as Document;
 
   const ids = [
@@ -429,6 +452,25 @@ function chooseTime(form: FakeDOMElement, value: string): void {
   selectRadio(form, 'cg-time', value);
   form.querySelector<FakeDOMElement>('input[name="cg-time"]:checked')!
     .dispatchEvent(new Event('change'));
+}
+
+/** The disclosure toggle for the advanced controls. */
+function moreToggle(form: FakeDOMElement): FakeDOMElement {
+  const button = form.querySelector<FakeDOMElement>('.cg-more-toggle');
+  assert.ok(button, 'no more-options toggle');
+  return button;
+}
+
+/** The region the toggle controls. */
+function advancedRegion(form: FakeDOMElement): FakeDOMElement {
+  const region = form.querySelector<FakeDOMElement>('#cg-more-options');
+  assert.ok(region, 'no more-options region');
+  return region;
+}
+
+/** What the closed row currently says about the advanced choices. */
+function summaryText(form: FakeDOMElement): string {
+  return form.querySelector<FakeDOMElement>('.cg-more-summary')?.textContent ?? '';
 }
 
 /** One time-control radio by value. The fake DOM matches a single attribute. */
@@ -756,7 +798,7 @@ test('POST-AUD-001: deferred bot creation cannot navigate after disposal', async
   }
 });
 
-test('mountLobby: create-game V4 renders canonical choices and labelled optional rating bounds', () => {
+test('mountLobby: create-game renders canonical choices with the advanced ones disclosed', () => {
   const { doc, elements } = createTestDoc();
   const { client } = makeFakeClient();
 
@@ -785,7 +827,7 @@ test('mountLobby: create-game V4 renders canonical choices and labelled optional
   assert.equal(form.querySelector<FakeDOMElement>('input[name="cg-color"]:checked')?.value, 'random');
   assert.deepEqual(
     form.querySelectorAll<FakeDOMElement>('legend').map((legend) => legend.textContent),
-    ['Time', 'Variant', 'Mode', 'Color', 'Opponent rating'],
+    ['Time', 'Mode', 'Color', 'Variant', 'Opponent rating'],
   );
   const minimum = form.querySelector<FakeDOMElement>('#cg-min-rating');
   const maximum = form.querySelector<FakeDOMElement>('#cg-max-rating');
@@ -796,7 +838,21 @@ test('mountLobby: create-game V4 renders canonical choices and labelled optional
   assert.equal(minimum?.getAttribute('aria-describedby'), 'cg-rating-hint cg-rating-error');
   assert.equal(maximum?.getAttribute('aria-describedby'), 'cg-rating-hint cg-rating-error');
   assert.equal(form.querySelector('#cg-rating-hint')?.textContent, 'Leave blank for no restriction.');
-  assert.equal(form.querySelector('.cg-more-toggle'), null);
+  const toggle = form.querySelector<FakeDOMElement>('.cg-more-toggle')!;
+  const advanced = form.querySelector<FakeDOMElement>('#cg-more-options')!;
+  assert.equal(toggle.tagName, 'BUTTON');
+  assert.equal(toggle.getAttribute('type'), 'button');
+  assert.equal(toggle.getAttribute('aria-controls'), 'cg-more-options');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  assert.ok(toggle.textContent.includes('More options'));
+  // Default state: nothing advanced is set, so the section stays out of the way.
+  assert.equal(advanced.hidden, true);
+  assert.equal(form.querySelector('.cg-more-summary')?.textContent, 'Standard · Any rating');
+  // Both advanced fieldsets live inside the one region, and nowhere else.
+  assert.equal(advanced.querySelectorAll('input[name="cg-variant"]').length, OFFERED_VARIANTS.length);
+  assert.equal(form.querySelectorAll('input[name="cg-variant"]').length, OFFERED_VARIANTS.length);
+  assert.ok(advanced.contains(form.querySelector('#cg-min-rating')));
+  assert.ok(advanced.contains(form.querySelector('#cg-max-rating')));
   assert.equal(form.querySelector('select'), null);
   assert.equal(form.querySelector('.cg-custom')?.hidden, true);
   assert.equal(form.querySelector('.cg-time-summary')?.hidden, false);
@@ -1785,6 +1841,431 @@ test('mountLobby: a preference naming an unknown time control never selects the 
     );
     assert.equal(form?.querySelector<FakeDOMElement>('input[name="cg-mode"]:checked')?.value, 'casual', time);
   }
+});
+
+/**
+ * The formatter is what stands in for the hidden controls, so a wrong string is
+ * a user looking at a filter they cannot see.
+ */
+test('the disclosure summary names the variant and the rating bound in words', () => {
+  const cases: readonly (readonly [Variant, number | null, number | null, string])[] = [
+    ['standard', null, null, 'Standard · Any rating'],
+    ['atomic', null, null, 'Atomic · Any rating'],
+    ['standard', 1200, null, 'Standard · Rating 1200 and up'],
+    ['standard', null, 1800, 'Standard · Rating up to 1800'],
+    ['standard', 1600, 1600, 'Standard · Rating 1600 exactly'],
+    ['standard', 1200, 1800, 'Standard · Rating 1200 to 1800'],
+    ['crazyhouse', 1200, 1800, 'Crazyhouse · Rating 1200 to 1800'],
+    ['kingofthehill', 0, 4000, 'King of the Hill · Rating 0 to 4000'],
+  ];
+  for (const [variant, minRating, maxRating, expected] of cases) {
+    assert.equal(
+      formatMoreOptionsSummary(variant, { ok: true, minRating, maxRating }),
+      expected,
+      expected,
+    );
+  }
+});
+
+/** A range the panel would reject must never read as a settled choice. */
+test('the disclosure summary refuses to describe an invalid rating as valid', () => {
+  assert.equal(
+    formatMoreOptionsSummary('standard', { ok: false }),
+    'Standard · Opponent rating needs attention',
+  );
+  assert.equal(
+    formatMoreOptionsSummary('horde', { ok: false }),
+    'Horde · Opponent rating needs attention',
+  );
+});
+
+test('mountLobby: the default panel hides the advanced controls behind the disclosure', () => {
+  const { doc, elements } = createTestDoc();
+  const { client } = makeFakeClient();
+
+  mountTestLobby({ doc, client, isAuthenticated: () => true });
+  const mount = elements.get('create-game')!;
+  mount.querySelector('#create-seek')!.click();
+  const form = mount.querySelector('#create-game-form')!;
+
+  assert.equal(advancedRegion(form).hidden, true);
+  assert.equal(moreToggle(form).getAttribute('aria-expanded'), 'false');
+  assert.equal(summaryText(form), 'Standard · Any rating');
+  // The values are still there to submit — only the presentation is closed.
+  assert.equal(form.querySelector<FakeDOMElement>('input[name="cg-variant"]:checked')?.value, 'standard');
+});
+
+test('mountLobby: the disclosure toggles and reports its state on the button', () => {
+  const { doc, elements } = createTestDoc();
+  const { client } = makeFakeClient();
+
+  mountTestLobby({ doc, client, isAuthenticated: () => true });
+  const mount = elements.get('create-game')!;
+  mount.querySelector('#create-seek')!.click();
+  const form = mount.querySelector('#create-game-form')!;
+  const toggle = moreToggle(form);
+
+  toggle.click();
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  assert.equal(advancedRegion(form).hidden, false);
+  // Expanded, the real controls speak for themselves.
+  assert.equal(form.querySelector<FakeDOMElement>('.cg-more-summary')?.hidden, true);
+
+  toggle.click();
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(advancedRegion(form).hidden, true);
+  assert.equal(form.querySelector<FakeDOMElement>('.cg-more-summary')?.hidden, false);
+});
+
+test('mountLobby: toggling the disclosure changes nothing that gets submitted', async () => {
+  const { doc, elements } = createTestDoc();
+  const { client, createdSeeks } = makeFakeClient();
+
+  mountTestLobby({ doc, client, isAuthenticated: () => true });
+  const mount = elements.get('create-game')!;
+  mount.querySelector('#create-seek')!.click();
+  const form = mount.querySelector('#create-game-form')!;
+  const toggle = moreToggle(form);
+
+  toggle.click();
+  chooseTime(form, 'custom');
+  form.querySelector<FakeDOMElement>('#cg-minutes')!.value = '12';
+  form.querySelector<FakeDOMElement>('#cg-increment')!.value = '3';
+  selectRadio(form, 'cg-variant', 'atomic');
+  selectRadio(form, 'cg-mode', 'rated');
+  selectRadio(form, 'cg-color', 'black');
+  form.querySelector<FakeDOMElement>('#cg-min-rating')!.value = '1200';
+  form.querySelector<FakeDOMElement>('#cg-max-rating')!.value = '1800';
+
+  for (let cycle = 0; cycle < 3; cycle++) {
+    toggle.click();
+    toggle.click();
+  }
+
+  assert.equal(form.querySelector<FakeDOMElement>('input[name="cg-time"]:checked')?.value, 'custom');
+  assert.equal(form.querySelector<FakeDOMElement>('#cg-minutes')?.value, '12');
+  assert.equal(form.querySelector<FakeDOMElement>('#cg-increment')?.value, '3');
+  assert.equal(form.querySelector<FakeDOMElement>('input[name="cg-variant"]:checked')?.value, 'atomic');
+  assert.equal(form.querySelector<FakeDOMElement>('input[name="cg-mode"]:checked')?.value, 'rated');
+  assert.equal(form.querySelector<FakeDOMElement>('input[name="cg-color"]:checked')?.value, 'black');
+  assert.equal(form.querySelector<FakeDOMElement>('#cg-min-rating')?.value, '1200');
+  assert.equal(form.querySelector<FakeDOMElement>('#cg-max-rating')?.value, '1800');
+
+  submit(form);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(createdSeeks, [{
+    variant: 'atomic',
+    timeControl: { initialMs: 720_000, incrementMs: 3_000, delayMs: 0, kind: 'increment' },
+    rated: true,
+    color: 'black',
+    minRating: 1200,
+    maxRating: 1800,
+  }]);
+});
+
+test('mountLobby: the collapsed summary follows every advanced edit', () => {
+  const { doc, elements } = createTestDoc();
+  const { client } = makeFakeClient();
+
+  mountTestLobby({ doc, client, isAuthenticated: () => true });
+  const mount = elements.get('create-game')!;
+  mount.querySelector('#create-seek')!.click();
+  const form = mount.querySelector('#create-game-form')!;
+  const toggle = moreToggle(form);
+  const minimum = form.querySelector<FakeDOMElement>('#cg-min-rating')!;
+  const maximum = form.querySelector<FakeDOMElement>('#cg-max-rating')!;
+
+  toggle.click();
+  selectRadio(form, 'cg-variant', 'atomic');
+  form.querySelector<FakeDOMElement>('input[name="cg-variant"]:checked')!
+    .dispatchEvent(new Event('change'));
+  minimum.value = '1200';
+  minimum.dispatchEvent(new Event('input'));
+  toggle.click();
+  assert.equal(summaryText(form), 'Atomic · Rating 1200 and up');
+
+  toggle.click();
+  minimum.value = '';
+  minimum.dispatchEvent(new Event('input'));
+  maximum.value = '1800';
+  maximum.dispatchEvent(new Event('input'));
+  toggle.click();
+  assert.equal(summaryText(form), 'Atomic · Rating up to 1800');
+
+  toggle.click();
+  minimum.value = '1800';
+  minimum.dispatchEvent(new Event('input'));
+  toggle.click();
+  assert.equal(summaryText(form), 'Atomic · Rating 1800 exactly');
+});
+
+/**
+ * The whole point of the summary: a filter the player cannot see must still be
+ * announced, and a bad one must not read as settled.
+ */
+test('mountLobby: a collapsed invalid range says so instead of implying a choice', () => {
+  const { doc, elements } = createTestDoc();
+  const { client } = makeFakeClient();
+
+  mountTestLobby({ doc, client, isAuthenticated: () => true });
+  const mount = elements.get('create-game')!;
+  mount.querySelector('#create-seek')!.click();
+  const form = mount.querySelector('#create-game-form')!;
+  const toggle = moreToggle(form);
+  const minimum = form.querySelector<FakeDOMElement>('#cg-min-rating')!;
+
+  toggle.click();
+  minimum.value = '2000';
+  minimum.dispatchEvent(new Event('input'));
+  form.querySelector<FakeDOMElement>('#cg-max-rating')!.value = '1500';
+  form.querySelector<FakeDOMElement>('#cg-max-rating')!.dispatchEvent(new Event('input'));
+  toggle.click();
+
+  assert.equal(summaryText(form), 'Standard · Opponent rating needs attention');
+  // Closing retires the inline message but keeps what was typed.
+  assert.equal(minimum.value, '2000');
+  assert.equal(form.querySelector<FakeDOMElement>('#cg-max-rating')?.value, '1500');
+});
+
+/**
+ * Focusing a field inside a closed section would leave the player staring at a
+ * form that refuses to submit and says nothing about why.
+ */
+test('mountLobby: submitting a hidden invalid range opens the section before reporting it', async () => {
+  const { doc, elements } = createTestDoc();
+  const { client, createdSeeks } = makeFakeClient();
+
+  mountTestLobby({ doc, client, isAuthenticated: () => true });
+  const mount = elements.get('create-game')!;
+  mount.querySelector('#create-seek')!.click();
+  const form = mount.querySelector('#create-game-form')!;
+  const toggle = moreToggle(form);
+  const minimum = form.querySelector<FakeDOMElement>('#cg-min-rating')!;
+
+  toggle.click();
+  minimum.value = '2000';
+  form.querySelector<FakeDOMElement>('#cg-max-rating')!.value = '1500';
+  toggle.click();
+  assert.equal(advancedRegion(form).hidden, true);
+
+  submit(form);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(createdSeeks.length, 0);
+  assert.equal(advancedRegion(form).hidden, false);
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  assert.equal(form.querySelector<FakeDOMElement>('#cg-rating-error')?.hidden, false);
+  assert.equal(minimum.getAttribute('aria-invalid'), 'true');
+});
+
+/**
+ * Collapsing hides whatever the player was editing. Browsers disagree about what
+ * a click does to focus — Chromium focuses the button, Safari and Firefox on
+ * macOS blur to the document — so the panel claims focus rather than inspecting
+ * it, and the result has to hold from either starting point.
+ */
+test('mountLobby: toggling the section always leaves focus on the toggle', () => {
+  for (const startInside of [true, false]) {
+    const { doc, elements } = createTestDoc();
+    const { client } = makeFakeClient();
+
+    mountTestLobby({ doc, client, isAuthenticated: () => true });
+    const mount = elements.get('create-game')!;
+    mount.querySelector('#create-seek')!.click();
+    const form = mount.querySelector('#create-game-form')!;
+    const toggle = moreToggle(form);
+    toggle.click();
+    assert.equal(advancedRegion(form).hidden, false);
+
+    // Either the browser left focus on the field being edited, or it dropped it
+    // somewhere outside the region entirely.
+    const origin = startInside
+      ? form.querySelector<FakeDOMElement>('#cg-min-rating')!
+      : form.querySelector<FakeDOMElement>('.cg-submit')!;
+    origin.focus();
+    const before = toggle.focusCount;
+
+    toggle.click();
+
+    const where = startInside ? 'from inside' : 'from outside';
+    assert.equal(advancedRegion(form).hidden, true, where);
+    assert.equal(toggle.focusCount, before + 1, where);
+    assert.equal((doc as unknown as { activeElement: unknown }).activeElement, toggle, where);
+  }
+});
+
+/** Opening ends on the toggle too, so Tab walks straight into the region. */
+test('mountLobby: opening the section leaves focus on the toggle', () => {
+  const { doc, elements } = createTestDoc();
+  const { client } = makeFakeClient();
+
+  mountTestLobby({ doc, client, isAuthenticated: () => true });
+  const mount = elements.get('create-game')!;
+  mount.querySelector('#create-seek')!.click();
+  const form = mount.querySelector('#create-game-form')!;
+  const toggle = moreToggle(form);
+
+  toggle.click();
+
+  assert.equal(advancedRegion(form).hidden, false);
+  assert.equal((doc as unknown as { activeElement: unknown }).activeElement, toggle);
+});
+
+test('mountLobby: a pending create locks the disclosure with every other control', async () => {
+  const pendingSeek = deferred<SeekView>();
+  const { doc, elements } = createTestDoc();
+  const { client } = makeFakeClient({ createSeek: () => pendingSeek.promise });
+
+  mountTestLobby({ doc, client, isAuthenticated: () => true });
+  const mount = elements.get('create-game')!;
+  mount.querySelector('#create-seek')!.click();
+  const form = mount.querySelector('#create-game-form')!;
+  const toggle = moreToggle(form);
+
+  submit(form);
+
+  assert.equal(toggle.disabled, true);
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+
+  pendingSeek.resolve(makeSeek({ id: 'disclosure-pending' }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(toggle.disabled, false);
+});
+
+test('mountLobby: restored advanced preferences open the section instead of hiding', () => {
+  const { doc } = createTestDoc();
+  const { client } = makeFakeClient();
+  const storage = memoryStorage({
+    'gambit-create-game': JSON.stringify({
+      time: '5+3', mode: 'rated', variant: 'atomic', color: 'black',
+      minRating: 1200, maxRating: 1800,
+    }),
+  });
+
+  mountTestLobby({ doc, client, isAuthenticated: () => true, storage });
+  const form = (doc.getElementById('create-game') as unknown as FakeDOMElement)
+    .querySelector('#create-game-form')!;
+
+  assert.equal(advancedRegion(form).hidden, false);
+  assert.equal(moreToggle(form).getAttribute('aria-expanded'), 'true');
+  assert.equal(form.querySelector<FakeDOMElement>('input[name="cg-variant"]:checked')?.value, 'atomic');
+  assert.equal(form.querySelector<FakeDOMElement>('#cg-min-rating')?.value, '1200');
+});
+
+test('mountLobby: a rating bound alone is enough to open the section', () => {
+  for (const [stored, expectedSummary] of [
+    [{ minRating: 1200 }, 'Standard · Rating 1200 and up'],
+    [{ maxRating: 1800 }, 'Standard · Rating up to 1800'],
+    [{ variant: 'horde' }, 'Horde · Any rating'],
+  ] as const) {
+    const { doc } = createTestDoc();
+    const { client } = makeFakeClient();
+    const storage = memoryStorage({
+      'gambit-create-game': JSON.stringify({ time: '10+0', mode: 'casual', ...stored }),
+    });
+
+    mountTestLobby({ doc, client, isAuthenticated: () => true, storage });
+    const form = (doc.getElementById('create-game') as unknown as FakeDOMElement)
+      .querySelector('#create-game-form')!;
+
+    assert.equal(advancedRegion(form).hidden, false, JSON.stringify(stored));
+    // Still useful once the player closes it by hand.
+    moreToggle(form).click();
+    assert.equal(summaryText(form), expectedSummary, JSON.stringify(stored));
+  }
+});
+
+test('mountLobby: default preferences leave the section closed', () => {
+  const { doc } = createTestDoc();
+  const { client } = makeFakeClient();
+  const storage = memoryStorage({
+    'gambit-create-game': JSON.stringify({
+      time: '5+3', mode: 'rated', variant: 'standard', color: 'white',
+      minRating: null, maxRating: null,
+    }),
+  });
+
+  mountTestLobby({ doc, client, isAuthenticated: () => true, storage });
+  const form = (doc.getElementById('create-game') as unknown as FakeDOMElement)
+    .querySelector('#create-game-form')!;
+
+  assert.equal(advancedRegion(form).hidden, true);
+  assert.equal(summaryText(form), 'Standard · Any rating');
+});
+
+/** Malformed prefs fall back to defaults, which must not read as a hidden filter. */
+test('mountLobby: malformed preferences leave no advanced state hidden', () => {
+  for (const raw of ['not json', '{"time":"7+7","mode":"rated","variant":"atomic"}', '{"time":"10+0"}']) {
+    const { doc } = createTestDoc();
+    const { client } = makeFakeClient();
+    const storage = memoryStorage({ 'gambit-create-game': raw });
+
+    mountTestLobby({ doc, client, isAuthenticated: () => true, storage });
+    const form = (doc.getElementById('create-game') as unknown as FakeDOMElement)
+      .querySelector('#create-game-form')!;
+
+    assert.equal(advancedRegion(form).hidden, true, raw);
+    assert.equal(summaryText(form), 'Standard · Any rating', raw);
+    assert.equal(form.querySelector<FakeDOMElement>('input[name="cg-variant"]:checked')?.value, 'standard', raw);
+  }
+});
+
+/**
+ * A seek posted with advanced settings must not come back looking default, or
+ * the next Create seek quietly repeats a filter the player cannot see.
+ */
+test('mountLobby: reopening after an advanced create shows the settings it used', async () => {
+  const { doc, elements } = createTestDoc();
+  const { client, createdSeeks } = makeFakeClient();
+
+  mountTestLobby({ doc, client, isAuthenticated: () => true });
+  const mount = elements.get('create-game')!;
+  mount.querySelector('#create-seek')!.click();
+  const form = mount.querySelector('#create-game-form')!;
+  moreToggle(form).click();
+  selectRadio(form, 'cg-variant', 'atomic');
+  form.querySelector<FakeDOMElement>('#cg-min-rating')!.value = '1200';
+  form.querySelector<FakeDOMElement>('#cg-max-rating')!.value = '1800';
+  moreToggle(form).click();
+
+  submit(form);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(createdSeeks.length, 1);
+  assert.equal(form.hidden, true);
+
+  mount.querySelector('#create-seek')!.click();
+  assert.equal(advancedRegion(form).hidden, false);
+  assert.equal(moreToggle(form).getAttribute('aria-expanded'), 'true');
+});
+
+test('mountLobby: the disclosure leaves the time control alone', () => {
+  const { doc, elements } = createTestDoc();
+  const { client } = makeFakeClient();
+
+  mountTestLobby({ doc, client, isAuthenticated: () => true });
+  const mount = elements.get('create-game')!;
+  mount.querySelector('#create-seek')!.click();
+  const form = mount.querySelector('#create-game-form')!;
+  const toggle = moreToggle(form);
+  const summary = form.querySelector<FakeDOMElement>('.cg-time-summary')!;
+
+  chooseTime(form, 'unlimited');
+  const unlimitedText = summary.textContent;
+  toggle.click();
+  toggle.click();
+  assert.equal(form.querySelector<FakeDOMElement>('input[name="cg-time"]:checked')?.value, 'unlimited');
+  assert.equal(summary.textContent, unlimitedText);
+
+  chooseTime(form, 'custom');
+  form.querySelector<FakeDOMElement>('#cg-minutes')!.value = '7.5';
+  form.querySelector<FakeDOMElement>('#cg-increment')!.value = '4';
+  toggle.click();
+  toggle.click();
+  assert.equal(form.querySelector<FakeDOMElement>('input[name="cg-time"]:checked')?.value, 'custom');
+  assert.equal(form.querySelector<FakeDOMElement>('#cg-minutes')?.value, '7.5');
+  assert.equal(form.querySelector<FakeDOMElement>('#cg-increment')?.value, '4');
+  assert.equal(form.querySelector<FakeDOMElement>('.cg-custom')?.hidden, false);
 });
 
 test('mountLobby: a valid V3 preset preference restores every choice', () => {

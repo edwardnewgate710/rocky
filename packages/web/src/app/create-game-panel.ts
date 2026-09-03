@@ -1,8 +1,9 @@
 /**
  * Create-a-game panel — the lobby's focused seek builder.
  *
- * The collapsed trigger opens one short form for time, variant, mode, color,
- * and optional opponent-rating bounds.
+ * The collapsed trigger opens one short form for time, mode, and color, with
+ * variant and optional opponent-rating bounds behind a "More options"
+ * disclosure — the hierarchy the confirmed design brief specifies.
  * The component owns only DOM and form state; the lobby wiring remains
  * responsible for the network request.
  */
@@ -51,6 +52,36 @@ const COLOR_LABELS: Record<SeekColor, string> = {
   black: 'Black',
 };
 
+/** Id of the disclosure region, referenced by the toggle's `aria-controls`. */
+const ADVANCED_REGION_ID = 'cg-more-options';
+
+/** A rating range as the panel would submit it, or the fact that it is unusable. */
+export type RatingSummary =
+  | { readonly ok: true; readonly minRating: number | null; readonly maxRating: number | null }
+  | { readonly ok: false };
+
+/**
+ * Describe the advanced choices for the collapsed disclosure.
+ *
+ * An active variant or rating bound must never be invisible, so this is what the
+ * closed row says instead. It is worded rather than glyphed — a screen reader
+ * gets the same sentence the eye does — and a range the panel would reject says
+ * so, rather than reading as a settled choice.
+ */
+export function formatMoreOptionsSummary(variant: Variant, rating: RatingSummary): string {
+  const label = VARIANT_LABELS[variant];
+  if (!rating.ok) return `${label} · Opponent rating needs attention`;
+  const { minRating, maxRating } = rating;
+  if (minRating !== null && maxRating !== null) {
+    return minRating === maxRating
+      ? `${label} · Rating ${minRating} exactly`
+      : `${label} · Rating ${minRating} to ${maxRating}`;
+  }
+  if (minRating !== null) return `${label} · Rating ${minRating} and up`;
+  if (maxRating !== null) return `${label} · Rating up to ${maxRating}`;
+  return `${label} · Any rating`;
+}
+
 /** The validated settings sent through the existing seek-creation path. */
 export interface CreateGameParams {
   readonly variant: Variant;
@@ -92,10 +123,15 @@ export class CreateGamePanel {
   private readonly maxRating: HTMLInputElement;
   private readonly ratingError: HTMLParagraphElement;
   private readonly timeSummary: HTMLParagraphElement;
+  private readonly moreToggle: HTMLButtonElement;
+  private readonly moreSummary: HTMLSpanElement;
+  private readonly advancedRegion: HTMLDivElement;
   private readonly storage: KeyValueStorage | undefined;
 
   private expanded = false;
   private pending = false;
+  /** Disclosure openness is presentation only — never persisted, never submitted. */
+  private advancedOpen = false;
 
   constructor(opts: CreateGamePanelOptions) {
     this.doc = opts.doc;
@@ -151,16 +187,37 @@ export class CreateGamePanel {
       novalidate: '',
       hidden: '',
     });
+    this.moreSummary = el(this.doc, 'span', { class: 'cg-more-summary', dir: 'ltr' });
+    this.moreToggle = el(this.doc, 'button', {
+      type: 'button',
+      class: 'cg-more-toggle',
+      'aria-expanded': 'false',
+      'aria-controls': ADVANCED_REGION_ID,
+    });
+    this.moreToggle.append(
+      el(this.doc, 'span', { class: 'cg-more-label' }, 'More options'),
+      this.moreSummary,
+    );
+    this.advancedRegion = el(
+      this.doc,
+      'div',
+      { id: ADVANCED_REGION_ID, class: 'cg-more', hidden: '' },
+      this.createVariantField(prefs?.variant ?? DEFAULT_CREATE_GAME_VARIANT),
+      this.createRatingField(prefs?.minRating ?? null, prefs?.maxRating ?? null),
+    );
     this.form.append(
       this.createTimeField(prefs?.time ?? DEFAULT_PRESET_ID),
-      this.createVariantField(prefs?.variant ?? DEFAULT_CREATE_GAME_VARIANT),
       this.createModeField(prefs?.mode ?? 'casual'),
       this.createColorField(prefs?.color ?? DEFAULT_CREATE_GAME_COLOR),
-      this.createRatingField(prefs?.minRating ?? null, prefs?.maxRating ?? null),
+      this.moreToggle,
+      this.advancedRegion,
       el(this.doc, 'div', { class: 'cg-actions' }, this.submitBtn, this.cancelBtn),
     );
     this.bindEvents();
     this.syncTimeSelection(false);
+    // Derived, never restored: an advanced choice that survived in prefs opens
+    // the section rather than sitting behind a closed row.
+    this.setAdvancedOpen(this.hasAdvancedState());
     opts.mount.replaceChildren(this.trigger, this.form);
     this.setAuthenticated(opts.initialAuthenticated ?? false);
   }
@@ -375,6 +432,20 @@ export class CreateGamePanel {
     this.customIncrement.addEventListener('input', () => this.clearCustomError(this.customIncrement));
     this.minRating.addEventListener('input', () => this.refreshRatingError());
     this.maxRating.addEventListener('input', () => this.refreshRatingError());
+    this.moreToggle.addEventListener('click', () => {
+      // Closing on a rating the panel would reject retires only the inline
+      // message; the values stay, the summary still says so, and submitting
+      // re-opens and re-reports. Clearing it outright would hide a real problem.
+      if (this.advancedOpen) this.clearRatingError();
+      this.setAdvancedOpen(!this.advancedOpen);
+      // Claim focus rather than inspect it. Browsers disagree about what a click
+      // does to focus — Chromium focuses the button, Safari and Firefox on macOS
+      // do not and blur to the document instead — so reading activeElement to
+      // decide would be wrong on the engines that need this most. Collapsing
+      // hides whatever the player was editing; the control they just operated is
+      // where focus belongs either way, and re-focusing it is a no-op elsewhere.
+      this.moreToggle.focus();
+    });
     this.form.addEventListener('submit', (event) => {
       event.preventDefault();
       void this.submit();
@@ -590,11 +661,51 @@ export class CreateGamePanel {
     this.trigger.hidden = expanded;
     this.form.hidden = !expanded;
     if (expanded) {
+      this.setAdvancedOpen(this.hasAdvancedState());
       this.form.querySelector<HTMLInputElement>('input[name="cg-time"]:checked')?.focus();
     } else {
       this.callbacks.onError(null);
       if (!this.trigger.disabled) this.trigger.focus();
     }
+  }
+
+  /** True when a choice inside the disclosure differs from the quiet default. */
+  private hasAdvancedState(): boolean {
+    const variant = this.readChecked('cg-variant');
+    return (
+      variant !== DEFAULT_CREATE_GAME_VARIANT ||
+      this.minRating.value.trim() !== '' ||
+      this.maxRating.value.trim() !== ''
+    );
+  }
+
+  /**
+   * Show or hide the advanced region.
+   *
+   * `hidden` rather than detaching it: the controls keep their values and stay
+   * readable by {@link gather}, so what the panel submits never depends on what
+   * the panel is showing.
+   */
+  private setAdvancedOpen(open: boolean): void {
+    this.advancedOpen = open;
+    this.moreToggle.setAttribute('aria-expanded', String(open));
+    this.advancedRegion.hidden = !open;
+    this.syncAdvancedSummary();
+  }
+
+  /** Keep the collapsed row describing the values that would actually be sent. */
+  private syncAdvancedSummary(): void {
+    this.moreSummary.hidden = this.advancedOpen;
+    if (this.advancedOpen) {
+      this.moreSummary.textContent = '';
+      return;
+    }
+    const variant = this.readChecked('cg-variant');
+    const rating = this.validateRatingRange();
+    this.moreSummary.textContent = formatMoreOptionsSummary(
+      isOfferedVariant(variant) ? variant : DEFAULT_CREATE_GAME_VARIANT,
+      rating.ok ? { ok: true, ...rating.value } : { ok: false },
+    );
   }
 
   /** Gate the entire flow and collapse it immediately when authentication is lost. */
@@ -612,6 +723,7 @@ export class CreateGamePanel {
     this.cancelBtn.disabled = pending;
     this.minRating.disabled = pending;
     this.maxRating.disabled = pending;
+    this.moreToggle.disabled = pending;
     for (const name of ['cg-time', 'cg-variant', 'cg-mode', 'cg-color']) {
       for (const radio of this.form.querySelectorAll<HTMLInputElement>(`input[name="${name}"]`)) {
         radio.disabled = pending;
@@ -685,6 +797,10 @@ export class CreateGamePanel {
 
   /** Render shared rating feedback and mark only its current owning field. */
   private setRatingError(message: string, input: HTMLInputElement): void {
+    // Reveal before anyone focuses `input`: it lives inside the disclosure, and
+    // focusing a hidden field would leave the player staring at a form that
+    // refuses to submit for no visible reason.
+    if (!this.advancedOpen) this.setAdvancedOpen(true);
     this.ratingError.textContent = message;
     this.ratingError.hidden = false;
     this.minRating.removeAttribute('aria-invalid');
