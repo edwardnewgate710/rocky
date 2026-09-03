@@ -19,10 +19,17 @@
  * an absolute deadline enforced *during* a run, not merely consulted before starting another, and
  * expiring it kills the whole process tree — `node:test` spawns one child per test file, so killing
  * only the process this script started would leave workers behind on POSIX. It never retries a
- * failed file, never reruns the suite to get a green result, and never lowers concurrency — those
- * would hide the defect rather than explain it. A pass that captures nothing proves nothing beyond
- * "not observed in N runs", and the printed summary says so; a pass containing a run whose report
- * could not be read says it is inconclusive instead.
+ * failed file and never reruns the suite to get a green result — those would hide the defect rather
+ * than explain it.
+ *
+ * Concurrency is **matched, not lowered**: each run passes the same `--test-concurrency=1` that
+ * `packages/api`'s own `npm test` passes, so the pass measures the configuration CI and developers
+ * actually run, which is the configuration under which every occurrence has been observed. Running
+ * it at Node's default parallelism would be a different experiment, not a stricter one.
+ *
+ * A pass that captures nothing proves nothing beyond "not observed in N runs", and the printed
+ * summary says so; a pass containing a run whose report could not be read says it is inconclusive
+ * instead.
  *
  * Usage, from `packages/api` (compile first: `npx tsc -p tsconfig.test.json`):
  *
@@ -128,7 +135,9 @@ function positiveNumber(name, raw, fallback, { integer = false } = {}) {
 // a duration and are legitimately fractional, so the integer rule belongs to the count alone.
 const maxRuns = positiveNumber('runs', flag('runs', 20), 20, { integer: true });
 const maxMs = positiveNumber('max-minutes', flag('max-minutes', 45), 45) * 60_000;
-const outDir = flag('out', fs.mkdtempSync(path.join(tmpdir(), 'sigb-pass-')));
+// The fallback is computed only when --out is absent: an argument is evaluated before the call,
+// so an eager mkdtemp would create an unused directory on every run that supplies its own.
+const outDir = flag('out', null) ?? fs.mkdtempSync(path.join(tmpdir(), 'sigb-pass-'));
 
 // What each run executes. The default is the whole compiled suite, which is what reproducing
 // Signature B requires; `--target` exists so this script's own tests can point a run at one trivial

@@ -313,6 +313,27 @@ function runPass(args: string[], cwd?: string): ReturnType<typeof spawnSync> {
   });
 }
 
+/**
+ * Wait for a pid to disappear, or give up.
+ *
+ * `process.kill(pid, 0)` sends no signal and throws ESRCH once the process is gone, but signal
+ * delivery and reaping are asynchronous — sampling once right after a kill can still see a process
+ * that is on its way out. Polling to a deadline tests the guarantee that actually matters ("it does
+ * not survive") without asserting anything about how fast the OS gets there.
+ */
+async function waitForExit(pid: number, timeoutMs = 15_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 /** A test file that finishes immediately, so a pass over it costs a process start and nothing more. */
 function trivialTarget(dir: string): string {
   const file = path.join(dir, 'noop.test.cjs');
@@ -355,10 +376,11 @@ test('pass runner: an option consumed as another option is a usage error', () =>
   assert.ok(!fs.existsSync(path.resolve(DIAGNOSTICS_DIR, '../..', '--target')), 'and must create no directory named after an option');
 });
 
-test('pass runner: the ceiling kills the run and every process it started', () => {
+test('pass runner: the ceiling kills the run and every process it started', async () => {
   // Deterministic in both directions by a wide margin: the target blocks for 30s while the ceiling
-  // is 1.2s, and a runner start costs well under half a second. This is the one behaviour that
-  // needs a real timeout, because it is the process-tree cleanup being asserted — node:test spawns
+  // is 6s, which has to outlast two process starts — this script starts `node --test`, which then
+  // spawns the per-file worker that records its pid at load time. This is the one behaviour that
+  // needs a real timeout, because it is the process-tree cleanup being asserted: node:test spawns
   // one child per file, and on POSIX a SIGKILL to the runner is not delivered to that child.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-tree-'));
   try {
@@ -373,7 +395,7 @@ test('pass runner: the ceiling kills the run and every process it started', () =
     );
     const out = path.join(dir, 'out');
 
-    const result = runPass(['--runs', '1', '--max-minutes', '0.02', '--target', target, '--out', out]);
+    const result = runPass(['--runs', '1', '--max-minutes', '0.1', '--target', target, '--out', out]);
 
     assert.notEqual(result.status, 0, 'a pass with no readable run must not exit successfully');
     const summary = JSON.parse(fs.readFileSync(path.join(out, 'summary.json'), 'utf8')) as {
@@ -384,15 +406,7 @@ test('pass runner: the ceiling kills the run and every process it started', () =
 
     const childPid = Number(fs.readFileSync(pidFile, 'utf8'));
     assert.ok(Number.isInteger(childPid) && childPid > 0, 'the per-file child recorded its pid');
-    // `process.kill(pid, 0)` sends no signal and throws ESRCH when the process is gone. Shelling out
-    // to PowerShell would work only on Windows, and Linux is where this guarantee actually bites.
-    let alive = true;
-    try {
-      process.kill(childPid, 0);
-    } catch {
-      alive = false;
-    }
-    assert.equal(alive, false, 'the per-file child must not outlive the ceiling');
+    assert.equal(await waitForExit(childPid), true, 'the per-file child must not outlive the ceiling');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -442,24 +456,28 @@ test('pass runner: interrupting the pass takes the detached test tree with it', 
       { cwd: path.resolve(DIAGNOSTICS_DIR, '../..'), env: { ...process.env, NODE_TEST_CONTEXT: undefined }, stdio: 'ignore' },
     );
 
-    // Wait for the per-file worker to exist, so the interrupt has something to clean up.
-    const deadline = Date.now() + 20_000;
-    while (!fs.existsSync(pidFile) && Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 50));
-    }
-    assert.ok(fs.existsSync(pidFile), 'the per-file worker started');
-    const workerPid = Number(fs.readFileSync(pidFile, 'utf8'));
-
-    pass.kill('SIGTERM');
-    await new Promise((resolve) => pass.on('close', resolve));
-
-    let alive = true;
     try {
-      process.kill(workerPid, 0);
-    } catch {
-      alive = false;
+      // Wait for the per-file worker to exist, so the interrupt has something to clean up.
+      const deadline = Date.now() + 20_000;
+      while (!fs.existsSync(pidFile) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      assert.ok(fs.existsSync(pidFile), 'the per-file worker started');
+      const workerPid = Number(fs.readFileSync(pidFile, 'utf8'));
+
+      pass.kill('SIGTERM');
+      await new Promise((resolve) => pass.on('close', resolve));
+
+      assert.equal(
+        await waitForExit(workerPid),
+        true,
+        'the detached per-file worker must not survive the interrupted pass',
+      );
+    } finally {
+      // If the worker never appeared, the assertion above throws before the interrupt is sent — and
+      // the tree this test started would outlive it. Killing here runs on every path.
+      pass.kill('SIGKILL');
     }
-    assert.equal(alive, false, 'the detached per-file worker must not survive the interrupted pass');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
