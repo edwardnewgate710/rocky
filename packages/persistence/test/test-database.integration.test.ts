@@ -52,19 +52,6 @@ async function databaseExists(name: string): Promise<boolean> {
   }
 }
 
-/** How many disposable databases the helper currently has on the server. */
-async function countTestDatabases(): Promise<number> {
-  const client = await admin();
-  try {
-    const { rows } = await client.query<{ n: string }>(
-      "SELECT count(*)::text AS n FROM pg_database WHERE datname LIKE 'test\\_db\\_%'",
-    );
-    return Number(rows[0]?.n ?? '0');
-  } finally {
-    await client.end();
-  }
-}
-
 test('test database: a successful callback leaves no database behind', { skip }, async () => {
   let name = '';
   let poolRef: Pool | undefined;
@@ -284,9 +271,17 @@ test('test database: a concurrent run is not blocked by another database’s bac
       }
     },
     { onQuiescenceCheck: (backends) => checksLong.push(backends) },
-  ).then(() => {
-    longFinished = true;
-  });
+    // Settled here, where the promise is created, rather than after `await short`. A rejection
+    // arriving while `short` is still pending would otherwise be unhandled at that moment, and
+    // node:test would report an uncaught rejection instead of the failure the precedence logic
+    // below exists to preserve — hiding exactly what it was written to surface.
+  ).then(
+    () => {
+      longFinished = true;
+      return undefined;
+    },
+    (error: unknown) => error ?? new Error('the long run rejected with a falsy value'),
+  );
 
   const short = withTestDatabase(
     async ({ pool, database }) => {
@@ -316,10 +311,7 @@ test('test database: a concurrent run is not blocked by another database’s bac
   }
 
   releaseLong();
-  const longFailure = await long.then(
-    () => undefined,
-    (error: unknown) => error ?? new Error('the long run rejected with a falsy value'),
-  );
+  const longFailure = await long;
 
   if (primaryFailed) {
     if (longFailure !== undefined && primaryFailure instanceof Error && primaryFailure.cause === undefined) {
@@ -338,15 +330,18 @@ test('test database: a concurrent run is not blocked by another database’s bac
 
 test('test database: giving up on teardown still leaves no database behind', { skip }, async () => {
   // The bounded path force-drops before it reports, and the outer net must not wrongly assume it
-  // did. A leaked database is invisible to every other assertion here and is the one outcome
-  // teardown must never produce, so it gets counted directly.
-  const before = await countTestDatabases();
+  // did. A leaked database is invisible to every other assertion here, so it is checked directly —
+  // by name rather than by counting `test_db_%` on the server. This suite shares a server with
+  // whatever else is running against `DATABASE_URL`, and a count taken before and after would be
+  // answering for that other process as much as for this fixture.
+  let name = '';
   let held: Client | undefined;
 
   try {
     await assert.rejects(
       withTestDatabase(
-        async ({ pool, connectionString }) => {
+        async ({ pool, connectionString, database }) => {
+          name = database;
           await pool.query('SELECT 1');
           held = new Client({ connectionString, application_name: 'leak-check' });
           await held.connect();
@@ -362,7 +357,8 @@ test('test database: giving up on teardown still leaves no database behind', { s
     if (held) await held.end().catch(() => undefined);
   }
 
-  assert.equal(await countTestDatabases(), before, 'the disposable database did not survive teardown');
+  assert.notEqual(name, '', 'the fixture reported the database it created');
+  assert.equal(await databaseExists(name), false, 'the disposable database did not survive teardown');
 });
 
 test('test database: a leaked pool client does not become an uncaught error', { skip }, async () => {
@@ -373,11 +369,12 @@ test('test database: a leaked pool client does not become an uncaught error', { 
   // uncaught exception: the failure this whole helper exists to remove, reintroduced by its own
   // cleanup. Unlike the other leak tests, nothing here attaches a listener of its own — the helper
   // has to own the termination it causes.
-  const before = await countTestDatabases();
+  let name = '';
 
   await assert.rejects(
     withTestDatabase(
-      async ({ pool }) => {
+      async ({ pool, database }) => {
+        name = database;
         const leased = await pool.connect();
         await leased.query('SELECT 1');
         // Deliberately never released.
@@ -391,8 +388,10 @@ test('test database: a leaked pool client does not become an uncaught error', { 
   );
 
   // If the FATAL had escaped, node:test would have failed this run with an uncaught exception rather
-  // than reaching here.
-  assert.equal(await countTestDatabases(), before, 'and the database still went away');
+  // than reaching here. Checked by name, not by counting `test_db_%`: this suite shares a server, so
+  // a count would be answering for whatever else is running against it too.
+  assert.notEqual(name, '', 'the fixture reported the database it created');
+  assert.equal(await databaseExists(name), false, 'and the database still went away');
 });
 
 test('test database: a callback that rejects with undefined is still a failure', { skip }, async () => {
