@@ -372,7 +372,15 @@ console.log(`\n${runs.length} run(s), ${minutes} minute(s), ${capture ? 1 : 0} c
 // runs that produced a readable report — rather than the runs that were started — covers an empty
 // experiment and a wholly unreadable one with the same test, and neither is a clean result.
 if (capture) {
-  console.log('See capture.json. A single capture names a mechanism; it does not establish a cause.');
+  // Only a record whose exit status names something may be described as naming something. An
+  // `unclassified` or `inconclusive` capture is still worth having, but saying it names a mechanism
+  // would overstate exactly the evidence this diagnostic exists to report precisely.
+  const named = capture.records.filter((record) => record.specific);
+  console.log(
+    named.length > 0
+      ? `See capture.json. ${named.length} of ${capture.records.length} record(s) name a candidate mechanism; a candidate is not a cause.`
+      : 'See capture.json. No record names a mechanism — the exit status is one no measurement here identifies.',
+  );
 } else if (readable === 0) {
   console.error('No run produced a readable result, so this pass observed nothing. It is not a clean result.');
   process.exitCode = 1;

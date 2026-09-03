@@ -314,6 +314,30 @@ function runPass(args: string[], cwd?: string): ReturnType<typeof spawnSync> {
 }
 
 /**
+ * Read a worker pid once the file actually holds one.
+ *
+ * `existsSync` turns true when the worker creates the file, which can precede it writing the bytes.
+ * An empty read gives `Number('') === 0`, and pid 0 is not "no process" — `process.kill(0, ...)`
+ * addresses this test's *own* process group, so a naive read would have the test signalling itself
+ * and then reporting the worker as still alive.
+ *
+ * @returns the pid, or null if none appeared before the deadline
+ */
+async function readWorkerPid(pidFile: string, timeoutMs = 20_000): Promise<number | null> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      const pid = Number(fs.readFileSync(pidFile, 'utf8').trim());
+      if (Number.isInteger(pid) && pid > 0) return pid;
+    } catch {
+      /* not written yet */
+    }
+    if (Date.now() >= deadline) return null;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+/**
  * Kill a pid outright, tolerating one that is already gone.
  *
  * Used from `finally` in the tests that deliberately start a long-sleeping worker: if their cleanup
@@ -422,8 +446,8 @@ test('pass runner: the ceiling kills the run and every process it started', asyn
     assert.equal(summary.runs[0]?.timedOut, true, 'the deadline, not a signal, is what marks a run timed out');
     assert.match(`${summary.runs[0]?.collectionError}`, /ceiling/);
 
-    workerPid = Number(fs.readFileSync(pidFile, 'utf8'));
-    assert.ok(Number.isInteger(workerPid) && workerPid > 0, 'the per-file child recorded its pid');
+    workerPid = await readWorkerPid(pidFile);
+    assert.ok(workerPid !== null, 'the per-file child recorded its pid');
     assert.equal(await waitForExit(workerPid), true, 'the per-file child must not outlive the ceiling');
   } finally {
     reap(workerPid);
@@ -477,13 +501,10 @@ test('pass runner: interrupting the pass takes the detached test tree with it', 
     );
 
     try {
-      // Wait for the per-file worker to exist, so the interrupt has something to clean up.
-      const deadline = Date.now() + 20_000;
-      while (!fs.existsSync(pidFile) && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 50));
-      }
-      assert.ok(fs.existsSync(pidFile), 'the per-file worker started');
-      workerPid = Number(fs.readFileSync(pidFile, 'utf8'));
+      // Wait for the worker to have written a usable pid, so the interrupt has something to clean
+      // up and the liveness probe addresses the worker rather than this process group.
+      workerPid = await readWorkerPid(pidFile);
+      assert.ok(workerPid !== null, 'the per-file worker started and recorded its pid');
 
       pass.kill('SIGTERM');
       await new Promise((resolve) => pass.on('close', resolve));
