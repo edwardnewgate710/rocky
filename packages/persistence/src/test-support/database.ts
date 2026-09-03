@@ -125,6 +125,17 @@ async function reportTimeoutAfterForcedDrop(
   throw timeout;
 }
 
+/**
+ * Bound on creating the disposable database.
+ *
+ * Deliberately generous, and deliberately *not* `teardownTimeoutMs`. `connectionTimeoutMillis`
+ * bounds acquiring a connection, not a query on one already established, so a stalled server could
+ * otherwise hold this await open forever — before the callback runs and before there is any cleanup
+ * to start. It is separate from the teardown budget because tests set that as low as 300ms to
+ * exercise the timeout path, and creation has nothing to do with how long teardown may wait.
+ */
+const CREATE_TIMEOUT_MS = 30_000;
+
 /** SQLSTATE 55006 — `DROP DATABASE` refusing because a backend is still attached. */
 const OBJECT_IN_USE = '55006';
 
@@ -214,7 +225,24 @@ async function boundedQuery<R extends QueryResultRow>(
   text: string,
   values: readonly unknown[] = [],
 ): Promise<QueryResult<R>> {
-  const client = await withDeadline(admin.connect(), timeoutMs, `${what} (connect)`);
+  const lease = admin.connect();
+  let client: PoolClient;
+  try {
+    client = await withDeadline(lease, timeoutMs, `${what} (connect)`);
+  } catch (error) {
+    // The deadline stops this waiting; it does not cancel the connect. A lease that lands afterwards
+    // would be checked out with nobody left to release it — and `pool.end()` waits for checked-out
+    // clients, so the pool this was meant to bound would never close. Destroy the late arrival
+    // instead, and tolerate the lease rejecting on its own.
+    void lease.then(
+      (late) => {
+        late.release(true);
+      },
+      () => undefined,
+    );
+    throw error;
+  }
+
   let overran = false;
   try {
     return await withDeadline(client.query<R>(text, [...values]), timeoutMs, what);
@@ -503,7 +531,7 @@ export async function withTestDatabase<T>(
   let result!: T;
 
   try {
-    await admin.query(`CREATE DATABASE "${database}"`);
+    await boundedQuery(admin, CREATE_TIMEOUT_MS, 'create', `CREATE DATABASE "${database}"`);
     const databaseUrl = urlForDatabase(connectionString, database);
     pool = createPool({ connectionString: databaseUrl, max: options.max ?? 4 });
     clients = trackClients(pool);
