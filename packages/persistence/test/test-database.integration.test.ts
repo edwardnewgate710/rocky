@@ -261,10 +261,19 @@ test('test database: a concurrent run is not blocked by another database’s bac
   const checksShort: Array<readonly LingeringBackend[]> = [];
   let longFinished = false;
 
+  // The long run is held open by an explicit release rather than a sleep. A fixed `pg_sleep` would
+  // make this assertion a bet that the short run finishes first, which a loaded server can lose —
+  // failing a correct implementation. Held this way, the ordering is a fact of the test.
+  let releaseLong = (): void => undefined;
+  const heldOpen = new Promise<void>((resolve) => {
+    releaseLong = resolve;
+  });
+
   const long = withTestDatabase(
     async ({ pool, database }) => {
       names.push(database);
-      await pool.query('SELECT pg_sleep(1.5)');
+      await pool.query('SELECT 1');
+      await heldOpen;
     },
     { onQuiescenceCheck: (backends) => checksLong.push(backends) },
   ).then(() => {
@@ -282,6 +291,7 @@ test('test database: a concurrent run is not blocked by another database’s bac
   await short;
   assert.equal(longFinished, false, 'the short run completed while the long one still held its database');
 
+  releaseLong();
   await long;
 
   assert.equal(names.length, 2);

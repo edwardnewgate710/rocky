@@ -6,7 +6,7 @@
  * a separate subpath so the driver-facing surface does not grow a test harness.
  */
 
-import type { Pool, PoolClient } from 'pg';
+import type { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { createPool } from '../pg/pool';
 
 /** A backend still attached to the disposable database when teardown wanted to drop it. */
@@ -91,16 +91,16 @@ function sqlState(error: unknown): string | null {
 }
 
 /**
- * Whether an error is a connection dying because something terminated its backend.
+ * Whether an error is the backend termination this helper itself just asked for.
  *
- * Two shapes, because the client sees whichever arrives first: the `FATAL` message, which carries
- * SQLSTATE 57P01, or the socket simply closing underneath it, which `pg` reports with no code at
- * all. Both were observed against PostgreSQL 16.14 while measuring a forced drop.
+ * SQLSTATE only. `pg` also reports a bare "Connection terminated unexpectedly" when the socket
+ * closes before the `FATAL` is read, and matching that string would absorb every unrelated
+ * disconnect too — a server restart, a dropped network — precisely while the emergency listeners are
+ * installed. 57P01 is the server saying it terminated the backend on command, which is the only
+ * thing this code has grounds to treat as its own doing.
  */
 function isForcedTermination(error: unknown): boolean {
-  if (sqlState(error) === ADMIN_SHUTDOWN) return true;
-  const message = error instanceof Error ? error.message : '';
-  return message.includes('Connection terminated');
+  return sqlState(error) === ADMIN_SHUTDOWN;
 }
 
 /** Replaces the database in a connection URL, leaving credentials and host alone. */
@@ -115,6 +115,14 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** A teardown step that ran out of budget, as opposed to one that failed on its own terms. */
+class TeardownDeadlineError extends Error {
+  constructor(what: string, timeoutMs: number) {
+    super(`withTestDatabase: ${what} exceeded its ${timeoutMs}ms budget`);
+    this.name = 'TeardownDeadlineError';
+  }
+}
+
 /**
  * Run `work`, but stop waiting for it after `timeoutMs`.
  *
@@ -122,9 +130,8 @@ function delay(ms: number): Promise<void> {
  * connection that stops answering would sit past the deadline with nothing to interrupt it, which
  * would make the budget advisory rather than real. Every teardown step therefore goes through here.
  *
- * A step that times out is abandoned rather than cancelled — PostgreSQL is still holding whatever it
- * was given — so the caller goes on to end the admin pool, which is what actually drops the sockets
- * those queries are waiting on.
+ * Losing the race abandons the wait, not the work — so callers that raced a *query* must also
+ * destroy the connection it was running on. {@link boundedQuery} is how they do that.
  */
 async function withDeadline<T>(work: Promise<T>, timeoutMs: number, what: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
@@ -132,14 +139,42 @@ async function withDeadline<T>(work: Promise<T>, timeoutMs: number, what: string
     return await Promise.race([
       work,
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`withTestDatabase: ${what} exceeded its ${timeoutMs}ms budget`)),
-          timeoutMs,
-        );
+        timer = setTimeout(() => reject(new TeardownDeadlineError(what, timeoutMs)), timeoutMs);
       }),
     ]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * Run one admin statement under the budget, and take its connection away if it overruns.
+ *
+ * Racing `pool.query()` alone is not enough to bound anything. The abandoned query keeps its client
+ * checked out, and `pool.end()` never closes a checked-out client — so the bounded end gives up too
+ * and the helper returns with live sockets and a query still running, which is the opposite of the
+ * guarantee. Leasing the client here makes it reachable: `release(true)` destroys it rather than
+ * returning it to the pool, which drops the socket the statement is waiting on.
+ *
+ * Only a deadline overrun destroys the connection. A statement that fails on its own terms — 55006
+ * from a drop, say — has finished with its client, and that client is still perfectly good.
+ */
+async function boundedQuery<R extends QueryResultRow>(
+  admin: Pool,
+  timeoutMs: number,
+  what: string,
+  text: string,
+  values: readonly unknown[] = [],
+): Promise<QueryResult<R>> {
+  const client = await withDeadline(admin.connect(), timeoutMs, `${what} (connect)`);
+  let overran = false;
+  try {
+    return await withDeadline(client.query<R>(text, [...values]), timeoutMs, what);
+  } catch (error) {
+    overran = error instanceof TeardownDeadlineError;
+    throw error;
+  } finally {
+    client.release(overran);
   }
 }
 
@@ -155,15 +190,19 @@ async function waitForQuiescence(
   admin: Pool,
   database: string,
   deadline: number,
+  stepTimeoutMs: number,
   pollIntervalMs: number,
   onCheck: ((backends: readonly LingeringBackend[]) => void) | undefined,
 ): Promise<readonly LingeringBackend[]> {
   for (;;) {
-    const { rows } = await admin.query<{
+    const { rows } = await boundedQuery<{
       pid: number;
       state: string | null;
       application_name: string | null;
     }>(
+      admin,
+      stepTimeoutMs,
+      'quiescence check',
       `SELECT pid, state, application_name
          FROM pg_stat_activity
         WHERE datname = $1 AND pid <> pg_backend_pid()`,
@@ -239,15 +278,26 @@ async function forceDropAbandoned(
   pool: Pool,
   clients: ReadonlySet<PoolClient>,
   database: string,
+  timeoutMs: number,
 ): Promise<void> {
+  // Two shapes reach these connections, and both are this call's own doing. The server's `FATAL`
+  // carries SQLSTATE 57P01. When the backend dies before that message can be read, `pg` reports a
+  // bare "Connection terminated unexpectedly" with no code at all — measured here, that is what a
+  // *leased* client sees, because its socket goes down under an in-flight lease.
+  //
+  // Matching that string is defensible only because of where it sits: on connections belonging to a
+  // pool already being abandoned, after this function has itself issued the termination, on a path
+  // whose caller always throws. It is deliberately not part of {@link isForcedTermination}, which
+  // stays SQLSTATE-only — as a general predicate the string would absorb an unrelated server restart
+  // or dropped network too, which is the observability loss the deleted 57P01 absorber caused.
   const absorbOwnTermination = (error: Error): void => {
-    if (isForcedTermination(error)) return;
+    if (isForcedTermination(error) || error.message.includes('Connection terminated')) return;
     throw error;
   };
   pool.on('error', absorbOwnTermination);
   for (const client of clients) client.on('error', absorbOwnTermination);
 
-  await admin.query(`DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`);
+  await boundedQuery(admin, timeoutMs, 'forced drop', `DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`);
 }
 
 /**
@@ -270,15 +320,27 @@ async function dropWhenFree(
 ): Promise<void> {
   for (;;) {
     try {
-      await admin.query(`DROP DATABASE IF EXISTS "${database}"`);
+      await boundedQuery(
+        admin,
+        teardownTimeoutMs,
+        'drop',
+        `DROP DATABASE IF EXISTS "${database}"`,
+      );
       return;
     } catch (error) {
       if (sqlState(error) !== OBJECT_IN_USE || Date.now() >= deadline) throw error;
-      const lingering = await waitForQuiescence(admin, database, deadline, pollIntervalMs, onCheck);
+      const lingering = await waitForQuiescence(
+        admin,
+        database,
+        deadline,
+        teardownTimeoutMs,
+        pollIntervalMs,
+        onCheck,
+      );
       if (lingering.length > 0 && Date.now() >= deadline) {
         // Giving up here still has to leave the server clean: reporting the timeout without dropping
         // would leave the database behind, which is the outcome teardown works hardest to avoid.
-        await forceDropAbandoned(admin, pool, clients, database);
+        await forceDropAbandoned(admin, pool, clients, database, teardownTimeoutMs);
         throw new DatabaseTeardownTimeoutError(database, teardownTimeoutMs, lingering);
       }
     }
@@ -307,11 +369,18 @@ async function tearDown(
   const deadline = Date.now() + teardownTimeoutMs;
   await endPoolWithin(pool, Math.max(0, deadline - Date.now()));
 
-  const lingering = await waitForQuiescence(admin, database, deadline, pollIntervalMs, onCheck);
+  const lingering = await waitForQuiescence(
+    admin,
+    database,
+    deadline,
+    teardownTimeoutMs,
+    pollIntervalMs,
+    onCheck,
+  );
   if (lingering.length > 0) {
     // Something outlived its owner. Drop the database anyway so the server is not littered with
     // abandoned test databases, then say precisely what was holding it.
-    await forceDropAbandoned(admin, pool, clients, database);
+    await forceDropAbandoned(admin, pool, clients, database, teardownTimeoutMs);
     throw new DatabaseTeardownTimeoutError(database, teardownTimeoutMs, lingering);
   }
   await dropWhenFree(admin, pool, clients, database, deadline, teardownTimeoutMs, pollIntervalMs, onCheck);
@@ -373,6 +442,10 @@ export async function withTestDatabase<T>(
   // nothing else would ever return.
   const teardownBackstopMs = teardownTimeoutMs * 2 + 1_000;
   const admin = createPool({ connectionString, max: 2, connectionTimeoutMillis: teardownTimeoutMs });
+  // Hoisted so the last-resort drop can route through `forceDropAbandoned`: that drop is a forced
+  // one too, and it terminates the same connections, so it owes them the same listener.
+  let pool: Pool | undefined;
+  let clients: ReadonlySet<PoolClient> = new Set();
   let dropped = false;
   let bodyFailed = false;
   let teardownFailed = false;
@@ -383,8 +456,8 @@ export async function withTestDatabase<T>(
   try {
     await admin.query(`CREATE DATABASE "${database}"`);
     const databaseUrl = urlForDatabase(connectionString, database);
-    const pool = createPool({ connectionString: databaseUrl, max: options.max ?? 4 });
-    const clients = trackClients(pool);
+    pool = createPool({ connectionString: databaseUrl, max: options.max ?? 4 });
+    clients = trackClients(pool);
     try {
       result = await body({ pool, database, connectionString: databaseUrl });
     } catch (error) {
@@ -420,11 +493,18 @@ export async function withTestDatabase<T>(
   } finally {
     try {
       if (!dropped) {
-        await withDeadline(
-          admin.query(`DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`),
-          teardownBackstopMs,
-          'last-resort drop',
-        );
+        // The same forced drop, so the same duty of care: if a pool exists it may still own
+        // connections this is about to terminate, and they need a listener before it happens.
+        if (pool !== undefined) {
+          await forceDropAbandoned(admin, pool, clients, database, teardownBackstopMs);
+        } else {
+          await boundedQuery(
+            admin,
+            teardownBackstopMs,
+            'last-resort drop',
+            `DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`,
+          );
+        }
       }
     } catch {
       // A last-resort drop that fails leaves the error already in flight, which describes the real
