@@ -39,7 +39,9 @@ of what the pair does and does not establish. `run-signature-b-pass.mjs` runs th
 declared ceiling and stops at the first capture.
 
 A bounded pass of 20 runs produced 0 captures. That bounds the rate and proves
-nothing: at the historically observed ~1-in-5, zero in 20 runs happens about 4% of the time.
+nothing: treating the historically observed ~1-in-5 as an independent per-run rate, zero captures in
+20 runs has probability `(4/5)^20 ≈ 1.2%` — small, but bad luck is not excluded, and independence is
+an assumption rather than something this data establishes.
 The pass ran at 3084–3834 MB free of 16 GB where the historical captures happened at
 roughly 2.5 GB free — consistent with the standing resource-contention hypothesis, and not evidence
 for it. Nothing here establishes a cause.

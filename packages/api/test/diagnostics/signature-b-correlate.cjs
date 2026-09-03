@@ -40,22 +40,30 @@ const path = require('node:path');
 const MAX_RECORDS = 200;
 
 /**
- * Last path segment, treating both separators as separators whatever platform this runs on.
+ * A path with both separators normalised to `/`, so a capture taken on one platform can be read on
+ * another. `path.basename` and `path.normalize` use only the host's separator, so on Linux they
+ * return a Windows path unchanged and every comparison against it silently fails.
  *
- * `path.basename` uses only the host's separator, so on Linux it returns a Windows path unchanged
- * and the join silently finds nothing. Captures happen on the developer machine and may be read
- * anywhere, including CI, so the key cannot depend on where the analysis runs.
+ * @param {string} filePath
+ * @returns {string}
+ */
+function normalizePath(filePath) {
+  return String(filePath).replace(/\\/g, '/').replace(/^\.\//, '');
+}
+
+/**
+ * Last path segment, platform-independently.
  *
  * @param {string} filePath
  * @returns {string}
  */
 function fileKey(filePath) {
-  const segments = String(filePath).split(/[\\/]/);
+  const segments = normalizePath(filePath).split('/');
   return segments[segments.length - 1] ?? '';
 }
 
 /**
- * How a child process terminated, keyed by the exit status the parent observed.
+ * What an observed exit status *suggests*, keyed by the status the parent saw.
  *
  * Every code below was measured on this platform (Windows 11, Node v24.15.0) rather than assumed:
  * `process.abort()` and `process.exit(1)` by running them under the test runner and reading the TAP
@@ -63,22 +71,28 @@ function fileKey(filePath) {
  * no POSIX signals — `signal` is `null` for every external kill and native fault — so the exit code
  * is the only discriminator, and `1` does not discriminate at all.
  *
- * @type {ReadonlyArray<{ code: number, id: string, meaning: string, conclusive: boolean }>}
+ * `specific` says whether the status names a *particular* mechanism, not whether that mechanism is
+ * proven. Nothing here is proof: an exit status is a 32-bit integer the terminating party chooses,
+ * and any process can exit with 134 or with a value in the NTSTATUS range without a native fault
+ * having occurred. `TerminateProcess(h, 0xC0000005)` produces the same number as a real access
+ * violation. Corroboration has to come from outside the number — see {@link narrowFromChildEvidence}.
+ *
+ * @type {ReadonlyArray<{ code: number, id: string, meaning: string, specific: boolean }>}
  */
 const EXIT_CODE_TABLE = [
-  { code: 134, id: 'native-abort-or-v8-fatal', conclusive: true,
-    meaning: 'CRT/V8 abort(): a JS process.abort(), a V8 fatal error such as heap OOM, or a native assertion' },
-  { code: 3221225477, id: 'native-access-violation', conclusive: true,
-    meaning: 'STATUS_ACCESS_VIOLATION (0xC0000005): the process faulted on a bad memory access' },
-  { code: 3221226505, id: 'native-fast-fail', conclusive: true,
-    meaning: 'STATUS_STACK_BUFFER_OVERRUN (0xC0000409): __fastfail, raised by a security or consistency check' },
-  { code: 3221225725, id: 'native-stack-overflow', conclusive: true,
-    meaning: 'STATUS_STACK_OVERFLOW (0xC00000FD): the native stack was exhausted' },
-  { code: 3221225540, id: 'job-object-quota', conclusive: true,
-    meaning: 'STATUS_QUOTA_EXCEEDED (0xC0000044): a job object or quota limit terminated the process' },
-  { code: 4294967295, id: 'external-terminate-process', conclusive: true,
-    meaning: 'TerminateProcess with exit code -1, which is what PowerShell Stop-Process -Force produces' },
-  { code: 1, id: 'inconclusive', conclusive: false,
+  { code: 134, id: 'native-abort-or-v8-fatal', specific: true,
+    meaning: 'candidate: CRT/V8 abort(), a V8 fatal error such as heap OOM, or a native assertion; any process can also exit 134 deliberately' },
+  { code: 3221225477, id: 'native-access-violation', specific: true,
+    meaning: 'candidate: STATUS_ACCESS_VIOLATION (0xC0000005); an external TerminateProcess may pass the same value' },
+  { code: 3221226505, id: 'native-fast-fail', specific: true,
+    meaning: 'candidate: STATUS_STACK_BUFFER_OVERRUN (0xC0000409), __fastfail; an external kill may pass the same value' },
+  { code: 3221225725, id: 'native-stack-overflow', specific: true,
+    meaning: 'candidate: STATUS_STACK_OVERFLOW (0xC00000FD); an external kill may pass the same value' },
+  { code: 3221225540, id: 'job-object-quota', specific: true,
+    meaning: 'candidate: STATUS_QUOTA_EXCEEDED (0xC0000044), a job object or quota limit; an external kill may pass the same value' },
+  { code: 4294967295, id: 'external-terminate-process', specific: true,
+    meaning: 'candidate: TerminateProcess with exit code -1, which is what PowerShell Stop-Process -Force produces' },
+  { code: 1, id: 'inconclusive', specific: false,
     meaning: 'exit code 1 is produced by an uncaught exception, process.exit(1), taskkill /F and process.kill alike' },
 ];
 
@@ -98,19 +112,19 @@ function classifyTermination({ exitCode, signal }) {
     return {
       id: 'signal-terminated',
       meaning: `the child was terminated by ${signal}; the exit contract names the signal, not its sender, so the runner, the OS and an external process are all still possible`,
-      conclusive: false,
+      specific: false,
     };
   }
   const known = EXIT_CODE_TABLE.find((entry) => entry.code === exitCode);
-  if (known) return { id: known.id, meaning: known.meaning, conclusive: known.conclusive };
+  if (known) return { id: known.id, meaning: known.meaning, specific: known.specific };
   if (typeof exitCode === 'number' && exitCode >= 0xc0000000) {
     return {
       id: 'native-ntstatus',
-      meaning: `exit code ${exitCode} (0x${exitCode.toString(16)}) is an NTSTATUS value, so the process was terminated by a native fault`,
-      conclusive: true,
+      meaning: `candidate: exit code ${exitCode} (0x${exitCode.toString(16)}) lies in the NTSTATUS range, which a native fault produces — and which an external TerminateProcess can also pass deliberately`,
+      specific: true,
     };
   }
-  return { id: 'unclassified', meaning: `exit code ${String(exitCode)} is not in the verified table`, conclusive: false };
+  return { id: 'unclassified', meaning: `exit code ${String(exitCode)} is not in the measured table`, specific: false };
 }
 
 /** JS lifecycle events whose absence proves the child never ran an exit path. */
@@ -125,7 +139,7 @@ const JS_EXIT_KINDS = ['process.exit', 'process.abort', 'uncaughtExceptionMonito
  * remains — an external `TerminateProcess`, or a native path that bypasses JS entirely — is a
  * narrowing, not an identification, and this returns it as such.
  *
- * @param {{ id: string, conclusive: boolean }} classification
+ * @param {{ id: string, specific: boolean }} classification
  * @param {readonly string[]} childKinds Event kinds the child logged, in order.
  * @returns {{ narrowed: boolean, statement: string }}
  */
@@ -137,16 +151,21 @@ function narrowFromChildEvidence(classification, childKinds) {
     return { narrowed: false, statement: 'the child never recorded preload-installed, so nothing is known about its JS lifecycle' };
   }
   if (ranAnyExitPath) {
-    return { narrowed: false, statement: 'the child ran a JS exit path, so its own log identifies the cause and the exit code only corroborates it' };
+    return { narrowed: false, statement: 'the child ran a JS exit path, so its own log identifies the cause and the exit status only corroborates it' };
   }
-  if (classification.conclusive) {
-    return { narrowed: true, statement: `the child ran no JS exit path, and the exit code identifies the termination as ${classification.id}` };
+  if (classification.specific) {
+    return {
+      narrowed: true,
+      statement:
+        `the child ran no JS exit path, which excludes process.exit and an uncaught exception, and the exit status names ${classification.id} ` +
+        'as the candidate mechanism — the status is a number the terminating party chose, so this is the strongest candidate rather than proof',
+    };
   }
   return {
     narrowed: true,
     statement:
       'the child reached preload-installed and then ran no JS exit path at all, which excludes process.exit and an uncaught exception; ' +
-      'an external TerminateProcess or a native path that bypasses JS remains, and the exit code alone does not choose between them',
+      'an external TerminateProcess or a native path that bypasses JS remains, and the exit status alone does not choose between them',
   };
 }
 
@@ -224,7 +243,9 @@ function readChildLogs(logDir) {
         continue;
       }
       if (typeof record.testFile !== 'string' || record.testFile === '') continue;
-      const key = fileKey(record.testFile);
+      // Keyed on the child's whole path, not its basename. A suite run spans directories, and
+      // `foo/a.test.js` and `bar/a.test.js` are different files whose events must never be merged.
+      const key = normalizePath(record.testFile);
       const existing = byFile.get(key) ?? { pid: null, kinds: [] };
       existing.pid = typeof record.pid === 'number' ? record.pid : existing.pid;
       if (typeof record.kind === 'string') existing.kinds.push(record.kind);
@@ -232,6 +253,37 @@ function readChildLogs(logDir) {
     }
   }
   return byFile;
+}
+
+/**
+ * Find the child log belonging to one parent failure, or say that it cannot be told apart.
+ *
+ * The parent names the file as the runner received it, usually a relative path; the child records
+ * its own resolved `argv[1]`, an absolute one. Matching is therefore by path *suffix* rather than
+ * equality, which identifies `dist-test/test/foo/a.test.js` uniquely even when `bar/a.test.js`
+ * exists. Basename is only a fallback for a parent path too short to disambiguate, and when either
+ * step finds more than one candidate the answer is **ambiguous** rather than the first match:
+ * attaching one file's PID and lifecycle events to another file's failure would make the diagnostic
+ * assert something false, which is worse than reporting that it does not know.
+ *
+ * @param {ReturnType<typeof readChildLogs>} childLogs
+ * @param {string} parentFile
+ * @returns {{ child: { pid: number | null, kinds: string[] } | null, ambiguous: boolean, candidates: number }}
+ */
+function matchChild(childLogs, parentFile) {
+  const wanted = normalizePath(parentFile);
+  const entries = [...childLogs.entries()];
+
+  const bySuffix = entries.filter(([key]) => key === wanted || key.endsWith(`/${wanted}`));
+  if (bySuffix.length === 1) return { child: bySuffix[0][1], ambiguous: false, candidates: 1 };
+  if (bySuffix.length > 1) return { child: null, ambiguous: true, candidates: bySuffix.length };
+
+  const base = fileKey(wanted);
+  const byBase = entries.filter(([key]) => fileKey(key) === base);
+  if (byBase.length === 1) return { child: byBase[0][1], ambiguous: false, candidates: 1 };
+  if (byBase.length > 1) return { child: null, ambiguous: true, candidates: byBase.length };
+
+  return { child: null, ambiguous: false, candidates: 0 };
 }
 
 /**
@@ -248,8 +300,8 @@ function readChildLogs(logDir) {
  */
 function correlate(failures, childLogs) {
   return failures.map((failure) => {
-    const child = childLogs.get(fileKey(failure.file)) ?? null;
-    const kinds = child?.kinds ?? [];
+    const match = matchChild(childLogs, failure.file);
+    const kinds = match.child?.kinds ?? [];
     const classification = classifyTermination(failure);
     const narrowing = narrowFromChildEvidence(classification, kinds);
     return {
@@ -261,15 +313,19 @@ function correlate(failures, childLogs) {
         durationMs: failure.durationMs,
       },
       child: {
-        logFound: child !== null,
-        pid: child?.pid ?? null,
+        logFound: match.child !== null,
+        ambiguous: match.ambiguous,
+        candidates: match.candidates,
+        pid: match.child?.pid ?? null,
         kinds,
       },
       classification: classification.id,
       meaning: classification.meaning,
-      conclusive: classification.conclusive,
-      narrowed: narrowing.narrowed,
-      statement: narrowing.statement,
+      specific: classification.specific,
+      narrowed: match.ambiguous ? false : narrowing.narrowed,
+      statement: match.ambiguous
+        ? `${match.candidates} child logs match this file's name and none matches its path, so no lifecycle evidence can be attributed to it without guessing`
+        : narrowing.statement,
     };
   });
 }
@@ -279,21 +335,33 @@ module.exports = {
   MAX_RECORDS,
   classifyTermination,
   correlate,
+  matchChild,
   narrowFromChildEvidence,
+  normalizePath,
   parseTapFailures,
   readChildLogs,
 };
 
 if (require.main === module) {
   const args = process.argv.slice(2);
+  const known = new Set(['--tap', '--child-logs']);
+  let usage = null;
+  // `--tap --child-logs dir` must be a usage error, not a request to read a file called
+  // "--child-logs". An option that swallows the next option produces a confident wrong answer.
   const valueOf = (flag) => {
     const at = args.indexOf(flag);
-    return at === -1 ? null : args[at + 1] ?? null;
+    if (at === -1) return null;
+    const value = args[at + 1];
+    if (value === undefined || known.has(value)) {
+      usage = `${flag} requires a value`;
+      return null;
+    }
+    return value;
   };
   const tapPath = valueOf('--tap');
   const logDir = valueOf('--child-logs');
-  if (tapPath === null || logDir === null) {
-    process.stderr.write('usage: signature-b-correlate.cjs --tap <report.tap> --child-logs <dir>\n');
+  if (usage !== null || tapPath === null || logDir === null) {
+    process.stderr.write(`${usage ?? 'usage'}: signature-b-correlate.cjs --tap <report.tap> --child-logs <dir>\n`);
     process.exitCode = 2;
   } else {
     const records = correlate(parseTapFailures(fs.readFileSync(tapPath, 'utf8')), readChildLogs(logDir));
