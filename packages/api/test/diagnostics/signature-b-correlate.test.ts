@@ -225,33 +225,29 @@ test('pass runner: an experiment that runs nothing is refused, not reported clea
 });
 
 test('pass runner: a pass whose every run was unreadable is refused, not reported clean', () => {
-  // A wall-clock ceiling smaller than a single run makes the child time out, so the run yields no
-  // readable report. The pass observed nothing and must say so rather than print the same summary
-  // as a quiet one — the failure mode the ceiling and the collection check exist to prevent.
+  // The report is made unreadable by construction rather than by racing a clock: `run1.tap` is
+  // pre-created as a *directory*, so the reporter cannot write it and reading it back raises
+  // EISDIR. That is deterministic on every machine, needs no timeout, and leaves nothing running —
+  // a fixture that instead outlived a short ceiling would leak the test-file child the runner had
+  // already spawned, which survives being killed at one level up.
   //
-  // `--target` points the nested run at one file of this test's own making. Without it the run
-  // would launch a second copy of the whole API suite against the same database as the suite
-  // running this very test. That file blocks far longer than the ceiling rather than doing nothing,
-  // so the timeout is what ends it on every machine: a trivial child could beat a 6ms deadline on a
-  // fast runner, finish cleanly, and make this assertion flaky.
+  // `--target` points the nested run at one trivial file of this test's own making. Without it the
+  // run would launch a second copy of the whole API suite against the database the suite running
+  // this very test is already using.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-target-'));
   try {
-    const trivial = path.join(dir, 'blocks.test.cjs');
-    fs.writeFileSync(
-      trivial,
-      "require('node:test').test('outlives the ceiling', async () => {\n" +
-        '  await new Promise((resolve) => setTimeout(resolve, 30_000));\n' +
-        '});\n',
-    );
+    const trivial = path.join(dir, 'noop.test.cjs');
+    fs.writeFileSync(trivial, "require('node:test').test('noop', () => {});\n");
+    const out = path.join(dir, 'out');
+    fs.mkdirSync(path.join(out, 'run1.tap'), { recursive: true });
 
     const result = spawnSync(
       process.execPath,
       [
         path.join(DIAGNOSTICS_DIR, 'run-signature-b-pass.mjs'),
-        '--runs', '5',
-        '--max-minutes', '0.0001',
+        '--runs', '1',
         '--target', trivial,
-        '--out', path.join(dir, 'out'),
+        '--out', out,
       ],
       {
         cwd: path.resolve(DIAGNOSTICS_DIR, '../..'),
