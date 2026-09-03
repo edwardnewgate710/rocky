@@ -324,13 +324,17 @@ so nobody read them.
 
 Two consequences follow, and the second is the one that keeps the analysis honest.
 
-- **A native fault or a V8 fatal error is now nameable as a candidate.** `134`, `0xC0000005` and the
-  rest of the `0xC0000000` range each name a specific mechanism — but naming is not proving. An exit
-  status is a 32-bit integer the terminating party chooses, and `TerminateProcess(h, 0xC0000005)`
-  produces the same number as a real access violation, so the status is the strongest candidate
-  rather than proof. `signature-b-correlate.cjs` reports these as `specific` rather than
-  `conclusive`, and confirmation has to come from the child log, the enumerated fatal stderr
-  markers, or OS evidence.
+- **A native fault or a V8 fatal error is now nameable as a candidate.** `134` and `0xC0000005`
+  name a specific mechanism — but naming is not proving. An exit status is a 32-bit integer the
+  terminating party chooses, and `TerminateProcess(h, 0xC0000005)` produces the same number as a
+  real access violation, so the status is the strongest candidate rather than proof.
+  `signature-b-correlate.cjs` reports these as `specific` rather than `conclusive`, and confirmation
+  has to come from the child log, the enumerated fatal stderr markers, or OS evidence.
+  **Membership of the `0xC0000000` range is not itself a native-fault finding**, and an earlier
+  draft of this section said otherwise: `STATUS_CONTROL_C_EXIT` (`0xC000013A`) is a console CTRL+C
+  and sits in the same range. Codes the measured table covers name a candidate; a value in the range
+  that it does not cover is reported `ntstatus-unmeasured` and non-specific, rather than assumed to
+  be a crash.
 - **Exit code `1` identifies nothing.** An uncaught exception, `process.exit(1)`, `taskkill /F` and
   `process.kill` all produce `1` with `signal: null`, because Windows has no POSIX signals and libuv
   reports one only when the parent's own handle did the killing. Reading `1` as proof of an external

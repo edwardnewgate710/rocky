@@ -120,9 +120,22 @@ test('correlator: classifies every termination code that was measured on this pl
   assert.equal(correlator.classifyTermination({ exitCode: 4294967295, signal: null }).id, 'external-terminate-process');
   assert.equal(
     correlator.classifyTermination({ exitCode: 3221225786, signal: null }).id,
-    'native-ntstatus',
-    'an unlisted 0xC0000000-range code still names a native fault as the candidate',
+    'external-control-c',
+    '0xC000013A is STATUS_CONTROL_C_EXIT, a console interrupt — not a native fault',
   );
+});
+
+test('correlator: an unmeasured NTSTATUS code names no mechanism', () => {
+  // The range fallback used to report anything at or above 0xC0000000 as a native-fault candidate.
+  // STATUS_CONTROL_C_EXIT (0xC000013A) disproves that as a rule: it lives in the range and means a
+  // console CTRL+C. So membership narrows the shape of the answer and nothing more, and a value the
+  // measured table does not cover has to be reported non-specific.
+  const unmeasured = correlator.classifyTermination({ exitCode: 0xc0000022, signal: null });
+
+  assert.equal(unmeasured.id, 'ntstatus-unmeasured');
+  assert.equal(unmeasured.specific, false, 'an unmeasured status in the range must not claim a mechanism');
+  assert.match(unmeasured.meaning, /does not cover/);
+  assert.doesNotMatch(unmeasured.meaning, /^candidate:/, 'it names no candidate to lead with');
 });
 
 test('correlator: an exit status names a candidate mechanism, never a proven one', () => {
@@ -469,6 +482,9 @@ test('pass runner: the ceiling kills the run and every process it started', asyn
     workerPid = await readWorkerPid(pidFile);
     assert.ok(workerPid !== null, 'the per-file child recorded its pid');
     assert.equal(await waitForExit(workerPid), true, 'the per-file child must not outlive the ceiling');
+    // Proven gone, so there is nothing left to reap — and `waitForExit` only ever held the number.
+    // Passing a dead pid to `reap` would signal whatever the OS has since reused it for.
+    workerPid = null;
   } finally {
     reap(workerPid);
     fs.rmSync(dir, { recursive: true, force: true });
@@ -534,6 +550,9 @@ test('pass runner: interrupting the pass takes the detached test tree with it', 
         true,
         'the detached per-file worker must not survive the interrupted pass',
       );
+      // Same reason as the ceiling test: once the pid is proven gone it belongs to nobody, and
+      // reaping it later could kill an unrelated process the OS gave that number to.
+      workerPid = null;
     } finally {
       // Two ways this test could leak the tree it started: the worker never appears, so the
       // assertion throws before the interrupt is sent; or the cleanup being asserted did not happen,

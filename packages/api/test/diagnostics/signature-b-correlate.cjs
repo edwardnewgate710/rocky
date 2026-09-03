@@ -65,11 +65,17 @@ function fileKey(filePath) {
 /**
  * What an observed exit status *suggests*, keyed by the status the parent saw.
  *
- * Every code below was measured on this platform (Windows 11, Node v24.15.0) rather than assumed:
- * `process.abort()` and `process.exit(1)` by running them under the test runner and reading the TAP
- * block, and the external kills by spawning a sleeper and terminating it from outside. Windows has
- * no POSIX signals — `signal` is `null` for every external kill and native fault — so the exit code
- * is the only discriminator, and `1` does not discriminate at all.
+ * Every code below was measured on this platform (Windows 11, Node v24.15.0) rather than assumed,
+ * with one labelled exception: `process.abort()` and `process.exit(1)` by running them under the
+ * test runner and reading the TAP block, and the external kills by spawning a sleeper and
+ * terminating it from outside. Windows has no POSIX signals — `signal` is `null` for every external
+ * kill and native fault — so the exit code is the only discriminator, and `1` does not discriminate
+ * at all.
+ *
+ * The exception is `0xC000013A`, which is taken from documented Windows console semantics rather
+ * than measured here. It is in the table because its absence was worse: it sits inside the
+ * `0xC0000000` range, and the range fallback used to call anything in that range a native-fault
+ * candidate, which for a console interrupt is simply wrong.
  *
  * `specific` says whether the status names a *particular* mechanism, not whether that mechanism is
  * proven. Nothing here is proof: an exit status is a 32-bit integer the terminating party chooses,
@@ -90,6 +96,8 @@ const EXIT_CODE_TABLE = [
     meaning: 'candidate: STATUS_STACK_OVERFLOW (0xC00000FD); an external kill may pass the same value' },
   { code: 3221225540, id: 'job-object-quota', specific: true,
     meaning: 'candidate: STATUS_QUOTA_EXCEEDED (0xC0000044), a job object or quota limit; an external kill may pass the same value' },
+  { code: 3221225786, id: 'external-control-c', specific: true,
+    meaning: 'candidate: STATUS_CONTROL_C_EXIT (0xC000013A), a console CTRL+C or CTRL+BREAK — an external interrupt, not a native fault; documented rather than measured here, and an external kill may pass the same value' },
   { code: 4294967295, id: 'external-terminate-process', specific: true,
     meaning: 'candidate: TerminateProcess with exit code -1, which is what PowerShell Stop-Process -Force produces' },
   { code: 1, id: 'inconclusive', specific: false,
@@ -118,10 +126,14 @@ function classifyTermination({ exitCode, signal }) {
   const known = EXIT_CODE_TABLE.find((entry) => entry.code === exitCode);
   if (known) return { id: known.id, meaning: known.meaning, specific: known.specific };
   if (typeof exitCode === 'number' && exitCode >= 0xc0000000) {
+    // Membership of the range is not a finding. A native fault produces a value here, but so does a
+    // console CTRL+C (`STATUS_CONTROL_C_EXIT`, in the table above), and an external TerminateProcess
+    // can pass any of them deliberately. An unmeasured value in the range therefore narrows the
+    // shape of the answer without naming a mechanism, and must not be reported as though it had.
     return {
-      id: 'native-ntstatus',
-      meaning: `candidate: exit code ${exitCode} (0x${exitCode.toString(16)}) lies in the NTSTATUS range, which a native fault produces — and which an external TerminateProcess can also pass deliberately`,
-      specific: true,
+      id: 'ntstatus-unmeasured',
+      meaning: `exit code ${exitCode} (0x${exitCode.toString(16)}) is an NTSTATUS value this table does not cover; a native fault is one candidate, but the range also carries non-fault statuses such as STATUS_CONTROL_C_EXIT, so the number alone names no mechanism`,
+      specific: false,
     };
   }
   return { id: 'unclassified', meaning: `exit code ${String(exitCode)} is not in the measured table`, specific: false };
