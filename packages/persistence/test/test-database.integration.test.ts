@@ -296,17 +296,38 @@ test('test database: a concurrent run is not blocked by another database’s bac
     { onQuiescenceCheck: (backends) => checksShort.push(backends) },
   );
 
+  // The gate has to open on every path. If the short run rejects or the ordering assertion fails,
+  // an unreleased latch leaves the long callback suspended forever: its teardown never runs, its
+  // database and pool stay alive, and the runner may not exit. A test that leaks the thing it is
+  // policing is the failure this whole file exists to prevent.
+  //
+  // Not a `finally`, though — throwing from one replaces whatever was already propagating, so a
+  // long run that also failed would bury the short-run failure that started all this. The same rule
+  // the helper follows for callback-versus-teardown errors: the first failure is the one worth
+  // reading, and the second rides along.
+  let primaryFailure: unknown;
+  let primaryFailed = false;
   try {
     await short;
     assert.equal(longFinished, false, 'the short run completed while the long one still held its database');
-  } finally {
-    // The gate has to open on every path. If the short run rejects or the ordering assertion fails,
-    // an unreleased latch leaves the long callback suspended forever: its teardown never runs, its
-    // database and pool stay alive, and the runner may not exit. A test that leaks the thing it is
-    // policing is the failure this whole file exists to prevent.
-    releaseLong();
-    await long;
+  } catch (error) {
+    primaryFailed = true;
+    primaryFailure = error;
   }
+
+  releaseLong();
+  const longFailure = await long.then(
+    () => undefined,
+    (error: unknown) => error ?? new Error('the long run rejected with a falsy value'),
+  );
+
+  if (primaryFailed) {
+    if (longFailure !== undefined && primaryFailure instanceof Error && primaryFailure.cause === undefined) {
+      primaryFailure.cause = longFailure;
+    }
+    throw primaryFailure;
+  }
+  if (longFailure !== undefined) throw longFailure;
 
   assert.equal(names.length, 2);
   assert.notEqual(names[0], names[1], 'each run gets its own database');

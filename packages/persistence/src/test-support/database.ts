@@ -59,8 +59,21 @@ export interface TestDatabaseOptions {
 export class DatabaseTeardownTimeoutError extends Error {
   readonly database: string;
   readonly lingering: readonly LingeringBackend[];
+  /**
+   * Whether the emergency drop actually removed the database.
+   *
+   * The caller uses this rather than assuming a timeout implies a clean server: the forced drop is
+   * itself a query, and it can fail or overrun like any other. When it does, the database is still
+   * there and the last-resort drop still has work to do.
+   */
+  readonly droppedDatabase: boolean;
 
-  constructor(database: string, timeoutMs: number, lingering: readonly LingeringBackend[]) {
+  constructor(
+    database: string,
+    timeoutMs: number,
+    lingering: readonly LingeringBackend[],
+    droppedDatabase: boolean,
+  ) {
     const who =
       lingering.length > 0
         ? lingering
@@ -69,12 +82,47 @@ export class DatabaseTeardownTimeoutError extends Error {
         : 'nothing was visible on the server, so the pool itself never finished closing';
     super(
       `database "${database}" was still in use ${timeoutMs}ms after its pool was closed: ${who}. ` +
-        'It has been dropped so nothing leaks, but something held a connection it did not own.',
+        (droppedDatabase
+          ? 'It has been dropped, but something held a connection it did not own.'
+          : 'Dropping it then failed too, so it may still be on the server — see this error’s cause.'),
     );
     this.name = 'DatabaseTeardownTimeoutError';
     this.database = database;
     this.lingering = lingering;
+    this.droppedDatabase = droppedDatabase;
   }
+}
+
+/**
+ * Force-drop for a teardown that has already failed, and report the timeout either way.
+ *
+ * The forced drop is a query like any other: it can fail, or overrun its own budget. Letting that
+ * escape would replace the typed timeout — and with it the list of backends that actually held the
+ * database, which is the only part of this a reader can act on. So the drop's failure becomes the
+ * timeout's `cause`, and whether it succeeded is recorded rather than assumed.
+ */
+async function reportTimeoutAfterForcedDrop(
+  admin: Pool,
+  pool: Pool,
+  clients: ReadonlySet<PoolClient>,
+  database: string,
+  timeoutMs: number,
+  lingering: readonly LingeringBackend[],
+): Promise<never> {
+  let dropFailure: unknown;
+  try {
+    await forceDropAbandoned(admin, pool, clients, database, timeoutMs);
+  } catch (error) {
+    dropFailure = error;
+  }
+  const timeout = new DatabaseTeardownTimeoutError(
+    database,
+    timeoutMs,
+    lingering,
+    dropFailure === undefined,
+  );
+  if (dropFailure !== undefined) timeout.cause = dropFailure;
+  throw timeout;
 }
 
 /** SQLSTATE 55006 — `DROP DATABASE` refusing because a backend is still attached. */
@@ -342,10 +390,8 @@ async function dropWhenFree(
       if (Date.now() >= deadline) {
         // 55006 arriving at or past the deadline is still a teardown timeout, not a raw SQL fault:
         // rethrowing the PostgreSQL error would skip the snapshot that names what was holding the
-        // database and leave only the outer best-effort drop. Giving up here has to leave the server
-        // clean too, so the database goes before the report does.
-        await forceDropAbandoned(admin, pool, clients, database, teardownTimeoutMs);
-        throw new DatabaseTeardownTimeoutError(database, teardownTimeoutMs, lingering);
+        // database and leave only the outer best-effort drop.
+        await reportTimeoutAfterForcedDrop(admin, pool, clients, database, teardownTimeoutMs, lingering);
       }
     }
   }
@@ -384,8 +430,7 @@ async function tearDown(
   if (lingering.length > 0) {
     // Something outlived its owner. Drop the database anyway so the server is not littered with
     // abandoned test databases, then say precisely what was holding it.
-    await forceDropAbandoned(admin, pool, clients, database, teardownTimeoutMs);
-    throw new DatabaseTeardownTimeoutError(database, teardownTimeoutMs, lingering);
+    await reportTimeoutAfterForcedDrop(admin, pool, clients, database, teardownTimeoutMs, lingering);
   }
   await dropWhenFree(admin, pool, clients, database, deadline, teardownTimeoutMs, pollIntervalMs, onCheck);
 }
@@ -481,9 +526,10 @@ export async function withTestDatabase<T>(
       } catch (error) {
         teardownFailed = true;
         teardownError = error;
-        // Both teardown paths that throw a timeout have already force-dropped the database, so only
-        // those are known-clean. Any other failure leaves the drop to the net below.
-        dropped = error instanceof DatabaseTeardownTimeoutError;
+        // A timeout reports whether its own forced drop succeeded, because that drop is a query and
+        // can fail too. Trusting the error type alone would skip the net below exactly when the
+        // database is still there.
+        dropped = error instanceof DatabaseTeardownTimeoutError && error.droppedDatabase;
       }
     }
   } catch (error) {
