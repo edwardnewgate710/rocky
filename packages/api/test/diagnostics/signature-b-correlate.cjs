@@ -105,7 +105,7 @@ const EXIT_CODE_TABLE = [
  * Naming a sender would be the same unsupported leap this module refuses to make for exit code 1.
  *
  * @param {{ exitCode: number | null, signal: string | null }} termination
- * @returns {{ id: string, meaning: string, conclusive: boolean }}
+ * @returns {{ id: string, meaning: string, specific: boolean }}
  */
 function classifyTermination({ exitCode, signal }) {
   if (signal !== null && signal !== undefined) {
