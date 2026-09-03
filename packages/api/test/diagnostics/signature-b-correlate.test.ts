@@ -314,6 +314,23 @@ function runPass(args: string[], cwd?: string): ReturnType<typeof spawnSync> {
 }
 
 /**
+ * Kill a pid outright, tolerating one that is already gone.
+ *
+ * Used from `finally` in the tests that deliberately start a long-sleeping worker: if their cleanup
+ * assertion fails, the worker they were complaining about would otherwise outlive the suite and
+ * interfere with whatever runs next. A test that leaks the process it is policing is worse than no
+ * test at all.
+ */
+function reap(pid: number | null): void {
+  if (pid === null) return;
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch {
+    /* already gone, which is what the assertion wanted */
+  }
+}
+
+/**
  * Wait for a pid to disappear, or give up.
  *
  * `process.kill(pid, 0)` sends no signal and throws ESRCH once the process is gone, but signal
@@ -383,6 +400,7 @@ test('pass runner: the ceiling kills the run and every process it started', asyn
   // needs a real timeout, because it is the process-tree cleanup being asserted: node:test spawns
   // one child per file, and on POSIX a SIGKILL to the runner is not delivered to that child.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-tree-'));
+  let workerPid: number | null = null;
   try {
     const pidFile = path.join(dir, 'child.pid');
     const target = path.join(dir, 'blocks.test.cjs');
@@ -404,10 +422,11 @@ test('pass runner: the ceiling kills the run and every process it started', asyn
     assert.equal(summary.runs[0]?.timedOut, true, 'the deadline, not a signal, is what marks a run timed out');
     assert.match(`${summary.runs[0]?.collectionError}`, /ceiling/);
 
-    const childPid = Number(fs.readFileSync(pidFile, 'utf8'));
-    assert.ok(Number.isInteger(childPid) && childPid > 0, 'the per-file child recorded its pid');
-    assert.equal(await waitForExit(childPid), true, 'the per-file child must not outlive the ceiling');
+    workerPid = Number(fs.readFileSync(pidFile, 'utf8'));
+    assert.ok(Number.isInteger(workerPid) && workerPid > 0, 'the per-file child recorded its pid');
+    assert.equal(await waitForExit(workerPid), true, 'the per-file child must not outlive the ceiling');
   } finally {
+    reap(workerPid);
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -450,6 +469,7 @@ test('pass runner: interrupting the pass takes the detached test tree with it', 
         '});\n',
     );
 
+    let workerPid: number | null = null;
     const pass = spawn(
       process.execPath,
       [path.join(DIAGNOSTICS_DIR, 'run-signature-b-pass.mjs'), '--runs', '1', '--target', target, '--out', path.join(dir, 'out')],
@@ -463,7 +483,7 @@ test('pass runner: interrupting the pass takes the detached test tree with it', 
         await new Promise((r) => setTimeout(r, 50));
       }
       assert.ok(fs.existsSync(pidFile), 'the per-file worker started');
-      const workerPid = Number(fs.readFileSync(pidFile, 'utf8'));
+      workerPid = Number(fs.readFileSync(pidFile, 'utf8'));
 
       pass.kill('SIGTERM');
       await new Promise((resolve) => pass.on('close', resolve));
@@ -474,9 +494,11 @@ test('pass runner: interrupting the pass takes the detached test tree with it', 
         'the detached per-file worker must not survive the interrupted pass',
       );
     } finally {
-      // If the worker never appeared, the assertion above throws before the interrupt is sent — and
-      // the tree this test started would outlive it. Killing here runs on every path.
+      // Two ways this test could leak the tree it started: the worker never appears, so the
+      // assertion throws before the interrupt is sent; or the cleanup being asserted did not happen,
+      // so the worker is still sleeping. Both are covered here rather than in the happy path.
       pass.kill('SIGKILL');
+      reap(workerPid);
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
