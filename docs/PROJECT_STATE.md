@@ -42,8 +42,11 @@ again as loud as it should be. `createPool` and `migrate` are unchanged; no prod
 
 Teardown is bounded — `pool.end()` included, because a client checked out and never released leaves
 it pending indefinitely (measured past a three-second bound) — names the lingering backends when it
-gives up, never leaks a database on any path, and never lets a cleanup failure replace the assertion
-the test actually failed on. Ten regression tests pin the contract against a real server; none asserts on
+gives up, and never lets a cleanup failure replace the assertion
+the test actually failed on. It drops the disposable database on every path it can reach, including the
+one where it gives up — but that last-resort drop is best effort: it runs inside a `catch` so a
+cleanup failure cannot bury the error already being reported, which means a server that refuses the
+drop can still leave a database behind. Ten regression tests pin the contract against a real server; none asserts on
 elapsed wall-clock time, which would measure the machine rather than the guarantee. The emergency
 path owns the termination it causes: it attaches a listener to the pool *and* to every live client
 before force-dropping, because a client the callback checked out and never released is not idle, so

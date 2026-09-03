@@ -277,7 +277,7 @@ async function dropWhenFree(
       const lingering = await waitForQuiescence(admin, database, deadline, pollIntervalMs, onCheck);
       if (lingering.length > 0 && Date.now() >= deadline) {
         // Giving up here still has to leave the server clean: reporting the timeout without dropping
-        // would leak the database, which is the one outcome teardown must never produce.
+        // would leave the database behind, which is the outcome teardown works hardest to avoid.
         await forceDropAbandoned(admin, pool, clients, database);
         throw new DatabaseTeardownTimeoutError(database, teardownTimeoutMs, lingering);
       }
@@ -336,8 +336,11 @@ async function tearDown(
  * succeeds by killing it. So teardown waits for the database to be genuinely unused and then drops
  * it ordinarily — trading a quiet, harmful success for a loud, harmless failure.
  *
- * Teardown always runs and always removes the database. It never replaces the callback's own error:
- * when both fail, the callback's error is thrown with the teardown failure attached as its `cause`.
+ * Teardown always runs, and drops the disposable database on every path it can reach — including the
+ * one where it gives up and reports a timeout. The final fallback drop is best effort: it runs inside
+ * a `catch`, because a cleanup failure must not bury the error already being reported, so a server
+ * that refuses that drop can still leave a database behind. Teardown never replaces the callback's
+ * own error: when both fail, the callback's error is thrown with the teardown failure as its `cause`.
  */
 export async function withTestDatabase<T>(
   body: (db: TestDatabase) => Promise<T>,
