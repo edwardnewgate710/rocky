@@ -15,10 +15,12 @@
  *   the exit status without a custom reporter, without patching Node internals, and without changing
  *   what a human sees on stdout.
  *
- * The pass is **bounded by construction** and stops at the first capture. It never retries a failed
- * file, never reruns the suite to get a green result, and never lowers concurrency — those would
- * hide the defect rather than explain it. A pass that captures nothing proves nothing beyond "not
- * observed in N runs", and the printed summary says so.
+ * The pass is **bounded by construction** and stops at the first capture. The wall-clock ceiling is
+ * passed to each child as a `timeout`, so it binds a run that hangs rather than only the decision to
+ * start another one. It never retries a failed file, never reruns the suite to get a green result,
+ * and never lowers concurrency — those would hide the defect rather than explain it. A pass that
+ * captures nothing proves nothing beyond "not observed in N runs", and the printed summary says so;
+ * a pass containing a run whose report could not be read says it is inconclusive instead.
  *
  * Usage, from `packages/api` (compile first: `npx tsc -p tsconfig.test.json`):
  *
@@ -107,33 +109,54 @@ for (let run = 1; run <= maxRuns; run++) {
       cwd: API_DIR,
       encoding: 'utf8',
       env: { ...process.env, SIGB_LOG_DIR: logDir },
-      maxBuffer: 256 * 1024 * 1024,
+      // `spec` goes straight to this terminal, which is the whole point of running it alongside
+      // `tap`: the human-facing output must stay exactly what it would be without the diagnostic.
+      // Only stderr is captured, and only to test it for known fatal markers.
+      stdio: ['ignore', 'inherit', 'pipe'],
+      // The ceiling has to bind a run that hangs, not merely the decision to start another one.
+      timeout: Math.max(1, maxMs - elapsed),
+      killSignal: 'SIGKILL',
+      maxBuffer: 64 * 1024 * 1024,
     },
   );
   const durationMs = Date.now() - startedRun;
 
+  // A run whose report cannot be read has not answered the question, and must not be filed next to
+  // the runs that did. Reporting it as "zero captures" would let a broken pass look like a quiet one.
   let records = [];
-  try {
-    records = correlate(parseTapFailures(fs.readFileSync(tapPath, 'utf8')), readChildLogs(logDir));
-  } catch {
-    /* a run that produced no readable report is recorded below as zero captures */
+  let collectionError = result.error ? `${result.error.name}: ${result.error.message}` : null;
+  if (collectionError === null) {
+    try {
+      records = correlate(parseTapFailures(fs.readFileSync(tapPath, 'utf8')), readChildLogs(logDir));
+    } catch (error) {
+      collectionError = `${error.name}: ${error.message}`;
+    }
   }
 
   const summary = {
     run,
     durationMs,
     runnerExitCode: result.status,
+    timedOut: result.signal !== null && result.signal !== undefined,
     freeMemBeforeMb: Math.round(freeBefore / 1048576),
     freeMemAfterMb: Math.round(freemem() / 1048576),
     totalMemMb: Math.round(totalmem() / 1048576),
     captures: records.length,
+    collectionError,
   };
   runs.push(summary);
   fs.writeFileSync(path.join(outDir, 'summary.json'), `${JSON.stringify({ runs }, null, 2)}\n`, { mode: 0o600 });
   console.log(
     `run ${run}: ${Math.round(durationMs / 1000)}s  runnerExit=${result.status}  ` +
-      `captures=${records.length}  freeMb ${summary.freeMemBeforeMb}->${summary.freeMemAfterMb}`,
+      `captures=${records.length}  freeMb ${summary.freeMemBeforeMb}->${summary.freeMemAfterMb}` +
+      (collectionError === null ? '' : `  COLLECTION FAILED: ${collectionError}`),
   );
+
+  if (collectionError !== null) {
+    console.error(`\nRun ${run} produced no readable diagnostic result. Stopping rather than reporting a clean pass.`);
+    process.exitCode = 1;
+    break;
+  }
 
   if (records.length > 0) {
     capture = { run, records, fatalMarkers: fatalMarkersIn(result.stderr) };
@@ -148,8 +171,16 @@ for (let run = 1; run <= maxRuns; run++) {
 }
 
 const minutes = Math.round((Date.now() - startedAt) / 60_000);
-console.log(`\n${runs.length} run(s), ${minutes} minute(s), ${capture ? 1 : 0} capture(s).`);
-if (!capture) {
+const failed = runs.filter((entry) => entry.collectionError !== null).length;
+console.log(`\n${runs.length} run(s), ${minutes} minute(s), ${capture ? 1 : 0} capture(s), ${failed} unreadable.`);
+
+// Only a pass whose every run produced a readable report is entitled to say the defect was not
+// observed. Anything else is an unfinished experiment, and saying otherwise would be the same
+// mistake as calling a clean pass a fix.
+if (capture) {
+  console.log('See capture.json. A single capture names a mechanism; it does not establish a cause.');
+} else if (failed > 0) {
+  console.log('This pass is inconclusive: at least one run produced no readable diagnostic result.');
+} else {
   console.log('Signature B was not observed in this pass. That bounds its rate; it does not mean it is fixed.');
 }
-process.exitCode = 0;

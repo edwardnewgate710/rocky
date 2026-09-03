@@ -34,7 +34,7 @@ const correlator = require(CORRELATE_PATH) as {
 };
 
 /** A TAP block in the exact shape Node's built-in reporter emits for a file-level failure. */
-function tapFailure(file: string, exitCode: string, signal = '~'): string {
+function tapFailure(file: string, exitCode: string, signal = '~', failureType = 'testCodeFailure'): string {
   return [
     `# Subtest: ${file}`,
     `not ok 1 - ${file}`,
@@ -42,7 +42,7 @@ function tapFailure(file: string, exitCode: string, signal = '~'): string {
     '  duration_ms: 612.4',
     "  type: 'test'",
     `  location: 'C:\\repo\\${file}:1:1'`,
-    "  failureType: 'testCodeFailure'",
+    `  failureType: '${failureType}'`,
     `  exitCode: ${exitCode}`,
     `  signal: ${signal}`,
     "  error: 'test failed'",
@@ -72,6 +72,17 @@ test('correlator: ignores a test that failed on its own assertion', () => {
   assert.deepEqual(correlator.parseTapFailures(realFailure), [], 'only Node\'s bare fallback is Signature B');
 });
 
+test('correlator: an ordinary failing assertion is not a Signature B capture', () => {
+  // Node writes `error: 'test failed'` for any file whose child exited non-zero, so a file holding
+  // an ordinary failing test carries the identical message — under `subtestsFailed`, because a
+  // subtest did fail. Matching the message alone would report every regression as a capture and
+  // halt the pass on a false positive.
+  const ordinary = tapFailure('has-a-failing-test.test.js', '1', '~', 'subtestsFailed');
+
+  assert.deepEqual(correlator.parseTapFailures(ordinary), [], 'only the no-subtest-failed branch is this defect');
+  assert.equal(correlator.parseTapFailures(tapFailure('died.test.js', '1')).length, 1, 'testCodeFailure still counts');
+});
+
 test('correlator: classifies every termination code that was measured on this platform', () => {
   assert.equal(correlator.classifyTermination({ exitCode: 134, signal: null }).id, 'native-abort-or-v8-fatal');
   assert.equal(correlator.classifyTermination({ exitCode: 3221225477, signal: null }).id, 'native-access-violation');
@@ -81,11 +92,18 @@ test('correlator: classifies every termination code that was measured on this pl
     'native-ntstatus',
     'an unlisted 0xC0000000-range code is still recognisably a native fault',
   );
-  assert.equal(
-    correlator.classifyTermination({ exitCode: null, signal: 'SIGTERM' }).id,
-    'runner-initiated-kill',
-    'libuv reports a signal only when the parent handle did the killing',
-  );
+});
+
+test('correlator: names the signal that killed a child but never claims who sent it', () => {
+  // Node's exit contract reports the signal, not its sender, so an external SIGKILL on Linux is
+  // indistinguishable here from a runner cancellation. Attributing one would be the same
+  // unsupported leap this module refuses to make for exit code 1.
+  const classification = correlator.classifyTermination({ exitCode: null, signal: 'SIGKILL' });
+
+  assert.equal(classification.id, 'signal-terminated');
+  assert.equal(classification.conclusive, false, 'the mechanism is known; the actor is not');
+  assert.match(classification.meaning, /SIGKILL/);
+  assert.doesNotMatch(classification.meaning, /the test runner killed/, 'no sender may be named');
 });
 
 test('correlator: refuses to identify exit code 1, which four different causes produce', () => {

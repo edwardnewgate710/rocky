@@ -85,8 +85,10 @@ const EXIT_CODE_TABLE = [
 /**
  * Classify a parent-observed child termination.
  *
- * A non-null `signal` is only ever set by libuv when the parent's own handle killed the child, so it
- * means the test runner itself terminated the file — a timeout or cancellation, not a crash.
+ * A non-null `signal` establishes that the child died by signal and nothing more. Node's exit
+ * contract names the signal that terminated the process, not the process that sent it, so an
+ * external `SIGKILL`, a self-sent signal and a runner cancellation are indistinguishable here.
+ * Naming a sender would be the same unsupported leap this module refuses to make for exit code 1.
  *
  * @param {{ exitCode: number | null, signal: string | null }} termination
  * @returns {{ id: string, meaning: string, conclusive: boolean }}
@@ -94,9 +96,9 @@ const EXIT_CODE_TABLE = [
 function classifyTermination({ exitCode, signal }) {
   if (signal !== null && signal !== undefined) {
     return {
-      id: 'runner-initiated-kill',
-      meaning: `the test runner killed the child with ${signal}; libuv reports a signal only for a kill through the parent's own handle`,
-      conclusive: true,
+      id: 'signal-terminated',
+      meaning: `the child was terminated by ${signal}; the exit contract names the signal, not its sender, so the runner, the OS and an external process are all still possible`,
+      conclusive: false,
     };
   }
   const known = EXIT_CODE_TABLE.find((entry) => entry.code === exitCode);
@@ -151,8 +153,12 @@ function narrowFromChildEvidence(classification, childKinds) {
 /**
  * Extract the file-level failures Node reports as its own bare fallback from a TAP report.
  *
- * Only `'test failed'` blocks are taken. A test that fails on its own assertion carries a real
- * message and a stack and is not this defect.
+ * Both conditions are required, and the second is the one that matters. Node writes
+ * `error: 'test failed'` for *any* file whose child exited non-zero, so a file containing an
+ * ordinary failing assertion carries it too — with `failureType: 'subtestsFailed'`, because the
+ * runner saw a subtest fail (`kSubtestsFailed`). Signature B is the other branch: no subtest
+ * failed, so the runner falls back to `kTestCodeFailure`. Matching on the message alone would
+ * report every ordinary regression as a capture and halt the pass on a false positive.
  *
  * @param {string} tapText
  * @returns {Array<{ file: string, exitCode: number | null, signal: string | null, failureType: string | null, durationMs: number | null }>}
@@ -162,6 +168,7 @@ function parseTapFailures(tapText) {
   const out = [];
   for (const [, rawName, body] of blocks) {
     if (!/^\s*error: 'test failed'\s*$/m.test(body)) continue;
+    if (!/^\s*failureType: 'testCodeFailure'\s*$/m.test(body)) continue;
     if (out.length >= MAX_RECORDS) break;
     const scalar = (key) => {
       const found = new RegExp(`^\\s*${key}: (.+)$`, 'm').exec(body);
