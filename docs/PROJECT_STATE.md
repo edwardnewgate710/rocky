@@ -43,8 +43,11 @@ again as loud as it should be. `createPool` and `migrate` are unchanged; no prod
 Teardown is bounded — `pool.end()` included, because a client checked out and never released leaves
 it pending indefinitely (measured past a three-second bound) — names the lingering backends when it
 gives up, never leaks a database on any path, and never lets a cleanup failure replace the assertion
-the test actually failed on. Seven regression tests pin the contract against a real server; none
-asserts on elapsed wall-clock time, which would measure the machine rather than the guarantee.
+the test actually failed on. Ten regression tests pin the contract against a real server; none asserts on
+elapsed wall-clock time, which would measure the machine rather than the guarantee. The emergency
+path owns the termination it causes: it attaches a listener to the pool *and* to every live client
+before force-dropping, because a client the callback checked out and never released is not idle, so
+`pg` has removed its `idleListener` and the pool would never see its FATAL at all.
 
 **Found while validating, not fixed here:** the persistence suite is not idempotent against a reused
 database. A second consecutive run against the same server fails — 12 tests on `b95065f`, 9 with

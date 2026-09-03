@@ -52,16 +52,43 @@ async function databaseExists(name: string): Promise<boolean> {
   }
 }
 
+/** How many disposable databases the helper currently has on the server. */
+async function countTestDatabases(): Promise<number> {
+  const client = await admin();
+  try {
+    const { rows } = await client.query<{ n: string }>(
+      "SELECT count(*)::text AS n FROM pg_database WHERE datname LIKE 'test\\_db\\_%'",
+    );
+    return Number(rows[0]?.n ?? '0');
+  } finally {
+    await client.end();
+  }
+}
+
 test('test database: a successful callback leaves no database behind', { skip }, async () => {
   let name = '';
+  let poolRef: Pool | undefined;
   await withTestDatabase(async ({ pool, database }) => {
     name = database;
+    poolRef = pool;
     await pool.query('SELECT 1');
     assert.equal(await databaseExists(database), true, 'the database exists while the callback runs');
   });
 
   assert.notEqual(name, '');
   assert.equal(await databaseExists(name), false, 'and is gone once the callback returns');
+
+  // Teardown must end the pool *before* it decides the database is unused, not merely reach the
+  // same state eventually. Without this, a teardown that never ended the pool still passes: `pg`
+  // closes idle clients after `idleTimeoutMillis` (10s by default), so the quiescence wait drains
+  // on its own and the only visible symptom is every test taking fifty times longer. `pool.end()`
+  // rejecting on a second call is pg's own documented contract, which makes this a fact about the
+  // pool rather than a measurement of the clock.
+  await assert.rejects(
+    poolRef!.end(),
+    /more than once/,
+    'teardown had already ended the pool it was handed',
+  );
 });
 
 test('test database: a throwing callback still loses its database, and its own error', { skip }, async () => {
@@ -220,39 +247,131 @@ test('test database: when both the callback and teardown fail, the callback erro
   assert.equal(await databaseExists(name), false, 'and the database still went away');
 });
 
-test('test database: two isolated databases do not see each other', { skip }, async () => {
-  // Concurrency: the quiescence predicate filters on `datname`, so one test's backends must be
-  // invisible to the other's teardown. If it filtered on anything looser, these would deadlock
-  // against each other or drop the wrong database.
+test('test database: a concurrent run is not blocked by another database’s backends', { skip }, async () => {
+  // The quiescence predicate filters on `datname`, so one run's busy backends must be invisible to
+  // the other's teardown. Asserting that no check ever saw *anything* would be flaky for the very
+  // reason this helper exists — a run's own pool can still be closing when its first check runs —
+  // and would prove nothing about isolation anyway, since the query already filters by database and
+  // a `LingeringBackend` does not carry the one it came from.
+  //
+  // What does prove it: the short run finishes while the long one is still holding a backend open.
+  // If teardown waited on anything outside its own database, that could not happen.
   const names: string[] = [];
-  const observed: Array<readonly LingeringBackend[]> = [];
+  const checksLong: Array<readonly LingeringBackend[]> = [];
+  const checksShort: Array<readonly LingeringBackend[]> = [];
+  let longFinished = false;
 
-  const one = withTestDatabase(
+  const long = withTestDatabase(
     async ({ pool, database }) => {
       names.push(database);
-      // Hold real work open across the other test's teardown.
-      await pool.query('SELECT pg_sleep(0.35)');
+      await pool.query('SELECT pg_sleep(1.5)');
     },
-    { onQuiescenceCheck: (backends) => observed.push(backends) },
-  );
+    { onQuiescenceCheck: (backends) => checksLong.push(backends) },
+  ).then(() => {
+    longFinished = true;
+  });
 
-  const two = withTestDatabase(
+  const short = withTestDatabase(
     async ({ pool, database }) => {
       names.push(database);
       await pool.query('SELECT 1');
     },
-    { onQuiescenceCheck: (backends) => observed.push(backends) },
+    { onQuiescenceCheck: (backends) => checksShort.push(backends) },
   );
 
-  await Promise.all([one, two]);
+  await short;
+  assert.equal(longFinished, false, 'the short run completed while the long one still held its database');
+
+  await long;
 
   assert.equal(names.length, 2);
   assert.notEqual(names[0], names[1], 'each run gets its own database');
   for (const name of names) assert.equal(await databaseExists(name), false, `${name} was dropped`);
-  assert.ok(
-    observed.every((backends) => backends.length === 0),
-    'neither teardown ever saw the other database’s backends',
+  assert.deepEqual(checksShort.at(-1), [], 'the short run reached quiescence before dropping');
+  assert.deepEqual(checksLong.at(-1), [], 'and so did the long one');
+});
+
+test('test database: giving up on teardown still leaves no database behind', { skip }, async () => {
+  // The bounded path force-drops before it reports, and the outer net must not wrongly assume it
+  // did. A leaked database is invisible to every other assertion here and is the one outcome
+  // teardown must never produce, so it gets counted directly.
+  const before = await countTestDatabases();
+  let held: Client | undefined;
+
+  try {
+    await assert.rejects(
+      withTestDatabase(
+        async ({ pool, connectionString }) => {
+          await pool.query('SELECT 1');
+          held = new Client({ connectionString, application_name: 'leak-check' });
+          await held.connect();
+          held.on('error', () => {
+            // Expected: this is the connection teardown gives up on and then terminates.
+          });
+        },
+        { teardownTimeoutMs: 300, pollIntervalMs: 25 },
+      ),
+      (error: unknown) => error instanceof DatabaseTeardownTimeoutError,
+    );
+  } finally {
+    if (held) await held.end().catch(() => undefined);
+  }
+
+  assert.equal(await countTestDatabases(), before, 'the disposable database did not survive teardown');
+});
+
+test('test database: a leaked pool client does not become an uncaught error', { skip }, async () => {
+  // The emergency path is the one place FORCE survives, and the connection it terminates can belong
+  // to the callback's own pool — a client checked out and never released, which is exactly what
+  // makes `pool.end()` time out and send teardown down that path. That pool has no `error` listener
+  // during the run, so without one installed before the forced drop, `pg` re-emits the FATAL as an
+  // uncaught exception: the failure this whole helper exists to remove, reintroduced by its own
+  // cleanup. Unlike the other leak tests, nothing here attaches a listener of its own — the helper
+  // has to own the termination it causes.
+  const before = await countTestDatabases();
+
+  await assert.rejects(
+    withTestDatabase(
+      async ({ pool }) => {
+        const leased = await pool.connect();
+        await leased.query('SELECT 1');
+        // Deliberately never released.
+      },
+      { teardownTimeoutMs: 400, pollIntervalMs: 25 },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof DatabaseTeardownTimeoutError, 'the bound is what reports, not a crash');
+      return true;
+    },
   );
+
+  // If the FATAL had escaped, node:test would have failed this run with an uncaught exception rather
+  // than reaching here.
+  assert.equal(await countTestDatabases(), before, 'and the database still went away');
+});
+
+test('test database: a callback that rejects with undefined is still a failure', { skip }, async () => {
+  // `undefined` is a legal rejection value, so it must not double as the helper's own no-error
+  // sentinel — that would turn this call into a success returning an uninitialised result.
+  let name = '';
+  let resolved = false;
+
+  await assert.rejects(
+    withTestDatabase(async ({ pool, database }) => {
+      name = database;
+      await pool.query('SELECT 1');
+      throw undefined;
+    }).then(() => {
+      resolved = true;
+    }),
+    (error: unknown) => {
+      assert.equal(error, undefined, 'the rejection value is preserved exactly as thrown');
+      return true;
+    },
+  );
+
+  assert.equal(resolved, false, 'a rejection with undefined never becomes a successful return');
+  assert.equal(await databaseExists(name), false, 'and its database is still cleaned up');
 });
 
 test('test database: a real query failure is not swallowed by teardown', { skip }, async () => {
