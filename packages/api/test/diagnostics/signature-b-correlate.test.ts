@@ -228,19 +228,36 @@ test('pass runner: a pass whose every run was unreadable is refused, not reporte
   // A wall-clock ceiling smaller than a single run makes the child time out, so the run yields no
   // readable report. The pass observed nothing and must say so rather than print the same summary
   // as a quiet one — the failure mode the ceiling and the collection check exist to prevent.
-  const result = spawnSync(
-    process.execPath,
-    [path.join(DIAGNOSTICS_DIR, 'run-signature-b-pass.mjs'), '--runs', '5', '--max-minutes', '0.0001'],
-    {
-      cwd: path.resolve(DIAGNOSTICS_DIR, '../..'),
-      encoding: 'utf8',
-      env: { ...process.env, NODE_TEST_CONTEXT: undefined },
-    },
-  );
+  //
+  // `--target` points the nested run at one trivial file. Without it the run would launch a second
+  // copy of the whole API suite against the same database as the suite running this very test.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-target-'));
+  try {
+    const trivial = path.join(dir, 'noop.test.cjs');
+    fs.writeFileSync(trivial, "require('node:test').test('noop', () => {});\n");
 
-  assert.notEqual(result.status, 0, 'an unreadable pass must not exit successfully');
-  assert.doesNotMatch(`${result.stdout}`, /was not observed/, 'and must not claim the defect was not observed');
-  assert.match(`${result.stderr}`, /observed nothing/, 'and must say the pass observed nothing');
+    const result = spawnSync(
+      process.execPath,
+      [
+        path.join(DIAGNOSTICS_DIR, 'run-signature-b-pass.mjs'),
+        '--runs', '5',
+        '--max-minutes', '0.0001',
+        '--target', trivial,
+        '--out', path.join(dir, 'out'),
+      ],
+      {
+        cwd: path.resolve(DIAGNOSTICS_DIR, '../..'),
+        encoding: 'utf8',
+        env: { ...process.env, NODE_TEST_CONTEXT: undefined },
+      },
+    );
+
+    assert.notEqual(result.status, 0, 'an unreadable pass must not exit successfully');
+    assert.doesNotMatch(`${result.stdout}`, /was not observed/, 'and must not claim the defect was not observed');
+    assert.match(`${result.stderr}`, /observed nothing/, 'and must say the pass observed nothing');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('correlator: captures a real child termination end to end through the parent reporter', () => {

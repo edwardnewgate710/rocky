@@ -98,6 +98,11 @@ const maxRuns = positiveNumber('runs', flag('runs', 20), 20);
 const maxMs = positiveNumber('max-minutes', flag('max-minutes', 45), 45) * 60_000;
 const outDir = flag('out', fs.mkdtempSync(path.join(tmpdir(), 'sigb-pass-')));
 
+// What each run executes. The default is the whole compiled suite, which is what reproducing
+// Signature B requires; `--target` exists so this script's own tests can point a run at one trivial
+// file instead of launching a second copy of the suite against the same database.
+const target = flag('target', 'dist-test/test/**/*.test.js');
+
 fs.mkdirSync(outDir, { recursive: true, mode: 0o700 });
 console.log(`Signature B bounded pass — ceiling ${maxRuns} runs or ${maxMs / 60_000} minutes, stopping at first capture.`);
 console.log(`Artifacts: ${outDir}\n`);
@@ -125,7 +130,7 @@ for (let run = 1; run <= maxRuns; run++) {
       '--require', './test/diagnostics/signature-b-preload.cjs',
       '--test-reporter=spec', '--test-reporter-destination=stdout',
       '--test-reporter=tap', `--test-reporter-destination=${tapPath}`,
-      '--test', '--test-concurrency=1', 'dist-test/test/**/*.test.js',
+      '--test', '--test-concurrency=1', target,
     ],
     {
       cwd: API_DIR,
