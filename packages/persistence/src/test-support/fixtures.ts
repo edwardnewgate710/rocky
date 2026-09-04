@@ -125,23 +125,26 @@ export const UNATTACHABLE_TEARDOWN_WARNING = 'PersistenceTestTeardownFailure';
  * back on itself would otherwise spin here forever, inside teardown, with no test to blame.
  */
 function tryAttachCause(error: unknown, addition: unknown): boolean {
-  const seen = new Set<unknown>();
-  let link = error;
-  while (link instanceof Error && !seen.has(link)) {
-    if (link.cause === undefined) {
-      // Nothing in here may throw. A frozen error rejects the assignment — with a `TypeError` in
-      // strict mode, silently otherwise — and letting either outcome past would replace the body's
-      // failure with a complaint about a property, which is the loss this helper exists to prevent.
-      // Reporting no free link instead routes the teardown failure to the warning path.
-      try {
+  // The whole walk is guarded, not just the write. Every step touches an object this helper did
+  // not create: reading `cause` can run someone else's getter, assigning it can run a setter or be
+  // refused by a frozen error — with a `TypeError` in strict mode, silently otherwise. None of
+  // those may escape, because an exception raised while *annotating* a failure would replace the
+  // failure, which is the one loss this helper exists to prevent. Anything unexpected is reported
+  // as "no free link", which routes the teardown failure to the warning path instead.
+  try {
+    const seen = new Set<unknown>();
+    let link = error;
+    while (link instanceof Error && !seen.has(link)) {
+      if (link.cause === undefined) {
         link.cause = addition;
-      } catch {
-        return false;
+        // Re-read rather than trust the write: a sealed error refuses it without complaining.
+        return Object.is(link.cause, addition);
       }
-      return Object.is(link.cause, addition);
+      seen.add(link);
+      link = link.cause;
     }
-    seen.add(link);
-    link = link.cause;
+  } catch {
+    return false;
   }
   return false;
 }

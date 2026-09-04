@@ -300,6 +300,47 @@ test('a frozen body error is rethrown, not replaced by the attempt to annotate i
   }, isolated);
 });
 
+test('a body error whose cause getter throws is still the error that surfaces', { skip }, async () => {
+  await withTestDatabase(async ({ connectionString }) => {
+    // Walking the chain reads `cause` on an object this helper did not create, so the read itself
+    // can run someone else's getter. Frozen errors were the write half of the same problem; this
+    // is the read half, and it escaped the guard that only wrapped the assignment.
+    const boom = new Error('the assertion that actually failed');
+    Object.defineProperty(boom, 'cause', {
+      configurable: true,
+      get() {
+        throw new Error('reading the cause blew up');
+      },
+    });
+    const cleanupFailure = new Error('and cleanup could not run either');
+
+    const warnings: Error[] = [];
+    const collect = (warning: Error): void => {
+      warnings.push(warning);
+    };
+    process.on('warning', collect);
+    try {
+      await assert.rejects(
+        withSharedDatabase({
+          connectionString,
+          max: 2,
+          cleanup: () => Promise.reject(cleanupFailure),
+        }, () => Promise.reject(boom)),
+        (error: unknown) => {
+          assert.equal(error, boom, 'annotating must never replace the failure being annotated');
+          return true;
+        },
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      process.off('warning', collect);
+    }
+
+    const reported = warnings.filter((w) => w.name === UNATTACHABLE_TEARDOWN_WARNING);
+    assert.equal(reported.length, 1, 'the cleanup failure fell through to the warning path');
+  }, isolated);
+});
+
 test('a cleanup that fails is reported rather than swallowed', { skip }, async () => {
   await withTestDatabase(async ({ pool, connectionString }) => {
     await migrated(pool);
