@@ -126,13 +126,12 @@ async function reportTimeoutAfterForcedDrop(
 }
 
 /**
- * Bound on creating the disposable database.
+ * Bound on creating the disposable database, covering both its connection and its statement.
  *
- * Deliberately generous, and deliberately *not* `teardownTimeoutMs`. `connectionTimeoutMillis`
- * bounds acquiring a connection, not a query on one already established, so a stalled server could
- * otherwise hold this await open forever — before the callback runs and before there is any cleanup
- * to start. It is separate from the teardown budget because tests set that as low as 300ms to
- * exercise the timeout path, and creation has nothing to do with how long teardown may wait.
+ * Deliberately generous, and deliberately *not* `teardownTimeoutMs`: creation happens before the
+ * callback runs and before there is any cleanup to start, so it has nothing to do with how long
+ * teardown may wait. Tests here set the teardown budget as low as 300ms to exercise the timeout
+ * path, and creation held to that would fail on a loaded server rather than on a real fault.
  */
 const CREATE_TIMEOUT_MS = 30_000;
 
@@ -518,7 +517,13 @@ export async function withTestDatabase<T>(
   // teardown was trying to report. This exists only for a server that has stopped answering, where
   // nothing else would ever return.
   const teardownBackstopMs = teardownTimeoutMs * 2 + 1_000;
-  const admin = createPool({ connectionString, max: 2, connectionTimeoutMillis: teardownTimeoutMs });
+  // No pool-level `connectionTimeoutMillis`. It would apply to *every* acquisition on this pool,
+  // including the one `boundedQuery` makes for `CREATE DATABASE` — which runs before the callback
+  // and has nothing to do with how long teardown may wait. Tests here pass `teardownTimeoutMs: 300`
+  // to exercise the timeout path, so binding acquisition to it would cap setup at 300ms and fail
+  // creation on a loaded server. It is also redundant: every `admin.connect()` in this file goes
+  // through `boundedQuery`, which bounds acquisition with the budget belonging to that operation.
+  const admin = createPool({ connectionString, max: 2 });
   // Hoisted so the last-resort drop can route through `forceDropAbandoned`: that drop is a forced
   // one too, and it terminates the same connections, so it owes them the same listener.
   let pool: Pool | undefined;
