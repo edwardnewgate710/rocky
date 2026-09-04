@@ -474,7 +474,7 @@ module.exports = {
 
 if (require.main === module) {
   const args = process.argv.slice(2);
-  const known = new Set(['--tap', '--child-logs']);
+  const known = new Set(['--tap', '--child-logs', '--windows', '--posix']);
   let usage = null;
   // `--tap --child-logs dir` must be a usage error, not a request to read a file called
   // "--child-logs". An option that swallows the next option produces a confident wrong answer.
@@ -491,13 +491,19 @@ if (require.main === module) {
   const tapPath = valueOf('--tap');
   const logDir = valueOf('--child-logs');
   if (usage !== null || tapPath === null || logDir === null) {
-    process.stderr.write(`${usage ?? 'usage'}: signature-b-correlate.cjs --tap <report.tap> --child-logs <dir>\n`);
+    process.stderr.write(`${usage ?? 'usage'}: signature-b-correlate.cjs --tap <report.tap> --child-logs <dir> [--windows|--posix]\n`);
     process.exitCode = 2;
   } else {
-    const isWin = process.platform === 'win32';
+    const isWindowsExplicit = args.includes('--windows') ? true : (args.includes('--posix') ? false : undefined);
+    const childLogs = readChildLogs(logDir);
+    // Derive capture platform from explicit flag or child log metadata, never the analyzer's host platform
+    const hasWindowsChild = [...childLogs.values()].some((child) => child?.isWindows);
+    const isWin = typeof isWindowsExplicit === 'boolean'
+      ? isWindowsExplicit
+      : (hasWindowsChild ? true : undefined);
     const records = correlate(
       parseTapFailures(fs.readFileSync(tapPath, 'utf8'), { isWindows: isWin }),
-      readChildLogs(logDir),
+      childLogs,
       { isWindows: isWin },
     );
     for (const record of records) process.stdout.write(`${JSON.stringify(record)}\n`);

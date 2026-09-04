@@ -1083,3 +1083,47 @@ test('correlator: correlates bare string failures with normalized null parent fi
     fs.rmSync(logDir, { recursive: true, force: true });
   }
 });
+
+test('correlator: CLI derives capture platform from child logs without relying on analyzer host platform', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-cli-platform-'));
+  try {
+    const logDir = path.join(tmpDir, 'logs');
+    fs.mkdirSync(logDir);
+    const tapPath = path.join(tmpDir, 'test.tap');
+
+    // Windows capture: child log contains Windows metadata
+    const winChild = [
+      { kind: 'start', pid: 4321, testFile: 'C:\\repo\\dist-test\\test\\windows-target.test.js', isWindows: true },
+      { kind: 'preload-installed', pid: 4321, testFile: 'C:\\repo\\dist-test\\test\\windows-target.test.js', isWindows: true },
+    ];
+    fs.writeFileSync(path.join(logDir, 'run-win.jsonl'), `${winChild.map((l) => JSON.stringify(l)).join('\n')}\n`);
+
+    // TAP failure has backslash-delimited relative path
+    fs.writeFileSync(tapPath, tapFailure('dist-test\\test\\windows-target.test.js', '1'));
+
+    const run = (extraArgs: string[] = []): ReturnType<typeof spawnSync> =>
+      spawnSync(process.execPath, [CORRELATE_PATH, '--tap', tapPath, '--child-logs', logDir, ...extraArgs], {
+        encoding: 'utf8',
+        env: { ...process.env, NODE_TEST_CONTEXT: undefined },
+      });
+
+    // Run CLI without explicit platform flag: must derive Windows from child logs
+    const resultAuto = run();
+    assert.equal(resultAuto.status, 0);
+    const linesAuto = String(resultAuto.stdout).trim().split('\n').filter(Boolean);
+    assert.equal(linesAuto.length, 1);
+    const recordAuto = JSON.parse(linesAuto[0]);
+    assert.equal(recordAuto.child.pid, 4321, 'CLI must derive Windows capture from child log metadata');
+    assert.equal(recordAuto.child.logFound, true);
+
+    // Overriding with --posix forces POSIX semantics (where backslash in relative path does not match)
+    const resultPosix = run(['--posix']);
+    assert.equal(resultPosix.status, 0);
+    const linesPosix = String(resultPosix.stdout).trim().split('\n').filter(Boolean);
+    assert.equal(linesPosix.length, 1);
+    const recordPosix = JSON.parse(linesPosix[0]);
+    assert.equal(recordPosix.child.logFound, false, '--posix flag must override and preserve POSIX backslash semantics');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
