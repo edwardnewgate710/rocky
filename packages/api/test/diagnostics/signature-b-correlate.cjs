@@ -123,16 +123,17 @@ function classifyTermination({ exitCode, signal }) {
       specific: false,
     };
   }
-  const known = EXIT_CODE_TABLE.find((entry) => entry.code === exitCode);
+  const unsigned = typeof exitCode === 'number' ? (exitCode >>> 0) : null;
+  const known = EXIT_CODE_TABLE.find((entry) => entry.code === exitCode || (unsigned !== null && entry.code === unsigned));
   if (known) return { id: known.id, meaning: known.meaning, specific: known.specific };
-  if (typeof exitCode === 'number' && exitCode >= 0xc0000000) {
+  if (unsigned !== null && unsigned >= 0xc0000000) {
     // Membership of the range is not a finding. A native fault produces a value here, but so does a
     // console CTRL+C (`STATUS_CONTROL_C_EXIT`, in the table above), and an external TerminateProcess
     // can pass any of them deliberately. An unmeasured value in the range therefore narrows the
     // shape of the answer without naming a mechanism, and must not be reported as though it had.
     return {
       id: 'ntstatus-unmeasured',
-      meaning: `exit code ${exitCode} (0x${exitCode.toString(16)}) is an NTSTATUS value this table does not cover; a native fault is one candidate, but the range also carries non-fault statuses such as STATUS_CONTROL_C_EXIT, so the number alone names no mechanism`,
+      meaning: `exit code ${exitCode} (0x${unsigned.toString(16)}) is an NTSTATUS value this table does not cover; a native fault is one candidate, but the range also carries non-fault statuses such as STATUS_CONTROL_C_EXIT, so the number alone names no mechanism`,
       specific: false,
     };
   }
@@ -227,11 +228,11 @@ function parseTapFailures(tapText) {
   const blocks = String(tapText).matchAll(/^not ok \d+ - (.+?)$\r?\n\s*---\r?\n([\s\S]*?)^\s*\.\.\.$/gm);
   const out = [];
   for (const [, rawName, body] of blocks) {
-    if (!/^\s*error: 'test failed'\s*$/m.test(body)) continue;
-    if (!/^\s*failureType: 'testCodeFailure'\s*$/m.test(body)) continue;
+    if (!/^\s*error:\s*['"]?test failed['"]?\s*$/m.test(body)) continue;
+    if (!/^\s*failureType:\s*['"]?testCodeFailure['"]?\s*$/m.test(body)) continue;
     if (out.length >= MAX_RECORDS) break;
     const scalar = (key) => {
-      const found = new RegExp(`^\\s*${key}: (.+)$`, 'm').exec(body);
+      const found = new RegExp(`^\\s*${key}:\\s*(.+)$`, 'm').exec(body);
       return found ? found[1].trim() : null;
     };
     const exit = scalar('exitCode');
@@ -240,8 +241,8 @@ function parseTapFailures(tapText) {
     out.push({
       file: rawName.trim().replace(/\\\\/g, '\\'),
       exitCode: exit === null || exit === '~' ? null : Number(exit),
-      signal: sig === null || sig === '~' ? null : sig.replace(/^'|'$/g, ''),
-      failureType: scalar('failureType')?.replace(/^'|'$/g, '') ?? null,
+      signal: sig === null || sig === '~' ? null : sig.replace(/^['"]|['"]$/g, ''),
+      failureType: scalar('failureType')?.replace(/^['"]|['"]$/g, '') ?? null,
       durationMs: dur === null ? null : Number(dur),
     });
   }
@@ -313,16 +314,30 @@ function readChildLogs(logDir) {
  */
 function matchChild(childLogs, parentFile) {
   const wanted = normalizePath(parentFile);
+  const isWin = process.platform === 'win32';
+  const wantedNorm = isWin ? wanted.toLowerCase() : wanted;
   const entries = [...childLogs.entries()];
 
-  const bySuffix = entries.filter(([key]) => key === wanted || key.endsWith(`/${wanted}`));
+  const bySuffix = entries.filter(([key]) => {
+    const keyNorm = isWin ? key.toLowerCase() : key;
+    return keyNorm === wantedNorm || keyNorm.endsWith(`/${wantedNorm}`);
+  });
   if (bySuffix.length === 1) return { child: bySuffix[0][1], ambiguous: false, candidates: 1 };
   if (bySuffix.length > 1) return { child: null, ambiguous: true, candidates: bySuffix.length };
 
-  const base = fileKey(wanted);
-  const byBase = entries.filter(([key]) => fileKey(key) === base);
-  if (byBase.length === 1) return { child: byBase[0][1], ambiguous: false, candidates: 1 };
-  if (byBase.length > 1) return { child: null, ambiguous: true, candidates: byBase.length };
+  // Basename fallback is ONLY for a parent path too short to disambiguate (i.e. bare filename with no slashes).
+  // When the parent specified a directory path and bySuffix found 0 matches, that file has no child log.
+  // Matching a different directory's child would be a false cross-directory attribution.
+  if (!wanted.includes('/')) {
+    const base = fileKey(wanted);
+    const baseNorm = isWin ? base.toLowerCase() : base;
+    const byBase = entries.filter(([key]) => {
+      const kBase = fileKey(key);
+      return isWin ? kBase.toLowerCase() === baseNorm : kBase === base;
+    });
+    if (byBase.length === 1) return { child: byBase[0][1], ambiguous: false, candidates: 1 };
+    if (byBase.length > 1) return { child: null, ambiguous: true, candidates: byBase.length };
+  }
 
   return { child: null, ambiguous: false, candidates: 0 };
 }

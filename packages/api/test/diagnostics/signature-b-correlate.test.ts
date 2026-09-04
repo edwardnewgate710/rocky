@@ -720,3 +720,111 @@ test('correlator: captures a real child termination end to end through the paren
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('correlator: a missing child log from one directory is never falsely matched to a child in another directory', () => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-nodup-'));
+  try {
+    // Only bar/a.test.js logged; foo/a.test.js died before writing any log
+    const lines = [
+      { kind: 'start', pid: 222, testFile: 'C:\\r\\dist-test\\test\\bar\\a.test.js' },
+      { kind: 'preload-installed', pid: 222, testFile: 'C:\\r\\dist-test\\test\\bar\\a.test.js' },
+      { kind: 'exit', pid: 222, testFile: 'C:\\r\\dist-test\\test\\bar\\a.test.js' },
+    ];
+    fs.writeFileSync(path.join(logDir, 'run-single.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    const logs = correlator.readChildLogs(logDir);
+
+    // Parent reports dist-test/test/foo/a.test.js failed.
+    const resolved = correlator.correlate(
+      correlator.parseTapFailures(tapFailure('dist-test/test/foo/a.test.js', '1')),
+      logs,
+    );
+    assert.equal(resolved.length, 1);
+    assert.equal(
+      resolved[0]?.child.logFound,
+      false,
+      'a file in foo/ must not claim the log of a different file in bar/ just because the basename matches',
+    );
+    assert.equal(resolved[0]?.child.pid, null, 'no PID may be attributed to the unlogged file');
+    assert.deepEqual(resolved[0]?.child.kinds, [], 'no lifecycle events may be falsely attributed');
+  } finally {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
+test('correlator: classifies signed negative 32-bit NTSTATUS codes identically to unsigned equivalents', () => {
+  // NTSTATUS 0xC0000005 in 32-bit signed two's complement is -1073741819 (unsigned 3221225477)
+  const signedViolation = correlator.classifyTermination({ exitCode: -1073741819, signal: null });
+  assert.equal(signedViolation.id, 'native-access-violation');
+  assert.equal(signedViolation.specific, true);
+
+  // Unmeasured NTSTATUS 0xC0000022 in 32-bit signed is -1073741790
+  const signedUnmeasured = correlator.classifyTermination({ exitCode: -1073741790, signal: null });
+  assert.equal(signedUnmeasured.id, 'ntstatus-unmeasured');
+  assert.equal(signedUnmeasured.specific, false);
+});
+
+test('correlator: parses TAP failure blocks with double-quoted or unquoted YAML values', () => {
+  const doubleQuoted = [
+    '# Subtest: dist-test/test/foo.test.js',
+    'not ok 1 - dist-test/test/foo.test.js',
+    '  ---',
+    '  duration_ms: 123.4',
+    '  failureType: "testCodeFailure"',
+    '  exitCode: 1',
+    '  signal: ~',
+    '  error: "test failed"',
+    '  code: "ERR_TEST_FAILURE"',
+    '  ...',
+  ].join('\n');
+
+  const unquoted = [
+    '# Subtest: dist-test/test/bar.test.js',
+    'not ok 2 - dist-test/test/bar.test.js',
+    '  ---',
+    '  duration_ms: 234.5',
+    '  failureType: testCodeFailure',
+    '  exitCode: 134',
+    '  signal: ~',
+    '  error: test failed',
+    '  code: ERR_TEST_FAILURE',
+    '  ...',
+  ].join('\n');
+
+  const dqFailures = correlator.parseTapFailures(doubleQuoted);
+  assert.equal(dqFailures.length, 1);
+  assert.equal(dqFailures[0]?.file, 'dist-test/test/foo.test.js');
+  assert.equal(dqFailures[0]?.exitCode, 1);
+  assert.equal(dqFailures[0]?.failureType, 'testCodeFailure');
+
+  const uqFailures = correlator.parseTapFailures(unquoted);
+  assert.equal(uqFailures.length, 1);
+  assert.equal(uqFailures[0]?.file, 'dist-test/test/bar.test.js');
+  assert.equal(uqFailures[0]?.exitCode, 134);
+  assert.equal(uqFailures[0]?.failureType, 'testCodeFailure');
+});
+
+test('correlator: path suffix matching on Windows is case-insensitive', {
+  skip: process.platform === 'win32' ? false : 'Windows NTFS path casing test',
+}, () => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-case-'));
+  try {
+    const lines = [
+      { kind: 'start', pid: 333, testFile: 'C:\\Repo\\Dist-Test\\Test\\Studies-Api.Test.js' },
+      { kind: 'preload-installed', pid: 333, testFile: 'C:\\Repo\\Dist-Test\\Test\\Studies-Api.Test.js' },
+    ];
+    fs.writeFileSync(path.join(logDir, 'run-case.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    const logs = correlator.readChildLogs(logDir);
+
+    // Parent uses lower-case path
+    const resolved = correlator.correlate(
+      correlator.parseTapFailures(tapFailure('dist-test/test/studies-api.test.js', '1')),
+      logs,
+    );
+    assert.equal(resolved.length, 1);
+    assert.equal(resolved[0]?.child.pid, 333, 'casing difference must not prevent matching on Windows');
+    assert.equal(resolved[0]?.child.logFound, true);
+    assert.equal(resolved[0]?.child.ambiguous, false);
+  } finally {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
