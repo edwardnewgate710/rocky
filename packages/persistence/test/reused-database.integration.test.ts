@@ -341,6 +341,48 @@ test('a body error whose cause getter throws is still the error that surfaces', 
   }, isolated);
 });
 
+test('a teardown failure that cannot even be described still loses to the body error', { skip }, async () => {
+  await withTestDatabase(async ({ connectionString }) => {
+    // The last place an exception could still be raised while recording a secondary failure:
+    // describing it. Reading `stack` runs a getter on someone else's object, and this one throws.
+    const cleanupFailure = new Error('cleanup could not run');
+    Object.defineProperty(cleanupFailure, 'stack', {
+      configurable: true,
+      get() {
+        throw new Error('and reading its stack blew up too');
+      },
+    });
+
+    const warnings: Error[] = [];
+    const collect = (warning: Error): void => {
+      warnings.push(warning);
+    };
+    process.on('warning', collect);
+    try {
+      await assert.rejects(
+        withSharedDatabase({
+          connectionString,
+          max: 2,
+          cleanup: () => Promise.reject(cleanupFailure),
+          // A primitive, so the failure has to go down the describe-and-warn path.
+        }, () => Promise.reject('a bare string')),
+        (error: unknown) => {
+          assert.equal(error, 'a bare string', 'the body failure survives all of this');
+          return true;
+        },
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      process.off('warning', collect);
+    }
+
+    // It still says something, rather than emitting nothing because the description failed.
+    const reported = warnings.filter((w) => w.name === UNATTACHABLE_TEARDOWN_WARNING);
+    assert.equal(reported.length, 1, 'the cleanup failure was still reported');
+    assert.match(reported[0]?.message ?? '', /describing the failure threw/);
+  }, isolated);
+});
+
 test('a cleanup that fails is reported rather than swallowed', { skip }, async () => {
   await withTestDatabase(async ({ pool, connectionString }) => {
     await migrated(pool);

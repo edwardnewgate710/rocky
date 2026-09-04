@@ -102,8 +102,19 @@ export async function withSharedDatabase<T>(
   }
 
   if (bodyFailed) {
-    if (teardownFailed && !tryAttachCause(bodyError, teardownError)) {
-      reportUnattachableTeardownFailure(teardownError);
+    // Nothing between here and the throw may escape. Recording a *secondary* failure must never
+    // cost the primary one, and every step of it — walking the error, describing it, emitting the
+    // warning — touches something this helper did not create. Each of those guards its own known
+    // failure so the teardown error still lands where it can; this one is the backstop that makes
+    // "the body's failure is what surfaces" true unconditionally rather than case by case.
+    if (teardownFailed) {
+      try {
+        if (!tryAttachCause(bodyError, teardownError)) {
+          reportUnattachableTeardownFailure(teardownError);
+        }
+      } catch {
+        // Nowhere left to put it. The body's failure still gets out, which is the guarantee.
+      }
     }
     throw bodyError;
   }
@@ -158,10 +169,18 @@ function tryAttachCause(error: unknown, addition: unknown): boolean {
  * a swallowed error.
  */
 function reportUnattachableTeardownFailure(teardownError: unknown): void {
-  const detail =
-    teardownError instanceof Error
-      ? (teardownError.stack ?? `${teardownError.name}: ${teardownError.message}`)
-      : `cleanup rejected with a non-Error value: ${String(teardownError)}`;
+  // Describing the failure reads properties, and `String()` runs `toString`, on an object this
+  // helper did not create. If even that throws there is still something worth saying, and saying
+  // it beats emitting nothing because the description of the problem was itself a problem.
+  let detail: string;
+  try {
+    detail =
+      teardownError instanceof Error
+        ? (teardownError.stack ?? `${teardownError.name}: ${teardownError.message}`)
+        : `cleanup rejected with a non-Error value: ${String(teardownError)}`;
+  } catch {
+    detail = 'cleanup failed, and describing the failure threw as well';
+  }
   process.emitWarning(detail, {
     type: UNATTACHABLE_TEARDOWN_WARNING,
     detail: 'the body rejected with a value that cannot carry a cause, so this could not ride along',
