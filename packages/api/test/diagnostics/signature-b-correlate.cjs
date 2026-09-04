@@ -363,16 +363,21 @@ function readChildLogs(logDir) {
  *
  * @param {ReturnType<typeof readChildLogs>} childLogs
  * @param {string} parentFile
+ * @param {boolean} [parentIsWindows]
  * @returns {{ child: { pid: number | null, kinds: string[] } | null, ambiguous: boolean, candidates: number }}
  */
-function matchChild(childLogs, parentFile) {
-  const isWantedWin = isWindowsPath(parentFile);
+function matchChild(childLogs, parentFile, parentIsWindows) {
+  const isWantedWin = typeof parentIsWindows === 'boolean'
+    ? parentIsWindows
+    : isWindowsPath(parentFile);
   const parentNorm = normalizePath(parentFile, isWantedWin);
   const entries = [...childLogs.entries()];
 
   const bySuffix = entries.filter(([key, child]) => {
     const isWin = Boolean(child?.isWindows || isWantedWin);
-    const wantedNorm = isWin ? parentNorm.toLowerCase() : parentNorm;
+    const isRelWin = Boolean(child?.isWindows && !isWantedWin && !parentFile.includes('/') && parentFile.includes('\\'));
+    const effectiveParentNorm = isRelWin ? normalizePath(parentFile, true) : parentNorm;
+    const wantedNorm = isWin ? effectiveParentNorm.toLowerCase() : effectiveParentNorm;
     const keyNorm = isWin ? key.toLowerCase() : key;
     return keyNorm === wantedNorm || keyNorm.endsWith(`/${wantedNorm}`);
   });
@@ -386,6 +391,8 @@ function matchChild(childLogs, parentFile) {
     const base = fileKey(parentFile, isWantedWin);
     const byBase = entries.filter(([key, child]) => {
       const isWin = Boolean(child?.isWindows || isWantedWin);
+      const isRelWin = Boolean(child?.isWindows && !isWantedWin && !parentFile.includes('/') && parentFile.includes('\\'));
+      if (isRelWin) return false;
       const kBase = fileKey(key, isWin);
       if (isWin) {
         return kBase.toLowerCase() === base.toLowerCase();
@@ -403,20 +410,24 @@ function matchChild(childLogs, parentFile) {
  * Join parent-observed failures to child-observed lifecycle evidence, one record per failure.
  *
  * Matching is by whole normalised path, not by basename. The parent names the file as the runner
- * received it while the child records its own resolved `argv[1]`, so the child's key is the longer
- * path and the parent's name is a suffix of it; a basename comparison is the fallback, not the rule.
- * Basenames are *not* unique across the suite's compiled output, which is why a name matching more
- * than one child is reported `ambiguous` rather than resolved to whichever came first. A failure
- * with no matching child log is reported with `child.logFound: false` rather than being dropped,
- * because "the child never wrote a log" is itself evidence.
+ * received it while the child records its own resolved `argv[1]`, an absolute one. Matching is therefore
+ * by path *suffix* rather than equality, which identifies `dist-test/test/foo/a.test.js` uniquely even
+ * when `bar/a.test.js` exists. Basename is only a fallback for a parent path too short to disambiguate,
+ * and when either step finds more than one candidate the answer is reported ambiguous rather than resolved.
  *
  * @param {ReturnType<typeof parseTapFailures>} failures
  * @param {ReturnType<typeof readChildLogs>} childLogs
+ * @param {{ isWindows?: boolean }} [options]
  * @returns {Array<object>}
  */
-function correlate(failures, childLogs) {
+function correlate(failures, childLogs, options = {}) {
+  const defaultIsWin = typeof options?.isWindows === 'boolean' ? options.isWindows : undefined;
   return failures.map((failure) => {
-    const match = matchChild(childLogs, failure.file);
+    const file = typeof failure === 'string' ? failure : failure.file;
+    const parentIsWin = typeof failure?.isWindows === 'boolean'
+      ? failure.isWindows
+      : defaultIsWin;
+    const match = matchChild(childLogs, file, parentIsWin);
     const kinds = match.child?.kinds ?? [];
     const classification = classifyTermination(failure);
     const narrowing = narrowFromChildEvidence(classification, kinds);

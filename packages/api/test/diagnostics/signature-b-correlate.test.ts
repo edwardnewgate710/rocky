@@ -47,7 +47,7 @@ const correlator = require(CORRELATE_PATH) as {
     meaning: string;
     specific: boolean;
   };
-  correlate(failures: unknown[], childLogs: Map<string, unknown>): CorrelatedRecord[];
+  correlate(failures: unknown[], childLogs: Map<string, unknown>, options?: { isWindows?: boolean }): CorrelatedRecord[];
   narrowFromChildEvidence(
     c: { id: string; specific: boolean },
     kinds: readonly string[],
@@ -60,7 +60,7 @@ const correlator = require(CORRELATE_PATH) as {
     durationMs: number | null;
   }>;
   readChildLogs(dir: string): Map<string, { pid: number | null; kinds: string[] }>;
-  matchChild(logs: Map<string, unknown>, file: string): { child: unknown; ambiguous: boolean; candidates: number };
+  matchChild(logs: Map<string, unknown>, file: string, parentIsWindows?: boolean): { child: unknown; ambiguous: boolean; candidates: number };
   normalizePath(p: string): string;
   isWindowsPath(p: string): boolean;
 };
@@ -1029,6 +1029,30 @@ test('correlator: POSIX parent path with backslash filename does not falsely mat
     );
     assert.equal(resolved.length, 1);
     assert.equal(resolved[0]?.child.logFound, false, 'POSIX parent path with backslash in filename must not match Windows child directory segments');
+  } finally {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
+test('correlator: relative backslash-delimited Windows parent path matches Windows child path', () => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-relwin-parent-'));
+  try {
+    const lines = [
+      { kind: 'start', pid: 999, testFile: 'C:\\repo\\dist-test\\test\\foo.test.js' },
+      { kind: 'preload-installed', pid: 999, testFile: 'C:\\repo\\dist-test\\test\\foo.test.js' },
+    ];
+    fs.writeFileSync(path.join(logDir, 'run-win.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    const logs = correlator.readChildLogs(logDir);
+
+    // Parent uses backslash-delimited relative path
+    const resolved = correlator.correlate(
+      correlator.parseTapFailures(tapFailure('dist-test\\test\\foo.test.js', '1')),
+      logs,
+    );
+    assert.equal(resolved.length, 1);
+    assert.equal(resolved[0]?.child.pid, 999, 'relative Windows backslash parent must match Windows child');
+    assert.equal(resolved[0]?.child.logFound, true);
+    assert.equal(resolved[0]?.child.ambiguous, false);
   } finally {
     fs.rmSync(logDir, { recursive: true, force: true });
   }
