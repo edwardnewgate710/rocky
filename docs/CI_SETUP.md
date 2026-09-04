@@ -8,7 +8,7 @@
 > workflow and deleted. This file now just documents what CI runs.
 
 The workflow lives at [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)
-and runs on every push and pull request targeting `main`, with a concurrency
+and runs on matching pushes and pull requests targeting `main`, with a concurrency
 group that cancels superseded runs on the same ref. Note that path filtering
 skips documentation-only changes (`!**/*.md`), with an explicit exception carved
 back in for `docs/adr/0121-deterministic-engine-install-in-ci.md` so that ADR
