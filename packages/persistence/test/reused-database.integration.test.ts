@@ -25,7 +25,11 @@ import { migrate } from '../src/pg/migrate';
 import { PgUsersRepository } from '../src/pg/repositories';
 import { uuidv7 } from '../src/ids';
 import { withTestDatabase } from '../src/test-support/database';
-import { deleteFixtureUsers, withSharedDatabase } from '../src/test-support/fixtures';
+import {
+  deleteFixtureUsers,
+  UNATTACHABLE_TEARDOWN_WARNING,
+  withSharedDatabase,
+} from '../src/test-support/fixtures';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
 const skip = DATABASE_URL ? false : 'DATABASE_URL not set';
@@ -224,22 +228,39 @@ test('a body error that already has a cause still carries the teardown failure',
   }, isolated);
 });
 
-test('a body that rejects with a primitive is rethrown exactly as it was', { skip }, async () => {
+test('a teardown failure with nowhere to attach is warned about, not dropped', { skip }, async () => {
   await withTestDatabase(async ({ connectionString }) => {
     // A primitive has nowhere to hang a cause, so the teardown failure cannot ride along. What
     // must not change is the value the caller catches: wrapping it to make room would break every
-    // `assert.rejects` predicate that compares identity.
-    await assert.rejects(
-      withSharedDatabase({
-        connectionString,
-        max: 2,
-        cleanup: () => Promise.reject(new Error('cleanup could not run')),
-      }, () => Promise.reject('a bare string')),
-      (error: unknown) => {
-        assert.equal(error, 'a bare string');
-        return true;
-      },
-    );
+    // `assert.rejects` predicate that compares identity. So it goes out as a warning instead —
+    // the difference between a limitation and a swallowed error.
+    const warnings: Error[] = [];
+    const collect = (warning: Error): void => {
+      warnings.push(warning);
+    };
+    process.on('warning', collect);
+    try {
+      await assert.rejects(
+        withSharedDatabase({
+          connectionString,
+          max: 2,
+          cleanup: () => Promise.reject(new Error('cleanup could not run')),
+        }, () => Promise.reject('a bare string')),
+        (error: unknown) => {
+          assert.equal(error, 'a bare string', 'the rejected value is rethrown untouched');
+          return true;
+        },
+      );
+      // `emitWarning` defers to `process.nextTick`, which runs before any `setImmediate` — so this
+      // is an ordering guarantee rather than a wait, and the assertion below cannot race it.
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      process.off('warning', collect);
+    }
+
+    const reported = warnings.filter((w) => w.name === UNATTACHABLE_TEARDOWN_WARNING);
+    assert.equal(reported.length, 1, 'the cleanup failure was reported exactly once');
+    assert.match(reported[0]?.message ?? '', /cleanup could not run/);
   }, isolated);
 });
 

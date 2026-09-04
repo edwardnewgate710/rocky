@@ -61,16 +61,22 @@ in its own disposable database so it can make claims about what a database conta
 three consecutive runs against one PostgreSQL 16.14 database with no reset between them:
 **183 / 183 / 183, zero failures**, after which the database holds no test rows at all — only the
 three migration-seeded bot accounts — with zero leaked disposable databases and zero lingering
-backends. Falsification killed **13 of 15** mutations; both survivors are named in the PR.
+backends. Falsification killed **14 of 16** mutations; both survivors are named in the PR.
 
 No production code, migration, checksum, constraint or repository conflict semantic changed.
 
-**Signature B remains UNRESOLVED**, and was observed once during this increment: a whole file
-(`learning.integration.test.ts`) failing with a bare `'test failed'`, no assertion, no stack and none
-of its own tests reported. That is the documented Signature B shape, now seen in
-`packages/persistence` rather than only `packages/api`. It did not recur across the acceptance
-sequence, and the file passes standalone against the exact database state it failed on. Nothing here
-touches it.
+**Signature B remains UNRESOLVED**, and was observed three times during this increment — on the
+`search-backfill`, `learning` and `test-database` integration files. Each was a whole file failing
+with a bare `'test failed'`, no assertion, no stack and none of its own tests reported: the
+documented Signature B shape, now seen in **`packages/persistence` as well as `packages/api`**, which
+is new information about a defect previously recorded only in the API suite. None recurred — each
+file passes standalone against the exact database state it died on, and re-running the same command
+was green. Nothing here touches it.
+
+**Found and not fixed here:** `packages/api/test/pg-security.integration.test.ts` leaks users into
+the shared database (`rotate…`, `revoke…`, `race…`, `meta…` handles, minted with `uuidv7()` so they
+never collide). That is the same ownership contract this increment corrected, in a package this
+increment's scope did not cover — recorded rather than silently widened into.
 
 
 ## M15 Increment 45 — PostgreSQL isolated-database teardown race
