@@ -29,6 +29,17 @@ describe('PgAchievementsRepository (integration)', { skip: !databaseUrl }, () =>
   let pool: Pool;
   let repo: PgAchievementsRepository;
 
+  /** Which seeded bot accounts this database actually had before the suite touched anything. */
+  let seedBaseline: string[] = [];
+
+  const seededBotsNow = async (): Promise<string[]> => {
+    const { rows } = await pool.query<{ handle: string }>(
+      'SELECT handle FROM users WHERE handle = ANY($1::citext[]) ORDER BY handle',
+      [SEEDED_BOT_HANDLES],
+    );
+    return rows.map((row) => row.handle);
+  };
+
   /** Remove this suite's own rows. Safe when they are already gone, so it runs before and after. */
   const deleteFixtures = async (): Promise<void> => {
     await pool.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [FIXTURE_USER_IDS]);
@@ -37,13 +48,15 @@ describe('PgAchievementsRepository (integration)', { skip: !databaseUrl }, () =>
     // did not only destroy other suites' fixtures: it took the bot accounts migration 0021 seeds,
     // and nothing restores them — `migrate` has recorded 0021 as applied, so the database simply
     // stays without them. Widening the delete again fails here instead of silently years later.
-    const seeded = await pool.query(
-      'SELECT 1 FROM users WHERE handle = ANY($1::citext[])',
-      [SEEDED_BOT_HANDLES],
-    );
-    assert.equal(
-      seeded.rowCount,
-      SEEDED_BOT_HANDLES.length,
+    //
+    // Compared against what this database had at `before`, not against all three. A database that
+    // already ran the old suite is *already* missing them, permanently, and demanding three here
+    // would fail every run on that database for a reason this suite did not cause and must not try
+    // to repair — restoring schema-owned rows is not cleanup's job. Holding the count steady still
+    // catches a widened delete, which is the whole point.
+    assert.deepEqual(
+      await seededBotsNow(),
+      seedBaseline,
       'cleanup must leave rows this suite did not create, including the migration seed',
     );
   };
@@ -51,6 +64,7 @@ describe('PgAchievementsRepository (integration)', { skip: !databaseUrl }, () =>
   before(async () => {
     pool = createPool({ connectionString: databaseUrl });
     await migrate(pool, join(process.cwd(), 'migrations'));
+    seedBaseline = await seededBotsNow();
     repo = new PgAchievementsRepository(pool);
   });
 
