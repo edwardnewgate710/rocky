@@ -496,11 +496,13 @@ if (require.main === module) {
   } else {
     const isWindowsExplicit = args.includes('--windows') ? true : (args.includes('--posix') ? false : undefined);
     const childLogs = readChildLogs(logDir);
-    // Derive capture platform from explicit flag or child log metadata, never the analyzer's host platform
-    const hasWindowsChild = [...childLogs.values()].some((child) => child?.isWindows);
+    // Derive capture platform only when child logs are uniformly Windows or POSIX; never let mixed or stale logs force Windows semantics
+    const children = [...childLogs.values()];
+    const allWindows = children.length > 0 && children.every((child) => child?.isWindows);
+    const allPosix = children.length > 0 && children.every((child) => !child?.isWindows);
     const isWin = typeof isWindowsExplicit === 'boolean'
       ? isWindowsExplicit
-      : (hasWindowsChild ? true : undefined);
+      : (allWindows ? true : (allPosix ? false : undefined));
     const records = correlate(
       parseTapFailures(fs.readFileSync(tapPath, 'utf8'), { isWindows: isWin }),
       childLogs,

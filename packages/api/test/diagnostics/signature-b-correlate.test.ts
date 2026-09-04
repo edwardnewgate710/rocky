@@ -1127,3 +1127,55 @@ test('correlator: CLI derives capture platform from child logs without relying o
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test('correlator: CLI preserves POSIX semantics when log directory contains mixed or stale Windows logs', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-cli-mixed-'));
+  try {
+    const logDir = path.join(tmpDir, 'logs');
+    fs.mkdirSync(logDir);
+    const tapPathCasing = path.join(tmpDir, 'casing.tap');
+    const tapPathExact = path.join(tmpDir, 'exact.tap');
+
+    // Mixed logs: a stale Windows child log and a POSIX child log
+    const staleWinChild = [
+      { kind: 'start', pid: 1111, testFile: 'C:\\stale\\dist-test\\test\\stale.test.js', isWindows: true },
+      { kind: 'preload-installed', pid: 1111, testFile: 'C:\\stale\\dist-test\\test\\stale.test.js', isWindows: true },
+    ];
+    const posixChild = [
+      { kind: 'start', pid: 2222, testFile: '/repo/dist-test/test/posix-target.test.js', isWindows: false },
+      { kind: 'preload-installed', pid: 2222, testFile: '/repo/dist-test/test/posix-target.test.js', isWindows: false },
+    ];
+    fs.writeFileSync(path.join(logDir, 'run-stale-win.jsonl'), `${staleWinChild.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    fs.writeFileSync(path.join(logDir, 'run-posix.jsonl'), `${posixChild.map((l) => JSON.stringify(l)).join('\n')}\n`);
+
+    // TAP failure 1: uppercase POSIX path (should NOT match lowercase posix-target when case-sensitive)
+    fs.writeFileSync(tapPathCasing, tapFailure('dist-test/test/POSIX-TARGET.test.js', '1'));
+    // TAP failure 2: exact lowercase POSIX path
+    fs.writeFileSync(tapPathExact, tapFailure('dist-test/test/posix-target.test.js', '1'));
+
+    const run = (tap: string, extraArgs: string[] = []): ReturnType<typeof spawnSync> =>
+      spawnSync(process.execPath, [CORRELATE_PATH, '--tap', tap, '--child-logs', logDir, ...extraArgs], {
+        encoding: 'utf8',
+        env: { ...process.env, NODE_TEST_CONTEXT: undefined },
+      });
+
+    // Without explicit flags, mixed logs must NOT force Windows semantics globally; POSIX case-sensitivity is preserved
+    const resultCasing = run(tapPathCasing);
+    assert.equal(resultCasing.status, 0);
+    const linesCasing = String(resultCasing.stdout).trim().split('\n').filter(Boolean);
+    assert.equal(linesCasing.length, 1);
+    const recordCasing = JSON.parse(linesCasing[0]);
+    assert.equal(recordCasing.child.logFound, false, 'mixed logs must not force Windows case folding onto POSIX paths');
+
+    // Exact casing matches the POSIX child correctly
+    const resultExact = run(tapPathExact);
+    assert.equal(resultExact.status, 0);
+    const linesExact = String(resultExact.stdout).trim().split('\n').filter(Boolean);
+    assert.equal(linesExact.length, 1);
+    const recordExact = JSON.parse(linesExact[0]);
+    assert.equal(recordExact.child.logFound, true);
+    assert.equal(recordExact.child.pid, 2222);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
