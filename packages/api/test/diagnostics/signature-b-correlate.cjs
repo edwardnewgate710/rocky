@@ -63,20 +63,21 @@ function fileKey(filePath) {
 }
 
 /**
- * Detect whether a path string represents a Windows path, either because the host running the
- * correlator is Windows, or because the path contains a Windows drive prefix (e.g. `C:/`) or UNC prefix (`//`).
- * This ensures Windows-origin captures analyzed on non-Windows machines (e.g. CI on Linux) still apply
- * Windows case-insensitive filesystem semantics during child log correlation.
+ * Detect whether a path string represents a Windows path based strictly on path syntax:
+ * backslashes, a Windows drive prefix (e.g. `C:/`), or a UNC prefix (`//`).
+ * Analyzer host platform (`process.platform`) is deliberately omitted so that POSIX captures
+ * analyzed on Windows preserve case-sensitivity, and Windows captures analyzed on Linux
+ * apply case-insensitive matching.
  *
  * @param {string} filePath
  * @returns {boolean}
  */
 function isWindowsPath(filePath) {
+  const str = String(filePath);
   return (
-    process.platform === 'win32' ||
-    String(filePath).includes('\\') ||
-    /^[a-zA-Z]:(?:\/|$)/.test(filePath) ||
-    /^\/\/[^/]/.test(filePath)
+    str.includes('\\') ||
+    /^[a-zA-Z]:(?:\/|$)/.test(str) ||
+    /^\/\/[^/]/.test(str)
   );
 }
 

@@ -40,12 +40,13 @@ parent TAP diagnostic logs and child JSONL preloads were matched and parsed:
    slashes (e.g. `test/diagnostics/sample.test.ts`), a child log from an unrelated directory with the
    same basename could be falsely attributed. Hardened to require `!wanted.includes('/')` before
    allowing basename fallback.
-2. **Host-dependent Windows path case folding:** While backslash-to-slash normalization was already
-   platform-independent, case folding in `matchChild` was gated strictly on `process.platform === 'win32'`.
-   When logs recorded on Windows were analyzed on a POSIX host (Linux or macOS), comparisons remained
-   case-sensitive, causing path matching to fail when runner TAP paths and child `process.argv[1]` paths
-   differed in casing. Hardened `isWindowsPath` to detect Windows-origin paths by drive letter or UNC prefix
-   independently of the executing host OS, ensuring case-insensitive matching across platforms.
+2. **Host-independent Windows path case folding:** Case folding in `matchChild` previously depended on
+   the analyzer host platform (`process.platform === 'win32'`). When logs recorded on Windows were
+   analyzed on POSIX, comparisons remained case-sensitive; conversely, POSIX captures analyzed on
+   Windows were erroneously treated as case-insensitive. Hardened `isWindowsPath` to detect
+   Windows-origin paths strictly from path syntax (drive letters, UNC prefixes, or backslashes) and
+   preserved child-log metadata independently of the executing host OS, ensuring case-insensitive
+   matching for Windows captures while strictly preserving case-sensitivity for POSIX captures.
 3. **Signed 32-bit NTSTATUS exit code wrapping:** On Windows, crash exit codes such as `0xC0000005`
    (access violation) or `STATUS_CONTROL_C_EXIT` can surface in Node/libuv or TAP as negative 32-bit
    integers (e.g. `-1073741819`). Hardened exit code parsing to normalize negative 32-bit values via
@@ -56,8 +57,8 @@ parent TAP diagnostic logs and child JSONL preloads were matched and parsed:
    prior to `Number(...)` conversion.
 
 **Verification and mutation falsification.**
-- Targeted correlator suite (`signature-b-correlate.test.ts`): expanded from 23 to 31 tests
-  (29 pass, 2 skip for deliberate platform-gated checks, 0 fail).
+- Targeted correlator suite (`signature-b-correlate.test.ts`): expanded from 23 to 33 tests
+  (31 pass, 2 skip for deliberate platform-gated checks, 0 fail).
 - Mutation falsification: four targeted mutations reversing each of the four hardened behaviors were
   verified to be killed by the expanded test suite.
 - Monorepo validation: full build, lint, counts, and guard scripts pass cleanly.

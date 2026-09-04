@@ -853,11 +853,29 @@ test('correlator: isWindowsPath identifies Windows drive letters, UNC paths, and
   assert.equal(correlator.isWindowsPath('d:/repo/test.js'), true);
   assert.equal(correlator.isWindowsPath('//server/share/test.js'), true);
   assert.equal(correlator.isWindowsPath('Dist-Test\\Test\\Foo.test.js'), true);
-  if (process.platform !== 'win32') {
-    assert.equal(correlator.isWindowsPath('/home/runner/repo/test.js'), false);
-    assert.equal(correlator.isWindowsPath('dist-test/test.js'), false);
-  } else {
-    assert.equal(correlator.isWindowsPath('/any/path'), true);
+  assert.equal(correlator.isWindowsPath('/home/runner/repo/test.js'), false);
+  assert.equal(correlator.isWindowsPath('dist-test/test.js'), false);
+});
+
+test('correlator: POSIX paths preserve case sensitivity regardless of analyzer host OS', () => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-posix-case-'));
+  try {
+    const lines = [
+      { kind: 'start', pid: 555, testFile: 'dist-test/test/studies-api.test.js' },
+      { kind: 'preload-installed', pid: 555, testFile: 'dist-test/test/studies-api.test.js' },
+    ];
+    fs.writeFileSync(path.join(logDir, 'run-posix.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    const logs = correlator.readChildLogs(logDir);
+
+    // Parent uses different casing on a purely POSIX relative path
+    const resolved = correlator.correlate(
+      correlator.parseTapFailures(tapFailure('Dist-Test/Test/Studies-Api.Test.js', '1')),
+      logs,
+    );
+    assert.equal(resolved.length, 1);
+    assert.equal(resolved[0]?.child.logFound, false, 'case mismatch on POSIX paths must not match');
+  } finally {
+    fs.rmSync(logDir, { recursive: true, force: true });
   }
 });
 
