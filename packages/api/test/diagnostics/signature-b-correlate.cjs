@@ -248,15 +248,18 @@ function parseTapFailures(tapText) {
       const found = new RegExp(`^\\s*${key}:\\s*(.+)$`, 'm').exec(body);
       return found ? found[1].trim() : null;
     };
-    const exit = scalar('exitCode');
-    const sig = scalar('signal');
-    const dur = scalar('duration_ms');
+    const unquote = (s) => (s === null || s === undefined ? null : s.replace(/^['"]|['"]$/g, ''));
+    const exit = unquote(scalar('exitCode'));
+    const sig = unquote(scalar('signal'));
+    const dur = unquote(scalar('duration_ms'));
+    const parsedExit = exit === null || exit === '~' || exit === '' ? null : Number(exit);
+    const parsedDur = dur === null || dur === '~' || dur === '' ? null : Number(dur);
     out.push({
       file: rawName.trim().replace(/\\\\/g, '\\'),
-      exitCode: exit === null || exit === '~' ? null : Number(exit),
-      signal: sig === null || sig === '~' ? null : sig.replace(/^['"]|['"]$/g, ''),
-      failureType: scalar('failureType')?.replace(/^['"]|['"]$/g, '') ?? null,
-      durationMs: dur === null ? null : Number(dur),
+      exitCode: parsedExit !== null && Number.isNaN(parsedExit) ? null : parsedExit,
+      signal: sig === null || sig === '~' ? null : sig,
+      failureType: unquote(scalar('failureType')),
+      durationMs: parsedDur !== null && Number.isNaN(parsedDur) ? null : parsedDur,
     });
   }
   return out;

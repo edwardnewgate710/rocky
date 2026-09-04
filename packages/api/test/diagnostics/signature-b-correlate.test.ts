@@ -802,6 +802,26 @@ test('correlator: parses TAP failure blocks with double-quoted or unquoted YAML 
   assert.equal(uqFailures[0]?.file, 'dist-test/test/bar.test.js');
   assert.equal(uqFailures[0]?.exitCode, 134);
   assert.equal(uqFailures[0]?.failureType, 'testCodeFailure');
+
+  const singleQuoted = [
+    '# Subtest: dist-test/test/baz.test.js',
+    'not ok 3 - dist-test/test/baz.test.js',
+    '  ---',
+    '  duration_ms: \'345.6\'',
+    '  failureType: \'testCodeFailure\'',
+    '  exitCode: \'1\'',
+    '  signal: ~',
+    '  error: \'test failed\'',
+    '  code: \'ERR_TEST_FAILURE\'',
+    '  ...',
+  ].join('\n');
+
+  const sqFailures = correlator.parseTapFailures(singleQuoted);
+  assert.equal(sqFailures.length, 1);
+  assert.equal(sqFailures[0]?.file, 'dist-test/test/baz.test.js');
+  assert.equal(sqFailures[0]?.exitCode, 1);
+  assert.equal(sqFailures[0]?.durationMs, 345.6);
+  assert.equal(sqFailures[0]?.failureType, 'testCodeFailure');
 });
 
 test('correlator: path suffix matching for Windows-origin paths is case-insensitive across platforms', () => {
