@@ -40,10 +40,12 @@ parent TAP diagnostic logs and child JSONL preloads were matched and parsed:
    slashes (e.g. `test/diagnostics/sample.test.ts`), a child log from an unrelated directory with the
    same basename could be falsely attributed. Hardened to require `!wanted.includes('/')` before
    allowing basename fallback.
-2. **Host-dependent Windows-origin path normalization:** Slashes were converted only when
-   `process.platform === 'win32'`. When logs recorded on Windows were analyzed on a POSIX CI runner or
-   host, backslashes remained un-normalized, causing path matching to fail. Hardened to detect
-   Windows-origin paths by drive letter or backslash pattern independently of the executing host OS.
+2. **Host-dependent Windows path case folding:** While backslash-to-slash normalization was already
+   platform-independent, case folding in `matchChild` was gated strictly on `process.platform === 'win32'`.
+   When logs recorded on Windows were analyzed on a POSIX host (Linux or macOS), comparisons remained
+   case-sensitive, causing path matching to fail when runner TAP paths and child `process.argv[1]` paths
+   differed in casing. Hardened `isWindowsPath` to detect Windows-origin paths by drive letter or UNC prefix
+   independently of the executing host OS, ensuring case-insensitive matching across platforms.
 3. **Signed 32-bit NTSTATUS exit code wrapping:** On Windows, crash exit codes such as `0xC0000005`
    (access violation) or `STATUS_CONTROL_C_EXIT` can surface in Node/libuv or TAP as negative 32-bit
    integers (e.g. `-1073741819`). Hardened exit code parsing to normalize negative 32-bit values via
