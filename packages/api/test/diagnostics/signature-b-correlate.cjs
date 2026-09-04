@@ -40,44 +40,58 @@ const path = require('node:path');
 const MAX_RECORDS = 200;
 
 /**
- * A path with both separators normalised to `/`, so a capture taken on one platform can be read on
- * another. `path.basename` and `path.normalize` use only the host's separator, so on Linux they
- * return a Windows path unchanged and every comparison against it silently fails.
+ * A path with separators normalised to `/`. For Windows paths (identified by drive letter, UNC,
+ * or explicit flag/metadata), backslashes are directory separators and are converted to `/`.
+ * For POSIX paths, backslashes are valid filename characters and are preserved to avoid
+ * splitting a single filename into multiple path segments.
  *
  * @param {string} filePath
+ * @param {boolean} [isWindows]
  * @returns {string}
  */
-function normalizePath(filePath) {
-  return String(filePath).replace(/\\/g, '/').replace(/^\.\//, '');
+function normalizePath(filePath, isWindows) {
+  const str = String(filePath);
+  const win = isWindows !== undefined ? isWindows : isWindowsPath(str);
+  if (win) {
+    return str.replace(/\\/g, '/').replace(/^\.\//, '');
+  }
+  return str.replace(/^\.\//, '');
 }
 
 /**
  * Last path segment, platform-independently.
  *
  * @param {string} filePath
+ * @param {boolean} [isWindows]
  * @returns {string}
  */
-function fileKey(filePath) {
-  const segments = normalizePath(filePath).split('/');
+function fileKey(filePath, isWindows) {
+  const segments = normalizePath(filePath, isWindows).split('/');
   return segments[segments.length - 1] ?? '';
 }
 
 /**
- * Detect whether a path string represents a Windows path based strictly on path syntax:
- * backslashes, a Windows drive prefix (e.g. `C:/`), or a UNC prefix (`//`).
+ * Detect whether a path string represents a Windows path based strictly on unambiguous
+ * Windows path syntax: a Windows drive prefix (e.g. `C:/` or `C:\`) or a UNC prefix (`//` or `\\`).
  * Analyzer host platform (`process.platform`) is deliberately omitted so that POSIX captures
  * analyzed on Windows preserve case-sensitivity, and Windows captures analyzed on Linux
  * apply case-insensitive matching.
+ *
+ * Backslash alone is NOT treated as proof of Windows origin because POSIX permits backslashes
+ * in filenames. A path starting with a single slash is an absolute POSIX path and is never Windows.
+ * For relative paths, Windows origin is determined via child-log capture metadata or explicit markers.
  *
  * @param {string} filePath
  * @returns {boolean}
  */
 function isWindowsPath(filePath) {
   const str = String(filePath);
+  if (str.startsWith('/') && !str.startsWith('//')) {
+    return false;
+  }
   return (
-    str.includes('\\') ||
-    /^[a-zA-Z]:(?:\/|$)/.test(str) ||
-    /^\/\/[^/]/.test(str)
+    /^[a-zA-Z]:(?:[/\\]|$)/.test(str) ||
+    /^(?:\\\\|\/\/)[^/\\\\]/.test(str)
   );
 }
 
@@ -262,10 +276,10 @@ function parseTapFailures(tapText) {
     const parsedDur = dur === null || dur === '~' || dur === '' ? null : Number(dur);
     out.push({
       file: rawName.trim().replace(/\\\\/g, '\\'),
-      exitCode: parsedExit !== null && Number.isNaN(parsedExit) ? null : parsedExit,
+      exitCode: parsedExit !== null && Number.isFinite(parsedExit) ? parsedExit : null,
       signal: sig === null || sig === '~' ? null : sig,
       failureType: unquote(scalar('failureType')),
-      durationMs: parsedDur !== null && Number.isNaN(parsedDur) ? null : parsedDur,
+      durationMs: parsedDur !== null && Number.isFinite(parsedDur) ? parsedDur : null,
     });
   }
   return out;
@@ -307,10 +321,25 @@ function readChildLogs(logDir) {
         continue;
       }
       if (typeof record.testFile !== 'string' || record.testFile === '') continue;
-      const isWin = isWindowsPath(record.testFile);
+      const isWin = typeof record.isWindows === 'boolean'
+        ? record.isWindows
+        : (typeof record.platform === 'string'
+          ? record.platform === 'win32'
+          : isWindowsPath(record.testFile));
       // Keyed on the child's whole path, not its basename. A suite run spans directories, and
       // `foo/a.test.js` and `bar/a.test.js` are different files whose events must never be merged.
-      const key = normalizePath(record.testFile);
+      const normalized = normalizePath(record.testFile, isWin);
+      let key = normalized;
+      if (isWin) {
+        const lower = normalized.toLowerCase();
+        for (const existingKey of byFile.keys()) {
+          const entry = byFile.get(existingKey);
+          if (entry?.isWindows && existingKey.toLowerCase() === lower) {
+            key = existingKey;
+            break;
+          }
+        }
+      }
       const existing = byFile.get(key) ?? { pid: null, kinds: [], isWindows: false };
       existing.pid = typeof record.pid === 'number' ? record.pid : existing.pid;
       if (typeof record.kind === 'string') existing.kinds.push(record.kind);
@@ -338,16 +367,16 @@ function readChildLogs(logDir) {
  */
 function matchChild(childLogs, parentFile) {
   const isWantedWin = isWindowsPath(parentFile);
-  const wanted = normalizePath(parentFile);
   const entries = [...childLogs.entries()];
+  const hasWindowsChild = entries.some(([, child]) => child?.isWindows);
+  const isWinContext = isWantedWin || hasWindowsChild;
+  const wanted = normalizePath(parentFile, isWinContext);
 
   const bySuffix = entries.filter(([key, child]) => {
-    if (child?.isWindows || isWindowsPath(key) || isWantedWin || isWindowsPath(wanted)) {
-      const keyNorm = key.toLowerCase();
-      const wantedNorm = wanted.toLowerCase();
-      return keyNorm === wantedNorm || keyNorm.endsWith(`/${wantedNorm}`);
-    }
-    return key === wanted || key.endsWith(`/${wanted}`);
+    const isWin = Boolean(child?.isWindows || isWantedWin);
+    const wantedNorm = isWin ? normalizePath(parentFile, true).toLowerCase() : normalizePath(parentFile, false);
+    const keyNorm = isWin ? key.toLowerCase() : key;
+    return keyNorm === wantedNorm || keyNorm.endsWith(`/${wantedNorm}`);
   });
   if (bySuffix.length === 1) return { child: bySuffix[0][1], ambiguous: false, candidates: 1 };
   if (bySuffix.length > 1) return { child: null, ambiguous: true, candidates: bySuffix.length };
@@ -356,10 +385,11 @@ function matchChild(childLogs, parentFile) {
   // When the parent specified a directory path and bySuffix found 0 matches, that file has no child log.
   // Matching a different directory's child would be a false cross-directory attribution.
   if (!wanted.includes('/')) {
-    const base = fileKey(wanted);
     const byBase = entries.filter(([key, child]) => {
-      const kBase = fileKey(key);
-      if (child?.isWindows || isWindowsPath(key) || isWantedWin || isWindowsPath(wanted)) {
+      const isWin = Boolean(child?.isWindows || isWantedWin);
+      const base = fileKey(parentFile, isWin);
+      const kBase = fileKey(key, isWin);
+      if (isWin) {
         return kBase.toLowerCase() === base.toLowerCase();
       }
       return kBase === base;

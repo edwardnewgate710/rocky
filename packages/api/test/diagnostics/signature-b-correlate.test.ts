@@ -848,12 +848,15 @@ test('correlator: path suffix matching for Windows-origin paths is case-insensit
   }
 });
 
-test('correlator: isWindowsPath identifies Windows drive letters, UNC paths, and backslashes', () => {
+test('correlator: isWindowsPath identifies Windows drive letters and UNC paths without false-positive on POSIX backslash filenames', () => {
   assert.equal(correlator.isWindowsPath('C:/repo/test.js'), true);
+  assert.equal(correlator.isWindowsPath('C:\\repo\\test.js'), true);
   assert.equal(correlator.isWindowsPath('d:/repo/test.js'), true);
   assert.equal(correlator.isWindowsPath('//server/share/test.js'), true);
-  assert.equal(correlator.isWindowsPath('Dist-Test\\Test\\Foo.test.js'), true);
+  assert.equal(correlator.isWindowsPath('\\\\server\\share\\test.js'), true);
   assert.equal(correlator.isWindowsPath('/home/runner/repo/test.js'), false);
+  assert.equal(correlator.isWindowsPath('/home/runner/repo/weird\\name.test.js'), false);
+  assert.equal(correlator.isWindowsPath('weird\\name.test.js'), false);
   assert.equal(correlator.isWindowsPath('dist-test/test.js'), false);
 });
 
@@ -883,8 +886,8 @@ test('correlator: relative backslash-delimited Windows child path matches case-i
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-relwin-'));
   try {
     const lines = [
-      { kind: 'start', pid: 444, testFile: 'Dist-Test\\Test\\Studies-Api.Test.js' },
-      { kind: 'preload-installed', pid: 444, testFile: 'Dist-Test\\Test\\Studies-Api.Test.js' },
+      { kind: 'start', pid: 444, testFile: 'Dist-Test\\Test\\Studies-Api.Test.js', isWindows: true },
+      { kind: 'preload-installed', pid: 444, testFile: 'Dist-Test\\Test\\Studies-Api.Test.js', isWindows: true },
     ];
     fs.writeFileSync(path.join(logDir, 'run-relwin.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
     const logs = correlator.readChildLogs(logDir);
@@ -901,4 +904,109 @@ test('correlator: relative backslash-delimited Windows child path matches case-i
   } finally {
     fs.rmSync(logDir, { recursive: true, force: true });
   }
+});
+
+test('correlator: POSIX paths with backslashes in filenames preserve filename structure and case sensitivity', () => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-posix-backslash-'));
+  try {
+    const lines = [
+      { kind: 'start', pid: 666, testFile: '/home/runner/repo/dist-test/test/weird\\name.test.js' },
+      { kind: 'preload-installed', pid: 666, testFile: '/home/runner/repo/dist-test/test/weird\\name.test.js' },
+    ];
+    fs.writeFileSync(path.join(logDir, 'run-posix-bs.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    const logs = correlator.readChildLogs(logDir);
+
+    assert.equal(correlator.normalizePath('/home/runner/repo/dist-test/test/weird\\name.test.js'), '/home/runner/repo/dist-test/test/weird\\name.test.js');
+
+    // Matching with correct case
+    const matchOk = correlator.correlate(
+      correlator.parseTapFailures(tapFailure('dist-test/test/weird\\name.test.js', '1')),
+      logs,
+    );
+    assert.equal(matchOk.length, 1);
+    assert.equal(matchOk[0]?.child.pid, 666);
+    assert.equal(matchOk[0]?.child.logFound, true);
+
+    // Mismatched case must not match on POSIX
+    const matchCaseFail = correlator.correlate(
+      correlator.parseTapFailures(tapFailure('dist-test/test/Weird\\name.test.js', '1')),
+      logs,
+    );
+    assert.equal(matchCaseFail.length, 1);
+    assert.equal(matchCaseFail[0]?.child.logFound, false);
+  } finally {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
+test('correlator: readChildLogs aggregates casing variants of the same Windows child file into a single entry', () => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-case-aggregate-'));
+  try {
+    const lines = [
+      { kind: 'start', pid: 777, testFile: 'C:\\Repo\\Dist-Test\\Test\\Studies-Api.Test.js' },
+      { kind: 'preload-installed', pid: 777, testFile: 'c:\\repo\\dist-test\\test\\studies-api.test.js' },
+    ];
+    fs.writeFileSync(path.join(logDir, 'run-case-agg.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    const logs = correlator.readChildLogs(logDir);
+
+    // Both lines must aggregate into one entry rather than creating conflicting entries
+    assert.equal(logs.size, 1);
+
+    const resolved = correlator.correlate(
+      correlator.parseTapFailures(tapFailure('dist-test/test/studies-api.test.js', '1')),
+      logs,
+    );
+    assert.equal(resolved.length, 1);
+    assert.equal(resolved[0]?.child.pid, 777);
+    assert.equal(resolved[0]?.child.logFound, true);
+    assert.equal(resolved[0]?.child.ambiguous, false, 'casing variants of the same child must not cause ambiguity');
+    assert.deepEqual(resolved[0]?.child.kinds, ['start', 'preload-installed']);
+  } finally {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
+test('correlator: parseTapFailures rejects non-finite exitCode and duration_ms scalars', () => {
+  const nonFiniteTap = [
+    'TAP version 13',
+    '# Subtest: dist-test/test/non-finite.test.js',
+    'not ok 1 - dist-test/test/non-finite.test.js',
+    '  ---',
+    '  duration_ms: Infinity',
+    '  failureType: testCodeFailure',
+    '  exitCode: Infinity',
+    '  signal: ~',
+    '  error: test failed',
+    '  code: ERR_TEST_FAILURE',
+    '  ...',
+    '# Subtest: dist-test/test/neg-infinity.test.js',
+    'not ok 2 - dist-test/test/neg-infinity.test.js',
+    '  ---',
+    '  duration_ms: -Infinity',
+    '  failureType: testCodeFailure',
+    '  exitCode: -Infinity',
+    '  signal: ~',
+    '  error: test failed',
+    '  code: ERR_TEST_FAILURE',
+    '  ...',
+    '# Subtest: dist-test/test/nan.test.js',
+    'not ok 3 - dist-test/test/nan.test.js',
+    '  ---',
+    '  duration_ms: NaN',
+    '  failureType: testCodeFailure',
+    '  exitCode: NaN',
+    '  signal: ~',
+    '  error: test failed',
+    '  code: ERR_TEST_FAILURE',
+    '  ...',
+  ].join('\n');
+
+  const failures = correlator.parseTapFailures(nonFiniteTap);
+  assert.equal(failures.length, 3);
+  assert.equal(failures[0]?.exitCode, null);
+  assert.equal(failures[0]?.durationMs, null);
+  assert.equal(failures[1]?.exitCode, null);
+  assert.equal(failures[1]?.durationMs, null);
+  assert.equal(failures[2]?.exitCode, null);
+  assert.equal(failures[2]?.durationMs, null);
 });

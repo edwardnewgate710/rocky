@@ -44,21 +44,23 @@ parent TAP diagnostic logs and child JSONL preloads were matched and parsed:
    the analyzer host platform (`process.platform === 'win32'`). When logs recorded on Windows were
    analyzed on POSIX, comparisons remained case-sensitive; conversely, POSIX captures analyzed on
    Windows were erroneously treated as case-insensitive. Hardened `isWindowsPath` to detect
-   Windows-origin paths strictly from path syntax (drive letters, UNC prefixes, or backslashes) and
-   preserved child-log metadata independently of the executing host OS, ensuring case-insensitive
-   matching for Windows captures while strictly preserving case-sensitivity for POSIX captures.
+   Windows-origin paths strictly from path syntax (drive letters or UNC prefixes) and explicit capture
+   metadata independently of the executing host OS, ensuring case-insensitive matching for Windows
+   captures while strictly preserving case-sensitivity and filename integrity for POSIX captures
+   (avoiding false-positive Windows classification on POSIX backslash filenames).
 3. **Signed 32-bit NTSTATUS exit code wrapping:** On Windows, crash exit codes such as `0xC0000005`
    (access violation) or `STATUS_CONTROL_C_EXIT` can surface in Node/libuv or TAP as negative 32-bit
    integers (e.g. `-1073741819`). Hardened exit code parsing to normalize negative 32-bit values via
    unsigned right shift `(exitCode >>> 0)`, correctly recovering the standard `0xC0000005` representation.
-4. **Quoted TAP YAML scalar parsing:** Node's TAP reporter emits single- or double-quoted scalars
-   around certain YAML values (e.g. `exitCode: '1'` or duration strings). Strict numeric conversion
-   previously yielded `NaN` or dropped exit codes. Hardened YAML extraction to unquote scalar tokens
-   prior to `Number(...)` conversion.
+4. **Quoted and non-finite TAP YAML scalar parsing:** Node's TAP reporter emits single- or double-quoted
+   scalars around certain YAML values (e.g. `exitCode: '1'` or duration strings). Strict numeric conversion
+   previously yielded `NaN` or dropped exit codes, and non-finite numbers (`Infinity`, `-Infinity`) leaked
+   through. Hardened YAML extraction to unquote scalar tokens prior to conversion and convert non-finite
+   values to `null`.
 
 **Verification and mutation falsification.**
-- Targeted correlator suite (`signature-b-correlate.test.ts`): expanded from 23 to 33 tests
-  (31 pass, 2 skip for deliberate platform-gated checks, 0 fail).
+- Targeted correlator suite (`signature-b-correlate.test.ts`): expanded from 23 to 36 tests
+  (34 pass, 2 skip for deliberate platform-gated checks, 0 fail).
 - Mutation falsification: four targeted mutations reversing each of the four hardened behaviors were
   verified to be killed by the expanded test suite.
 - Monorepo validation: full build, lint, counts, and guard scripts pass cleanly.
