@@ -5,8 +5,8 @@ import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Pool } from 'pg';
-import { createPool } from '../src/pg/pool';
 import { migrate, migrationFiles, migrationsDir } from '../src/pg/migrate';
+import { withTestDatabase } from '../src/test-support/database';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
 const skip = DATABASE_URL ? false : 'DATABASE_URL not set';
@@ -40,13 +40,6 @@ function isConstraintViolation(error: unknown, code: string, constraint: string)
   return pgError.code === code && pgError.constraint === constraint;
 }
 
-/** Replaces the database path in the configured PostgreSQL connection URL. */
-function databaseUrlFor(database: string): string {
-  const url = new URL(DATABASE_URL!);
-  url.pathname = `/${database}`;
-  return url.toString();
-}
-
 /** Copies migrations through the requested version into a disposable directory. */
 function migrationsThrough(version: number): { readonly dir: string; cleanup(): void } {
   const dir = mkdtempSync(join(tmpdir(), `variant-migrations-${version}-`));
@@ -57,29 +50,16 @@ function migrationsThrough(version: number): { readonly dir: string; cleanup(): 
   return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
-/** Runs a callback in an isolated database and always releases its pools and database. */
+/**
+ * Runs a callback in an isolated database and always releases its pools and database.
+ *
+ * The teardown protocol itself lives in {@link withTestDatabase}. This file used to end its pool and
+ * then immediately `DROP DATABASE ... WITH (FORCE)`, which terminated backends the pool had not yet
+ * finished closing and delivered the resulting FATAL to a live socket — surfacing as an uncaught
+ * error that `node:test` attributed to whichever test happened to run next.
+ */
 async function withDatabase(run: (pool: Pool) => Promise<void>): Promise<void> {
-  const admin = createPool({ connectionString: DATABASE_URL, max: 2 });
-  const database = `variant_migration_${randomUUID().replaceAll('-', '')}`;
-  let databaseCreated = false;
-  try {
-    await admin.query(`CREATE DATABASE "${database}"`);
-    databaseCreated = true;
-    const pool = createPool({ connectionString: databaseUrlFor(database), max: 4 });
-    try {
-      await run(pool);
-    } finally {
-      await pool.end();
-    }
-  } finally {
-    try {
-      if (databaseCreated) {
-        await admin.query(`DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`);
-      }
-    } finally {
-      await admin.end();
-    }
-  }
+  await withTestDatabase(async ({ pool }) => run(pool), { connectionString: DATABASE_URL, max: 4 });
 }
 
 /** Reads one named constraint from PostgreSQL's catalog. */

@@ -4,7 +4,70 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-09-03 — M15 Increment 44: Signature B parent-side termination evidence._
+_Last updated: 2026-09-03 — M15 Increment 45: PostgreSQL isolated-database teardown race._
+
+
+## M15 Increment 45 — PostgreSQL isolated-database teardown race
+
+The intermittent `postgres integration (persistence)` failure recorded during Increment 44 —
+`terminating connection due to administrator command`, arriving as an uncaught exception attributed
+to whichever test happened to be running — is closed. It was a lifecycle defect in the test helpers,
+not in migration logic: migration order, SQL, checksums, transaction semantics and advisory-lock
+semantics are all untouched, and no migration was added.
+
+**Mechanism, measured rather than assumed.** `withDatabase` ended its pool and then immediately ran
+`DROP DATABASE ... WITH (FORCE)`. `pool.end()` does not wait for its clients to close: in pg 8.22.0
+`_pulseQueue` reaches the end callback in the same synchronous turn in which `_remove` filters the
+last client out of `_clients`, while `client.end()` has only queued the Terminate byte. Instrumented
+here, **zero of four `remove` events had fired at the moment `end()` resolved**. A drop issued
+straight afterwards could therefore still find a backend attached; `FORCE` terminated it, and the
+`FATAL` landed on a socket whose pool still had `idleListener` attached — `_remove` never detaches
+it — so `pg` re-emitted it as `pool.emit('error')`, an unhandled EventEmitter error.
+
+**`WITH (FORCE)` was not required, and was the harm.** Measured against PostgreSQL 16.14 with a
+backend deliberately held open: plain `DROP DATABASE` fails with SQLSTATE 55006 and leaves that
+connection untouched, where `WITH (FORCE)` succeeds by killing it. The fix trades a quiet, harmful
+success for a loud, harmless failure — teardown waits for the database to be genuinely unused, then
+drops it ordinarily, so the normal path terminates nothing.
+
+FORCE survives only on the emergency path, reached once teardown has already failed, and there it is
+**best effort in both directions**. It does terminate whatever is still attached — the helper
+installs an error listener on the pool and on every live client first, so the FATAL it causes cannot
+escape as an uncaught error — and the final fallback drop runs inside a `catch`, so a cleanup failure
+cannot bury the error being reported. A server that refuses that drop can therefore still leave a
+database behind. Which of the two happened is recorded rather than assumed:
+`DatabaseTeardownTimeoutError` carries `droppedDatabase`, with any failed drop attached as its
+`cause`. Anyone diagnosing a teardown should read that flag instead of taking a reported timeout to
+mean the server came out clean.
+
+**Shared helper.** `packages/persistence/src/test-support/database.ts` exposes `withTestDatabase`
+through the new `@chess-platform/persistence/test-support` subpath, kept off the driver-facing `./pg`
+surface. Both isolated-database call sites use it: `variant-migrations.integration.test.ts` and
+`packages/api/test/auth-signin-schema.integration.test.ts`. The latter previously carried a
+`pool.on('error', ...)` listener absorbing SQLSTATE 57P01 — a symptom fix for this same race, added
+when it surfaced there first. **That listener is deleted**: the corrected lifecycle never terminates
+a connection, so there is nothing to absorb, and a real connection failure in those tests is once
+again as loud as it should be. `createPool` and `migrate` are unchanged; no production code moved.
+
+Teardown is bounded — `pool.end()` included, because a client checked out and never released leaves
+it pending indefinitely (measured past a three-second bound) — names the lingering backends when it
+gives up, and never lets a cleanup failure replace the assertion
+the test actually failed on. It drops the disposable database on every path it can reach, including the
+one where it gives up — but that last-resort drop is best effort: it runs inside a `catch` so a
+cleanup failure cannot bury the error already being reported, which means a server that refuses the
+drop can still leave a database behind. Ten regression tests pin the contract against a real server; none asserts on
+elapsed wall-clock time, which would measure the machine rather than the guarantee. The emergency
+path owns the termination it causes: it attaches a listener to the pool *and* to every live client
+before force-dropping, because a client the callback checked out and never released is not idle, so
+`pg` has removed its `idleListener` and the pool would never see its FATAL at all.
+
+**Found while validating, not fixed here:** the persistence suite is not idempotent against a reused
+database. A second consecutive run against the same server fails — 12 tests on `b95065f`, 9 with
+this change — in the achievements, identity-tokens and tournaments repositories, which share
+`chess_test` rather than taking a database of their own. CI provisions a fresh server every run, so
+it has never surfaced there. Pre-existing, and out of scope for this increment.
+
+**Signature B remains UNRESOLVED.** It is a separate defect and nothing here touches it.
 
 
 ## M15 Increment 44 — Signature B parent-side termination evidence

@@ -35,12 +35,12 @@ import { join } from 'node:path';
 import type { Server } from 'node:http';
 import { closeServer, listenOnFetchablePort } from './listen';
 import {
-  createPool,
   migrate,
   migrationFiles,
   missingMigrations,
   migrationsDir,
 } from '@chess-platform/persistence/pg';
+import { withTestDatabase } from '@chess-platform/persistence/test-support';
 import type { Pool } from 'pg';
 import { createPgApiServer } from '../src/bootstrap';
 import { JsonLogger } from '../src/ports/logger';
@@ -53,21 +53,6 @@ const TEST_SECRET = 'test-access-token-secret-0123456789abcdef';
 
 /** The loopback address this suite binds; also the host in the `baseUrl` it hands to `run`. */
 const SERVER_HOST = '127.0.0.1';
-
-/** SQLSTATE 57P01 — `admin_shutdown`: the backend was terminated by `pg_terminate_backend`. */
-const ADMIN_SHUTDOWN = '57P01';
-
-/**
- * Absorb the one failure a forced database drop is expected to cause, and nothing else.
- *
- * Re-throwing restores the previous behaviour for every other error — an uncaught exception that
- * stops the run — which is what an unexpected connection failure in these tests deserves.
- */
-function rethrowUnlessForcedTermination(error: Error): void {
-  if ((error as { code?: string }).code === ADMIN_SHUTDOWN) return;
-  if (error.message.includes('terminating connection due to administrator command')) return;
-  throw error;
-}
 
 /**
  * A directory holding the first `count` migrations, copied byte-for-byte from the real ones.
@@ -93,79 +78,89 @@ interface Fixture {
   migrateTo(dir: string): Promise<number>;
 }
 
-/** The same server, same credentials, a different database name. */
-function databaseUrlFor(name: string): string {
-  const url = new URL(DATABASE_URL!);
-  url.pathname = `/${name}`;
-  return url.toString();
-}
-
 /**
  * Run one case against an API server whose entire world is a private PostgreSQL database, created
  * for the test and dropped after it.
  */
 async function withSchema(run: (fixture: Fixture) => Promise<void>): Promise<void> {
-  // Both pools are capped well below `pg`'s default of ten. This file runs inside a suite that
-  // already holds a great many connections against one server, and a test that quietly opened twenty
-  // more would push the next file over `max_connections` — which surfaces as that file failing, not
-  // this one. Two is the floor rather than one: `migrate` holds the advisory lock on a dedicated
-  // client and runs its statements on another, so a single-connection pool deadlocks against itself.
-  const admin = createPool({ connectionString: DATABASE_URL, max: 2 });
-  const database = `signin_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e9).toString(36)}`;
-  await admin.query(`CREATE DATABASE "${database}"`);
-
-  const pool = createPool({ connectionString: databaseUrlFor(database), max: 4 });
-
-  // Dropping a database WITH (FORCE) terminates whatever backends are still attached to it, and a
-  // `pg` pool with no `error` listener re-emits that as an *uncaught exception* — which node:test
-  // attributes to whichever test happens to be running, not to the teardown that caused it. That is
-  // exactly how this arrived: "terminating connection due to administrator command", surfacing in CI
-  // as a failure of the next test along, while three local runs never raced.
+  // The pool is capped well below `pg`'s default of ten. This file runs inside a suite that already
+  // holds a great many connections against one server, and a test that quietly opened twenty more
+  // would push the next file over `max_connections` — which surfaces as that file failing, not this
+  // one. Two is the floor rather than one: `migrate` holds the advisory lock on a dedicated client
+  // and runs its statements on another, so a single-connection pool deadlocks against itself.
   //
-  // Only that one error is absorbed. A listener that swallowed everything would also hide a real
-  // connection failure in these tests, which is the opposite of what they are for — so anything else
-  // is re-thrown and stays as loud as it was before. The SQLSTATE is the test rather than the
-  // message, because `lc_messages` can translate the text and cannot translate `57P01`.
-  pool.on('error', rethrowUnlessForcedTermination);
-  admin.on('error', rethrowUnlessForcedTermination);
-  // Errors only: a deliberately broken database is about to be exercised, and the point of these
-  // tests is the status codes, not a wall of expected failure logging.
-  const logger = new JsonLogger({}, { level: 'error', sink: () => {} });
+  // This used to absorb SQLSTATE 57P01 on both pools, because ending the pool and immediately
+  // dropping the database WITH (FORCE) terminated backends the pool had not finished closing, and
+  // `pg` re-emitted that FATAL as an uncaught exception attributed to an unrelated test. That
+  // listener treated the symptom. `withTestDatabase` waits for the database to be genuinely unused
+  // and then drops it without FORCE, so nothing is terminated and there is no error to absorb — and
+  // a real connection failure in these tests is once again as loud as it should be.
+  await withTestDatabase(
+    async ({ pool }) => {
+      // Errors only: a deliberately broken database is about to be exercised, and the point of these
+      // tests is the status codes, not a wall of expected failure logging.
+      const logger = new JsonLogger({}, { level: 'error', sink: () => {} });
 
-  const savedEnv = { NODE_ENV: process.env['NODE_ENV'], EMAIL_PROVIDER: process.env['EMAIL_PROVIDER'] };
-  process.env['NODE_ENV'] = 'test';
-  process.env['EMAIL_PROVIDER'] = 'console';
+      const savedEnv = { NODE_ENV: process.env['NODE_ENV'], EMAIL_PROVIDER: process.env['EMAIL_PROVIDER'] };
+      process.env['NODE_ENV'] = 'test';
+      process.env['EMAIL_PROVIDER'] = 'console';
 
-  let http: Server | undefined;
-  let shutdownAnalysis: (() => Promise<void>) | undefined;
-  try {
-    const composed = createPgApiServer({ pool, logger, config: { accessTokenSecret: TEST_SECRET } });
-    shutdownAnalysis = composed.shutdownAnalysis;
+      let http: Server | undefined;
+      let shutdownAnalysis: (() => Promise<void>) | undefined;
+      let caseFailed = false;
+      let caseError: unknown;
+      try {
+        const composed = createPgApiServer({ pool, logger, config: { accessTokenSecret: TEST_SECRET } });
+        shutdownAnalysis = composed.shutdownAnalysis;
 
-    const listening = await listenOnFetchablePort(
-      (p, h) => composed.server.listen(p, h),
-      SERVER_HOST,
-    );
-    http = listening.server;
+        const listening = await listenOnFetchablePort(
+          (p, h) => composed.server.listen(p, h),
+          SERVER_HOST,
+        );
+        http = listening.server;
 
-    await run({
-      baseUrl: `http://${SERVER_HOST}:${listening.port}`,
-      pool,
-      migrateTo: (dir) => migrate(pool, dir),
-    });
-  } finally {
-    if (http) await closeServer(http);
-    if (shutdownAnalysis) await shutdownAnalysis();
-    // Every connection to the database has to be gone before it can be dropped, and the admin pool
-    // is deliberately connected to a different one.
-    await pool.end();
-    await admin.query(`DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`);
-    await admin.end();
-    for (const [key, value] of Object.entries(savedEnv)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  }
+        await run({
+          baseUrl: `http://${SERVER_HOST}:${listening.port}`,
+          pool,
+          migrateTo: (dir) => migrate(pool, dir),
+        });
+      } catch (error) {
+        caseFailed = true;
+        caseError = error;
+      }
+
+      // The server and the analysis worker both hold this pool, so they have to be shut down before
+      // the callback returns — teardown ends the pool the moment it does, and anything still using
+      // it would fail with "Cannot use a pool after calling end on the pool".
+      //
+      // Each step runs whatever the one before it did. Chained with plain awaits, a server that
+      // failed to close would skip `shutdownAnalysis` entirely, leaving the analysis worker holding
+      // this pool while teardown tried to end it — turning a small close failure into a teardown
+      // timeout and a run of pool-after-end errors. Restoring the environment must not be skipped
+      // either, or the next test in the file inherits it.
+      const cleanupFailures: unknown[] = [];
+      const record = (error: unknown): void => {
+        cleanupFailures.push(error);
+      };
+      if (http) await closeServer(http).catch(record);
+      if (shutdownAnalysis) await shutdownAnalysis().catch(record);
+      for (const [key, value] of Object.entries(savedEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+
+      // Same precedence the helper itself uses: the case's own failure is the one worth reading, and
+      // a cleanup failure rides along rather than replacing it.
+      if (caseFailed) {
+        if (cleanupFailures.length > 0 && caseError instanceof Error && caseError.cause === undefined) {
+          caseError.cause = cleanupFailures[0];
+        }
+        throw caseError;
+      }
+      if (cleanupFailures.length > 0) throw cleanupFailures[0];
+    },
+    { connectionString: DATABASE_URL, max: 4 },
+  );
 }
 
 /**

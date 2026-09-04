@@ -13,6 +13,10 @@
     "./pg": {
       "types": "./dist/pg/index.d.ts",
       "default": "./dist/pg/index.js"
+    },
+    "./test-support": {
+      "types": "./dist/test-support/database.d.ts",
+      "default": "./dist/test-support/database.js"
     }
   },
   "files": [
