@@ -86,7 +86,7 @@ Every increment: **build to explicit acceptance criteria with tests → self-cri
 
 - **Validation gate**: Advance only when clean — run `npm run build && npm run lint && npm test` before reporting done.
 - **Architectural gates**: Decisions that introduce a durable or shared contract require an Architecture Decision Record (ADR) approved under `docs/adr/` before implementation.
-- **Documentation hygiene**: Update documentation (`README.md`, `ROADMAP.md`, `docs/PROJECT_STATE.md`) at every milestone checkpoint.
+- **Documentation hygiene**: Update documentation (`README.md`, `docs/ROADMAP.md`, `docs/PROJECT_STATE.md`) at every milestone checkpoint.
 
 ## Enduring Guardrails
 
