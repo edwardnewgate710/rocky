@@ -49,9 +49,18 @@ export interface SharedDatabaseOptions {
  * Failure precedence is the point of this helper, and it is the part that a plain `try/finally`
  * gets wrong. A `finally` that awaits cleanup lets a cleanup rejection *replace* the assertion
  * that actually failed, so the run reports a `DELETE` that could not run instead of the defect
- * that made it necessary. Here the body's failure always wins, a cleanup failure is attached to
- * it as `cause`, and cleanup failing on its own is still reported rather than swallowed — silence
- * there would let a suite quietly stop cleaning up and reintroduce exactly this defect.
+ * that made it necessary. Here the body's failure always wins — the value the body rejected with
+ * is the value rethrown, unchanged — and cleanup failing on its own is reported rather than
+ * swallowed, because silence there would let a suite quietly stop cleaning up and reintroduce
+ * exactly this defect.
+ *
+ * When both fail, the teardown error rides along on the body error's `cause` chain, at the first
+ * free link rather than only the first: an error that already carries a `cause` used to drop the
+ * teardown failure entirely. The one case that cannot carry it is a body that rejects with a
+ * primitive, which has nowhere to hang a property; that value is still rethrown as-is, and the
+ * teardown failure is lost. Rejecting with a non-`Error` is already pathological in a test, and
+ * the alternatives — wrapping the value, or throwing an `AggregateError` — would change what the
+ * caller catches, which is the one thing this helper exists to keep stable.
  */
 export async function withSharedDatabase<T>(
   options: SharedDatabaseOptions,
@@ -93,8 +102,8 @@ export async function withSharedDatabase<T>(
   }
 
   if (bodyFailed) {
-    if (teardownFailed && bodyError instanceof Error && bodyError.cause === undefined) {
-      bodyError.cause = teardownError;
+    if (teardownFailed) {
+      attachCause(bodyError, teardownError);
     }
     throw bodyError;
   }
@@ -102,6 +111,27 @@ export async function withSharedDatabase<T>(
     throw teardownError;
   }
   return result;
+}
+
+/**
+ * Hang `addition` off the first free `cause` link under `error`, if there is one.
+ *
+ * Setting only `error.cause` drops the addition whenever the primary error already has one, which
+ * is common: repositories wrap driver errors and keep the original as the cause. Walking to the
+ * end keeps both. The `seen` set is not theoretical tidiness — an error whose cause chain loops
+ * back on itself would otherwise spin here forever, inside teardown, with no test to blame.
+ */
+function attachCause(error: unknown, addition: unknown): void {
+  const seen = new Set<unknown>();
+  let link = error;
+  while (link instanceof Error && !seen.has(link)) {
+    if (link.cause === undefined) {
+      link.cause = addition;
+      return;
+    }
+    seen.add(link);
+    link = link.cause;
+  }
 }
 
 /**

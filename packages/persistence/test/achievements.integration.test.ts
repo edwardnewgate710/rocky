@@ -55,10 +55,14 @@ describe('PgAchievementsRepository (integration)', { skip: !databaseUrl }, () =>
   });
 
   after(async () => {
-    if (pool) {
-      // Leave the shared database as this suite found it, so the next run begins from the same
-      // preconditions this one did.
+    if (!pool) return;
+    // Leave the shared database as this suite found it, so the next run begins from the same
+    // preconditions this one did — but close the pool whatever that delete does. Awaiting the
+    // cleanup first and closing second would skip `end()` on exactly the runs where cleanup
+    // failed, leaving a backend attached and the worker unable to exit cleanly.
+    try {
       await deleteFixtures();
+    } finally {
       await pool.end();
     }
   });

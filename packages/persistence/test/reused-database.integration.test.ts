@@ -199,6 +199,50 @@ test('when the body and the cleanup both fail, the body error still wins', { ski
   }, isolated);
 });
 
+test('a body error that already has a cause still carries the teardown failure', { skip }, async () => {
+  await withTestDatabase(async ({ connectionString }) => {
+    // Repositories wrap driver errors and keep the original as `cause`, so a body failing inside
+    // one arrives here with that link already taken. Writing only to `error.cause` dropped the
+    // teardown failure in exactly that case — the common one, not an edge.
+    const original = new Error('the driver error underneath');
+    const boom = new Error('the assertion that actually failed', { cause: original });
+    const cleanupFailure = new Error('and cleanup could not run either');
+
+    await assert.rejects(
+      withSharedDatabase({
+        connectionString,
+        max: 2,
+        cleanup: () => Promise.reject(cleanupFailure),
+      }, () => Promise.reject(boom)),
+      (error: unknown) => {
+        assert.equal(error, boom, 'the body error is still what surfaces');
+        assert.equal((error as Error).cause, original, 'and keeps the cause it arrived with');
+        assert.equal(original.cause, cleanupFailure, 'the teardown failure took the next free link');
+        return true;
+      },
+    );
+  }, isolated);
+});
+
+test('a body that rejects with a primitive is rethrown exactly as it was', { skip }, async () => {
+  await withTestDatabase(async ({ connectionString }) => {
+    // A primitive has nowhere to hang a cause, so the teardown failure cannot ride along. What
+    // must not change is the value the caller catches: wrapping it to make room would break every
+    // `assert.rejects` predicate that compares identity.
+    await assert.rejects(
+      withSharedDatabase({
+        connectionString,
+        max: 2,
+        cleanup: () => Promise.reject(new Error('cleanup could not run')),
+      }, () => Promise.reject('a bare string')),
+      (error: unknown) => {
+        assert.equal(error, 'a bare string');
+        return true;
+      },
+    );
+  }, isolated);
+});
+
 test('a cleanup that fails is reported rather than swallowed', { skip }, async () => {
   await withTestDatabase(async ({ pool, connectionString }) => {
     await migrated(pool);

@@ -56,12 +56,12 @@ and `analysis-cache` wrote rows they never removed. Fresh `uuidv7()` ids meant t
 so nothing ever failed — the tables simply grew on every run against a database anyone reuses. Unique
 keys stop the *next* run failing; they are not cleanup.
 
-**Verified.** Eight regression tests in `reused-database.integration.test.ts` pin the mechanism, each
+**Verified.** Ten regression tests in `reused-database.integration.test.ts` pin the mechanism, each
 in its own disposable database so it can make claims about what a database contains. Acceptance is
 three consecutive runs against one PostgreSQL 16.14 database with no reset between them:
-**181 / 181 / 181, zero failures**, after which the database holds no test rows at all — only the
+**183 / 183 / 183, zero failures**, after which the database holds no test rows at all — only the
 three migration-seeded bot accounts — with zero leaked disposable databases and zero lingering
-backends. Falsification killed **12 of 13** mutations; the survivor is named in the PR.
+backends. Falsification killed **13 of 15** mutations; both survivors are named in the PR.
 
 No production code, migration, checksum, constraint or repository conflict semantic changed.
 
