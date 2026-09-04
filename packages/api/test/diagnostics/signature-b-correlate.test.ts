@@ -848,14 +848,39 @@ test('correlator: path suffix matching for Windows-origin paths is case-insensit
   }
 });
 
-test('correlator: isWindowsPath identifies Windows drive letters and UNC paths', () => {
+test('correlator: isWindowsPath identifies Windows drive letters, UNC paths, and backslashes', () => {
   assert.equal(correlator.isWindowsPath('C:/repo/test.js'), true);
   assert.equal(correlator.isWindowsPath('d:/repo/test.js'), true);
   assert.equal(correlator.isWindowsPath('//server/share/test.js'), true);
+  assert.equal(correlator.isWindowsPath('Dist-Test\\Test\\Foo.test.js'), true);
   if (process.platform !== 'win32') {
     assert.equal(correlator.isWindowsPath('/home/runner/repo/test.js'), false);
     assert.equal(correlator.isWindowsPath('dist-test/test.js'), false);
   } else {
     assert.equal(correlator.isWindowsPath('/any/path'), true);
+  }
+});
+
+test('correlator: relative backslash-delimited Windows child path matches case-insensitively across platforms', () => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-relwin-'));
+  try {
+    const lines = [
+      { kind: 'start', pid: 444, testFile: 'Dist-Test\\Test\\Studies-Api.Test.js' },
+      { kind: 'preload-installed', pid: 444, testFile: 'Dist-Test\\Test\\Studies-Api.Test.js' },
+    ];
+    fs.writeFileSync(path.join(logDir, 'run-relwin.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    const logs = correlator.readChildLogs(logDir);
+
+    // Parent uses lower-case forward-slash path
+    const resolved = correlator.correlate(
+      correlator.parseTapFailures(tapFailure('dist-test/test/studies-api.test.js', '1')),
+      logs,
+    );
+    assert.equal(resolved.length, 1);
+    assert.equal(resolved[0]?.child.pid, 444, 'relative backslash-delimited child path must match case-insensitively');
+    assert.equal(resolved[0]?.child.logFound, true);
+    assert.equal(resolved[0]?.child.ambiguous, false);
+  } finally {
+    fs.rmSync(logDir, { recursive: true, force: true });
   }
 });

@@ -72,7 +72,12 @@ function fileKey(filePath) {
  * @returns {boolean}
  */
 function isWindowsPath(filePath) {
-  return process.platform === 'win32' || /^[a-zA-Z]:(?:\/|$)/.test(filePath) || /^\/\/[^/]/.test(filePath);
+  return (
+    process.platform === 'win32' ||
+    String(filePath).includes('\\') ||
+    /^[a-zA-Z]:(?:\/|$)/.test(filePath) ||
+    /^\/\/[^/]/.test(filePath)
+  );
 }
 
 /**
@@ -301,12 +306,14 @@ function readChildLogs(logDir) {
         continue;
       }
       if (typeof record.testFile !== 'string' || record.testFile === '') continue;
+      const isWin = isWindowsPath(record.testFile);
       // Keyed on the child's whole path, not its basename. A suite run spans directories, and
       // `foo/a.test.js` and `bar/a.test.js` are different files whose events must never be merged.
       const key = normalizePath(record.testFile);
-      const existing = byFile.get(key) ?? { pid: null, kinds: [] };
+      const existing = byFile.get(key) ?? { pid: null, kinds: [], isWindows: false };
       existing.pid = typeof record.pid === 'number' ? record.pid : existing.pid;
       if (typeof record.kind === 'string') existing.kinds.push(record.kind);
+      if (isWin) existing.isWindows = true;
       byFile.set(key, existing);
     }
   }
@@ -329,11 +336,12 @@ function readChildLogs(logDir) {
  * @returns {{ child: { pid: number | null, kinds: string[] } | null, ambiguous: boolean, candidates: number }}
  */
 function matchChild(childLogs, parentFile) {
+  const isWantedWin = isWindowsPath(parentFile);
   const wanted = normalizePath(parentFile);
   const entries = [...childLogs.entries()];
 
-  const bySuffix = entries.filter(([key]) => {
-    if (isWindowsPath(key) || isWindowsPath(wanted)) {
+  const bySuffix = entries.filter(([key, child]) => {
+    if (child?.isWindows || isWindowsPath(key) || isWantedWin || isWindowsPath(wanted)) {
       const keyNorm = key.toLowerCase();
       const wantedNorm = wanted.toLowerCase();
       return keyNorm === wantedNorm || keyNorm.endsWith(`/${wantedNorm}`);
@@ -348,9 +356,9 @@ function matchChild(childLogs, parentFile) {
   // Matching a different directory's child would be a false cross-directory attribution.
   if (!wanted.includes('/')) {
     const base = fileKey(wanted);
-    const byBase = entries.filter(([key]) => {
+    const byBase = entries.filter(([key, child]) => {
       const kBase = fileKey(key);
-      if (isWindowsPath(key) || isWindowsPath(wanted)) {
+      if (child?.isWindows || isWindowsPath(key) || isWantedWin || isWindowsPath(wanted)) {
         return kBase.toLowerCase() === base.toLowerCase();
       }
       return kBase === base;
