@@ -8,20 +8,62 @@ import {
   PgSessionsRepository,
   PgUsersRepository,
 } from '@chess-platform/persistence/pg';
+import {
+  deleteFixtureUsers,
+  withSharedDatabase,
+} from '@chess-platform/persistence/test-support/fixtures';
+import type { Pool } from 'pg';
 import { PgRateLimiter } from '../src/ports/pg-rate-limiter';
 import { backendPid, waitForBackendBlocked } from './pg-observer';
 
 const skip = process.env['DATABASE_URL'] ? false : 'DATABASE_URL not set';
 
+const MIGRATIONS = join(process.cwd(), '../persistence/migrations');
+
+/**
+ * Remove the rate-limit buckets a test created.
+ *
+ * `rate_limit_buckets` is keyed by `bucket_key` alone and no foreign key references it, so no
+ * cascade can ever reach these rows: the only thing that removes one is naming it.
+ * `PgRateLimiter.sweep` is not that thing — it fires once every thousand admissions and evicts only
+ * buckets that expired over an hour ago, which none of these do inside a run.
+ *
+ * Deleting by exact key rather than by the shared `integration:` prefix is the contract, not a
+ * detail. The prefix is a naming convention, not an ownership claim, so `LIKE 'integration:%'`
+ * would delete rows this file never created.
+ */
+const deleteBuckets =
+  (keys: readonly string[]) =>
+  async (pool: Pool): Promise<void> => {
+    await pool.query('DELETE FROM rate_limit_buckets WHERE bucket_key = ANY($1::text[])', [
+      [...keys],
+    ]);
+  };
+
+/**
+ * Throughout this file, every identifier is recorded *before* the statement that creates its row.
+ *
+ * Recording afterwards loses exactly the rows worth cleaning up: a create that commits and is then
+ * contradicted by a failing assertion never reaches the line that would have registered it, so the
+ * row it left behind is orphaned by the very failure that made cleanup necessary. Deleting an
+ * identifier whose row was never inserted matches nothing, so pre-recording costs nothing and
+ * stays correct under any mid-test throw.
+ */
+
 test('Postgres registration transaction allows one concurrent case-insensitive handle', { skip }, async () => {
-  const pool = createPool();
-  try {
-    await migrate(pool, join(process.cwd(), '../persistence/migrations'));
+  const userIds: string[] = [];
+  await withSharedDatabase({ cleanup: (pool) => deleteFixtureUsers(pool, userIds) }, async (pool) => {
+    await migrate(pool, MIGRATIONS);
     const users = new PgUsersRepository(pool);
     const suffix = uuidv7().replaceAll('-', '').slice(0, 12);
+    // Both contenders are recorded, because which one commits is the race under test. The loser's
+    // row never exists, and deleting an id that was never inserted matches nothing.
+    const upper = uuidv7();
+    const lower = uuidv7();
+    userIds.push(upper, lower);
     const attempts = await Promise.allSettled([
-      users.createWithPasswordAndRole({ id: uuidv7(), handle: `Race${suffix}` }, 'hash-a', 'user'),
-      users.createWithPasswordAndRole({ id: uuidv7(), handle: `race${suffix}` }, 'hash-b', 'user'),
+      users.createWithPasswordAndRole({ id: upper, handle: `Race${suffix}` }, 'hash-a', 'user'),
+      users.createWithPasswordAndRole({ id: lower, handle: `race${suffix}` }, 'hash-b', 'user'),
     ]);
     assert.equal(attempts.filter((result) => result.status === 'fulfilled').length, 1);
     const rejected = attempts.find((result) => result.status === 'rejected');
@@ -30,19 +72,21 @@ test('Postgres registration transaction allows one concurrent case-insensitive h
     assert.ok(winner);
     assert.ok(await users.getPasswordHash(winner.id));
     assert.deepEqual(await users.rolesOf(winner.id), ['user']);
-  } finally {
-    await pool.end();
-  }
+  });
 });
 
 test('Postgres refresh rotation has exactly one winner under concurrency', { skip }, async () => {
-  const pool = createPool();
-  try {
-    await migrate(pool, join(process.cwd(), '../persistence/migrations'));
+  const userIds: string[] = [];
+  await withSharedDatabase({ cleanup: (pool) => deleteFixtureUsers(pool, userIds) }, async (pool) => {
+    await migrate(pool, MIGRATIONS);
     const users = new PgUsersRepository(pool);
     const sessions = new PgSessionsRepository(pool);
+    // Every session this test creates hangs off this user, the rotation child included, so the
+    // user id is the whole ownership record: `sessions.user_id` is `ON DELETE CASCADE`.
+    const userId = uuidv7();
+    userIds.push(userId);
     const user = await users.createWithPasswordAndRole(
-      { id: uuidv7(), handle: `rotate${uuidv7().replaceAll('-', '').slice(0, 12)}` },
+      { id: userId, handle: `rotate${uuidv7().replaceAll('-', '').slice(0, 12)}` },
       'hash',
       'user',
     );
@@ -72,9 +116,7 @@ test('Postgres refresh rotation has exactly one winner under concurrency', { ski
       'SELECT COUNT(*)::text AS count FROM sessions WHERE rotated_from = $1', [oldId],
     );
     assert.equal(children.rows[0]!.count, '1');
-  } finally {
-    await pool.end();
-  }
+  });
 });
 
 /**
@@ -83,13 +125,15 @@ test('Postgres refresh rotation has exactly one winner under concurrency', { ski
  * contract but cannot prove it — a single JavaScript turn has no interleaving to lose.
  */
 test('Postgres session revocation has exactly one winner under concurrency', { skip }, async () => {
-  const pool = createPool();
-  try {
-    await migrate(pool, join(process.cwd(), '../persistence/migrations'));
+  const userIds: string[] = [];
+  await withSharedDatabase({ cleanup: (pool) => deleteFixtureUsers(pool, userIds) }, async (pool) => {
+    await migrate(pool, MIGRATIONS);
     const users = new PgUsersRepository(pool);
     const sessions = new PgSessionsRepository(pool);
+    const userId = uuidv7();
+    userIds.push(userId);
     const user = await users.createWithPasswordAndRole(
-      { id: uuidv7(), handle: `revoke${uuidv7().replaceAll('-', '').slice(0, 12)}` },
+      { id: userId, handle: `revoke${uuidv7().replaceAll('-', '').slice(0, 12)}` },
       'hash',
       'user',
     );
@@ -116,9 +160,7 @@ test('Postgres session revocation has exactly one winner under concurrency', { s
       'SELECT revoked_at FROM sessions WHERE id = $1', [id],
     )).rows[0]!;
     assert.equal(row.revoked_at.getTime(), at.getTime(), 'the first revocation time stands');
-  } finally {
-    await pool.end();
-  }
+  });
 });
 
 /**
@@ -126,13 +168,15 @@ test('Postgres session revocation has exactly one winner under concurrency', { s
  * the round trip: the columns are written by `create` but were absent from the read projection.
  */
 test('Postgres session rows carry the request metadata they were created with', { skip }, async () => {
-  const pool = createPool();
-  try {
-    await migrate(pool, join(process.cwd(), '../persistence/migrations'));
+  const userIds: string[] = [];
+  await withSharedDatabase({ cleanup: (pool) => deleteFixtureUsers(pool, userIds) }, async (pool) => {
+    await migrate(pool, MIGRATIONS);
     const users = new PgUsersRepository(pool);
     const sessions = new PgSessionsRepository(pool);
+    const userId = uuidv7();
+    userIds.push(userId);
     const user = await users.createWithPasswordAndRole(
-      { id: uuidv7(), handle: `meta${uuidv7().replaceAll('-', '').slice(0, 12)}` },
+      { id: userId, handle: `meta${uuidv7().replaceAll('-', '').slice(0, 12)}` },
       'hash',
       'user',
     );
@@ -150,24 +194,21 @@ test('Postgres session rows carry the request metadata they were created with', 
     assert.equal(listed?.createdIp, '203.0.113.7');
     assert.equal(listed?.createdUserAgent, 'Mozilla/5.0 (X11; Linux x86_64) Firefox/121');
     assert.equal(listed?.lastIp, null, 'nothing writes the last-seen fields');
-  } finally {
-    await pool.end();
-  }
+  });
 });
 
 test('Postgres rate limiting is shared and atomic across limiter instances', { skip }, async () => {
-  const pool = createPool();
-  try {
-    await migrate(pool, join(process.cwd(), '../persistence/migrations'));
+  const keys: string[] = [];
+  await withSharedDatabase({ cleanup: deleteBuckets(keys) }, async (pool) => {
+    await migrate(pool, MIGRATIONS);
     const a = new PgRateLimiter(pool);
     const b = new PgRateLimiter(pool);
     const key = `integration:${uuidv7()}`;
+    keys.push(key);
     const results = await Promise.all(Array.from({ length: 10 }, (_, index) =>
       (index % 2 === 0 ? a : b).admit([{ key, limit: { maxRequests: 5, windowMs: 60_000 } }])));
     assert.equal(results.filter((result) => result.allowed).length, 5);
-  } finally {
-    await pool.end();
-  }
+  });
 });
 
 /**
@@ -179,13 +220,14 @@ test('Postgres rate limiting is shared and atomic across limiter instances', { s
  * this runs against a live server with real concurrency.
  */
 test('Postgres multi-bucket admission charges every bucket or none', { skip }, async () => {
-  const pool = createPool();
-  try {
-    await migrate(pool, join(process.cwd(), '../persistence/migrations'));
+  const keys: string[] = [];
+  await withSharedDatabase({ cleanup: deleteBuckets(keys) }, async (pool) => {
+    await migrate(pool, MIGRATIONS);
     const limiter = new PgRateLimiter(pool);
     const run = uuidv7();
     const full = { key: `integration:full:${run}`, limit: { maxRequests: 1, windowMs: 60_000 } };
     const roomy = { key: `integration:roomy:${run}`, limit: { maxRequests: 5, windowMs: 60_000 } };
+    keys.push(full.key, roomy.key);
 
     assert.equal((await limiter.admit([full])).allowed, true, "fill the tight bucket");
 
@@ -201,9 +243,7 @@ test('Postgres multi-bucket admission charges every bucket or none', { skip }, a
     for (let i = 0; i < 5; i += 1) survivors.push(await limiter.admit([roomy]));
     assert.equal(survivors.filter((r) => r.allowed).length, 5, "all five slots were preserved");
     assert.equal((await limiter.admit([roomy])).allowed, false, "and the sixth is refused");
-  } finally {
-    await pool.end();
-  }
+  });
 });
 
 /**
@@ -215,13 +255,14 @@ test('Postgres multi-bucket admission charges every bucket or none', { skip }, a
  * the caller would come back to a second refusal having learned nothing.
  */
 test('Postgres reports the longest wait when several buckets refuse', { skip }, async () => {
-  const pool = createPool();
-  try {
-    await migrate(pool, join(process.cwd(), '../persistence/migrations'));
+  const keys: string[] = [];
+  await withSharedDatabase({ cleanup: deleteBuckets(keys) }, async (pool) => {
+    await migrate(pool, MIGRATIONS);
     const limiter = new PgRateLimiter(pool);
     const run = uuidv7();
     const short = { key: `integration:a-short:${run}`, limit: { maxRequests: 1, windowMs: 5_000 } };
     const long = { key: `integration:z-long:${run}`, limit: { maxRequests: 1, windowMs: 600_000 } };
+    keys.push(short.key, long.key);
 
     assert.equal((await limiter.admit([short, long])).allowed, true);
 
@@ -232,9 +273,7 @@ test('Postgres reports the longest wait when several buckets refuse', { skip }, 
       `expected the 10-minute bucket to set the wait, got ${refused.retryAfterSeconds}s`,
     );
     assert.ok(refused.retryAfterSeconds <= 600);
-  } finally {
-    await pool.end();
-  }
+  });
 });
 
 /**
@@ -248,11 +287,12 @@ test('Postgres reports the longest wait when several buckets refuse', { skip }, 
  * request it refused. Only a real server can show this, because the evidence is a stored row.
  */
 test('Postgres single-bucket refusals leave the stored counter untouched', { skip }, async () => {
-  const pool = createPool();
-  try {
-    await migrate(pool, join(process.cwd(), '../persistence/migrations'));
+  const keys: string[] = [];
+  await withSharedDatabase({ cleanup: deleteBuckets(keys) }, async (pool) => {
+    await migrate(pool, MIGRATIONS);
     const limiter = new PgRateLimiter(pool);
     const key = `integration:refusal:${uuidv7()}`;
+    keys.push(key);
     const tight = { key, limit: { maxRequests: 2, windowMs: 600_000 } };
 
     assert.equal((await limiter.admit([tight])).allowed, true);
@@ -280,9 +320,7 @@ test('Postgres single-bucket refusals leave the stored counter untouched', { ski
     assert.equal((await limiter.admit([raised])).allowed, true);
     assert.equal((await limiter.admit([raised])).allowed, true);
     assert.equal((await limiter.admit([raised])).allowed, false);
-  } finally {
-    await pool.end();
-  }
+  });
 });
 
 /**
@@ -309,70 +347,81 @@ test('Postgres single-bucket refusals leave the stored counter untouched', { ski
  * instead of passing quietly. Raised in the CodeRabbit review of PR #137; see ADR-0119.
  */
 test('Postgres tells the loser of a bucket-creation race the real remaining window', { skip }, async () => {
-  const admin = createPool();
-  // The limiter gets its own single-connection pool so the backend running the blocked statement
-  // is known by identity. Without that the observer would be guessing which of the pool's clients
-  // to watch, and "some backend somewhere is blocked" is not the claim this test needs to make.
-  const limiterPool = createPool({ max: 1 });
-  const observerPool = createPool({ max: 1 });
-  try {
-    await migrate(admin, join(process.cwd(), '../persistence/migrations'));
-    const limiter = new PgRateLimiter(limiterPool);
-    const key = `integration:create-race:${uuidv7()}`;
-    const windowMs = 600_000;
-    const bucket = { key, limit: { maxRequests: 1, windowMs } };
-
-    // A holds the row uncommitted; B then starts and blocks on the unique key.
-    const holder = await admin.connect();
-    let loser;
-    let evidence;
-    let pending;
-    const holderPid = await backendPid(holder);
-    const limiterPid = await backendPid(limiterPool);
+  const keys: string[] = [];
+  // The admin pool is the shared one, so it is also the pool cleanup runs on. The bucket under
+  // test is inserted by this test's own statement rather than through the limiter, which makes it
+  // exactly the kind of row a cleanup written from the repository's point of view would miss.
+  await withSharedDatabase({ cleanup: deleteBuckets(keys) }, async (admin) => {
+    // The limiter gets its own single-connection pool so the backend running the blocked statement
+    // is known by identity. Without that the observer would be guessing which of the pool's clients
+    // to watch, and "some backend somewhere is blocked" is not the claim this test needs to make.
+    const limiterPool = createPool({ max: 1 });
+    const observerPool = createPool({ max: 1 });
     try {
-      await holder.query('BEGIN');
-      await holder.query(
-        `INSERT INTO rate_limit_buckets (bucket_key, request_count, window_started_at, expires_at)
-         VALUES ($1, 1, now(), now() + ($2 * interval '1 millisecond'))`,
-        [key, windowMs],
+      await migrate(admin, MIGRATIONS);
+      const limiter = new PgRateLimiter(limiterPool);
+      const key = `integration:create-race:${uuidv7()}`;
+      keys.push(key);
+      const windowMs = 600_000;
+      const bucket = { key, limit: { maxRequests: 1, windowMs } };
+
+      // A holds the row uncommitted; B then starts and blocks on the unique key.
+      const holder = await admin.connect();
+      let loser;
+      let evidence;
+      let pending;
+      let holderPid;
+      try {
+        // Inside the try that releases the client, because reading a backend pid is a query and a
+        // query can fail. When these ran ahead of the try, such a failure leaked the leased client,
+        // and a pool with a client still checked out never finishes `end()` — so the file hung
+        // instead of reporting the error that caused it.
+        holderPid = await backendPid(holder);
+        const limiterPid = await backendPid(limiterPool);
+        await holder.query('BEGIN');
+        await holder.query(
+          `INSERT INTO rate_limit_buckets (bucket_key, request_count, window_started_at, expires_at)
+           VALUES ($1, 1, now(), now() + ($2 * interval '1 millisecond'))`,
+          [key, windowMs],
+        );
+
+        pending = limiter.admit([bucket]);
+        // Wait for the server to report the limiter blocked on this holder's transaction. Throws
+        // rather than continuing if that never happens, so the race cannot be skipped in silence.
+        evidence = await waitForBackendBlocked(observerPool, {
+          pid: limiterPid,
+          blockedBy: holderPid,
+        });
+        await holder.query('COMMIT');
+        loser = await pending;
+      } finally {
+        // An assertion failing between BEGIN and COMMIT leaves this transaction open with the
+        // admission still blocked on it. Rolling back before release keeps a failing test from
+        // handing a poisoned client back to the pool, and unblocks the pending statement so its
+        // rejection is awaited here rather than surfacing as an unhandled one later.
+        await holder.query('ROLLBACK').catch(() => undefined);
+        holder.release();
+        await pending?.catch(() => undefined);
+      }
+
+      // Load-bearing. This is what separates a run that raced from one that reached the same
+      // numbers sequentially; remove the wait above and there is nothing left to assert here.
+      assert.equal(evidence.waitEvent, 'transactionid');
+      assert.ok(
+        evidence.blockingPids.includes(holderPid),
+        `the admission must have been blocked by backend ${holderPid}, not merely slower than it`,
       );
 
-      pending = limiter.admit([bucket]);
-      // Wait for the server to report the limiter blocked on this holder's transaction. Throws
-      // rather than continuing if that never happens, so the race cannot be skipped in silence.
-      evidence = await waitForBackendBlocked(observerPool, {
-        pid: limiterPid,
-        blockedBy: holderPid,
-      });
-      await holder.query('COMMIT');
-      loser = await pending;
+      assert.equal(loser.allowed, false, 'the bucket was already full when the race resolved');
+      assert.ok(
+        loser.retryAfterSeconds > 300,
+        `expected the real remaining window, got ${loser.retryAfterSeconds}s`,
+      );
+      assert.ok(loser.retryAfterSeconds <= 600);
     } finally {
-      // An assertion failing between BEGIN and COMMIT leaves this transaction open with the
-      // admission still blocked on it. Rolling back before release keeps a failing test from
-      // handing a poisoned client back to the pool, and unblocks the pending statement so its
-      // rejection is awaited here rather than surfacing as an unhandled one later.
-      await holder.query('ROLLBACK').catch(() => undefined);
-      holder.release();
-      await pending?.catch(() => undefined);
+      await Promise.all([limiterPool.end(), observerPool.end()]);
     }
-
-    // Load-bearing. This is what separates a run that raced from one that reached the same
-    // numbers sequentially; remove the wait above and there is nothing left to assert here.
-    assert.equal(evidence.waitEvent, 'transactionid');
-    assert.ok(
-      evidence.blockingPids.includes(holderPid),
-      `the admission must have been blocked by backend ${holderPid}, not merely slower than it`,
-    );
-
-    assert.equal(loser.allowed, false, 'the bucket was already full when the race resolved');
-    assert.ok(
-      loser.retryAfterSeconds > 300,
-      `expected the real remaining window, got ${loser.retryAfterSeconds}s`,
-    );
-    assert.ok(loser.retryAfterSeconds <= 600);
-  } finally {
-    await Promise.all([admin.end(), limiterPool.end(), observerPool.end()]);
-  }
+  });
 });
 
 /**
@@ -380,11 +429,15 @@ test('Postgres tells the loser of a bucket-creation race the real remaining wind
  * for one key with different limits had no order-independent answer in either.
  */
 test('Postgres refuses a duplicate bucket key rather than charging it twice', { skip }, async () => {
-  const pool = createPool();
-  try {
-    await migrate(pool, join(process.cwd(), '../persistence/migrations'));
+  const keys: string[] = [];
+  await withSharedDatabase({ cleanup: deleteBuckets(keys) }, async (pool) => {
+    await migrate(pool, MIGRATIONS);
     const limiter = new PgRateLimiter(pool);
     const key = `integration:dup:${uuidv7()}`;
+    // Recorded even though the assertion below proves the refusal created no row. Cleanup states
+    // what this test claims to own, and stating it costs one no-op delete; leaving it out would
+    // mean a regression that made the refusal write a row leaked it instead of being caught.
+    keys.push(key);
 
     await assert.rejects(
       () =>
@@ -400,9 +453,7 @@ test('Postgres refuses a duplicate bucket key rather than charging it twice', { 
       [key],
     );
     assert.equal(stored.rowCount, 0, 'a refused request must not have created the bucket');
-  } finally {
-    await pool.end();
-  }
+  });
 });
 
 /**
@@ -412,15 +463,16 @@ test('Postgres refuses a duplicate bucket key rather than charging it twice', { 
  * for the other instead of the pair being killed as a cycle.
  */
 test('Postgres combined admission is deadlock-free and hands the last slot to exactly one', { skip }, async () => {
-  const pool = createPool();
-  try {
-    await migrate(pool, join(process.cwd(), '../persistence/migrations'));
+  const keys: string[] = [];
+  await withSharedDatabase({ cleanup: deleteBuckets(keys) }, async (pool) => {
+    await migrate(pool, MIGRATIONS);
     const limiter = new PgRateLimiter(pool);
     const run = uuidv7();
     // Deliberately named so that "user" sorts before "zip" — the reversed call below hands them
     // over the other way round.
     const user = { key: `integration:auser:${run}`, limit: { maxRequests: 1, windowMs: 60_000 } };
     const zip = { key: `integration:zip:${run}`, limit: { maxRequests: 20, windowMs: 60_000 } };
+    keys.push(user.key, zip.key);
 
     const results = await Promise.all(
       Array.from({ length: 8 }, (_, i) =>
@@ -438,7 +490,5 @@ test('Postgres combined admission is deadlock-free and hands the last slot to ex
       if (remaining > 25) break;
     }
     assert.equal(remaining, 19);
-  } finally {
-    await pool.end();
-  }
+  });
 });
