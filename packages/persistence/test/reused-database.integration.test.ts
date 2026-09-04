@@ -264,6 +264,42 @@ test('a teardown failure with nowhere to attach is warned about, not dropped', {
   }, isolated);
 });
 
+test('a frozen body error is rethrown, not replaced by the attempt to annotate it', { skip }, async () => {
+  await withTestDatabase(async ({ connectionString }) => {
+    // Writing `cause` on a frozen error throws a TypeError in strict mode. Escaping, that TypeError
+    // would replace the body failure with a complaint about a property assignment — the exact loss
+    // this helper exists to prevent, introduced by the code that was meant to preserve more.
+    const boom = Object.freeze(new Error('the assertion that actually failed'));
+    const cleanupFailure = new Error('and cleanup could not run either');
+
+    const warnings: Error[] = [];
+    const collect = (warning: Error): void => {
+      warnings.push(warning);
+    };
+    process.on('warning', collect);
+    try {
+      await assert.rejects(
+        withSharedDatabase({
+          connectionString,
+          max: 2,
+          cleanup: () => Promise.reject(cleanupFailure),
+        }, () => Promise.reject(boom)),
+        (error: unknown) => {
+          assert.equal(error, boom, 'the body error survives an error that cannot be annotated');
+          return true;
+        },
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      process.off('warning', collect);
+    }
+
+    // And the teardown failure is not lost just because it had nowhere to go.
+    const reported = warnings.filter((w) => w.name === UNATTACHABLE_TEARDOWN_WARNING);
+    assert.equal(reported.length, 1, 'the cleanup failure fell through to the warning path');
+  }, isolated);
+});
+
 test('a cleanup that fails is reported rather than swallowed', { skip }, async () => {
   await withTestDatabase(async ({ pool, connectionString }) => {
     await migrated(pool);

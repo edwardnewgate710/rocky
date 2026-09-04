@@ -129,8 +129,16 @@ function tryAttachCause(error: unknown, addition: unknown): boolean {
   let link = error;
   while (link instanceof Error && !seen.has(link)) {
     if (link.cause === undefined) {
-      link.cause = addition;
-      return true;
+      // Nothing in here may throw. A frozen error rejects the assignment — with a `TypeError` in
+      // strict mode, silently otherwise — and letting either outcome past would replace the body's
+      // failure with a complaint about a property, which is the loss this helper exists to prevent.
+      // Reporting no free link instead routes the teardown failure to the warning path.
+      try {
+        link.cause = addition;
+      } catch {
+        return false;
+      }
+      return Object.is(link.cause, addition);
     }
     seen.add(link);
     link = link.cause;
