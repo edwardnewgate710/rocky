@@ -7,7 +7,8 @@ no skeletons, no placeholders.
 
 > **Status:** Milestones 1–9, M12 (security hardening), and M13
 > (observability & SRE) are complete; M10 (social & learning), M11 (search),
-> and M14 (deployment & scale) have delivered increments and remain in progress —
+> and M14 (deployment & scale) have delivered core packages and UI;
+> current productionization and hardening work is tracked in M15 —
 > a perft-verified, variant-aware chess rules engine (`@chess-platform/core`),
 > an event-sourced game authority with clocks (`@chess-platform/game`), a
 > real-time gateway with authoritative fanout, durable event log, and Redis
@@ -16,9 +17,10 @@ no skeletons, no placeholders.
 > published OpenAPI spec (`@chess-platform/api`), a provider-agnostic engine
 > bridge (`@chess-platform/engine`), a playable web frontend with Playwright
 > full-game e2e + Lighthouse a11y gates (`@chess-platform/web`), an AI
-> orchestration layer (`@chess-platform/ai-orchestrator`), nine AI features
-> (`@chess-platform/ai-features`), a tournament system with round-robin,
-> Swiss, and Arena formats plus live broadcast
+> orchestration layer (`@chess-platform/ai-orchestrator`), AI features
+> including coaching, move explanations, puzzle generation, opening exploration,
+> endgame training, and tournament commentary (`@chess-platform/ai-features`), a
+> tournament system with round-robin, Swiss, and Arena formats plus live broadcast
 > (`@chess-platform/tournament`), and a deployable stack: one-command
 > `docker compose up` plus a Helm chart validated in CI.
 > See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what is built vs. planned.
@@ -41,7 +43,7 @@ chess-platform/
 │   ├── realtime-gateway/   # ✅ WebSocket rooms, presence, authoritative fanout, resume
 │   ├── persistence/        # ✅ Durable data: event store, migrations, repositories, Glicko-2
 │   ├── api/                # ✅ Stateless REST + identity service, published OpenAPI 3.1
-│   ├── engine/             # ✅ Stockfish-backed analysis engine: eval, best lines, UCI bridge
+│   ├── engine/             # ✅ UCI engine bridge & analysis orchestrator: Stockfish/Fairy-Stockfish, pools, scheduling
 │   ├── web/                # ✅ Web frontend: lobby, board UI, live game play, PWA, a11y
 │   ├── e2e-harness/        # ✅ In-process backend harness for Playwright acceptance
 │   ├── tournament/         # ✅ Round-robin, Swiss, and Arena tournament domain
@@ -54,7 +56,7 @@ chess-platform/
 │   ├── learning/           # ✅ Courses, lessons, steps, and progress
 │   ├── search/             # ✅ Keyword, semantic, and hybrid search domain
 │   ├── ai-orchestrator/    # ✅ AI provider routing, failover, caching, grounding
-│   └── ai-features/        # ✅ Coach, puzzles, explanations, commentator (9 features)
+│   └── ai-features/        # ✅ AI capabilities: coach, puzzles, explanations, commentator, opening & endgame study
 ├── docs/
 │   ├── ARCHITECTURE.md     # Full system design (services, data, real-time, AI, security)
 │   ├── DATABASE.md         # Approved database architecture (M4 gate)
@@ -77,8 +79,9 @@ A dependency-free, fully-typed chess engine.
 - FEN parse/serialize (incl. Crazyhouse pockets), UCI + SAN, check / checkmate /
   stalemate / draw detection, and variant win conditions.
 - Immutable `Position` API — playing a move returns a new position.
-- **Correctness proven by `perft`** against the published reference node counts
-  (start position, Kiwipete, and three EPD edge-case positions).
+- **Correctness proven by `perft`** test suites against published reference node
+  counts for standard chess (start position, Kiwipete, edge cases), Chess960,
+  and supported variants.
 
 ### Quick start
 
@@ -164,20 +167,25 @@ documented adapter seams (`transport.ts`, `pubsub.ts`).
   restored) and asks for every move it missed since `lastPly`.
 - **Latency compensation.** `ping`/`pong` carry a server timestamp; clocks stay
   authoritative on the server and clients interpolate locally.
-- The package suite includes reconnection integration coverage and a fanout
-  load test targeting **p99 < 50ms** while broadcasting to 5,000 active
-  subscribers with 50,000 idle connections registered.
+- The package suite includes reconnection integration coverage and an
+  in-process fanout benchmark validating algorithmic scaling (**p99 < 50ms**
+  broadcast across 5,000 active subscribers with 50,000 idle connections
+  registered in memory).
 
 ```ts
 import {
   GameAuthority, RealtimeGateway, InMemoryPubSub, InMemoryConnection,
+  type TokenVerifier,
 } from '@chess-platform/realtime-gateway';
 
 const pubsub = new InMemoryPubSub();
 const authority = new GameAuthority(pubsub);
-const gateway = new RealtimeGateway(authority, pubsub, { tokenVerifier });
+const tokenVerifier: TokenVerifier = {
+  verify: async (token) => (token === 'token-alice' ? 'alice' : null),
+};
+const gateway = new RealtimeGateway(authority, pubsub, tokenVerifier);
 
-authority.createGame({
+await authority.createGame({
   gameId: 'g1',
   timeControl: { initialMs: 180_000, incrementMs: 2_000, delayMs: 0, kind: 'increment' },
   players: { white: 'alice', black: 'bob' },
@@ -227,10 +235,11 @@ The stateless REST + identity service, built on Node's `http` module with a
 typed router and dependency injection — no web framework, no third-party runtime
 dependency at the root entry.
 
-- **Identity:** a `PasswordHasher` abstraction with a built-in **scrypt** default
-  (argon2id/KMS are drop-in replacements — the stored hash is self-describing),
-  **HMAC-SHA256 access tokens** verified with no database round-trip, and
-  **opaque, single-use refresh tokens** with rotation and theft (reuse) detection.
+- **Identity & security:** a `PasswordHasher` abstraction with a built-in **scrypt**
+  default (argon2id/KMS are drop-in replacements — the stored hash is self-describing),
+  stateless **HMAC-SHA256 access tokens**, **opaque single-use refresh tokens** with
+  rotation and reuse detection, **WebAuthn passkeys**, session visibility and
+  revocation, password reset, and email verification.
 - **RBAC** (`user`/`coach`/`tournament_director`/`moderator`/`admin`) enforced
   declaratively per route.
 - **Resources:** identity and sessions, profiles and ratings, seeks and games,
@@ -255,20 +264,27 @@ contract and the in-memory (no-database) quick start.
 
 ## `@chess-platform/engine`
 
-A Stockfish-backed analysis engine that bridges the UCI protocol to the
-platform. It provides position evaluation, best-line search, and multi-PV
-analysis through a typed API, with a managed child-process bridge to the
-Stockfish binary.
+A provider-agnostic chess engine bridge and orchestrator that connects the UCI
+protocol to the platform. It provides position evaluation, best-line analysis,
+and bot play through a typed provider interface, routing requests across engine
+pools for standard chess (Stockfish) and variants (Fairy-Stockfish).
 
-- **UCI bridge:** spawns and controls a Stockfish process, handles `position`,
-  `go`, and `stop` commands with timeout support.
-- **Evaluation API:** typed `evaluate(position, depth?)` and
-  `bestLines(position, { multiPv, depth })` returning scores and principal
-  variations.
-- **Adapter seam:** `InMemoryEngine` for tests/dev, `StockfishEngine` for
-  production.
+- **Provider abstraction:** `AnalysisProvider` is the caller-facing contract,
+  offering `analyze(request)` for position evaluation and multi-PV lines,
+  `play(request)` for bot move selection with target strength, and
+  `capabilitiesFor(variant)` for capability discovery.
+- **Engine management & pools:** `EngineManager` routes across per-plugin
+  `EnginePool` instances with priority scheduling (`JobPriority`: bot moves, live
+  analysis, batch, background), circuit breakers, and worker health tracking.
+- **Transport seams:** `EngineTransport` isolates process I/O —
+  `FakeEngineTransport` for hermetic testing without native binaries, and
+  `ChildProcessTransport` for managing native engine subprocesses.
+- **Production composition:** `createEngineManager()` configures native engine
+  processes from environment variables (`STOCKFISH_PATH`, `FAIRY_STOCKFISH_PATH`)
+  with lazy worker warming.
 - The package suite covers protocol handling, scheduling, failure isolation,
-  cancellation, and engine capability routing.
+  cancellation, and capability routing. See
+  [`packages/engine/README.md`](packages/engine/README.md) for detailed architecture.
 
 ```bash
 cd packages/engine && npm install && npm run build && npm test
