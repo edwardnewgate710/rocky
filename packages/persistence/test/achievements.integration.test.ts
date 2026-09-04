@@ -32,6 +32,12 @@ describe('PgAchievementsRepository (integration)', { skip: !databaseUrl }, () =>
   /** Which seeded bot accounts this database actually had before the suite touched anything. */
   let seedBaseline: string[] = [];
 
+  /**
+   * The seeded bot handles present right now, ordered so two readings compare directly.
+   *
+   * Read twice — once in `before` for the baseline, once per cleanup — because the question is
+   * whether cleanup changed the set, not how large it is.
+   */
   const seededBotsNow = async (): Promise<string[]> => {
     const { rows } = await pool.query<{ handle: string }>(
       'SELECT handle FROM users WHERE handle = ANY($1::citext[]) ORDER BY handle',

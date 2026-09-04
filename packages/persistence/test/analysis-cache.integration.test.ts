@@ -111,12 +111,19 @@ function freshKey(overrides: Partial<AnalysisKey> = {}): AnalysisKey {
  */
 let migrated = false;
 
+/** Apply the ledger the first time only; later calls on later pools are no-ops. */
 async function ensureMigrated(pool: Pool): Promise<void> {
   if (migrated) return;
   await migrate(pool, join(process.cwd(), 'migrations'));
   migrated = true;
 }
 
+/**
+ * Run one test against a cache on the shared database, then take back the rows it wrote.
+ *
+ * The fault array is handed to the body so a test can assert on errors the cache reported rather
+ * than threw — it is collected here, outside the callback, so it survives a body that fails.
+ */
 async function withCache(
   run: (cache: PgAnalysisCache, pool: Pool, faults: AnalysisCacheFault[]) => Promise<void>,
 ): Promise<void> {
@@ -143,6 +150,12 @@ async function deleteMintedRows(pool: Pool): Promise<void> {
   ]);
 }
 
+/**
+ * The limits actually recorded for an identity, read past the cache rather than through it.
+ *
+ * Asserts exactly one row: the identity is a composite key, so two would mean the write path had
+ * inserted where it should have updated, which no assertion through the cache API would show.
+ */
 async function storedLimitsOf(pool: Pool, key: AnalysisKey): Promise<Record<string, unknown>> {
   const result = await pool.query(
     `SELECT achieved_depth, achieved_nodes, achieved_time_ms, payload_version

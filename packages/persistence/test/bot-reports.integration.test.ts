@@ -11,6 +11,12 @@ import { withSharedDatabase } from '../src/test-support/fixtures';
 const DATABASE_URL = process.env['DATABASE_URL'];
 const skip = DATABASE_URL ? false : 'DATABASE_URL not set';
 
+/**
+ * A behaviour report varying only by suspicion band.
+ *
+ * Stored as JSONB, so the point of the fixed fields is that they come back unchanged — a mapping
+ * that dropped or renamed one would pass a type check and fail here.
+ */
 function makeReport(suspicion: 'clean' | 'review' | 'high' = 'clean'): BotBehaviorReport {
   return {
     suspicion,

@@ -43,10 +43,23 @@ const FIXED_HANDLE = 'reuse-fixture';
 /** The bot accounts migration 0021 seeds. They belong to the schema, not to any suite. */
 const SEEDED_BOT_HANDLES = ['gambit-novice', 'gambit-club', 'gambit-master'];
 
+/**
+ * Bring a disposable database up to the same schema the shared one has.
+ *
+ * The same call every real suite makes on its way in, so what these tests exercise is the schema
+ * as shipped — constraints, triggers and seed rows included — rather than a convenient subset.
+ */
 async function migrated(pool: Pool): Promise<void> {
   await migrate(pool, join(process.cwd(), 'migrations'));
 }
 
+/**
+ * How many rows carry this id — 0 or 1, since it is the primary key.
+ *
+ * Counted rather than selected so an absent row is `0` instead of something falsy that an
+ * assertion could confuse with a row that exists. `-1` is unreachable: `count(*)` always returns a
+ * row, and seeing it would mean the query itself was wrong rather than the database empty.
+ */
 async function countUsers(pool: Pool, id: string): Promise<number> {
   const { rows } = await pool.query<{ n: string }>(
     'SELECT count(*)::text AS n FROM users WHERE id = $1',

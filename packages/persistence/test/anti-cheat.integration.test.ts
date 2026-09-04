@@ -25,6 +25,12 @@ const deleteReportsForGames =
     await pool.query('DELETE FROM anti_cheat_reports WHERE game_id = ANY($1::uuid[])', [[...gameIds]]);
   };
 
+/**
+ * A correlation report whose fields are internally consistent, varying only by suspicion band.
+ *
+ * The numbers matter less than that they round-trip: the report is stored as JSONB, so a field
+ * dropped or renamed by the mapping shows up as a mismatch rather than a type error.
+ */
 function makeReport(suspicion: 'clean' | 'review' | 'high' = 'clean'): PlayerCorrelationReport {
   return {
     suspicion,
