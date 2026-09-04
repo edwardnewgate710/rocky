@@ -35,6 +35,12 @@ interface OwnedState {
   readonly buckets: string[];
 }
 
+/**
+ * Take that reading from `pool`.
+ *
+ * The ordering is done in SQL rather than in JavaScript so that both readings are ordered by the
+ * same rule the database applies, instead of by whatever order rows happened to come back in.
+ */
 async function readOwnedState(pool: Pool): Promise<OwnedState> {
   const column = async (sql: string): Promise<string[]> =>
     (await pool.query<{ value: string }>(sql)).rows.map((row) => row.value);
