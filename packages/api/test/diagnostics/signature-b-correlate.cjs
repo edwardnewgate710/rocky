@@ -63,6 +63,19 @@ function fileKey(filePath) {
 }
 
 /**
+ * Detect whether a path string represents a Windows path, either because the host running the
+ * correlator is Windows, or because the path contains a Windows drive prefix (e.g. `C:/`) or UNC prefix (`//`).
+ * This ensures Windows-origin captures analyzed on non-Windows machines (e.g. CI on Linux) still apply
+ * Windows case-insensitive filesystem semantics during child log correlation.
+ *
+ * @param {string} filePath
+ * @returns {boolean}
+ */
+function isWindowsPath(filePath) {
+  return process.platform === 'win32' || /^[a-zA-Z]:(?:\/|$)/.test(filePath) || /^\/\/[^/]/.test(filePath);
+}
+
+/**
  * What an observed exit status *suggests*, keyed by the status the parent saw.
  *
  * Every code below was measured on this platform (Windows 11, Node v24.15.0) rather than assumed,
@@ -314,13 +327,15 @@ function readChildLogs(logDir) {
  */
 function matchChild(childLogs, parentFile) {
   const wanted = normalizePath(parentFile);
-  const isWin = process.platform === 'win32';
-  const wantedNorm = isWin ? wanted.toLowerCase() : wanted;
   const entries = [...childLogs.entries()];
 
   const bySuffix = entries.filter(([key]) => {
-    const keyNorm = isWin ? key.toLowerCase() : key;
-    return keyNorm === wantedNorm || keyNorm.endsWith(`/${wantedNorm}`);
+    if (isWindowsPath(key) || isWindowsPath(wanted)) {
+      const keyNorm = key.toLowerCase();
+      const wantedNorm = wanted.toLowerCase();
+      return keyNorm === wantedNorm || keyNorm.endsWith(`/${wantedNorm}`);
+    }
+    return key === wanted || key.endsWith(`/${wanted}`);
   });
   if (bySuffix.length === 1) return { child: bySuffix[0][1], ambiguous: false, candidates: 1 };
   if (bySuffix.length > 1) return { child: null, ambiguous: true, candidates: bySuffix.length };
@@ -330,10 +345,12 @@ function matchChild(childLogs, parentFile) {
   // Matching a different directory's child would be a false cross-directory attribution.
   if (!wanted.includes('/')) {
     const base = fileKey(wanted);
-    const baseNorm = isWin ? base.toLowerCase() : base;
     const byBase = entries.filter(([key]) => {
       const kBase = fileKey(key);
-      return isWin ? kBase.toLowerCase() === baseNorm : kBase === base;
+      if (isWindowsPath(key) || isWindowsPath(wanted)) {
+        return kBase.toLowerCase() === base.toLowerCase();
+      }
+      return kBase === base;
     });
     if (byBase.length === 1) return { child: byBase[0][1], ambiguous: false, candidates: 1 };
     if (byBase.length > 1) return { child: null, ambiguous: true, candidates: byBase.length };
@@ -394,6 +411,7 @@ module.exports = {
   MAX_RECORDS,
   classifyTermination,
   correlate,
+  isWindowsPath,
   matchChild,
   narrowFromChildEvidence,
   normalizePath,

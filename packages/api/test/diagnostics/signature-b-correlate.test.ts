@@ -62,6 +62,7 @@ const correlator = require(CORRELATE_PATH) as {
   readChildLogs(dir: string): Map<string, { pid: number | null; kinds: string[] }>;
   matchChild(logs: Map<string, unknown>, file: string): { child: unknown; ambiguous: boolean; candidates: number };
   normalizePath(p: string): string;
+  isWindowsPath(p: string): boolean;
 };
 
 /** A TAP block in the exact shape Node's built-in reporter emits for a file-level failure. */
@@ -803,9 +804,7 @@ test('correlator: parses TAP failure blocks with double-quoted or unquoted YAML 
   assert.equal(uqFailures[0]?.failureType, 'testCodeFailure');
 });
 
-test('correlator: path suffix matching on Windows is case-insensitive', {
-  skip: process.platform === 'win32' ? false : 'Windows NTFS path casing test',
-}, () => {
+test('correlator: path suffix matching for Windows-origin paths is case-insensitive across platforms', () => {
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-case-'));
   try {
     const lines = [
@@ -821,10 +820,22 @@ test('correlator: path suffix matching on Windows is case-insensitive', {
       logs,
     );
     assert.equal(resolved.length, 1);
-    assert.equal(resolved[0]?.child.pid, 333, 'casing difference must not prevent matching on Windows');
+    assert.equal(resolved[0]?.child.pid, 333, 'casing difference must not prevent matching for Windows-origin paths');
     assert.equal(resolved[0]?.child.logFound, true);
     assert.equal(resolved[0]?.child.ambiguous, false);
   } finally {
     fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
+test('correlator: isWindowsPath identifies Windows drive letters and UNC paths', () => {
+  assert.equal(correlator.isWindowsPath('C:/repo/test.js'), true);
+  assert.equal(correlator.isWindowsPath('d:/repo/test.js'), true);
+  assert.equal(correlator.isWindowsPath('//server/share/test.js'), true);
+  if (process.platform !== 'win32') {
+    assert.equal(correlator.isWindowsPath('/home/runner/repo/test.js'), false);
+    assert.equal(correlator.isWindowsPath('dist-test/test.js'), false);
+  } else {
+    assert.equal(correlator.isWindowsPath('/any/path'), true);
   }
 });
