@@ -59,8 +59,8 @@ parent TAP diagnostic logs and child JSONL preloads were matched and parsed:
    values to `null`.
 
 **Verification and mutation falsification.**
-- Targeted correlator suite (`signature-b-correlate.test.ts`): expanded from 23 to 38 tests
-  (36 pass, 2 skip for deliberate platform-gated checks, 0 fail).
+- Targeted correlator suite (`signature-b-correlate.test.ts`): expanded from 23 to 39 tests
+  (37 pass, 2 skip for deliberate platform-gated checks, 0 fail).
 - Mutation falsification: four targeted mutations reversing each of the four hardened behaviors were
   verified to be killed by the expanded test suite.
 - Monorepo validation: full build, lint, counts, and guard scripts pass cleanly.

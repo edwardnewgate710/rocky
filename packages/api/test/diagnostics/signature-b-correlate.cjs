@@ -254,12 +254,15 @@ function narrowFromChildEvidence(classification, childKinds) {
  * failed, so the runner falls back to `kTestCodeFailure`. Matching on the message alone would
  * report every ordinary regression as a capture and halt the pass on a false positive.
  *
+/**
  * @param {string} tapText
- * @returns {Array<{ file: string, exitCode: number | null, signal: string | null, failureType: string | null, durationMs: number | null }>}
+ * @param {{ isWindows?: boolean }} [options]
+ * @returns {Array<{ file: string, exitCode: number | null, signal: string | null, failureType: string | null, durationMs: number | null, isWindows?: boolean }>}
  */
-function parseTapFailures(tapText) {
+function parseTapFailures(tapText, options = {}) {
   const blocks = String(tapText).matchAll(/^not ok \d+ - (.+?)$\r?\n\s*---\r?\n([\s\S]*?)^\s*\.\.\.$/gm);
   const out = [];
+  const isWin = typeof options?.isWindows === 'boolean' ? options.isWindows : undefined;
   for (const [, rawName, body] of blocks) {
     if (!/^\s*error:\s*['"]?test failed['"]?\s*$/m.test(body)) continue;
     if (!/^\s*failureType:\s*['"]?testCodeFailure['"]?\s*$/m.test(body)) continue;
@@ -280,6 +283,7 @@ function parseTapFailures(tapText) {
       signal: sig === null || sig === '~' ? null : sig,
       failureType: unquote(scalar('failureType')),
       durationMs: parsedDur !== null && Number.isFinite(parsedDur) ? parsedDur : null,
+      ...(typeof isWin === 'boolean' ? { isWindows: isWin } : {}),
     });
   }
   return out;
@@ -375,9 +379,7 @@ function matchChild(childLogs, parentFile, parentIsWindows) {
 
   const bySuffix = entries.filter(([key, child]) => {
     const isWin = Boolean(child?.isWindows || isWantedWin);
-    const isRelWin = Boolean(child?.isWindows && !isWantedWin && !parentFile.includes('/') && parentFile.includes('\\'));
-    const effectiveParentNorm = isRelWin ? normalizePath(parentFile, true) : parentNorm;
-    const wantedNorm = isWin ? effectiveParentNorm.toLowerCase() : effectiveParentNorm;
+    const wantedNorm = isWin ? parentNorm.toLowerCase() : parentNorm;
     const keyNorm = isWin ? key.toLowerCase() : key;
     return keyNorm === wantedNorm || keyNorm.endsWith(`/${wantedNorm}`);
   });
@@ -391,8 +393,6 @@ function matchChild(childLogs, parentFile, parentIsWindows) {
     const base = fileKey(parentFile, isWantedWin);
     const byBase = entries.filter(([key, child]) => {
       const isWin = Boolean(child?.isWindows || isWantedWin);
-      const isRelWin = Boolean(child?.isWindows && !isWantedWin && !parentFile.includes('/') && parentFile.includes('\\'));
-      if (isRelWin) return false;
       const kBase = fileKey(key, isWin);
       if (isWin) {
         return kBase.toLowerCase() === base.toLowerCase();
@@ -422,12 +422,14 @@ function matchChild(childLogs, parentFile, parentIsWindows) {
  */
 function correlate(failures, childLogs, options = {}) {
   const defaultIsWin = typeof options?.isWindows === 'boolean' ? options.isWindows : undefined;
-  return failures.map((failure) => {
-    const file = typeof failure === 'string' ? failure : failure.file;
+  return failures.map((rawFailure) => {
+    const failure = typeof rawFailure === 'string'
+      ? { file: rawFailure, exitCode: null, signal: null, failureType: null, durationMs: null }
+      : rawFailure;
     const parentIsWin = typeof failure?.isWindows === 'boolean'
       ? failure.isWindows
       : defaultIsWin;
-    const match = matchChild(childLogs, file, parentIsWin);
+    const match = matchChild(childLogs, failure.file, parentIsWin);
     const kinds = match.child?.kinds ?? [];
     const classification = classifyTermination(failure);
     const narrowing = narrowFromChildEvidence(classification, kinds);
@@ -492,7 +494,12 @@ if (require.main === module) {
     process.stderr.write(`${usage ?? 'usage'}: signature-b-correlate.cjs --tap <report.tap> --child-logs <dir>\n`);
     process.exitCode = 2;
   } else {
-    const records = correlate(parseTapFailures(fs.readFileSync(tapPath, 'utf8')), readChildLogs(logDir));
+    const isWin = process.platform === 'win32';
+    const records = correlate(
+      parseTapFailures(fs.readFileSync(tapPath, 'utf8'), { isWindows: isWin }),
+      readChildLogs(logDir),
+      { isWindows: isWin },
+    );
     for (const record of records) process.stdout.write(`${JSON.stringify(record)}\n`);
     if (records.length === 0) process.stderr.write('no Signature B failures in this report\n');
   }

@@ -52,12 +52,13 @@ const correlator = require(CORRELATE_PATH) as {
     c: { id: string; specific: boolean },
     kinds: readonly string[],
   ): { narrowed: boolean; statement: string };
-  parseTapFailures(tap: string): Array<{
+  parseTapFailures(tap: string, options?: { isWindows?: boolean }): Array<{
     file: string;
     exitCode: number | null;
     signal: string | null;
     failureType: string | null;
     durationMs: number | null;
+    isWindows?: boolean;
   }>;
   readChildLogs(dir: string): Map<string, { pid: number | null; kinds: string[] }>;
   matchChild(logs: Map<string, unknown>, file: string, parentIsWindows?: boolean): { child: unknown; ambiguous: boolean; candidates: number };
@@ -1034,7 +1035,7 @@ test('correlator: POSIX parent path with backslash filename does not falsely mat
   }
 });
 
-test('correlator: relative backslash-delimited Windows parent path matches Windows child path', () => {
+test('correlator: relative backslash-delimited Windows parent path matches Windows child path with Windows platform context', () => {
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-relwin-parent-'));
   try {
     const lines = [
@@ -1044,15 +1045,40 @@ test('correlator: relative backslash-delimited Windows parent path matches Windo
     fs.writeFileSync(path.join(logDir, 'run-win.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
     const logs = correlator.readChildLogs(logDir);
 
-    // Parent uses backslash-delimited relative path
+    // Parent uses backslash-delimited relative path with explicit Windows platform context
     const resolved = correlator.correlate(
-      correlator.parseTapFailures(tapFailure('dist-test\\test\\foo.test.js', '1')),
+      correlator.parseTapFailures(tapFailure('dist-test\\test\\foo.test.js', '1'), { isWindows: true }),
       logs,
+      { isWindows: true },
     );
     assert.equal(resolved.length, 1);
     assert.equal(resolved[0]?.child.pid, 999, 'relative Windows backslash parent must match Windows child');
     assert.equal(resolved[0]?.child.logFound, true);
     assert.equal(resolved[0]?.child.ambiguous, false);
+  } finally {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
+test('correlator: correlates bare string failures with normalized null parent fields', () => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-string-failure-'));
+  try {
+    const lines = [
+      { kind: 'start', pid: 777, testFile: '/home/runner/repo/dist-test/test/studies-api.test.js' },
+      { kind: 'preload-installed', pid: 777, testFile: '/home/runner/repo/dist-test/test/studies-api.test.js' },
+    ];
+    fs.writeFileSync(path.join(logDir, 'run-str.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    const logs = correlator.readChildLogs(logDir);
+
+    const resolved = correlator.correlate(['dist-test/test/studies-api.test.js'], logs);
+    assert.equal(resolved.length, 1);
+    assert.equal(resolved[0]?.file, 'dist-test/test/studies-api.test.js');
+    assert.equal(resolved[0]?.parent.exitCode, null);
+    assert.equal(resolved[0]?.parent.signal, null);
+    assert.equal(resolved[0]?.parent.failureType, null);
+    assert.equal(resolved[0]?.parent.durationMs, null);
+    assert.equal(resolved[0]?.child.pid, 777);
+    assert.equal(resolved[0]?.child.logFound, true);
   } finally {
     fs.rmSync(logDir, { recursive: true, force: true });
   }
