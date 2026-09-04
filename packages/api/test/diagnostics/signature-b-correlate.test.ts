@@ -852,7 +852,7 @@ test('correlator: isWindowsPath identifies Windows drive letters and UNC paths w
   assert.equal(correlator.isWindowsPath('C:/repo/test.js'), true);
   assert.equal(correlator.isWindowsPath('C:\\repo\\test.js'), true);
   assert.equal(correlator.isWindowsPath('d:/repo/test.js'), true);
-  assert.equal(correlator.isWindowsPath('//server/share/test.js'), true);
+  assert.equal(correlator.isWindowsPath('//server/share/test.js'), false);
   assert.equal(correlator.isWindowsPath('\\\\server\\share\\test.js'), true);
   assert.equal(correlator.isWindowsPath('/home/runner/repo/test.js'), false);
   assert.equal(correlator.isWindowsPath('/home/runner/repo/weird\\name.test.js'), false);
@@ -1009,4 +1009,27 @@ test('correlator: parseTapFailures rejects non-finite exitCode and duration_ms s
   assert.equal(failures[1]?.durationMs, null);
   assert.equal(failures[2]?.exitCode, null);
   assert.equal(failures[2]?.durationMs, null);
+});
+
+test('correlator: POSIX parent path with backslash filename does not falsely match Windows child path with directory segments', () => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-posix-parent-win-child-'));
+  try {
+    // Windows child log where 'weird' is a directory and 'name.test.js' is the file
+    const lines = [
+      { kind: 'start', pid: 888, testFile: 'C:\\repo\\dist-test\\test\\weird\\name.test.js' },
+      { kind: 'preload-installed', pid: 888, testFile: 'C:\\repo\\dist-test\\test\\weird\\name.test.js' },
+    ];
+    fs.writeFileSync(path.join(logDir, 'run-win-child.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    const logs = correlator.readChildLogs(logDir);
+
+    // POSIX parent failure where 'weird\name.test.js' is a single filename in 'test/'
+    const resolved = correlator.correlate(
+      correlator.parseTapFailures(tapFailure('dist-test/test/weird\\name.test.js', '1')),
+      logs,
+    );
+    assert.equal(resolved.length, 1);
+    assert.equal(resolved[0]?.child.logFound, false, 'POSIX parent path with backslash in filename must not match Windows child directory segments');
+  } finally {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
 });

@@ -86,12 +86,12 @@ function fileKey(filePath, isWindows) {
  */
 function isWindowsPath(filePath) {
   const str = String(filePath);
-  if (str.startsWith('/') && !str.startsWith('//')) {
+  if (str.startsWith('/')) {
     return false;
   }
   return (
     /^[a-zA-Z]:(?:[/\\]|$)/.test(str) ||
-    /^(?:\\\\|\/\/)[^/\\\\]/.test(str)
+    /^\\{2}[^/\\]/.test(str)
   );
 }
 
@@ -367,14 +367,12 @@ function readChildLogs(logDir) {
  */
 function matchChild(childLogs, parentFile) {
   const isWantedWin = isWindowsPath(parentFile);
+  const parentNorm = normalizePath(parentFile, isWantedWin);
   const entries = [...childLogs.entries()];
-  const hasWindowsChild = entries.some(([, child]) => child?.isWindows);
-  const isWinContext = isWantedWin || hasWindowsChild;
-  const wanted = normalizePath(parentFile, isWinContext);
 
   const bySuffix = entries.filter(([key, child]) => {
     const isWin = Boolean(child?.isWindows || isWantedWin);
-    const wantedNorm = isWin ? normalizePath(parentFile, true).toLowerCase() : normalizePath(parentFile, false);
+    const wantedNorm = isWin ? parentNorm.toLowerCase() : parentNorm;
     const keyNorm = isWin ? key.toLowerCase() : key;
     return keyNorm === wantedNorm || keyNorm.endsWith(`/${wantedNorm}`);
   });
@@ -384,10 +382,10 @@ function matchChild(childLogs, parentFile) {
   // Basename fallback is ONLY for a parent path too short to disambiguate (i.e. bare filename with no slashes).
   // When the parent specified a directory path and bySuffix found 0 matches, that file has no child log.
   // Matching a different directory's child would be a false cross-directory attribution.
-  if (!wanted.includes('/')) {
+  if (!parentNorm.includes('/')) {
+    const base = fileKey(parentFile, isWantedWin);
     const byBase = entries.filter(([key, child]) => {
       const isWin = Boolean(child?.isWindows || isWantedWin);
-      const base = fileKey(parentFile, isWin);
       const kBase = fileKey(key, isWin);
       if (isWin) {
         return kBase.toLowerCase() === base.toLowerCase();
