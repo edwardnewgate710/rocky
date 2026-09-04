@@ -4,15 +4,16 @@
  * `ON CONFLICT DO UPDATE ... WHERE` guard — and neither can be exercised by a fake pool.
  *
  * Every test namespaces its rows with a unique fingerprint, so the file is safe to run against a
- * database shared with the other integration suites and against itself.
+ * database shared with the other integration suites and against itself — and then removes them,
+ * so it is also safe to run against a database that has already been used.
  */
-import { describe, it } from 'node:test';
+import { after, describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import type { Pool } from 'pg';
 import type { AnalysisKey, EngineResult } from '@chess-platform/engine';
-import { createPool } from '../src/pg/pool';
+import { withSharedDatabase } from '../src/test-support/fixtures';
 import { migrate } from '../src/pg/migrate';
 import { ANALYSIS_CACHE_PAYLOAD_VERSION, encodeAnalysisPayload } from '../src/analysis-cache';
 import { PgAnalysisCache, type AnalysisCacheFault } from '../src/pg/analysis-cache';
@@ -50,10 +51,48 @@ function otherLine(): EngineResult {
   };
 }
 
+/**
+ * Every fingerprint this file mints, so cleanup can remove exactly the rows they own.
+ *
+ * A unique fingerprint per test is what keeps the suites from colliding, and that was mistaken for
+ * a cleanup strategy: unique keys mean the *next* run does not fail, not that this run left
+ * nothing behind. Against a database anyone reuses, `engine_analysis_cache` grew by twenty-odd
+ * rows every time the file ran.
+ */
+const mintedFingerprints: string[] = [];
+
+/**
+ * The same fingerprints, kept for the whole file rather than drained per test.
+ *
+ * `after` uses this to check the file actually left nothing behind. Without that check the cleanup
+ * is only assumed to work: unique fingerprints mean no later run ever collides, so a cleanup that
+ * quietly stopped deleting anything would go on passing indefinitely.
+ */
+const allFingerprints: string[] = [];
+
+/** Mint a fingerprint nothing else uses, and remember it for cleanup. */
+function freshFingerprint(): string {
+  const fingerprint = `fp-${randomUUID()}`;
+  mintedFingerprints.push(fingerprint);
+  allFingerprints.push(fingerprint);
+  return fingerprint;
+}
+
+after(async () => {
+  if (!DATABASE_URL || allFingerprints.length === 0) return;
+  await withSharedDatabase({ max: 2, cleanup: async () => undefined }, async (pool) => {
+    const left = await pool.query<{ n: string }>(
+      'SELECT count(*)::text AS n FROM engine_analysis_cache WHERE fingerprint = ANY($1::text[])',
+      [allFingerprints],
+    );
+    assert.equal(left.rows[0]?.n, '0', 'every row this file wrote was removed again');
+  });
+});
+
 /** A fresh identity per test, so suites sharing one database cannot collide. */
 function freshKey(overrides: Partial<AnalysisKey> = {}): AnalysisKey {
   return {
-    fingerprint: `fp-${randomUUID()}`,
+    fingerprint: freshFingerprint(),
     fen: START_FEN,
     variant: 'standard',
     multiPv: 1,
@@ -72,27 +111,51 @@ function freshKey(overrides: Partial<AnalysisKey> = {}): AnalysisKey {
  */
 let migrated = false;
 
+/** Apply the ledger the first time only; later calls on later pools are no-ops. */
 async function ensureMigrated(pool: Pool): Promise<void> {
   if (migrated) return;
   await migrate(pool, join(process.cwd(), 'migrations'));
   migrated = true;
 }
 
+/**
+ * Run one test against a cache on the shared database, then take back the rows it wrote.
+ *
+ * The fault array is handed to the body so a test can assert on errors the cache reported rather
+ * than threw — it is collected here, outside the callback, so it survives a body that fails.
+ */
 async function withCache(
   run: (cache: PgAnalysisCache, pool: Pool, faults: AnalysisCacheFault[]) => Promise<void>,
 ): Promise<void> {
+  const faults: AnalysisCacheFault[] = [];
   // A small pool per test: these suites share a server with every other integration file, and
   // the default of ten connections each is pressure none of them needs.
-  const pool = createPool({ max: 2 });
-  const faults: AnalysisCacheFault[] = [];
-  try {
+  await withSharedDatabase({ max: 2, cleanup: deleteMintedRows }, async (pool) => {
     await ensureMigrated(pool);
     await run(new PgAnalysisCache(pool, { onError: (fault) => faults.push(fault) }), pool, faults);
-  } finally {
-    await pool.end();
-  }
+  });
 }
 
+/**
+ * Remove every row keyed by a fingerprint minted so far, then forget them.
+ *
+ * The list is drained rather than read, so a test that fails partway still hands the next one an
+ * empty ledger instead of re-deleting rows that are already gone.
+ */
+async function deleteMintedRows(pool: Pool): Promise<void> {
+  const fingerprints = mintedFingerprints.splice(0, mintedFingerprints.length);
+  if (fingerprints.length === 0) return;
+  await pool.query('DELETE FROM engine_analysis_cache WHERE fingerprint = ANY($1::text[])', [
+    fingerprints,
+  ]);
+}
+
+/**
+ * The limits actually recorded for an identity, read past the cache rather than through it.
+ *
+ * Asserts exactly one row: the identity is a composite key, so two would mean the write path had
+ * inserted where it should have updated, which no assertion through the cache API would show.
+ */
 async function storedLimitsOf(pool: Pool, key: AnalysisKey): Promise<Record<string, unknown>> {
   const result = await pool.query(
     `SELECT achieved_depth, achieved_nodes, achieved_time_ms, payload_version
@@ -191,7 +254,7 @@ describe('PgAnalysisCache identity isolation', { skip }, () => {
       const key = freshKey();
       await cache.set(key, [line(1)], { limits: { depth: 20 } });
 
-      const otherBuild = { ...key, fingerprint: `fp-${randomUUID()}` };
+      const otherBuild = { ...key, fingerprint: freshFingerprint() };
       assert.equal(await cache.get(otherBuild, { depth: 20 }), undefined);
     });
   });

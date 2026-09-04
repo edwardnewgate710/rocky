@@ -9,15 +9,33 @@ import { PostgresEventStore } from '../src/pg/event-store';
 import { PgGamesRepository, PgSeeksRepository, PgSeekAcceptor, PgGameStarter, PgUsersRepository } from '../src/pg/repositories';
 import { uuidv7 } from '../src/ids';
 import { ConcurrencyError } from '../src/errors';
+import { withTestDatabase } from '../src/test-support/database';
 
 // Integration tests need a real Postgres. They SKIP (not fail) when DATABASE_URL
 // is unset, so dependency-free suites still run everywhere (incl. CI before a DB).
 const DATABASE_URL = process.env['DATABASE_URL'];
 const skip = DATABASE_URL ? false : 'DATABASE_URL not set';
 
+/**
+ * Every test here that writes takes a disposable database of its own.
+ *
+ * This file cannot meet the obligation the other shared-database suites meet — remove what you
+ * created — because it appends to `game_events`, and that table is append-only by production
+ * trigger (`game_events_block_mutate`, migration 0001): `DELETE` raises. Cleaning up after itself
+ * would mean weakening a production safety rule to suit a test, so the honest alternative is to
+ * stop writing into a database it shares. The rows it used to leave behind were not harmless: a
+ * `games` row referencing one of its users is what made the achievements suite's cleanup abort
+ * with SQLSTATE 23503 on every reused database.
+ *
+ * Two of these tests also edit `schema_migrations` deliberately — setting a checksum the runner
+ * must reject, or marking an online index pending — which no other suite may observe. That used
+ * to rest on `--test-concurrency=1` keeping files apart. On a database nobody else can reach, it
+ * rests on nothing.
+ */
+const isolated = { connectionString: DATABASE_URL, max: 4 } as const;
+
 test('migrations apply and are idempotent', { skip }, async () => {
-  const pool = createPool();
-  try {
+  await withTestDatabase(async ({ pool }) => {
     const dir = join(process.cwd(), 'migrations');
     await migrate(pool, dir);
 
@@ -55,47 +73,39 @@ test('migrations apply and are idempotent', { skip }, async () => {
       'SELECT state FROM schema_migrations WHERE version = 23',
     );
     assert.equal(migration.rows[0]?.state, 'applied');
-  } finally {
-    await pool.end();
-  }
+  }, isolated);
 });
 
 test('the ledger is portable across checkouts but still rejects edits', { skip }, async () => {
-  const pool = createPool();
-  const dir = join(process.cwd(), 'migrations');
-  const file = '0023_community_pending_join_requests_index.sql';
-  const version = 23;
-  const canonical = migrationChecksum(readMigrationSql(dir, file));
-  /** The checksum recorded for this migration, or undefined if it has no row. */
-  const readChecksum = async (): Promise<string | undefined> =>
-    (
-      await pool.query<{ checksum: string }>(
-        'SELECT checksum FROM schema_migrations WHERE version = $1',
-        [version],
-      )
-    ).rows[0]?.checksum;
+  await withTestDatabase(async ({ pool }) => {
+    const dir = join(process.cwd(), 'migrations');
+    const file = '0023_community_pending_join_requests_index.sql';
+    const version = 23;
+    const canonical = migrationChecksum(readMigrationSql(dir, file));
+    /** The checksum recorded for this migration, or undefined if it has no row. */
+    const readChecksum = async (): Promise<string | undefined> =>
+      (
+        await pool.query<{ checksum: string }>(
+          'SELECT checksum FROM schema_migrations WHERE version = $1',
+          [version],
+        )
+      ).rows[0]?.checksum;
 
-  let ledgerMutated = false;
-  /**
-   * Overwrite this migration's recorded checksum, and remember that the ledger
-   * now needs restoring — cleanup keys off that flag so a failed write is not
-   * followed by a doomed restore that would bury the real error.
-   *
-   * This briefly leaves a checksum the runner must reject, so nothing else may
-   * migrate against the database meanwhile. The suite guarantees that with
-   * `node --test --test-concurrency=1`, which runs test files one at a time.
-   * Taking the runner's own advisory lock here instead would deadlock: migrate()
-   * acquires that same key on its own connection and would wait on this one.
-   */
-  const setChecksum = async (checksum: string): Promise<void> => {
-    await pool.query('UPDATE schema_migrations SET checksum = $2 WHERE version = $1', [
-      version,
-      checksum,
-    ]);
-    ledgerMutated = true;
-  };
+    /**
+     * Overwrite this migration's recorded checksum.
+     *
+     * This deliberately leaves a checksum the runner must reject. It used to need restoring in a
+     * `finally`, and a comment explaining that `--test-concurrency=1` was what kept any other file
+     * from migrating against the corrupted ledger meanwhile. The database is this test's own now
+     * and is dropped when it returns, so there is nothing to restore and nobody to protect.
+     */
+    const setChecksum = async (checksum: string): Promise<void> => {
+      await pool.query('UPDATE schema_migrations SET checksum = $2 WHERE version = $1', [
+        version,
+        checksum,
+      ]);
+    };
 
-  try {
     await migrate(pool, dir);
     assert.equal(await readChecksum(), canonical, 'a fresh run records the canonical checksum');
 
@@ -114,22 +124,11 @@ test('the ledger is portable across checkouts but still rejects edits', { skip }
     // An actual edit to an applied migration matches neither rendering.
     await setChecksum(createHash('sha256').update('edited migration', 'utf8').digest('hex'));
     await assert.rejects(migrate(pool, dir), /changed after being applied; history is immutable/);
-  } finally {
-    // Restore only what this test actually changed: if the first migrate() threw
-    // before schema_migrations existed, an UPDATE here would throw too and bury
-    // the real failure. Never let the restore leak the pool either — every later
-    // integration file migrates against this same database.
-    try {
-      if (ledgerMutated) await setChecksum(canonical);
-    } finally {
-      await pool.end();
-    }
-  }
+  }, isolated);
 });
 
 test('postgres event store: round-trip and optimistic concurrency', { skip }, async () => {
-  const pool = createPool();
-  try {
+  await withTestDatabase(async ({ pool }) => {
     await migrate(pool, join(process.cwd(), 'migrations'));
     const store = new PostgresEventStore(pool);
     const gameId = uuidv7();
@@ -157,11 +156,12 @@ test('postgres event store: round-trip and optimistic concurrency', { skip }, as
 
     // A second append at a stale head is rejected.
     await assert.rejects(store.append(gameId, -1, events), ConcurrencyError);
-  } finally {
-    await pool.end();
-  }
+  }, isolated);
 });
 
+// The one test in this file that writes nothing. It reads a row that cannot exist, so it needs a
+// migrated schema and nothing else — and paying for a disposable database to prove a lookup
+// returns null would buy nothing.
 test('postgres games repository treats a malformed public id as not found', { skip }, async () => {
   const pool = createPool();
   try {
@@ -174,8 +174,7 @@ test('postgres games repository treats a malformed public id as not found', { sk
 });
 
 test('postgres seek acceptance: optimistic concurrency', { skip }, async () => {
-  const pool = createPool();
-  try {
+  await withTestDatabase(async ({ pool }) => {
     await migrate(pool, join(process.cwd(), 'migrations'));
     const seeks = new PgSeeksRepository(pool);
     const acceptor = new PgSeekAcceptor(pool);
@@ -310,14 +309,11 @@ test('postgres seek acceptance: optimistic concurrency', { skip }, async () => {
       assert.equal(finalGame.rowCount, 0);
       assert.equal(finalEvents.rowCount, 0);
     }
-  } finally {
-    await pool.end();
-  }
+  }, isolated);
 });
 
 test('PgGameStarter: creates game and handles duplicate id cleanly', { skip }, async () => {
-  const pool = createPool();
-  try {
+  await withTestDatabase(async ({ pool }) => {
     await migrate(pool, join(process.cwd(), 'migrations'));
     const starter = new PgGameStarter(pool);
     const users = new PgUsersRepository(pool);
@@ -355,8 +351,6 @@ test('PgGameStarter: creates game and handles duplicate id cleanly', { skip }, a
 
     const second = await starter.start(gameId, events, gameStart);
     assert.equal(second, false, 'duplicate gameId must return false without throwing');
-  } finally {
-    await pool.end();
-  }
+  }, isolated);
 });
 
