@@ -79,7 +79,7 @@ A dependency-free, fully-typed chess engine.
 - FEN parse/serialize (incl. Crazyhouse pockets), UCI + SAN, check / checkmate /
   stalemate / draw detection, and variant win conditions.
 - Immutable `Position` API — playing a move returns a new position.
-- **Correctness proven by `perft`** test suites against published reference node
+- **Move-generation correctness validated by `perft`** test suites against published reference node
   counts for standard chess (start position, Kiwipete, edge cases), Chess960,
   and supported variants.
 
