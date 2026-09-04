@@ -7,9 +7,46 @@ import { createPool, migrate, PgAchievementsRepository } from '../src/pg/index.j
 
 const databaseUrl = process.env.DATABASE_URL;
 
+/**
+ * Every user this file creates. Cleanup removes exactly these and nothing else.
+ *
+ * This suite used to open each test with an unqualified `DELETE FROM achievement_progress` and
+ * `DELETE FROM users`, which is a claim to own the whole shared database. It does not own it:
+ * those statements destroyed rows belonging to other suites, and against a database that had
+ * already been used they failed outright. `games.white_id` and `games.black_id` are the only
+ * references to `users` without `ON DELETE CASCADE`, so one game left behind by another file made
+ * the wipe abort with SQLSTATE 23503 in `beforeEach`, before any assertion in this file ran.
+ *
+ * Deleting this suite's own user is what it actually needed: `achievement_progress` cascades from
+ * `users`, so the fixture goes with it.
+ */
+const FIXTURE_USER_IDS = ['018f3a5b-7c9d-7000-8000-000000000001'];
+
+/** The bot accounts migration 0021 seeds. They belong to the schema, not to this suite. */
+const SEEDED_BOT_HANDLES = ['gambit-novice', 'gambit-club', 'gambit-master'];
+
 describe('PgAchievementsRepository (integration)', { skip: !databaseUrl }, () => {
   let pool: Pool;
   let repo: PgAchievementsRepository;
+
+  /** Remove this suite's own rows. Safe when they are already gone, so it runs before and after. */
+  const deleteFixtures = async (): Promise<void> => {
+    await pool.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [FIXTURE_USER_IDS]);
+
+    // The second half of the contract, checked where it would be broken. The wipe this replaced
+    // did not only destroy other suites' fixtures: it took the bot accounts migration 0021 seeds,
+    // and nothing restores them — `migrate` has recorded 0021 as applied, so the database simply
+    // stays without them. Widening the delete again fails here instead of silently years later.
+    const seeded = await pool.query(
+      'SELECT 1 FROM users WHERE handle = ANY($1::citext[])',
+      [SEEDED_BOT_HANDLES],
+    );
+    assert.equal(
+      seeded.rowCount,
+      SEEDED_BOT_HANDLES.length,
+      'cleanup must leave rows this suite did not create, including the migration seed',
+    );
+  };
 
   before(async () => {
     pool = createPool({ connectionString: databaseUrl });
@@ -19,14 +56,14 @@ describe('PgAchievementsRepository (integration)', { skip: !databaseUrl }, () =>
 
   after(async () => {
     if (pool) {
+      // Leave the shared database as this suite found it, so the next run begins from the same
+      // preconditions this one did.
+      await deleteFixtures();
       await pool.end();
     }
   });
 
-  beforeEach(async () => {
-    await pool.query('DELETE FROM achievement_progress');
-    await pool.query('DELETE FROM users');
-  });
+  beforeEach(deleteFixtures);
 
   async function createTestUser(id: string, handle: string): Promise<void> {
     await pool.query(

@@ -1,0 +1,119 @@
+/**
+ * @packageDocumentation
+ * Owning your own rows in a database you share.
+ *
+ * {@link ../test-support/database!withTestDatabase} answers the other half of the same question:
+ * a suite that needs an empty or exclusive database gets a disposable one. This file is for the
+ * suites that legitimately share the database `DATABASE_URL` points at — they need a migrated
+ * schema, not a private one — and whose only obligation is to leave it as they found it.
+ *
+ * The contract those suites must meet is narrow and was not being met:
+ *
+ * - remove every row the suite created that a later run could collide with;
+ * - never remove a row the suite did not create.
+ *
+ * Both halves matter. A suite that skips the first leaves its fixed primary keys behind and the
+ * next run fails on `users_pkey` or `tournaments_pkey`. A suite that ignores the second reaches
+ * for an unqualified `DELETE FROM users`, which destroys other suites' fixtures and, once any
+ * `games` row exists, cannot even succeed — `games.white_id` and `games.black_id` are the only
+ * references to `users` without `ON DELETE CASCADE`, so the wipe aborts with SQLSTATE 23503.
+ *
+ * Test-only, like its sibling: nothing under `src/pg` imports it and no production entry point
+ * re-exports it.
+ */
+
+import type { Pool } from 'pg';
+import { createPool } from '../pg/pool';
+
+export interface SharedDatabaseOptions {
+  /** Server and database to connect to. Defaults to `DATABASE_URL`, like {@link createPool}. */
+  readonly connectionString?: string;
+  /**
+   * Pool size. These suites share a server with every other integration file, so the driver
+   * default of ten connections per suite is pressure none of them needs.
+   */
+  readonly max?: number;
+  /**
+   * Removes exactly the rows the body created, and nothing else.
+   *
+   * It runs whether the body passed or failed, so it must tolerate rows that were never created —
+   * a body that failed halfway leaves a partial fixture, and a `DELETE` that matches nothing is
+   * the correct outcome, not an error.
+   */
+  readonly cleanup: (pool: Pool) => Promise<unknown>;
+}
+
+/**
+ * Run `body` against the shared database, then remove the rows it owns.
+ *
+ * Failure precedence is the point of this helper, and it is the part that a plain `try/finally`
+ * gets wrong. A `finally` that awaits cleanup lets a cleanup rejection *replace* the assertion
+ * that actually failed, so the run reports a `DELETE` that could not run instead of the defect
+ * that made it necessary. Here the body's failure always wins, a cleanup failure is attached to
+ * it as `cause`, and cleanup failing on its own is still reported rather than swallowed — silence
+ * there would let a suite quietly stop cleaning up and reintroduce exactly this defect.
+ */
+export async function withSharedDatabase<T>(
+  options: SharedDatabaseOptions,
+  body: (pool: Pool) => Promise<T>,
+): Promise<T> {
+  // Both are safe to pass through undefined: `createPool` falls back to `DATABASE_URL`, and `pg`
+  // applies its own default pool size.
+  const pool = createPool({ connectionString: options.connectionString, max: options.max });
+
+  // `undefined` is a legal rejection value, so the flags carry whether something failed and the
+  // paired variable carries only what it failed with.
+  let bodyFailed = false;
+  let bodyError: unknown;
+  let teardownFailed = false;
+  let teardownError: unknown;
+  let result!: T;
+
+  try {
+    result = await body(pool);
+  } catch (error) {
+    bodyFailed = true;
+    bodyError = error;
+  }
+
+  try {
+    await options.cleanup(pool);
+  } catch (error) {
+    teardownFailed = true;
+    teardownError = error;
+  }
+
+  try {
+    await pool.end();
+  } catch (error) {
+    if (!teardownFailed) {
+      teardownFailed = true;
+      teardownError = error;
+    }
+  }
+
+  if (bodyFailed) {
+    if (teardownFailed && bodyError instanceof Error && bodyError.cause === undefined) {
+      bodyError.cause = teardownError;
+    }
+    throw bodyError;
+  }
+  if (teardownFailed) {
+    throw teardownError;
+  }
+  return result;
+}
+
+/**
+ * Delete these users and the rows that depend on them.
+ *
+ * Almost everything referencing `users` cascades, so deleting the user is enough — but `games`
+ * does not cascade, and a fixture that gave its users a game cannot be removed until the game is.
+ * Callers that never create games get the same answer from the second statement alone; doing both
+ * unconditionally means a caller does not have to know which of the two it is.
+ */
+export async function deleteFixtureUsers(pool: Pool, userIds: readonly string[]): Promise<void> {
+  const ids = [...userIds];
+  await pool.query('DELETE FROM games WHERE white_id = ANY($1::uuid[]) OR black_id = ANY($1::uuid[])', [ids]);
+  await pool.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [ids]);
+}

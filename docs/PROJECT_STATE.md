@@ -4,7 +4,73 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-09-03 — M15 Increment 45: PostgreSQL isolated-database teardown race._
+_Last updated: 2026-09-04 — M15 Increment 46: reused-database idempotence in the persistence suite._
+
+
+## M15 Increment 46 — the persistence suite is idempotent on a reused database
+
+The defect Increment 45 recorded and deliberately left open is closed. Against a fresh PostgreSQL 16
+database the persistence suite passed; run a second time against the *same* database it failed nine
+tests, every time, in the three families Increment 45 named. Measured here on PostgreSQL 16.14
+(`pgvector/pgvector:pg16`, matching CI) before any edit: **run 1 = 173 pass / 0 fail, run 2 on the
+same database = 164 pass / 9 fail**. CI provisions a fresh server per run, which is the only reason
+this never showed there.
+
+**One contract was being broken, in two directions.** Suites share `chess_test` because they need a
+migrated schema, not a private one, and that only works while each suite removes every row it
+created and removes nothing else. Each failure family is one half of that:
+
+| Failing tests | Where | PostgreSQL error | Why |
+|---|---|---|---|
+| 5 | `achievements.integration.test.ts` `beforeEach` | `23503` on `games_white_id_fkey` | it deleted rows it did not own |
+| 2 | `pg/identity-tokens.test.ts` | `23505` on `users_pkey` | it never removed the rows it did own |
+| 2 | `tournaments.pg.integration.test.ts` | `23505` on `tournaments_pkey`, surfaced as `VersionConflictError` | same |
+
+The achievements case is the one worth remembering. Its `beforeEach` ran an unqualified
+`DELETE FROM users`, which is a claim to own the whole database. `games.white_id` and
+`games.black_id` are the **only** references to `users` without `ON DELETE CASCADE` — verified against
+the live catalogue: thirty-one foreign keys point at `users`, twenty-nine cascade, and the two that do
+not are both on `games` — so a single game left behind by `pg.integration.test.ts` made the wipe abort
+before any assertion ran. The same statement also destroyed the bot accounts migration 0021 seeds, and
+nothing puts them back: `migrate` has already recorded 0021 as applied, so a database that had run the
+suite once was permanently missing them.
+
+**The fix is ownership, not a bigger reset.** Suites that legitimately share the database now delete
+exactly their own rows through `withSharedDatabase` in
+`packages/persistence/src/test-support/fixtures.ts` — the sibling of Increment 45's
+`withTestDatabase`, inheriting that increment's precedence rule: a cleanup failure never replaces the
+assertion that actually failed, and never disappears either.
+
+`pg.integration.test.ts` moved to disposable databases instead, because it *cannot* meet the cleanup
+half. It appends to `game_events`, which is append-only by production trigger
+(`game_events_block_mutate`), so `DELETE` raises; cleaning up after itself would have meant weakening
+a production safety rule to suit a test. Two of its tests also edit `schema_migrations` deliberately —
+that used to rest on `--test-concurrency=1` keeping other files away from a corrupted ledger, and now
+rests on nothing, because no other file can reach the database.
+
+`--test-concurrency=1` is an existing, documented invariant, not something introduced here, and it was
+never the fix: the second run failed identically with files already serialized.
+
+**Also corrected, same contract, no failure of their own:** `users-batch`, `anti-cheat`, `bot-reports`
+and `analysis-cache` wrote rows they never removed. Fresh `uuidv7()` ids meant they could not collide,
+so nothing ever failed — the tables simply grew on every run against a database anyone reuses. Unique
+keys stop the *next* run failing; they are not cleanup.
+
+**Verified.** Eight regression tests in `reused-database.integration.test.ts` pin the mechanism, each
+in its own disposable database so it can make claims about what a database contains. Acceptance is
+three consecutive runs against one PostgreSQL 16.14 database with no reset between them:
+**181 / 181 / 181, zero failures**, after which the database holds no test rows at all — only the
+three migration-seeded bot accounts — with zero leaked disposable databases and zero lingering
+backends. Falsification killed **12 of 13** mutations; the survivor is named in the PR.
+
+No production code, migration, checksum, constraint or repository conflict semantic changed.
+
+**Signature B remains UNRESOLVED**, and was observed once during this increment: a whole file
+(`learning.integration.test.ts`) failing with a bare `'test failed'`, no assertion, no stack and none
+of its own tests reported. That is the documented Signature B shape, now seen in
+`packages/persistence` rather than only `packages/api`. It did not recur across the acceptance
+sequence, and the file passes standalone against the exact database state it failed on. Nothing here
+touches it.
 
 
 ## M15 Increment 45 — PostgreSQL isolated-database teardown race
@@ -65,7 +131,9 @@ before force-dropping, because a client the callback checked out and never relea
 database. A second consecutive run against the same server fails — 12 tests on `b95065f`, 9 with
 this change — in the achievements, identity-tokens and tournaments repositories, which share
 `chess_test` rather than taking a database of their own. CI provisions a fresh server every run, so
-it has never surfaced there. Pre-existing, and out of scope for this increment.
+it has never surfaced there. Pre-existing, and out of scope for this increment. **Closed in
+Increment 46**; the finding above is left as written, because it is what was true when this
+increment shipped.
 
 **Signature B remains UNRESOLVED.** It is a separate defect and nothing here touches it.
 
