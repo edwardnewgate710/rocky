@@ -18,7 +18,6 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomInt } from 'node:crypto';
-import { join } from 'node:path';
 import type { Pool } from 'pg';
 import {
   EngineManager,
@@ -26,7 +25,7 @@ import {
   stockfishPlugin,
   type EngineResult,
 } from '@chess-platform/engine';
-import { migrate, PgAnalysisCache } from '@chess-platform/persistence/pg';
+import { migrate, migrationsDir, PgAnalysisCache } from '@chess-platform/persistence/pg';
 import { withSharedDatabase } from '@chess-platform/persistence/test-support/fixtures';
 import { createAnalysisCacheComposition } from '../src/analysis/durable-cache';
 import type { AnalysisCacheComposition } from '../src/analysis/composition';
@@ -48,12 +47,16 @@ const INFO = 'info depth 10 seldepth 12 nodes 12345 nps 50000 time 200 score cp 
 /**
  * The canonical ledger, from the package that owns it — never a schema this file invents.
  *
- * Anchored on this file's own location rather than `process.cwd()`, which several suites here still
- * use: the working directory is the package root under `npm test` and the repository root under an
- * IDE runner or a hand-written `node --test packages/api/...`, and a suite that can only find its
- * schema from one of those has swapped one hidden precondition for another.
+ * Asked for by that package rather than assembled here from `process.cwd()`, which several suites
+ * still do: the working directory is the package root under `npm test` and the repository root
+ * under an IDE runner or a hand-written `node --test packages/api/...`, and a suite that can only
+ * find its schema from one of those has swapped one hidden precondition for another. A relative
+ * path from this file would have the same shape of problem one level down, since it would have to
+ * know whether it was running as source or as the emitted `dist-test` copy. `migrationsDir` walks
+ * up from the persistence module itself, so it is right in every layout and this file has to know
+ * nothing about any of them.
  */
-const MIGRATIONS = join(__dirname, '../../../persistence/migrations');
+const MIGRATIONS = migrationsDir();
 
 /**
  * Every FEN minted so far and not yet cleaned up, which is this file's claim on the table.

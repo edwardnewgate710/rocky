@@ -82,7 +82,8 @@ check); and against a migrated database carrying a stranger's row the table is b
 was found. The child is deliberately spawned from the repository root, not from `packages/api`, so a
 working directory the suite does not control cannot decide whether its schema gets built.
 
-**Implementation.** `MIGRATIONS` resolves from the file's own location rather than `process.cwd()`;
+**Implementation.** `MIGRATIONS` asks the persistence package for the directory it ships, through
+its own `migrationsDir()`, instead of assembling a path from `process.cwd()`;
 `ensureMigrated(pool)` applies the canonical ledger once behind a file-scoped flag; every test now
 runs inside `withDatabase`, which is `withSharedDatabase({ max: 2, cleanup: deleteMintedRows })`;
 `freshFen()` records each identity before returning it, so a body that throws after a commit still
@@ -124,6 +125,21 @@ packages, 3304 tests, 3276 pass, 0 fail, 28 skipped**, with **0** suites self-sk
 `DATABASE_URL` — so the database-backed tests, which are the ones this increment touches, actually
 ran. `check:ci-parity`, `check:variant-parity`, `check:adr-claims`, `check:engine-pin-parity`,
 `check:observability` and `test:scripts` all exit 0; `git diff --check` clean.
+
+**Review findings, and what they turned out to be.** Adversarial review found four things worth
+acting on and two worth stating: the sentinel row in the ownership regression used the canonical
+`... 0 1`, which the suite's own minting could produce roughly once in two million and would then
+have deleted, so minted counters now start at a million; the lock-holding test acquired its client
+outside the `try` that guarantees a shutdown; the racing test awaited two shutdowns in sequence;
+and the TAP tally parser anchored on `$` without allowing the carriage return Windows puts before
+it. Qodo then flagged the migrations path as encoding the emitted `dist-test` layout. Its stated
+failure mode — running the TypeScript source directly — is not reachable in this repository: every
+test file, including untouched ones on `main`, fails first at ESM resolution of its extensionless
+relative imports, so Node never reaches the path. The underlying concern was right regardless, and
+the answer already existed: `migrationsDir()` walks up from the persistence module itself and was
+added in response to an earlier path-portability finding, so the file now knows nothing about any
+layout. Verified both ways round — the compiled suite passes on a fresh database run from
+`packages/api` and from the repository root.
 
 ### Known limits recorded rather than fixed
 

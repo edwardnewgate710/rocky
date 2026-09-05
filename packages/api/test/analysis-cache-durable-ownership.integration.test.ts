@@ -23,7 +23,7 @@ import { test } from 'node:test';
 import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { migrate } from '@chess-platform/persistence/pg';
+import { migrate, migrationsDir } from '@chess-platform/persistence/pg';
 import { withTestDatabase } from '@chess-platform/persistence/test-support';
 import type { Pool } from 'pg';
 
@@ -31,7 +31,8 @@ const DATABASE_URL = process.env['DATABASE_URL'];
 const skip = DATABASE_URL ? false : 'DATABASE_URL not set';
 
 const SUITE = join(__dirname, 'analysis-cache-durable.integration.test.js');
-const MIGRATIONS = join(__dirname, '../../../persistence/migrations');
+/** Resolved by the package that ships them, so it is right whatever the working directory is. */
+const MIGRATIONS = migrationsDir();
 /** Deliberately not `packages/api` — see `runSuiteAgainst`. */
 const REPO_ROOT = join(__dirname, '..', '..', '..', '..');
 
