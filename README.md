@@ -70,6 +70,10 @@ chess-platform/
 production adapters (Postgres event log, Redis pub/sub, `ws`). Deployment
 assets live under `deploy/`; see the roadmap for remaining infrastructure work.
 
+For a fresh clone, follow the [host build and test setup](docs/RUNNING.md#host-build-tests-and-live-counts).
+It covers the root workspace build and the separate gateway dependency install required by
+`npm run test:counts`.
+
 ## `@chess-platform/core`
 
 A dependency-free, fully-typed chess engine.
