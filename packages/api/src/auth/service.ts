@@ -138,6 +138,9 @@ function parseCollectedClientData(
   return { clientDataJSON, challenge: parsed.challenge };
 }
 
+/** Default grace window in milliseconds for near-simultaneous refreshes (e.g. multi-tab or network retries). */
+export const DEFAULT_REFRESH_GRACE_PERIOD_MS = 10_000;
+
 export class AuthService {
   private readonly repos: Repositories;
   private readonly hasher: PasswordHasher;
@@ -147,7 +150,7 @@ export class AuthService {
   private readonly refreshTtlSec: number;
   private readonly emailSender: EmailSender;
   private readonly webauthn: { rpId: string; origins: readonly string[] };
-
+  private readonly refreshGracePeriodMs: number;
 
   constructor(deps: {
     repos: Repositories;
@@ -158,7 +161,7 @@ export class AuthService {
     refreshTtlSec: number;
     emailSender: EmailSender;
     webauthn: { rpId: string; origins: readonly string[] };
-
+    refreshGracePeriodMs?: number;
   }) {
     this.repos = deps.repos;
     this.hasher = deps.hasher;
@@ -168,7 +171,7 @@ export class AuthService {
     this.refreshTtlSec = deps.refreshTtlSec;
     this.emailSender = deps.emailSender;
     this.webauthn = deps.webauthn;
-
+    this.refreshGracePeriodMs = deps.refreshGracePeriodMs ?? DEFAULT_REFRESH_GRACE_PERIOD_MS;
   }
 
   /** Create an account, grant the base `user` role, and start a session. */
@@ -251,6 +254,7 @@ export class AuthService {
     session: SessionRow,
     now: number,
     meta: RequestMeta,
+    isConcurrentRotation = false,
   ): Promise<never> {
     const sessions = await this.repos.sessions.listForUser(session.userId);
     // The whole descending chain, not just the direct successor: after two refreshes the successor
@@ -259,9 +263,13 @@ export class AuthService {
     const rotatedAway = sessions.some(
       (s) => descendants.has(s.id) && !s.revokedAt && s.expiresAt.getTime() > now,
     );
-    if (rotatedAway) {
-      await this.revokeAllForUser(session.userId, now);
-      await this.audit(meta, session.userId, 'auth.refresh.reuse', session.id);
+    if (rotatedAway && !isConcurrentRotation) {
+      const rotatedAt = session.revokedAt ? session.revokedAt.getTime() : 0;
+      const elapsed = now - rotatedAt;
+      if (elapsed > this.refreshGracePeriodMs) {
+        await this.revokeAllForUser(session.userId, now);
+        await this.audit(meta, session.userId, 'auth.refresh.reuse', session.id);
+      }
     }
     throw HttpError.unauthorized('refresh token has been revoked');
   }
@@ -298,7 +306,7 @@ export class AuthService {
       throw HttpError.unauthorized('refresh token has expired');
     }
     if (rotation.status === 'revoked') {
-      await this.rejectRevokedRefresh(rotation.previous, now, meta);
+      await this.rejectRevokedRefresh(rotation.previous, now, meta, true);
     }
     await this.audit(meta, user.id, 'auth.refresh', session.id);
     return { user, roles, tokens: prepared.tokens };

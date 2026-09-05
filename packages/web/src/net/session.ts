@@ -72,12 +72,39 @@ export class NoSessionError extends Error {
   }
 }
 
+export interface SessionChannel {
+  postMessage(message: unknown): void;
+  onmessage: ((event: MessageEvent) => void) | null;
+  close(): void;
+}
+
+function isAuthResponse(val: unknown): val is AuthResponse {
+  if (!val || typeof val !== 'object') return false;
+  const cand = val as Record<string, unknown>;
+  return (
+    typeof cand['user'] === 'object' &&
+    cand['user'] !== null &&
+    typeof cand['tokens'] === 'object' &&
+    cand['tokens'] !== null
+  );
+}
+
+function isBrowserEnvironment(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof document !== 'undefined' &&
+    (typeof process === 'undefined' || typeof process.versions !== 'object' || !process.versions?.node)
+  );
+}
+
 export interface SessionManagerOptions {
   readonly refresh: RefreshFn;
   readonly store?: TokenStore;
   readonly now?: () => number;
   /** Treat the access token as expired this many ms before its real expiry. Default 30000. */
   readonly expiryLeewayMs?: number;
+  /** Cross-tab session sync channel. Pass null to disable or custom channel for tests. */
+  readonly channel?: SessionChannel | null;
 }
 
 export class SessionManager {
@@ -86,13 +113,41 @@ export class SessionManager {
   private readonly now: () => number;
   private readonly leewayMs: number;
   private invalidatedHandler: (() => void) | null = null;
+  private adoptedHandler: ((session: StoredSession) => void) | null = null;
   private refreshInFlight: Promise<StoredSession> | null = null;
+  private channel: SessionChannel | null = null;
 
   constructor(options: SessionManagerOptions) {
     this.store = options.store ?? new MemoryTokenStore();
     this.doRefresh = options.refresh;
     this.now = options.now ?? ((): number => Date.now());
     this.leewayMs = options.expiryLeewayMs ?? 30_000;
+
+    if (options.channel !== undefined) {
+      this.channel = options.channel;
+    } else if (isBrowserEnvironment() && typeof BroadcastChannel !== 'undefined') {
+      try {
+        this.channel = new BroadcastChannel('gambit-session-sync');
+      } catch {
+        this.channel = null;
+      }
+    }
+
+    if (this.channel) {
+      this.channel.onmessage = (event: MessageEvent): void => {
+        this.handleChannelMessage(event.data);
+      };
+    }
+  }
+
+  private handleChannelMessage(data: unknown): void {
+    if (!data || typeof data !== 'object') return;
+    const msg = data as Record<string, unknown>;
+    if (msg['type'] === 'session_adopted' && isAuthResponse(msg['auth'])) {
+      this.adopt(msg['auth'], false);
+    } else if (msg['type'] === 'session_reset') {
+      this.reset(false);
+    }
   }
 
   get current(): StoredSession | null {
@@ -104,14 +159,29 @@ export class SessionManager {
   }
 
   /** Persist tokens+user from an auth response, computing access-token expiry. */
-  adopt(auth: AuthResponse): StoredSession {
+  adopt(auth: AuthResponse, broadcast = true): StoredSession {
     const session: StoredSession = {
       user: auth.user,
       tokens: auth.tokens,
       accessTokenExpiresAt: this.now() + auth.tokens.expiresIn * 1000,
     };
     this.store.save(session);
+    if (broadcast && this.channel) {
+      try {
+        this.channel.postMessage({ type: 'session_adopted', auth });
+      } catch {
+        // Channel closed or in error state.
+      }
+    }
+    this.adoptedHandler?.(session);
     return session;
+  }
+
+  /**
+   * Register the handler for when a session is adopted (including via peer tab broadcast).
+   */
+  onAdopted(handler: (session: StoredSession) => void): void {
+    this.adoptedHandler = handler;
   }
 
   /**
@@ -127,9 +197,24 @@ export class SessionManager {
   }
 
   /** Forget the local session (does not call the server). */
-  reset(): void {
+  reset(broadcast = true): void {
     this.store.clear();
     this.refreshInFlight = null;
+    if (broadcast && this.channel) {
+      try {
+        this.channel.postMessage({ type: 'session_reset' });
+      } catch {
+        // Channel closed or in error state.
+      }
+    }
+  }
+
+  /** Permanently close the cross-tab channel. */
+  dispose(): void {
+    if (this.channel) {
+      this.channel.close();
+      this.channel = null;
+    }
   }
 
   isAccessTokenExpired(session: StoredSession | null = this.store.load()): boolean {
@@ -178,9 +263,16 @@ export class SessionManager {
         const auth = await this.doRefresh(session.tokens.refreshToken);
         return this.adopt(auth);
       } catch (error) {
-        // The session is gone and the user did not ask for that, so tell whoever is showing them as
-        // signed in. Clearing only this store would leave the header and account controls claiming a
-        // session that no request can use.
+        // If a concurrent tab refreshed and updated our store with a fresh token,
+        // adopt that valid session rather than destroying it.
+        const current = this.store.load();
+        if (
+          current &&
+          current.tokens.accessToken !== session.tokens.accessToken &&
+          !this.isAccessTokenExpired(current)
+        ) {
+          return current;
+        }
         this.reset();
         this.invalidatedHandler?.();
         throw error;

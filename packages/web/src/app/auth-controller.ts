@@ -106,6 +106,12 @@ export class AuthController {
     this.client.session.onInvalidated(() => {
       if (!this.disposed) this.clearLocalSession();
     });
+
+    this.client.session.onAdopted?.((session) => {
+      if (!this.disposed) {
+        this.adoptSession(session.user);
+      }
+    });
   }
 
   /** Current session (snapshot), or null when unauthenticated. */
@@ -146,6 +152,10 @@ export class AuthController {
           }
           return this.adoptSession(refreshed.user);
         } catch {
+          // If another concurrent tab refreshed/restored while this request was in flight:
+          if (this.client.session.isAuthenticated && this.client.session.current) {
+            return this.adoptSession(this.client.session.current.user);
+          }
           // Cookie expired or absent — clear persisted state and return null.
           this.clearPersisted();
           return null;
@@ -249,6 +259,7 @@ export class AuthController {
   /** Permanently dispose the controller. */
   dispose(): void {
     this.disposed = true;
+    this.client.session.dispose?.();
   }
 
   private adoptSession(user: { handle: string; id: string }): AuthSession {

@@ -4,6 +4,7 @@ import {
   MemoryTokenStore,
   NoSessionError,
   SessionManager,
+  type SessionChannel,
 } from '../src/net/session.js';
 import type { StoredSession } from '../src/net/session.js';
 import type { AuthResponse } from '../src/api/models.js';
@@ -203,4 +204,125 @@ test('M12 inc 2: refreshNow works without a refresh token (cookie-based)', async
   });
   await mgr.refreshNow();
   assert.equal(receivedToken, undefined, 'refresh function should receive undefined when no token');
+});
+
+interface MockChannel extends SessionChannel {
+  peer: MockChannel | null;
+}
+
+function createMockChannelPair(): [SessionChannel, SessionChannel] {
+  const ch1: MockChannel = {
+    peer: null,
+    postMessage(data: unknown): void {
+      const peer = this.peer;
+      if (peer) {
+        queueMicrotask(() => {
+          peer.onmessage?.(new MessageEvent('message', { data }));
+        });
+      }
+    },
+    onmessage: null,
+    close(): void {
+      this.peer = null;
+    },
+  };
+
+  const ch2: MockChannel = {
+    peer: null,
+    postMessage(data: unknown): void {
+      const peer = this.peer;
+      if (peer) {
+        queueMicrotask(() => {
+          peer.onmessage?.(new MessageEvent('message', { data }));
+        });
+      }
+    },
+    onmessage: null,
+    close(): void {
+      this.peer = null;
+    },
+  };
+
+  ch1.peer = ch2;
+  ch2.peer = ch1;
+  return [ch1, ch2];
+}
+
+test('two session managers synchronize adoption across tabs via channel', async () => {
+  const [ch1, ch2] = createMockChannelPair();
+  const mgr1 = new SessionManager({ refresh: async () => authResponse(), now: () => 1000, channel: ch1 });
+  const mgr2 = new SessionManager({ refresh: async () => authResponse(), now: () => 1000, channel: ch2 });
+
+  let mgr2Adopted = false;
+  mgr2.onAdopted(() => { mgr2Adopted = true; });
+
+  mgr1.adopt(authResponse('tab1-token', 'r1', 3600));
+
+  await new Promise<void>((r) => queueMicrotask(() => r()));
+
+  assert.equal(mgr2.isAuthenticated, true);
+  assert.equal(mgr2.authorizationHeader(), 'Bearer tab1-token');
+  assert.equal(mgr2Adopted, true);
+
+  mgr1.dispose();
+  mgr2.dispose();
+});
+
+test('concurrent refreshes from two tabs: loser adopts winner without destroying session', async () => {
+  const [ch1, ch2] = createMockChannelPair();
+  const mgr1 = new SessionManager({
+    refresh: async () => authResponse('winner-token', 'r-winner', 3600),
+    now: () => 1000,
+    channel: ch1,
+  });
+  const mgr2 = new SessionManager({
+    refresh: async () => {
+      // Tab 2 loses race; server returns 401 because Tab 1 refreshed first
+      throw new Error('401 Unauthorized: refresh token has been revoked');
+    },
+    now: () => 1000,
+    channel: ch2,
+  });
+
+  // Both have the initial session before expiry
+  mgr1.adopt(authResponse('old-token', 'r-old', 1), false);
+  mgr2.adopt(authResponse('old-token', 'r-old', 1), false);
+
+  let mgr2Invalidated = false;
+  mgr2.onInvalidated(() => { mgr2Invalidated = true; });
+
+  // Tab 1 wins refresh
+  const s1 = await mgr1.refreshNow();
+  assert.equal(s1.tokens.accessToken, 'winner-token');
+
+  // Let the broadcast reach tab 2
+  await new Promise<void>((r) => queueMicrotask(() => r()));
+
+  // Tab 2 now has the winner's token and is still authenticated
+  assert.equal(mgr2.isAuthenticated, true);
+  assert.equal(mgr2.current?.tokens.accessToken, 'winner-token');
+  assert.equal(mgr2Invalidated, false, 'Tab 2 must not be invalidated when Tab 1 succeeded');
+
+  mgr1.dispose();
+  mgr2.dispose();
+});
+
+test('session reset synchronizes across tabs via channel', async () => {
+  const [ch1, ch2] = createMockChannelPair();
+  const mgr1 = new SessionManager({ refresh: async () => authResponse(), now: () => 1000, channel: ch1 });
+  const mgr2 = new SessionManager({ refresh: async () => authResponse(), now: () => 1000, channel: ch2 });
+
+  mgr1.adopt(authResponse('tok', 'r', 3600), false);
+  mgr2.adopt(authResponse('tok', 'r', 3600), false);
+  assert.equal(mgr2.isAuthenticated, true);
+
+  // Tab 1 logs out / resets
+  mgr1.reset();
+
+  await new Promise<void>((r) => queueMicrotask(() => r()));
+
+  assert.equal(mgr2.isAuthenticated, false);
+
+  mgr1.dispose();
+  mgr2.dispose();
 });
