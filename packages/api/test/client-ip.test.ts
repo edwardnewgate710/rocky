@@ -137,8 +137,8 @@ describe('client-ip: resolveClientIp', () => {
       headers: { 'x-forwarded-for': '203.0.113.1' },
       socket: { remoteAddress: '10.244.0.10' },
     };
-    // 2 hops requested, but only 1 entry present: clamps to the furthest upstream entry
-    assert.equal(resolveClientIp(reqFewerHops, 2), '203.0.113.1');
+    // 2 hops requested, but only 1 entry present: insufficient hops, falls back to direct socket peer
+    assert.equal(resolveClientIp(reqFewerHops, 2), '10.244.0.10');
   });
 
   test('falls back to socket IP when candidate in header is invalid IP', () => {

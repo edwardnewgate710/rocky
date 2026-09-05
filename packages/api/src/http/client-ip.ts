@@ -101,7 +101,7 @@ export function resolveTrustProxyEnv(val: string | undefined): TrustProxy {
  *   from the socket peer.
  *   Entries to the left of the trusted boundary are discarded as untrusted client input.
  *   If the header is absent, empty, or has fewer entries than configured hops,
- *   falls back safely to the furthest upstream valid IP or the direct socket remoteAddress.
+ *   falls back safely to the direct socket remoteAddress.
  */
 export function resolveClientIp(
   req: ClientIpRequestLike,
@@ -122,9 +122,9 @@ export function resolveClientIp(
   }
 
   const entries = parseForwardedFor(req.headers['x-forwarded-for']);
-  if (entries.length > 0) {
+  if (entries.length >= hops) {
     const targetIndex = entries.length - hops;
-    const candidate = entries[targetIndex >= 0 ? targetIndex : 0];
+    const candidate = entries[targetIndex];
     const normalized = normalizeIp(candidate);
     if (normalized) {
       return normalized;
