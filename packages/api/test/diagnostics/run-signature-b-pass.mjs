@@ -217,9 +217,21 @@ function killTree(child) {
  */
 let activeChild = null;
 
+/**
+ * The report directory of the run in flight, for the same reason `activeChild` exists.
+ *
+ * An interrupt reaches this process between a child writing a report and this script reading and
+ * deleting it, and a report body carries the whole command line and every environment variable.
+ * Killing the tree without this would leave that file on disk.
+ *
+ * @type {string | null}
+ */
+let activeReportDir = null;
+
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
     if (activeChild !== null) killTree(activeChild);
+    if (activeReportDir !== null) fs.rmSync(activeReportDir, { recursive: true, force: true });
     // 128 + signal number, the conventional shell encoding for "terminated by this signal".
     process.exit(signal === 'SIGINT' ? 130 : 143);
   });
@@ -293,8 +305,16 @@ for (let run = 1; run <= maxRuns; run++) {
   const tapPath = path.join(outDir, `run${run}.tap`);
   const logDir = path.join(outDir, `child-logs-run${run}`);
   const reportDir = path.join(outDir, `reports-run${run}`);
+  // Emptied, not merely created. `mkdirSync` is happy with a directory that already holds an
+  // interrupted pass's artifacts, and this is the same staleness the correlator refuses on the child
+  // -log side: a leftover report would be counted as this run's, and since a report is attributed by
+  // the pid in its name, a reused pid would let a file that merely chose its exit status inherit a
+  // native fault it never suffered.
+  fs.rmSync(logDir, { recursive: true, force: true });
+  fs.rmSync(reportDir, { recursive: true, force: true });
   fs.mkdirSync(logDir, { recursive: true, mode: 0o700 });
   fs.mkdirSync(reportDir, { recursive: true, mode: 0o700 });
+  activeReportDir = reportDir;
 
   const freeBefore = freemem();
   const startedRun = Date.now();
@@ -330,6 +350,10 @@ for (let run = 1; run <= maxRuns; run++) {
   } catch {
     /* nothing wrote one, which is itself the observation */
   }
+  // Deleted here rather than on the way out of a branch, so that a run which is captured, a run
+  // which is clean and a run whose report could not be read all leave the same nothing behind.
+  fs.rmSync(reportDir, { recursive: true, force: true });
+  activeReportDir = null;
 
   // Attributed to the failure whose child wrote it. A run can hold several failures, and a single
   // flat list cannot say which child suffered the fault — which is the only thing the report was
@@ -383,10 +407,6 @@ for (let run = 1; run <= maxRuns; run++) {
     // suite printed, so keeping it past the normalised record retains arbitrary test output for no
     // diagnostic gain; the child logs stay, being enumerated lifecycle events.
     fs.rmSync(tapPath, { force: true });
-    // Same treatment, same reason: every report name is recorded above, and a report body is a file
-    // of credentials. Windows cannot be given the POSIX mode this directory was created with, so
-    // leaving one behind would rest on ACLs this script does not control.
-    fs.rmSync(reportDir, { recursive: true, force: true });
     console.log(`\nCAPTURED on run ${run}:\n${records.map((r) => JSON.stringify(r, null, 2)).join('\n')}`);
     console.log(`\nRaw TAP discarded; the normalised record is ${path.join(outDir, 'capture.json')}.`);
     break;
@@ -394,7 +414,6 @@ for (let run = 1; run <= maxRuns; run++) {
 
   // A clean run's artifacts answer nothing and would otherwise grow without bound across the pass.
   fs.rmSync(logDir, { recursive: true, force: true });
-  fs.rmSync(reportDir, { recursive: true, force: true });
   fs.rmSync(tapPath, { force: true });
 }
 

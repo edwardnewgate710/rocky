@@ -1682,3 +1682,54 @@ test('pass runner: in a run with two failures, the report goes to the child that
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('pass runner: a reused --out cannot lend one pass a previous pass\'s diagnostic report', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-stale-report-'));
+  try {
+    // The same staleness this correlator refuses on the child-log side, on the artifact side. An
+    // interrupted pass leaves `reports-run1` behind; a later pass given the same `--out` created the
+    // directory without emptying it, so the leftover counted as this run's — and since attribution
+    // accepts any filename carrying the pid, a reused pid would let a file that merely chose its
+    // exit status inherit a native fault it never suffered.
+    const out = path.join(dir, 'out');
+    fs.mkdirSync(path.join(out, 'reports-run1'), { recursive: true });
+    fs.writeFileSync(path.join(out, 'reports-run1', 'report.19700101.000000.4242.0.001.json'), '{"stale":true}\n');
+
+    const result = runPass(['--runs', '1', '--max-minutes', '1', '--out', out, '--target', trivialTarget(dir)], dir);
+
+    assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+    const summary = JSON.parse(fs.readFileSync(path.join(out, 'summary.json'), 'utf8')) as {
+      runs: Array<{ reportFiles: number }>;
+    };
+    assert.equal(summary.runs[0]?.reportFiles, 0, 'a leftover from an earlier pass is not this run\'s evidence');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('pass runner: no diagnostic report body survives a run, whatever the run did', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-no-bodies-'));
+  try {
+    // A report body carries the whole command line and every environment variable, this suite's
+    // DATABASE_URL password included. The names are recorded; the bodies must not outlive the run
+    // that produced them, on the capture path or any other. Run both kinds and check the artifacts.
+    const clean = path.join(dir, 'clean');
+    const cleanResult = runPass(['--runs', '1', '--max-minutes', '1', '--out', clean, '--target', trivialTarget(dir)], dir);
+    assert.equal(cleanResult.status, 0, `${cleanResult.stdout}${cleanResult.stderr}`);
+
+    const failing = path.join(dir, 'fail-target.test.cjs');
+    fs.writeFileSync(failing, 'process.exit(134);\n');
+    const captured = path.join(dir, 'captured');
+    runPass(['--runs', '1', '--max-minutes', '1', '--out', captured, '--target', failing], dir);
+    assert.ok(fs.existsSync(path.join(captured, 'capture.json')), 'the failing target must be captured');
+
+    for (const artifacts of [clean, captured]) {
+      const bodies = fs
+        .readdirSync(artifacts, { recursive: true, encoding: 'utf8' })
+        .filter((entry) => entry.includes('report.') && entry.endsWith('.json'));
+      assert.deepEqual(bodies, [], `a report body survived in ${artifacts}: ${JSON.stringify(bodies)}`);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
