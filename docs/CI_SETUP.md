@@ -39,8 +39,9 @@ scripts is additionally guarded in seconds by `.github/workflows/pin-parity.yml`
   `envsubst` renders a valid nginx upstream configuration without stripping
   built-in nginx variables.
 - **postgres integration (`postgres-integration`)** — runs the `DATABASE_URL`-gated
-  persistence tests (event store + repositories) and API concurrency control
-  tests against a real PostgreSQL 16 service container with `pgvector`.
+  persistence tests (event store + repositories) and API Postgres integration
+  tests (concurrency and security controls) against a real PostgreSQL 16
+  service container with `pgvector`.
 - **analysis smoke (`analysis-smoke`)** — validates real engine boundaries and
   durable analysis caching by testing against pinned, checksummed Stockfish 16
   and Fairy-Stockfish 14 binaries alongside a real PostgreSQL service container.
