@@ -1,5 +1,7 @@
 # Gambit — Project State (Engineering Handover)
 
+> Product/identity handover: [Rookzen — owner decisions and complete research archive (Arabic)](PRODUCT_BRAND_CONTEXT_AR.md). This is the product context companion to the engineering state below; it does not imply the local branding changes have shipped.
+
 > Living handover document. Anyone (human or AI) joining the project should be able
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.

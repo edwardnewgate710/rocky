@@ -1,5 +1,7 @@
 # Gambit — an open-source chess platform
 
+> **Product and brand context:** [Rookzen decision record and complete research archive (Arabic)](docs/PRODUCT_BRAND_CONTEXT_AR.md). Captures the owner's current direction, provisional identity, rejected alternatives, and the distinction between local implementation and shipped work.
+
 An ambitious, AGPL-licensed chess platform targeting feature parity with
 Lichess and Chess.com, plus a first-class AI layer. This repository is built
 **milestone by milestone**, and every milestone ships real, tested, typed code —
