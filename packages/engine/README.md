@@ -24,7 +24,7 @@ EngineTransport       the only I/O seam (native subprocess in prod, fake in test
 ```
 
 Pluggable seams: `EnginePlugin` (register engines), `AnalysisCache` (in-process LRU by
-default; Redis/Postgres are future drop-ins), `EngineTransport`, `FenValidator`, `Clock`.
+default; persistent backends like PostgreSQL implement this interface), `EngineTransport`, `FenValidator`, `Clock`.
 
 ## Key properties
 
@@ -71,5 +71,10 @@ npm test          # tsc -p tsconfig.test.json && node --test dist-test/test/
 npm run lint      # tsc --noEmit
 ```
 
-The test suite (51 tests) is hermetic. A real-engine "golden" test is env-gated and lands
-with the deployable service (M14), along with distributed workers and authority wiring.
+The package test suite is hermetic, exercising the full stack using `FakeEngineTransport`
+and injectable clocks without requiring native engine binaries.
+
+Real-engine integration is tested via environment-gated smoke tests in CI (under
+`@chess-platform/api` with pinned Stockfish and Fairy-Stockfish binaries against a real database).
+In production runtime wiring, the engine bridge powers bot play in the gateway and analysis
+endpoints in the API. Distributed remote engine workers remain deferred.

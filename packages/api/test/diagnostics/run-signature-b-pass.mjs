@@ -312,7 +312,12 @@ for (let run = 1; run <= maxRuns; run++) {
   if (collectionError === null && result.timedOut) collectionError = 'run exceeded the wall-clock ceiling';
   if (collectionError === null) {
     try {
-      records = correlate(parseTapFailures(fs.readFileSync(tapPath, 'utf8')), readChildLogs(logDir));
+      const isWin = process.platform === 'win32';
+      records = correlate(
+        parseTapFailures(fs.readFileSync(tapPath, 'utf8'), { isWindows: isWin }),
+        readChildLogs(logDir),
+        { isWindows: isWin },
+      );
     } catch (error) {
       collectionError = `${error.name}: ${error.message}`;
     }

@@ -40,26 +40,59 @@ const path = require('node:path');
 const MAX_RECORDS = 200;
 
 /**
- * A path with both separators normalised to `/`, so a capture taken on one platform can be read on
- * another. `path.basename` and `path.normalize` use only the host's separator, so on Linux they
- * return a Windows path unchanged and every comparison against it silently fails.
+ * A path with separators normalised to `/`. For Windows paths (identified by drive letter, UNC,
+ * or explicit flag/metadata), backslashes are directory separators and are converted to `/`.
+ * For POSIX paths, backslashes are valid filename characters and are preserved to avoid
+ * splitting a single filename into multiple path segments.
  *
  * @param {string} filePath
+ * @param {boolean} [isWindows]
  * @returns {string}
  */
-function normalizePath(filePath) {
-  return String(filePath).replace(/\\/g, '/').replace(/^\.\//, '');
+function normalizePath(filePath, isWindows) {
+  const str = String(filePath);
+  const win = isWindows !== undefined ? isWindows : isWindowsPath(str);
+  if (win) {
+    return str.replace(/\\/g, '/').replace(/^\.\//, '');
+  }
+  return str.replace(/^\.\//, '');
 }
 
 /**
  * Last path segment, platform-independently.
  *
  * @param {string} filePath
+ * @param {boolean} [isWindows]
  * @returns {string}
  */
-function fileKey(filePath) {
-  const segments = normalizePath(filePath).split('/');
+function fileKey(filePath, isWindows) {
+  const segments = normalizePath(filePath, isWindows).split('/');
   return segments[segments.length - 1] ?? '';
+}
+
+/**
+ * Detect whether a path string represents a Windows path based strictly on unambiguous
+ * Windows path syntax: a Windows drive prefix (e.g. `C:/` or `C:\`) or a UNC prefix (`//` or `\\`).
+ * Analyzer host platform (`process.platform`) is deliberately omitted so that POSIX captures
+ * analyzed on Windows preserve case-sensitivity, and Windows captures analyzed on Linux
+ * apply case-insensitive matching.
+ *
+ * Backslash alone is NOT treated as proof of Windows origin because POSIX permits backslashes
+ * in filenames. A path starting with a single slash is an absolute POSIX path and is never Windows.
+ * For relative paths, Windows origin is determined via child-log capture metadata or explicit markers.
+ *
+ * @param {string} filePath
+ * @returns {boolean}
+ */
+function isWindowsPath(filePath) {
+  const str = String(filePath);
+  if (str.startsWith('/')) {
+    return false;
+  }
+  return (
+    /^[a-zA-Z]:(?:[/\\]|$)/.test(str) ||
+    /^\\{2}[^/\\]/.test(str)
+  );
 }
 
 /**
@@ -123,16 +156,17 @@ function classifyTermination({ exitCode, signal }) {
       specific: false,
     };
   }
-  const known = EXIT_CODE_TABLE.find((entry) => entry.code === exitCode);
+  const unsigned = typeof exitCode === 'number' ? (exitCode >>> 0) : null;
+  const known = EXIT_CODE_TABLE.find((entry) => entry.code === exitCode || (unsigned !== null && entry.code === unsigned));
   if (known) return { id: known.id, meaning: known.meaning, specific: known.specific };
-  if (typeof exitCode === 'number' && exitCode >= 0xc0000000) {
+  if (unsigned !== null && unsigned >= 0xc0000000) {
     // Membership of the range is not a finding. A native fault produces a value here, but so does a
     // console CTRL+C (`STATUS_CONTROL_C_EXIT`, in the table above), and an external TerminateProcess
     // can pass any of them deliberately. An unmeasured value in the range therefore narrows the
     // shape of the answer without naming a mechanism, and must not be reported as though it had.
     return {
       id: 'ntstatus-unmeasured',
-      meaning: `exit code ${exitCode} (0x${exitCode.toString(16)}) is an NTSTATUS value this table does not cover; a native fault is one candidate, but the range also carries non-fault statuses such as STATUS_CONTROL_C_EXIT, so the number alone names no mechanism`,
+      meaning: `exit code ${exitCode} (0x${unsigned.toString(16)}) is an NTSTATUS value this table does not cover; a native fault is one candidate, but the range also carries non-fault statuses such as STATUS_CONTROL_C_EXIT, so the number alone names no mechanism`,
       specific: false,
     };
   }
@@ -220,29 +254,36 @@ function narrowFromChildEvidence(classification, childKinds) {
  * failed, so the runner falls back to `kTestCodeFailure`. Matching on the message alone would
  * report every ordinary regression as a capture and halt the pass on a false positive.
  *
+/**
  * @param {string} tapText
- * @returns {Array<{ file: string, exitCode: number | null, signal: string | null, failureType: string | null, durationMs: number | null }>}
+ * @param {{ isWindows?: boolean }} [options]
+ * @returns {Array<{ file: string, exitCode: number | null, signal: string | null, failureType: string | null, durationMs: number | null, isWindows?: boolean }>}
  */
-function parseTapFailures(tapText) {
+function parseTapFailures(tapText, options = {}) {
   const blocks = String(tapText).matchAll(/^not ok \d+ - (.+?)$\r?\n\s*---\r?\n([\s\S]*?)^\s*\.\.\.$/gm);
   const out = [];
+  const isWin = typeof options?.isWindows === 'boolean' ? options.isWindows : undefined;
   for (const [, rawName, body] of blocks) {
-    if (!/^\s*error: 'test failed'\s*$/m.test(body)) continue;
-    if (!/^\s*failureType: 'testCodeFailure'\s*$/m.test(body)) continue;
+    if (!/^\s*error:\s*['"]?test failed['"]?\s*$/m.test(body)) continue;
+    if (!/^\s*failureType:\s*['"]?testCodeFailure['"]?\s*$/m.test(body)) continue;
     if (out.length >= MAX_RECORDS) break;
     const scalar = (key) => {
-      const found = new RegExp(`^\\s*${key}: (.+)$`, 'm').exec(body);
+      const found = new RegExp(`^\\s*${key}:\\s*(.+)$`, 'm').exec(body);
       return found ? found[1].trim() : null;
     };
-    const exit = scalar('exitCode');
-    const sig = scalar('signal');
-    const dur = scalar('duration_ms');
+    const unquote = (s) => (s === null || s === undefined ? null : s.replace(/^['"]|['"]$/g, ''));
+    const exit = unquote(scalar('exitCode'));
+    const sig = unquote(scalar('signal'));
+    const dur = unquote(scalar('duration_ms'));
+    const parsedExit = exit === null || exit === '~' || exit === '' ? null : Number(exit);
+    const parsedDur = dur === null || dur === '~' || dur === '' ? null : Number(dur);
     out.push({
       file: rawName.trim().replace(/\\\\/g, '\\'),
-      exitCode: exit === null || exit === '~' ? null : Number(exit),
-      signal: sig === null || sig === '~' ? null : sig.replace(/^'|'$/g, ''),
-      failureType: scalar('failureType')?.replace(/^'|'$/g, '') ?? null,
-      durationMs: dur === null ? null : Number(dur),
+      exitCode: parsedExit !== null && Number.isFinite(parsedExit) ? parsedExit : null,
+      signal: sig === null || sig === '~' ? null : sig,
+      failureType: unquote(scalar('failureType')),
+      durationMs: parsedDur !== null && Number.isFinite(parsedDur) ? parsedDur : null,
+      ...(typeof isWin === 'boolean' ? { isWindows: isWin } : {}),
     });
   }
   return out;
@@ -284,12 +325,29 @@ function readChildLogs(logDir) {
         continue;
       }
       if (typeof record.testFile !== 'string' || record.testFile === '') continue;
+      const isWin = typeof record.isWindows === 'boolean'
+        ? record.isWindows
+        : (typeof record.platform === 'string'
+          ? record.platform === 'win32'
+          : isWindowsPath(record.testFile));
       // Keyed on the child's whole path, not its basename. A suite run spans directories, and
       // `foo/a.test.js` and `bar/a.test.js` are different files whose events must never be merged.
-      const key = normalizePath(record.testFile);
-      const existing = byFile.get(key) ?? { pid: null, kinds: [] };
+      const normalized = normalizePath(record.testFile, isWin);
+      let key = normalized;
+      if (isWin) {
+        const lower = normalized.toLowerCase();
+        for (const existingKey of byFile.keys()) {
+          const entry = byFile.get(existingKey);
+          if (entry?.isWindows && existingKey.toLowerCase() === lower) {
+            key = existingKey;
+            break;
+          }
+        }
+      }
+      const existing = byFile.get(key) ?? { pid: null, kinds: [], isWindows: false };
       existing.pid = typeof record.pid === 'number' ? record.pid : existing.pid;
       if (typeof record.kind === 'string') existing.kinds.push(record.kind);
+      if (isWin) existing.isWindows = true;
       byFile.set(key, existing);
     }
   }
@@ -309,20 +367,41 @@ function readChildLogs(logDir) {
  *
  * @param {ReturnType<typeof readChildLogs>} childLogs
  * @param {string} parentFile
+ * @param {boolean} [parentIsWindows]
  * @returns {{ child: { pid: number | null, kinds: string[] } | null, ambiguous: boolean, candidates: number }}
  */
-function matchChild(childLogs, parentFile) {
-  const wanted = normalizePath(parentFile);
+function matchChild(childLogs, parentFile, parentIsWindows) {
+  const isWantedWin = typeof parentIsWindows === 'boolean'
+    ? parentIsWindows
+    : isWindowsPath(parentFile);
+  const parentNorm = normalizePath(parentFile, isWantedWin);
   const entries = [...childLogs.entries()];
 
-  const bySuffix = entries.filter(([key]) => key === wanted || key.endsWith(`/${wanted}`));
+  const bySuffix = entries.filter(([key, child]) => {
+    const isWin = Boolean(child?.isWindows || isWantedWin);
+    const wantedNorm = isWin ? parentNorm.toLowerCase() : parentNorm;
+    const keyNorm = isWin ? key.toLowerCase() : key;
+    return keyNorm === wantedNorm || keyNorm.endsWith(`/${wantedNorm}`);
+  });
   if (bySuffix.length === 1) return { child: bySuffix[0][1], ambiguous: false, candidates: 1 };
   if (bySuffix.length > 1) return { child: null, ambiguous: true, candidates: bySuffix.length };
 
-  const base = fileKey(wanted);
-  const byBase = entries.filter(([key]) => fileKey(key) === base);
-  if (byBase.length === 1) return { child: byBase[0][1], ambiguous: false, candidates: 1 };
-  if (byBase.length > 1) return { child: null, ambiguous: true, candidates: byBase.length };
+  // Basename fallback is ONLY for a parent path too short to disambiguate (i.e. bare filename with no slashes).
+  // When the parent specified a directory path and bySuffix found 0 matches, that file has no child log.
+  // Matching a different directory's child would be a false cross-directory attribution.
+  if (!parentNorm.includes('/')) {
+    const base = fileKey(parentFile, isWantedWin);
+    const byBase = entries.filter(([key, child]) => {
+      const isWin = Boolean(child?.isWindows || isWantedWin);
+      const kBase = fileKey(key, isWin);
+      if (isWin) {
+        return kBase.toLowerCase() === base.toLowerCase();
+      }
+      return kBase === base;
+    });
+    if (byBase.length === 1) return { child: byBase[0][1], ambiguous: false, candidates: 1 };
+    if (byBase.length > 1) return { child: null, ambiguous: true, candidates: byBase.length };
+  }
 
   return { child: null, ambiguous: false, candidates: 0 };
 }
@@ -331,20 +410,26 @@ function matchChild(childLogs, parentFile) {
  * Join parent-observed failures to child-observed lifecycle evidence, one record per failure.
  *
  * Matching is by whole normalised path, not by basename. The parent names the file as the runner
- * received it while the child records its own resolved `argv[1]`, so the child's key is the longer
- * path and the parent's name is a suffix of it; a basename comparison is the fallback, not the rule.
- * Basenames are *not* unique across the suite's compiled output, which is why a name matching more
- * than one child is reported `ambiguous` rather than resolved to whichever came first. A failure
- * with no matching child log is reported with `child.logFound: false` rather than being dropped,
- * because "the child never wrote a log" is itself evidence.
+ * received it while the child records its own resolved `argv[1]`, an absolute one. Matching is therefore
+ * by path *suffix* rather than equality, which identifies `dist-test/test/foo/a.test.js` uniquely even
+ * when `bar/a.test.js` exists. Basename is only a fallback for a parent path too short to disambiguate,
+ * and when either step finds more than one candidate the answer is reported ambiguous rather than resolved.
  *
  * @param {ReturnType<typeof parseTapFailures>} failures
  * @param {ReturnType<typeof readChildLogs>} childLogs
+ * @param {{ isWindows?: boolean }} [options]
  * @returns {Array<object>}
  */
-function correlate(failures, childLogs) {
-  return failures.map((failure) => {
-    const match = matchChild(childLogs, failure.file);
+function correlate(failures, childLogs, options = {}) {
+  const defaultIsWin = typeof options?.isWindows === 'boolean' ? options.isWindows : undefined;
+  return failures.map((rawFailure) => {
+    const failure = typeof rawFailure === 'string'
+      ? { file: rawFailure, exitCode: null, signal: null, failureType: null, durationMs: null }
+      : rawFailure;
+    const parentIsWin = typeof failure?.isWindows === 'boolean'
+      ? failure.isWindows
+      : defaultIsWin;
+    const match = matchChild(childLogs, failure.file, parentIsWin);
     const kinds = match.child?.kinds ?? [];
     const classification = classifyTermination(failure);
     const narrowing = narrowFromChildEvidence(classification, kinds);
@@ -379,6 +464,7 @@ module.exports = {
   MAX_RECORDS,
   classifyTermination,
   correlate,
+  isWindowsPath,
   matchChild,
   narrowFromChildEvidence,
   normalizePath,
@@ -388,7 +474,7 @@ module.exports = {
 
 if (require.main === module) {
   const args = process.argv.slice(2);
-  const known = new Set(['--tap', '--child-logs']);
+  const known = new Set(['--tap', '--child-logs', '--windows', '--posix']);
   let usage = null;
   // `--tap --child-logs dir` must be a usage error, not a request to read a file called
   // "--child-logs". An option that swallows the next option produces a confident wrong answer.
@@ -405,10 +491,23 @@ if (require.main === module) {
   const tapPath = valueOf('--tap');
   const logDir = valueOf('--child-logs');
   if (usage !== null || tapPath === null || logDir === null) {
-    process.stderr.write(`${usage ?? 'usage'}: signature-b-correlate.cjs --tap <report.tap> --child-logs <dir>\n`);
+    process.stderr.write(`${usage ?? 'usage'}: signature-b-correlate.cjs --tap <report.tap> --child-logs <dir> [--windows|--posix]\n`);
     process.exitCode = 2;
   } else {
-    const records = correlate(parseTapFailures(fs.readFileSync(tapPath, 'utf8')), readChildLogs(logDir));
+    const isWindowsExplicit = args.includes('--windows') ? true : (args.includes('--posix') ? false : undefined);
+    const childLogs = readChildLogs(logDir);
+    // Derive capture platform only when child logs are uniformly Windows or POSIX; never let mixed or stale logs force Windows semantics
+    const children = [...childLogs.values()];
+    const allWindows = children.length > 0 && children.every((child) => child?.isWindows);
+    const allPosix = children.length > 0 && children.every((child) => !child?.isWindows);
+    const isWin = typeof isWindowsExplicit === 'boolean'
+      ? isWindowsExplicit
+      : (allWindows ? true : (allPosix ? false : undefined));
+    const records = correlate(
+      parseTapFailures(fs.readFileSync(tapPath, 'utf8'), { isWindows: isWin }),
+      childLogs,
+      { isWindows: isWin },
+    );
     for (const record of records) process.stdout.write(`${JSON.stringify(record)}\n`);
     if (records.length === 0) process.stderr.write('no Signature B failures in this report\n');
   }

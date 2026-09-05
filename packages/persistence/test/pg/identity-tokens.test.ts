@@ -2,23 +2,34 @@ import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { randomBytes, createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { createPool } from '../../src/pg/pool';
 import { migrate } from '../../src/pg/migrate';
 import { PgIdentityTokensRepository, PgUsersRepository } from '../../src/pg/repositories';
+import { deleteFixtureUsers, withSharedDatabase } from '../../src/test-support/fixtures';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
 const skip = DATABASE_URL ? false : 'DATABASE_URL not set';
 
+/**
+ * These ids are fixed on purpose — they keep the fixtures readable — but a fixed primary key is
+ * only safe while the suite removes it again. Neither test used to, so a second run against the
+ * same database re-inserted them and died on `users_pkey` (SQLSTATE 23505) before reaching an
+ * assertion. The tokens themselves need no cleanup of their own: `identity_tokens.user_id`
+ * cascades from `users`.
+ */
+const TOKEN_USER_ID = '01918300-0000-0000-0000-000000000000';
+const RACE_USER_ID = '01918300-0000-0000-0000-000000000001';
+
 describe('PgIdentityTokensRepository', { skip }, () => {
   it('creates and atomically consumes a token', async () => {
-    const pool = createPool();
-    try {
+    await withSharedDatabase({
+      cleanup: (pool) => deleteFixtureUsers(pool, [TOKEN_USER_ID]),
+    }, async (pool) => {
       await migrate(pool, join(process.cwd(), 'migrations'));
       const users = new PgUsersRepository(pool);
       const tokens = new PgIdentityTokensRepository(pool);
 
       const user = await users.create({
-        id: '01918300-0000-0000-0000-000000000000',
+        id: TOKEN_USER_ID,
         handle: 'tokenuser',
         email: 'tokenuser@example.com',
         emailHash: createHash('sha256').update('tokenuser@example.com').digest(),
@@ -82,19 +93,18 @@ describe('PgIdentityTokensRepository', { skip }, () => {
         tokens.consume(replacement, 'email_verify', new Date()),
       ));
       assert.equal(consumedReplacements.filter(Boolean).length, 1);
-    } finally {
-      await pool.end();
-    }
+    });
   });
 
   it('serializes email verification against replacement issuance', async () => {
-    const pool = createPool();
-    try {
+    await withSharedDatabase({
+      cleanup: (pool) => deleteFixtureUsers(pool, [RACE_USER_ID]),
+    }, async (pool) => {
       await migrate(pool, join(process.cwd(), 'migrations'));
       const users = new PgUsersRepository(pool);
       const tokens = new PgIdentityTokensRepository(pool);
       const user = await users.create({
-        id: '01918300-0000-0000-0000-000000000001',
+        id: RACE_USER_ID,
         handle: 'verificationrace',
         email: 'verificationrace@example.com',
         emailHash: createHash('sha256').update('verificationrace@example.com').digest(),
@@ -134,8 +144,6 @@ describe('PgIdentityTokensRepository', { skip }, () => {
         userId: user.id,
         expiresAt,
       }, new Date()), null, 'verified users cannot receive another verification token');
-    } finally {
-      await pool.end();
-    }
+    });
   });
 });

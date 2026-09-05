@@ -2,14 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import type { BotBehaviorReport, StoredBotReport } from '@chess-platform/anti-cheat';
-import { createPool } from '../src/pg/pool';
+import type { Pool } from 'pg';
 import { migrate } from '../src/pg/migrate';
 import { PgBotBehaviorReportRepository } from '../src/pg/bot-reports';
 import { uuidv7 } from '../src/ids';
+import { withSharedDatabase } from '../src/test-support/fixtures';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
 const skip = DATABASE_URL ? false : 'DATABASE_URL not set';
 
+/**
+ * A behaviour report varying only by suspicion band.
+ *
+ * Stored as JSONB, so the point of the fixed fields is that they come back unchanged — a mapping
+ * that dropped or renamed one would pass a type check and fail here.
+ */
 function makeReport(suspicion: 'clean' | 'review' | 'high' = 'clean'): BotBehaviorReport {
   return {
     suspicion,
@@ -25,13 +32,24 @@ function makeReport(suspicion: 'clean' | 'review' | 'high' = 'clean'): BotBehavi
   };
 }
 
+/**
+ * Remove the reports a test wrote. `bot_reports` references nothing and the ids are freshly
+ * minted, so the leak was silent: the table simply grew on every run against a reused database.
+ */
+const deleteReportsForGames =
+  (gameIds: readonly string[]) =>
+  async (pool: Pool): Promise<void> => {
+    await pool.query('DELETE FROM bot_reports WHERE game_id = ANY($1::uuid[])', [[...gameIds]]);
+  };
+
 test('bot reports pg repository: migrate, saveBatch, listByPlayer, and upsert', { skip }, async () => {
-  const pool = createPool();
-  try {
+  const gameIds: string[] = [];
+  await withSharedDatabase({ cleanup: deleteReportsForGames(gameIds) }, async (pool) => {
     await migrate(pool, join(process.cwd(), 'migrations'));
     const repo = new PgBotBehaviorReportRepository(pool);
 
     const gameId = uuidv7();
+    gameIds.push(gameId);
     const whitePlayerId = uuidv7();
     const blackPlayerId = uuidv7();
 
@@ -78,7 +96,5 @@ test('bot reports pg repository: migrate, saveBatch, listByPlayer, and upsert', 
     const whiteStoredUpdated = await repo.listByPlayer(whitePlayerId);
     assert.equal(whiteStoredUpdated.length, 1, 'upsert replaces prior record, does not duplicate');
     assert.equal(whiteStoredUpdated[0]?.report.suspicion, 'high');
-  } finally {
-    await pool.end();
-  }
+  });
 });

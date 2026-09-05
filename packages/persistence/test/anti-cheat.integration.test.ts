@@ -2,14 +2,35 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import type { PlayerCorrelationReport, StoredPlayerReport } from '@chess-platform/anti-cheat';
-import { createPool } from '../src/pg/pool';
+import type { Pool } from 'pg';
 import { migrate } from '../src/pg/migrate';
 import { PgAntiCheatReportRepository } from '../src/pg/anti-cheat';
 import { uuidv7 } from '../src/ids';
+import { withSharedDatabase } from '../src/test-support/fixtures';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
 const skip = DATABASE_URL ? false : 'DATABASE_URL not set';
 
+/**
+ * Remove the reports a test wrote.
+ *
+ * `anti_cheat_reports` references nothing, and these tests mint fresh `uuidv7()` ids, so leaving
+ * the rows behind never collided with anything — which is exactly why it went unnoticed while the
+ * table grew on every run against a database anyone reuses. Fresh ids are not a substitute for
+ * cleaning up; they only hide the omission.
+ */
+const deleteReportsForGames =
+  (gameIds: readonly string[]) =>
+  async (pool: Pool): Promise<void> => {
+    await pool.query('DELETE FROM anti_cheat_reports WHERE game_id = ANY($1::uuid[])', [[...gameIds]]);
+  };
+
+/**
+ * A correlation report whose fields are internally consistent, varying only by suspicion band.
+ *
+ * The numbers matter less than that they round-trip: the report is stored as JSONB, so a field
+ * dropped or renamed by the mapping shows up as a mismatch rather than a type error.
+ */
 function makeReport(suspicion: 'clean' | 'review' | 'high' = 'clean'): PlayerCorrelationReport {
   return {
     suspicion,
@@ -30,12 +51,13 @@ function makeReport(suspicion: 'clean' | 'review' | 'high' = 'clean'): PlayerCor
 }
 
 test('anti-cheat reports pg repository: migrate, saveBatch, listByPlayer, and upsert', { skip }, async () => {
-  const pool = createPool();
-  try {
+  const gameIds: string[] = [];
+  await withSharedDatabase({ cleanup: deleteReportsForGames(gameIds) }, async (pool) => {
     await migrate(pool, join(process.cwd(), 'migrations'));
     const repo = new PgAntiCheatReportRepository(pool);
 
     const gameId = uuidv7();
+    gameIds.push(gameId);
     const whitePlayerId = uuidv7();
     const blackPlayerId = uuidv7();
 
@@ -82,7 +104,5 @@ test('anti-cheat reports pg repository: migrate, saveBatch, listByPlayer, and up
     const whiteStoredUpdated = await repo.listByPlayer(whitePlayerId);
     assert.equal(whiteStoredUpdated.length, 1, 'upsert replaces prior record, does not duplicate');
     assert.equal(whiteStoredUpdated[0]?.report.suspicion, 'high');
-  } finally {
-    await pool.end();
-  }
+  });
 });
