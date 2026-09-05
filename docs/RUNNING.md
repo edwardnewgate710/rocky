@@ -8,9 +8,9 @@ Postgres, a real API, a real WebSocket gateway, and the web frontend.
 
 - [Docker](https://docs.docker.com/get-docker/) with the Compose plugin (v2+)
 - Postgres and nginx run inside containers — no local install needed
-- [Node.js](https://nodejs.org/) 22+ on the host, only if you want to run
-  `scripts/smoke-test.mjs` outside a container (it uses the built-in `fetch`
-  and `WebSocket` globals)
+- [Node.js](https://nodejs.org/) 22+ on the host for dependency installation,
+  builds, tests (including `test:counts`), or `scripts/smoke-test.mjs` outside
+  containers. The smoke script uses the built-in `fetch` and `WebSocket` globals.
 
 ## Quick start
 
@@ -183,6 +183,48 @@ docker compose down          # stop containers
 docker compose down -v       # stop + delete the Postgres data volume
 ```
 
+## Host build, tests and live counts
+
+For tests outside Docker, use Node.js 22+ and run these commands **from the repository root**:
+
+```bash
+npm ci                           # root workspace dependencies, from package-lock.json
+npm run build                    # public packages/*/dist outputs, in dependency order
+npm ci --prefix services/gateway # standalone dependencies, from its own package-lock.json
+npm run test:counts              # execute and count workspace + gateway service tests
+```
+
+Root workspaces are `packages/*`. Root `npm ci` does not install `services/gateway`,
+and root `npm run build` does not compile it. The service deliberately has its own
+dependency tree and lockfile; its `file:../../packages/...` dependencies link to local
+workspace packages, whose public JavaScript and type entries point at `dist/`.
+Installing those links does not build their targets. Workspace tests compile into
+`dist-test/`, which does not replace the public `dist/` build.
+
+`test:counts` runs the workspace tests and `npm test --prefix services/gateway`.
+It does not install dependencies or run production builds. For separate checks after
+the setup above:
+
+```bash
+npm test                                # root workspace tests
+npm run lint                            # root workspace typecheck
+npm test --prefix services/gateway       # compiles and tests gateway dist-test/
+npm run build --prefix services/gateway  # compiles gateway dist/ for npm start
+```
+
+A gateway production build is not a prerequisite for its test command. Redis-backed
+tests skip when `REDIS_URL` is unset, but their static `ioredis` imports still require
+the gateway dependencies at compilation and module-loading time. Skips are reported
+separately and do not prove the Redis integration. With a test Redis instance available
+at `REDIS_URL`, `npm run test:gateway-redis` runs the gateway build and test suite.
+
+If `gateway-service: ERROR` includes `Cannot find module 'ioredis'`, run the separate
+gateway install above. Missing `@chess-platform/...` modules or type declarations on
+a fresh checkout require the root install and build as well. A root build alone cannot
+supply `ioredis`. Rerunning root `npm ci` in a prepared checkout retains gateway
+dependencies and existing build outputs, so that is not equivalent to a fresh clone.
+Docker prepares dependencies inside its images; it does not prepare host `node_modules`.
+
 ## Running the CI checks locally
 
 `npm run ci:local` runs what `.github/workflows/ci.yml` runs — build, typecheck, test, and the
@@ -190,6 +232,10 @@ check scripts — on your machine. It exists for when Actions is unavailable (an
 minutes quota, a fork without Actions, no network), and `npm run check:ci-parity` fails the build
 if the runner and the workflow ever disagree, so it stays a preview of CI rather than a second
 suite of its own.
+
+Complete the [host setup above](#host-build-tests-and-live-counts) first. The local
+runner executes builds and checks, but assumes dependencies are already installed;
+it performs neither the root install nor the separate gateway install.
 
 ```bash
 npm run ci:local --quick     # everything that needs no services
