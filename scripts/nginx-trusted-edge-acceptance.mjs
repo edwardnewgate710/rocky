@@ -19,11 +19,11 @@ import {
   NullLogger,
   InMemoryMetrics,
   NullTracer,
-} from '../../packages/api/dist/index.js';
+} from '../packages/api/dist/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const repoRoot = resolve(__dirname, '../..');
+const repoRoot = resolve(__dirname, '..');
 
 function isDockerAvailable() {
   try {

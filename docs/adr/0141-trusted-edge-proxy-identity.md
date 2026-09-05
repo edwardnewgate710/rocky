@@ -61,7 +61,7 @@ Any entries to the left of the trusted boundary are treated as untrusted user in
    - Connection closure decrements the active count and allows new connections.
    - Direct socket mode (`TRUST_PROXY=false`) ignores forwarded headers.
 3. **Real Nginx Acceptance Suite:**
-   `scripts/test/nginx-trusted-edge.acceptance.test.mjs` executes an automated integration suite against a real container running `nginxinc/nginx-unprivileged:alpine` with `docker/web/nginx.conf.template`:
+   `scripts/nginx-trusted-edge-acceptance.mjs` executes an automated integration suite against a real container running `nginxinc/nginx-unprivileged:alpine` with `docker/web/nginx.conf.template`:
    - Enforces the 20-socket WebSocket limit through real Nginx.
    - Defeats WebSocket spoofing through real Nginx.
    - Defeats API registration rate limit spoofing through real Nginx.

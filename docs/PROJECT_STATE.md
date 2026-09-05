@@ -43,7 +43,7 @@ Implemented an explicit trusted-hop proxy contract (`TRUST_PROXY`) in `packages/
    - Spoofed XFF prefixes do not bypass connection limits.
    - Connection closing decrements the active IP count.
    - Direct socket mode (`TRUST_PROXY=false`) ignores forwarded headers.
-3. **Real Nginx Acceptance Suite (`scripts/test/nginx-trusted-edge.acceptance.test.mjs`):** Runs an automated test against a live container running `nginxinc/nginx-unprivileged:alpine` with `docker/web/nginx.conf.template`:
+3. **Real Nginx Acceptance Suite (`scripts/nginx-trusted-edge-acceptance.mjs`):** Runs an automated test against a live container running `nginxinc/nginx-unprivileged:alpine` with `docker/web/nginx.conf.template`:
    - Real Nginx WebSocket admission: enforces 20-connection limit.
    - Real Nginx WebSocket spoof defense: spoofed prefixes cannot bypass connection limit.
    - Real Nginx API rate limit spoof defense: 6th registration blocked with 429.
