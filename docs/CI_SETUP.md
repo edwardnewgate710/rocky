@@ -12,8 +12,10 @@ and runs on matching pushes and pull requests targeting `main`, with a concurren
 group that cancels superseded runs on the same ref. Note that path filtering
 skips documentation-only changes (`!**/*.md`), with an explicit exception carved
 back in for `docs/adr/0121-deterministic-engine-install-in-ci.md` so that ADR
-pin modifications trigger validation; engine pin parity across Dockerfiles and
-scripts is additionally guarded in seconds by `.github/workflows/pin-parity.yml`.
+pin modifications trigger validation; engine pin parity across
+`.github/workflows/ci.yml`, `Dockerfile.api`, `Dockerfile.gateway`, and
+ADR-0121 is additionally guarded in seconds by
+[`.github/workflows/pin-parity.yml`](../.github/workflows/pin-parity.yml).
 
 ## Jobs
 
