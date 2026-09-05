@@ -17,6 +17,10 @@
     "./test-support": {
       "types": "./dist/test-support/database.d.ts",
       "default": "./dist/test-support/database.js"
+    },
+    "./test-support/fixtures": {
+      "types": "./dist/test-support/fixtures.d.ts",
+      "default": "./dist/test-support/fixtures.js"
     }
   },
   "files": [

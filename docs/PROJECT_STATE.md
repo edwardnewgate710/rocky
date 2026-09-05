@@ -4,8 +4,115 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-09-04 — M15 Increment 47: Signature B diagnostic correlator hardening._
+_Last updated: 2026-09-05 — M15 Increment 48: shared-database ownership for API pg-security integration tests._
 
+
+## M15 Increment 48 — shared-database ownership for API pg-security integration tests
+
+**Status: RESOLVED.** The defect Increment 46 recorded as out of its own scope is closed. No
+production code, migration, constraint, foreign key or repository semantic changed.
+
+**The defect: silent accumulation, not test failure.** `packages/api/test/pg-security.integration.test.ts`
+created rows in the shared database through real repositories and closed its connection pools without
+removing any of them. Because every identifier it mints is a fresh `uuidv7()`, no run ever collided
+with another, so the suite stayed green indefinitely while the database grew. Measured on PostgreSQL
+16.14 (`pgvector/pgvector:pg16`), Node v24.15.0, `pg` 8.22.0, with `DATABASE_URL` set, before any
+edit: **run 1 = all 11 tests passed and leaked 25 rows** — 4 users, 4 password credentials, 4 roles,
+4 sessions, 9 rate-limit buckets — and **run 2 against the same database passed all 11 again and
+leaked an identical further 25**. UUID uniqueness hid the problem by preventing collisions; the tests
+could not observe it because nothing in the file asserts on state it did not create.
+
+**Root cause.** One mechanism, not several: the suite creates uniquely identified shared-database
+rows and closes its pools without removing the rows it owns. Nothing in the file ever issued a
+`DELETE`. `rate_limit_buckets` is the sharpest case — no foreign key references it, so no cascade can
+ever reach those rows, and `PgRateLimiter.sweep` only evicts buckets that expired more than an hour
+ago. The only thing that removes such a row is naming it.
+
+**The ownership fix.** Each test now runs inside Increment 46's `withSharedDatabase` contract
+(`packages/persistence/src/test-support/fixtures.ts`) and names what it owns. Users are deleted by
+exact owned id, and the proven `ON DELETE CASCADE` foreign keys remove their credentials, roles and
+sessions with them — the only references to `users` that do not cascade are `games.white_id` and
+`games.black_id`, and this file creates no games. Rate-limit buckets are deleted by exact owned key.
+Identifiers are recorded *before* the statement that creates the row, so a body that throws after a
+commit still surrenders it. Explicitly not used: prefix-matched cleanup, `TRUNCATE`, broad `DELETE`,
+random-identifier workarounds, retries, conflict suppression, and serialization.
+
+**Package export.** `./test-support/fixtures` was added to the `exports` map of
+`packages/persistence/package.json` so API tests can reuse the canonical helper rather than grow a
+second, competing database-lifecycle abstraction. `packages/api` already consumed `./test-support`
+for `withTestDatabase`. No production semantics changed.
+
+**Secondary defect fixed in this increment.** In the bucket-creation race test, leased-client release
+protection started too late: the two `backendPid` reads sat between `admin.connect()` and the `try`
+whose `finally` releases the client. A failure in either read left the client checked out, and a pool
+with a client still checked out never settles `pool.end()` — verified directly, it had not resolved
+after 3s — so the file would hang instead of reporting the error that caused it. Both reads now occur
+inside the protected region.
+
+**Regression coverage.** `packages/api/test/pg-security-ownership.integration.test.ts` runs the real
+compiled suite as a child process against a disposable database and compares row *identity* before
+and after, because the defect is invisible from inside a suite whose assertions all pass on a
+polluted database. Proven RED against the pre-fix code, reporting the exact leaked-state difference
+(8 users against 4 expected; 5 credentials, 5 roles and 5 sessions against 1 each; 10 buckets against
+1), and GREEN after the fix. Sentinel rows standing in for another suite — including a bucket
+carrying the same `integration:` prefix the suite uses for its own keys — prove the cleanup is scoped
+rather than broad.
+
+**Repeated-database acceptance.** Runs A, B and C against one migrated PostgreSQL 16 database with no
+reset between them: **11/11, 11/11, 11/11**, with the database state identical to its pre-run reading
+after every run. Migration-owned seeds and unrelated sentinels were preserved, 0 leaked `test_db_*`
+databases remained, and 0 lingering backends.
+
+**Falsification.** 8 of 9 mutations killed, each applied to real source, rebuilt, run, and restored
+byte-identically (SHA-256 verified). **M9 survived honestly** — killing the `backendPid` error path
+requires fault injection that no passing suite currently performs. This is 8/9 and is not to be
+reported as 9/9.
+
+**Validation, as measured during Increment 48** (readings taken at this increment's HEAD, not standing
+invariants): build passed; lint passed; the full repository `npm test` passed with 19 packages
+reporting `fail 0` and no database suite self-skipping; `check:ci-parity`, `check:variant-parity`,
+`check:adr-claims`, `check:engine-pin-parity`, `check:observability` and `test:scripts` all passed;
+`git diff --check` was clean.
+
+The `packages/api` suite was measured twice, because this increment was synchronized with `main`
+mid-flight: **978 total / 968 pass / 10 skipped / 0 fail** at the implementation HEAD before the
+merge, and **993 / 983 / 10 / 0** after merging Increment 47, whose expanded correlator suite accounts
+for the difference. Both readings are of the same increment; neither is a standing figure.
+
+### Known defect discovered during Increment 48 — OPEN, not fixed here
+
+`packages/api/test/analysis-cache-durable.integration.test.ts` **depends on database state it does not
+establish.** It never calls `migrate()`; it opens pools and assumes the schema already exists. Run
+inside the full repository suite it passes, because `packages/persistence` migrates the shared
+database first. Run on its own against a fresh database it **fails 6 of 10**. Proven by running that
+one file against three databases: against a fresh database, 6 failures; against two previously
+migrated databases, 0 failures.
+
+**Status: OPEN / NOT FIXED IN INCREMENT 48.** This is the mirror image of the defect Increment 48
+fixed — a suite depending on state it does not establish, rather than leaking state it does not
+remove — and it belongs to the same ownership family. It is a bounded follow-up defect and must be
+fixed in a separate PR after #41.
+
+### Tooling/workspace issue observed during Increment 48 — OPEN, not fixed here
+
+`npm run test:counts` **exited 1**, reporting **3286 tests (28 skipped)** at the implementation HEAD
+and **3301 tests (28 skipped)** after this increment was synchronized with `main`. The non-zero exit
+came entirely from `services/gateway`, which is not included in the root npm workspaces (`packages/*`),
+so its local `ioredis` module resolution failed. The exit code and its cause were unchanged by the
+merge; only the test total moved, with Increment 47's expanded correlator suite accounting for it. Nothing in Increment 48 touched that service, and no
+gateway dependency was installed or mutated, because doing so would modify
+`services/gateway/package-lock.json` outside this increment's scope.
+
+**Status: OPEN / NOT FIXED IN INCREMENT 48.** Recorded as a separate bounded tooling/workspace
+follow-up requiring its own investigation. The correct remedy is **not** assumed to be "make gateway a
+workspace"; that must be established separately rather than presumed here.
+
+### Signature B
+
+**Signature B remains UNRESOLVED** — an open tracked defect after the Increment 47 diagnostic
+correlator hardening. Increment 48 recorded **0 Signature B occurrences** across its baseline runs,
+A/B/C acceptance, mutation rounds and full-repository validation. As with Increment 47's 26 bounded
+runs, zero occurrences bounds the rate under those conditions and does not resolve the defect.
 
 ## M15 Increment 47 — Signature B diagnostic correlator hardening
 
