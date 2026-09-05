@@ -235,6 +235,17 @@ interface ColdMissBarrier {
  */
 const BARRIER_CEILING_MS = 10_000;
 
+/**
+ * Build the test-only rendezvous described above.
+ *
+ * Each party is held at the UCI `go` boundary — the first thing an instance does after its cold
+ * read came back empty — and nothing is released until all `parties` are held at the same instant,
+ * which is what makes the cold miss simultaneous rather than merely concurrent. A slot belongs to
+ * an instance, not to a worker, so a search the pool retries on a fresh transport replaces that
+ * instance's slot instead of counting as another party.
+ *
+ * @param parties How many instances must be held before any of them may search.
+ */
 function createColdMissBarrier(parties: number): ColdMissBarrier {
   const held = new Map<number, () => void>();
   let nextParty = 0;
