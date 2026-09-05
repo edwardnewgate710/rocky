@@ -70,6 +70,7 @@ export class LobbyController {
   private readonly _clearInterval: (id: ReturnType<typeof setInterval>) => void;
   private timerId: ReturnType<typeof setInterval> | null = null;
   private seeks: readonly SeekView[] = [];
+  private requestGeneration = 0;
   private disposed = false;
 
   constructor(opts: LobbyControllerOptions) {
@@ -82,6 +83,10 @@ export class LobbyController {
     this._clearInterval = opts.clearInterval ?? ((id) => clearInterval(id));
   }
 
+  private isCurrent(generation: number): boolean {
+    return !this.disposed && generation === this.requestGeneration;
+  }
+
   /** Current seek list (snapshot). */
   get currentSeeks(): readonly SeekView[] {
     return this.seeks;
@@ -90,19 +95,12 @@ export class LobbyController {
   /** Fetch the seek list once and notify callbacks. */
   async refresh(): Promise<void> {
     if (this.disposed) return;
+    const generation = ++this.requestGeneration;
     try {
       const seeks = await this.client.seeks.list();
-      if (this.disposed) return;
-      this.seeks = seeks;
+      if (!this.isCurrent(generation)) return;
 
-      // Look for a matched seek (our backend only returns them if we are the creator)
-      const matched = this.seeks.find((s) => s.gameId !== null);
-      if (matched && this.callbacks.onGameMatched) {
-        this.callbacks.onGameMatched(matched.gameId!);
-      }
-
-      // Filter out matched seeks before passing to the UI
-      const openSeeks = this.seeks.filter((s) => s.gameId === null);
+      const openSeeks = seeks.filter((s) => s.gameId === null);
       let names: ReadonlyMap<string, SocialPlayer> = new Map();
       try {
         const creatorIds = [...new Set(openSeeks.map((s) => s.creatorId))];
@@ -113,11 +111,20 @@ export class LobbyController {
         // Graceful degradation when player handle resolution fails
       }
 
-      if (this.disposed) return;
+      if (!this.isCurrent(generation)) return;
 
+      this.seeks = seeks;
+
+      // Look for a matched seek (our backend only returns them if we are the creator)
+      const matched = this.seeks.find((s) => s.gameId !== null);
+      if (matched && this.callbacks.onGameMatched) {
+        this.callbacks.onGameMatched(matched.gameId!);
+      }
+
+      // Filter out matched seeks before passing to the UI
       this.callbacks.onSeeks(openSeeks, names);
     } catch (err) {
-      if (!this.disposed) {
+      if (this.isCurrent(generation)) {
         this.callbacks.onError(err instanceof Error ? err.message : String(err));
       }
     }
@@ -257,6 +264,7 @@ export class LobbyController {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.requestGeneration++;
     this.stop();
     this.onDispose();
   }

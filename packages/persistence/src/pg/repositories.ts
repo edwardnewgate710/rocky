@@ -44,8 +44,11 @@ import type {
   NewWebAuthnLoginChallenge,
   WebAuthnLoginChallengesRepository,
 } from '../repositories';
+import { SEEK_TTL_MS } from '../repositories';
 import { CURRENT_EVENT_VERSION } from '../event-store.js';
 import { DuplicateUserError, VersionConflictError } from '../errors';
+
+const SEEK_TTL_INTERVAL = `${Math.floor(SEEK_TTL_MS / 1000)} seconds`;
 
 // --- row shapes as returned by pg ------------------------------------------
 
@@ -590,11 +593,11 @@ export class PgSeeksRepository implements SeeksRepository {
        (
          SELECT id, creator_id, variant, time_control, rated, color, min_rating, max_rating, created_at, game_id, accepted_at
          FROM seeks
-         WHERE game_id IS NULL AND created_at > NOW() - interval '10 minutes'
+         WHERE game_id IS NULL AND created_at > NOW() - $3::interval
          ORDER BY created_at ASC
          LIMIT $1
        )`,
-      [limit, cid],
+      [limit, cid, SEEK_TTL_INTERVAL],
     );
     return res.rows.map(toSeek);
   }
@@ -611,8 +614,8 @@ export class PgSeeksRepository implements SeeksRepository {
     await this.pool.query(
       `DELETE FROM seeks
        WHERE (game_id IS NOT NULL AND accepted_at <= $1 - interval '5 minutes')
-          OR (game_id IS NULL AND created_at <= $1 - interval '10 minutes')`,
-      [at],
+          OR (game_id IS NULL AND created_at <= $1 - $2::interval)`,
+      [at, SEEK_TTL_INTERVAL],
     );
   }
 }
@@ -626,9 +629,9 @@ export class PgSeekAcceptor implements SeekAcceptor {
       await client.query('BEGIN');
       const seekRes = await client.query<SeekDbRow>(
         `UPDATE seeks SET game_id = $1, accepted_at = NOW()
-         WHERE id = $2 AND game_id IS NULL AND created_at > NOW() - interval '10 minutes'
+         WHERE id = $2 AND game_id IS NULL AND created_at > NOW() - $3::interval
          RETURNING id, creator_id, variant, time_control, rated, color, min_rating, max_rating, created_at, game_id, accepted_at`,
-        [gameId, seekId],
+        [gameId, seekId, SEEK_TTL_INTERVAL],
       );
       if (seekRes.rowCount === 0) {
         await client.query('ROLLBACK');

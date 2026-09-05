@@ -335,3 +335,104 @@ test('refresh resolves player names via graphql and passes them to onSeeks', asy
   assert.ok(receivedNames);
   assert.equal(receivedNames.get('p1')?.handle, 'handle-p1');
 });
+
+test('refresh: older refresh completing after a newer refresh does not overwrite state or notify callbacks', async () => {
+  const firstResolve = deferred<readonly SeekView[]>();
+  const secondResolve = deferred<readonly SeekView[]>();
+  let callCount = 0;
+
+  const client = {
+    seeks: {
+      list: async () => {
+        callCount++;
+        return callCount === 1 ? firstResolve.promise : secondResolve.promise;
+      },
+    },
+  } as unknown as GambitClient;
+
+  const deliveredSeeks: Array<readonly SeekView[]> = [];
+  const ctrl = new LobbyController({
+    client,
+    callbacks: {
+      onSeeks: (seeks) => { deliveredSeeks.push(seeks); },
+      onCreatePending: () => {},
+      onError: () => {},
+    },
+  });
+
+  const refresh1 = ctrl.refresh();
+  const refresh2 = ctrl.refresh();
+
+  const seeks2 = [makeSeek({ id: 'seek-new' })];
+  secondResolve.resolve(seeks2);
+  await refresh2;
+
+  assert.equal(ctrl.currentSeeks.length, 1);
+  assert.equal(ctrl.currentSeeks[0]?.id, 'seek-new');
+  assert.equal(deliveredSeeks.length, 1);
+  assert.equal(deliveredSeeks[0]?.[0]?.id, 'seek-new');
+
+  const seeks1 = [makeSeek({ id: 'seek-stale-1' }), makeSeek({ id: 'seek-stale-2' })];
+  firstResolve.resolve(seeks1);
+  await refresh1;
+
+  assert.equal(ctrl.currentSeeks.length, 1);
+  assert.equal(ctrl.currentSeeks[0]?.id, 'seek-new');
+  assert.equal(deliveredSeeks.length, 1);
+});
+
+test('refresh: deferred player resolution from older refresh cannot overwrite newer seek data', async () => {
+  const firstGql = deferred<ReadonlyMap<string, SocialPlayer>>();
+  const secondGql = deferred<ReadonlyMap<string, SocialPlayer>>();
+  let listCalls = 0;
+  let gqlCalls = 0;
+
+  const client = {
+    seeks: {
+      list: async () => {
+        listCalls++;
+        return listCalls === 1
+          ? [makeSeek({ id: 's1', creatorId: 'p1' })]
+          : [makeSeek({ id: 's2', creatorId: 'p2' })];
+      },
+    },
+    graphql: {
+      resolvePlayers: async () => {
+        gqlCalls++;
+        return gqlCalls === 1 ? firstGql.promise : secondGql.promise;
+      },
+    },
+  } as unknown as GambitClient;
+
+  const delivered: Array<{ seeks: readonly SeekView[]; names?: ReadonlyMap<string, SocialPlayer> | undefined }> = [];
+  const ctrl = new LobbyController({
+    client,
+    callbacks: {
+      onSeeks: (seeks, names) => { delivered.push({ seeks, names }); },
+      onCreatePending: () => {},
+      onError: () => {},
+    },
+  });
+
+  const r1 = ctrl.refresh();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  const r2 = ctrl.refresh();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  const names2 = new Map<string, SocialPlayer>([['p2', { id: 'p2', handle: 'handle-p2' }]]);
+  secondGql.resolve(names2);
+  await r2;
+
+  assert.equal(ctrl.currentSeeks[0]?.id, 's2');
+  assert.equal(delivered.length, 1);
+  assert.equal(delivered[0]?.seeks[0]?.id, 's2');
+  assert.equal(delivered[0]?.names?.get('p2')?.handle, 'handle-p2');
+
+  const names1 = new Map<string, SocialPlayer>([['p1', { id: 'p1', handle: 'handle-p1' }]]);
+  firstGql.resolve(names1);
+  await r1;
+
+  assert.equal(ctrl.currentSeeks[0]?.id, 's2');
+  assert.equal(delivered.length, 1);
+});
