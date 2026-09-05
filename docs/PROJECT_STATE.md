@@ -182,17 +182,26 @@ and because omitting it would make the memory-pressure correlation look cleaner 
 ### Separate known defect observed during this increment — not fixed here
 
 **The durable analysis-cache race test `two live instances racing a cold position both compute it`
-failed once and passed on rerun.** It lives in the Increment 49 suite, which this increment does not
-touch, and it passed at the two prior HEADs. This is **not** Signature B: it is an ordinary assertion
-failure (expected 2, actual 1) with a normal stack, not a bare file-level termination. The rerun
-passing does **not** resolve it. Recorded here as a separate bounded follow-up.
+has now failed twice.** It lives in `packages/api/test/analysis-cache-durable.integration.test.ts`,
+the Increment 49 suite, which this increment does not touch. First locally, during this increment's
+work; then again in CI's `postgres integration (persistence)` job on Linux at this branch's HEAD,
+where it failed with `cross-process single-flight does not exist` — `expected: 2, actual: 1`,
+`ERR_ASSERTION`, at `analysis-cache-durable.integration.test.js:385`. It passed at the two prior
+HEADs and passes on rerun.
+
+This is **not** Signature B: it is an ordinary assertion failure with a full stack and a named
+assertion, not a bare file-level termination with no test reported. It is also not caused by this
+increment, which changes only diagnostics and documentation. **A rerun passing does not resolve
+it** — the second occurrence, on a different operating system from the first, makes it a real
+intermittent defect rather than local noise. Recorded here as a separate bounded follow-up, not
+fixed here.
 
 ### Still open after Increment 51
 
 - **Signature B — UNRESOLVED**, now at Level C: the mechanism family is established, the terminating
   source is not. The controlled AV A/B test and OS-level tracing (ETW / WER `LocalDumps`) are the
   named next steps, and both need owner authorization because they change machine configuration.
-- **The analysis-cache race flake above — OPEN**, separate from Signature B.
+- **The analysis-cache race flake above — OPEN**, separate from Signature B, now observed twice (locally on Windows and in CI on Linux) and owned by the Increment 49 suite.
 
 
 ## M15 Increment 50 — test:counts / standalone gateway host setup contract
