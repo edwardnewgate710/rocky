@@ -339,3 +339,69 @@ test('session reset synchronizes across tabs via channel', async () => {
   mgr1.dispose();
   mgr2.dispose();
 });
+
+test('deferred refresh is invalidated when peer reset arrives before refresh resolves', async () => {
+  const [ch1, ch2] = createMockChannelPair();
+  let releaseRefresh!: () => void;
+  const refreshGate = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+
+  const mgr1 = new SessionManager({
+    refresh: async () => {
+      await refreshGate;
+      return authResponse('new-tok', 'new-r', 3600);
+    },
+    now: () => 1000,
+    channel: ch1,
+  });
+  const mgr2 = new SessionManager({
+    refresh: async () => authResponse(),
+    now: () => 1000,
+    channel: ch2,
+  });
+
+  let mgr1Invalidated = false;
+  mgr1.onInvalidated(() => {
+    mgr1Invalidated = true;
+  });
+
+  mgr1.adopt(authResponse('old-tok', 'old-r', 3600), false);
+  mgr2.adopt(authResponse('old-tok', 'old-r', 3600), false);
+  assert.equal(mgr1.isAuthenticated, true);
+  assert.equal(mgr2.isAuthenticated, true);
+
+  // Tab 1 starts refreshNow() while the network call is deferred
+  let refreshError: unknown = null;
+  const refreshPromise = mgr1.refreshNow().catch((err: unknown) => {
+    refreshError = err;
+  });
+
+  // Peer tab (Tab 2) logs out / resets session while Tab 1's refresh is still in flight
+  mgr2.reset();
+
+  // Allow message to be delivered from ch2 to ch1
+  await new Promise<void>((r) => queueMicrotask(() => r()));
+
+  // Tab 1 received session_reset
+  assert.equal(mgr1.isAuthenticated, false);
+
+  // Now the network response resolves on Tab 1
+  releaseRefresh();
+  await refreshPromise;
+
+  // The in-flight refresh MUST NOT adopt the session or resurrect it
+  assert.ok(refreshError instanceof NoSessionError, 'refreshNow must reject with NoSessionError');
+  assert.equal(mgr1.isAuthenticated, false, 'Tab 1 must remain unauthenticated');
+  assert.equal(mgr1.current, null, 'Tab 1 session store must remain empty');
+  assert.equal(mgr1Invalidated, false, 'voluntary reset must not trigger involuntary invalidation handler');
+
+  // Allow microtasks to ensure no channel message resurrected Tab 2
+  await new Promise<void>((r) => queueMicrotask(() => r()));
+
+  assert.equal(mgr2.isAuthenticated, false, 'Tab 2 must not be re-authenticated by peer refresh');
+  assert.equal(mgr2.current, null);
+
+  mgr1.dispose();
+  mgr2.dispose();
+});

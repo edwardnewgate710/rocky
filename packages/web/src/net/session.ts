@@ -116,6 +116,7 @@ export class SessionManager {
   private adoptedHandler: ((session: StoredSession) => void) | null = null;
   private resetHandler: (() => void) | null = null;
   private refreshInFlight: Promise<StoredSession> | null = null;
+  private sessionGeneration = 0;
   private channel: SessionChannel | null = null;
 
   constructor(options: SessionManagerOptions) {
@@ -207,6 +208,7 @@ export class SessionManager {
 
   /** Forget the local session (does not call the server). */
   reset(broadcast = true): void {
+    this.sessionGeneration++;
     this.store.clear();
     this.refreshInFlight = null;
     if (broadcast && this.channel) {
@@ -220,6 +222,8 @@ export class SessionManager {
 
   /** Permanently close the cross-tab channel. */
   dispose(): void {
+    this.sessionGeneration++;
+    this.refreshInFlight = null;
     if (this.channel) {
       this.channel.close();
       this.channel = null;
@@ -265,13 +269,25 @@ export class SessionManager {
     const session = this.store.load();
     if (!session) throw new NoSessionError('cannot refresh without a session');
 
-    const pending = (async (): Promise<StoredSession> => {
+    const opGen = this.sessionGeneration;
+
+    let pending: Promise<StoredSession> | null = null;
+    pending = (async (): Promise<StoredSession> => {
       try {
         // Pass the refresh token if available (non-browser path).
         // For the browser flow, the token is undefined and the cookie is sent.
         const auth = await this.doRefresh(session.tokens.refreshToken);
+        if (this.sessionGeneration !== opGen) {
+          throw new NoSessionError('session was reset while refresh was in flight');
+        }
         return this.adopt(auth);
       } catch (error) {
+        if (this.sessionGeneration !== opGen) {
+          if (error instanceof NoSessionError) {
+            throw error;
+          }
+          throw new NoSessionError('session was reset while refresh was in flight');
+        }
         // If a concurrent tab refreshed and updated our store with a fresh token,
         // adopt that valid session rather than destroying it.
         const current = this.store.load();
@@ -286,7 +302,9 @@ export class SessionManager {
         this.invalidatedHandler?.();
         throw error;
       } finally {
-        this.refreshInFlight = null;
+        if (this.refreshInFlight === pending) {
+          this.refreshInFlight = null;
+        }
       }
     })();
 
