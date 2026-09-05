@@ -4,7 +4,69 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-09-04 — M15 Increment 46: reused-database idempotence in the persistence suite._
+_Last updated: 2026-09-04 — M15 Increment 47: Signature B diagnostic correlator hardening._
+
+
+## M15 Increment 47 — Signature B diagnostic correlator hardening
+
+**Status: Root cause UNPROVEN and UNRESOLVED.** This increment contributes diagnostic correlator
+hardening only. No production or runtime code was modified, and no speculative fix was introduced.
+
+**Context and observed scope.** Signature B is an intermittent whole-file failure where Node's test
+runner marks an entire test file as `'test failed'` with no assertion error, no stack trace, and no
+tests within the file reporting. During M15 Increment 46 validation, Signature B was directly observed
+three times in the persistence suite (`search-backfill.integration.test.ts`,
+`learning.integration.test.ts`, and `test-database.integration.test.ts`). Each exhibited the exact
+documented bare whole-file failure shape, and each passed standalone on immediate re-run. This
+broadened the confirmed scope beyond `packages/api` into `packages/persistence`, demonstrating that
+the failure is not confined to the HTTP API test harness or a single package.
+
+**Own bounded reproduction passes.** Bounded local reproduction passes were executed across 26 runs
+total:
+- 1 baseline full-suite run (clean pass);
+- 20 sequential runs under `run-signature-b-pass.mjs` (3,084–3,834 MB free memory; 0 captures);
+- 5 concurrent repository-native load runs under simultaneous test activity (0 captures).
+
+Zero captures across 26 bounded runs establishes an empirical upper bound under those conditions, but
+**0 captures does NOT mean resolved**. Flaky failures with low frequency (~1-in-5 historically under
+high machine load) naturally produce zero occurrences in small bounded samples without resolving the
+underlying race or external cause.
+
+**Four proven correlator defects identified and hardened.** Analysis of the diagnostic harness
+(`packages/api/test/diagnostics/signature-b-correlate.cjs`) revealed four concrete blind spots in how
+parent TAP diagnostic logs and child JSONL preloads were matched and parsed:
+1. **Cross-directory basename fallback collision:** `correlateFileLogs` fell back to matching on
+   `path.basename` whenever an exact normalized match was missing. If a target relative path contained
+   slashes (e.g. `test/diagnostics/sample.test.ts`), a child log from an unrelated directory with the
+   same basename could be falsely attributed. Hardened to require `!wanted.includes('/')` before
+   allowing basename fallback.
+2. **Host-independent Windows path case folding:** Case folding in `matchChild` previously depended on
+   the analyzer host platform (`process.platform === 'win32'`). When logs recorded on Windows were
+   analyzed on POSIX, comparisons remained case-sensitive; conversely, POSIX captures analyzed on
+   Windows were erroneously treated as case-insensitive. Hardened `isWindowsPath` to detect
+   Windows-origin paths strictly from path syntax (drive letters or UNC prefixes) and explicit capture
+   metadata independently of the executing host OS, ensuring case-insensitive matching for Windows
+   captures while strictly preserving case-sensitivity and filename integrity for POSIX captures
+   (avoiding false-positive Windows classification on POSIX backslash filenames).
+3. **Signed 32-bit NTSTATUS exit code wrapping:** On Windows, crash exit codes such as `0xC0000005`
+   (access violation) or `STATUS_CONTROL_C_EXIT` can surface in Node/libuv or TAP as negative 32-bit
+   integers (e.g. `-1073741819`). Hardened exit code parsing to normalize negative 32-bit values via
+   unsigned right shift `(exitCode >>> 0)`, correctly recovering the standard `0xC0000005` representation.
+4. **Quoted and non-finite TAP YAML scalar parsing:** Node's TAP reporter emits single- or double-quoted
+   scalars around certain YAML values (e.g. `exitCode: '1'` or duration strings). Strict numeric conversion
+   previously yielded `NaN` or dropped exit codes, and non-finite numbers (`Infinity`, `-Infinity`) leaked
+   through. Hardened YAML extraction to unquote scalar tokens prior to conversion and convert non-finite
+   values to `null`.
+
+**Verification and mutation falsification.**
+- Targeted correlator suite (`signature-b-correlate.test.ts`): expanded from 23 to 41 tests
+  (39 pass, 2 skip for deliberate platform-gated checks, 0 fail).
+- Mutation falsification: four targeted mutations reversing each of the four hardened behaviors were
+  verified to be killed by the expanded test suite.
+- Monorepo validation: full build, lint, counts, and guard scripts pass cleanly.
+
+**Signature B remains UNRESOLVED.** The harness is hardened so that when the next occurrence happens,
+the parent-to-child log correlation is robust across operating systems and crash code representations.
 
 
 ## M15 Increment 46 — the persistence suite is idempotent on a reused database
