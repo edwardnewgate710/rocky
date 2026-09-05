@@ -367,6 +367,65 @@ names a **candidate** mechanism, while a bare `1`, a signal — which names the 
 child but never the party that sent it — and any code outside the measured table are all reported
 `specific: false` and name nothing on their own.
 
+### Follow-up: five captures name a mechanism family, and stop there
+
+The pass above read the exit status but caught nothing. A later increment (M15 Increment 51,
+`claude/signature-b-mechanism-isolation`) captured Signature B **five times** across
+`packages/api` and `packages/persistence` in 39 bounded runs, and every capture reported the same
+thing:
+
+| Package | File | `exitCode` | `signal` | Child lifecycle | Fatal markers | Diagnostic reports |
+|---|---|---|---|---|---|---|
+| api | `pg-security-ownership.integration` | `3221226505` | `null` | `start`, `preload-installed` | *not captured* | *n/a* |
+| persistence | `studies.integration` | `3221226505` | `null` | `start`, `preload-installed` | `[]` | `[]` |
+| persistence | `learning.integration` | `3221226505` | `null` | `start`, `preload-installed` | `[]` | `[]` |
+| api | `pg-security.integration` | `3221226505` | `null` | `start`, `preload-installed` | `[]` | `[]` |
+| api | `auth-signin-schema.integration` | `3221226505` | `null` | `start`, `preload-installed` | `[]` | `[]` |
+
+`3221226505` is `0xC0000409`, `STATUS_STACK_BUFFER_OVERRUN` — the Windows fail-fast status. It is
+not in the measured table above and was added by measurement, not inference. The first capture came
+from the pre-fix harness, whose raw TAP and fatal-marker evidence for that run was discarded before
+it could be read; its exit status and lifecycle log stand, its marker and report channels do not
+exist, and it is not treated as decisive.
+
+**Two channels made the exclusions possible, and both had to be fixed first.** Fatal markers were
+being read from the parent runner's stderr, where a child's `FATAL ERROR:` banner can never appear:
+the runner attaches a readline interface to the child's stderr and re-emits each line as a
+`test:stderr` reporter event, so the banner lands in the TAP report instead — measured at 0 bytes on
+the parent stream while the report held it. And child lifecycle logs were merged by test-file path
+across processes, so evidence from one run could be attributed to another; they are now isolated per
+process, keyed by log file and PID, with a reused PID surfaced as explicit ambiguity rather than a
+silent merge. Node's own `--report-on-fatalerror` was added as a third channel and measured: it
+writes exactly one PID-named report for a Node/V8 fatal error and none for `process.abort()` or an
+external kill, so its presence and PID attribution separate those paths.
+
+**What the four fully-instrumented captures exclude, by positive measurement:** `process.exit` and
+`process.exitCode`, an ordinary uncaught exception, a fatal unhandled rejection and an instrumented
+JS `process.abort()` — each of which leaves a lifecycle record and fires Node's `exit` event, and
+none did; the measured V8/Node fatal path including heap OOM — which produces fatal stderr
+diagnostics inside the TAP report **and** a PID-attributable diagnostic report, and these produced
+**neither**; and node:test parent cancellation in this repository's configuration — `FileTest` sets
+`this.timeout = null`, so the parent enforces no file-level wall clock, and a child aborted through
+the runner's `AbortSignal` sets `err` via `child.on('error')` and is reported as an `AbortError`
+rather than the bare fallback shape.
+
+**What remains is a family of two, and this ADR does not choose between them:** an in-process
+Windows fail-fast path (a security mitigation, `RaiseFailFastException`, or an equivalent native
+fail-fast source), or an external party calling `TerminateProcess` with `0xC0000409` as the chosen
+exit status. The status cannot separate them — it is a 32-bit integer the terminating party picks,
+which is the same limit §4 already records for `0xC0000005`. Separating them needs a channel this
+increment deliberately did not open, because both change the machine's configuration: ETW
+`Microsoft-Windows-Kernel-Process` tracing, or WER `LocalDumps`. No WER record exists for `node.exe`
+in the capture windows, though WER is enabled and logged other events that day. Avast Antivirus is
+present and `aswhook.dll` was observed loaded inside a live `node.exe` process; **injection is not
+causation**, so that is a named leading candidate for a controlled A/B test under owner
+authorization, not a cause. No antivirus was disabled, no exclusion was added, and no security
+posture was changed.
+
+**Signature B remains UNRESOLVED, at acceptance Level C: the mechanism family is established, the
+terminating source is not.** No fix is proposed and none is disguised. The Node 22 arm of the same
+campaign was 17 runs and 0 captures, which does not establish a Node-version difference.
+
 ## 5. `ApiServer.listen` rejects on a failed bind
 
 Raised by the Qodo review of PR #21 and **valid**. `packages/api/src/server.ts`
