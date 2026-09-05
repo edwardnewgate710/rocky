@@ -4,9 +4,106 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-09-05 — M15 Increment 51: Signature B mechanism isolation and diagnostic hardening._
+_Last updated: 2026-09-05 — M15 Increment 52: deterministic analysis-cache cold-race test._
+
+Prior: _Last updated: 2026-09-05 — M15 Increment 51: Signature B mechanism isolation and diagnostic hardening._
 
 Prior: _Last updated: 2026-09-05 — M15 Increment 50: test:counts / standalone gateway host setup contract._
+
+## M15 Increment 52 — deterministic analysis-cache cold-race test
+
+**Status: RESOLVED — integration-test scheduling nondeterminism.** No production code, migration,
+schema or cache semantic changed; the whole change is one test file. Increment 51 is untouched, and
+Signature B remains **UNRESOLVED — Level C**.
+
+`two live instances racing a cold position both compute it`, in
+`packages/api/test/analysis-cache-durable.integration.test.ts`, had failed twice — once locally on
+Windows and once in CI on Linux — with `cross-process single-flight does not exist`,
+`expected: 2, actual: 1`. Increment 51 recorded it as a separate open defect. It is now closed, and
+what was wrong was the test, not the cache.
+
+### Root cause
+
+`await Promise.all([analyze(a, fen), analyze(b, fen)])` starts both analyses and waits for both to
+finish. It orders **nothing in between**. Each instance owns a separate, lazily-connecting `pg.Pool`
+and its own `AnalysisOrchestrator`, whose single-flight map is a private field; the only state the
+two share is the `engine_analysis_cache` table. Meanwhile `FakeEngineTransport` emits on
+`queueMicrotask`, so a search costs effectively nothing, while both the read and the write are real
+TCP round trips — the first of which, on a lazily-connected pool, also pays for a connection
+handshake. So whether B's `SELECT` is evaluated before or after A's `UPSERT` commits is settled by
+connection setup and OS scheduling.
+
+When A won that race, B read A's row and correctly performed no search, and the sum was 1. **That is
+correct behaviour**: it is what the durable cache is *for*, and the sibling test
+`a second instance reuses what the first stored, with no engine of its own` already asserts exactly
+it. The failing assertion was not describing the system; it was describing the interleaving that run
+happened to get.
+
+**Measured, on unmodified production code, same composition as the test:**
+
+| Arrangement | A searches | B searches | Total | B's `cache_hit` |
+|---|---|---|---|---|
+| A fully awaited, then B | 1 | 0 | **1** | 1 |
+| both started together | 1 | 1 | **2** | 0 |
+
+Ordering alone decides it. Nothing else had to change to produce the reported failure.
+
+### What was NOT wrong
+
+- **Cross-process single-flight still does not exist**, and none was added. Nothing in PostgreSQL
+  coordinates two orchestrators, because nothing was asked to (ADR-0138).
+- **Duplicate computation on a genuinely simultaneous cold miss remains expected and correct** — the
+  price of not adding a distributed lock.
+- **No production defect was found.** No production file was touched, no schema changed, no locking
+  added, and `EngineManager` and the cache behave exactly as before.
+
+### The fix
+
+A test-only rendezvous, `createColdMissBarrier`, living entirely in the test file. It wraps each
+instance's transport through the existing `transportFactory` seam and holds that instance's UCI `go`
+line until every party is held at once, then releases them together. `go` is reached only inside
+`compute()`, which the orchestrator reaches only after `readCache` returned nothing, so an instance
+held at the barrier has provably missed the cold row and provably not written yet. Only `go` is
+held; `uci`, `setoption`, `position`, `stop` and `quit` pass straight through.
+
+Two details are load-bearing:
+
+- **A slot belongs to an instance, not to a worker.** `EngineTimeoutError` is `retryable` and
+  `EnginePool`'s `maxAttempts` defaults to 2, so a held search that times out is retried on a fresh
+  worker with a fresh transport, which sends its own `go`. A barrier that counted `go` lines would
+  have counted that second worker as a second party and opened — letting one lonely instance satisfy
+  an assertion about two. Keying by instance is what stops the barrier lying about simultaneity.
+- **The ceiling is a failure ceiling, not a delay.** It never runs on a passing run: both instances
+  reach `go` within milliseconds and the barrier opens synchronously on the second arrival. It
+  exists because the bound underneath it is the wrong one — the engine's own 15s search watchdog
+  would retry once before giving up, so a stuck barrier would surface after roughly 30s as an
+  `EngineTimeoutError` about an engine rather than as the thing that actually broke.
+
+No sleep, no delay, and no weakened assertion: the test asserts strictly more than it did before.
+
+### What the test now proves
+
+1. **Truly simultaneous at the cold-miss boundary** — the barrier's peak occupancy is 2, and each
+   instance recorded exactly one `cache_miss`, zero `cache_hit`, and zero read or write faults. That
+   last pair matters because `PgAnalysisCache` absorbs a read fault and answers `undefined`, which is
+   recorded as a miss: without it, a run against an unreachable database would have satisfied every
+   other assertion while proving nothing.
+2. **Exactly one search each** — asserted per instance rather than as a sum, so 2 + 0 can no longer
+   read as success.
+3. **The race resolves to the expected durable state** — one row for that FEN, carrying
+   `achieved_depth = 10`, and both callers received the depth-10 analysis they ran.
+4. **A later independent reader uses the row** — zero searches, depth 10.
+
+### Validation
+
+30 consecutive runs of the target test, **30 passes, 0 failures**; the whole file 10/10; the API
+package **1012 tests, 1002 pass, 0 fail, 10 skipped**. Falsification killed the two mutations that
+matter — restoring the pre-fix arrangement, and stopping the barrier from holding — both caught by
+the simultaneity assertion. Two mutations survived and are reported rather than hidden: deleting
+that assertion, and reverting to the summed search count, are both invisible **while the barrier
+works**, which is the only condition under which the suite runs. All sources were restored
+byte-identically, verified by SHA-256.
+
 
 ## M15 Increment 51 — Signature B mechanism isolation and diagnostic hardening
 
