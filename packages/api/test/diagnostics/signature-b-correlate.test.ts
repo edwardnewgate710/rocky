@@ -31,6 +31,7 @@ interface CorrelatedRecord {
     pid: number | null;
     kinds: string[];
   };
+  fatalMarkers: string[];
   classification: string;
   meaning: string;
   specific: boolean;
@@ -48,6 +49,7 @@ const correlator = require(CORRELATE_PATH) as {
     specific: boolean;
   };
   correlate(failures: unknown[], childLogs: Map<string, unknown>, options?: { isWindows?: boolean }): CorrelatedRecord[];
+  fatalMarkersIn(text: string | undefined): string[];
   narrowFromChildEvidence(
     c: { id: string; specific: boolean },
     kinds: readonly string[],
@@ -58,6 +60,7 @@ const correlator = require(CORRELATE_PATH) as {
     signal: string | null;
     failureType: string | null;
     durationMs: number | null;
+    fatalMarkers: string[];
     isWindows?: boolean;
   }>;
   readChildLogs(dir: string): Map<string, { pid: number | null; kinds: string[] }>;
@@ -65,6 +68,18 @@ const correlator = require(CORRELATE_PATH) as {
   normalizePath(p: string): string;
   isWindowsPath(p: string): boolean;
 };
+
+/**
+ * Whether a child died of a fault it suffered, rather than by choosing its own exit status.
+ *
+ * The two platforms report the same event differently and neither encoding is the contract. Windows
+ * has no signals, so a V8 fatal error reaches the parent as exit code 134 with `signal: null`; POSIX
+ * raises SIGABRT, and the exit code is then null. Asserting 134 alone passes on the machine this was
+ * written on and fails everywhere CI runs it — which is exactly how it did fail.
+ */
+function diedOfAFault(exitCode: number | null | undefined, signal: string | null | undefined): boolean {
+  return exitCode === 134 || signal === 'SIGABRT';
+}
 
 /** A TAP block in the exact shape Node's built-in reporter emits for a file-level failure. */
 function tapFailure(file: string, exitCode: string, signal = '~', failureType = 'testCodeFailure'): string {
@@ -1177,5 +1192,582 @@ test('correlator: CLI preserves POSIX semantics when log directory contains mixe
     assert.equal(recordExact.child.pid, 2222);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('correlator: a stale log from an earlier run is never merged into a later run\'s evidence', () => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-stale-'));
+  try {
+    // Two runs of the SAME file, in one directory. That is not a contrivance: the preload defaults
+    // SIGB_LOG_DIR to os.tmpdir()/sigb-diag, which is its documented manual usage and which nothing
+    // ever cleans, and the correlator CLI takes --child-logs pointed at whatever a reader chose.
+    const clean = ['start', 'preload-installed', 'beforeExit', 'exit'].map((kind) => ({
+      kind, pid: 1111, testFile: 'C:\\repo\\dist-test\\test\\studies-api.test.js',
+    }));
+    const terminated = ['start', 'preload-installed'].map((kind) => ({
+      kind, pid: 2222, testFile: 'C:\\repo\\dist-test\\test\\studies-api.test.js',
+    }));
+    fs.writeFileSync(path.join(logDir, 'run-1111-1000.jsonl'), `${clean.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    fs.writeFileSync(path.join(logDir, 'run-2222-2000.jsonl'), `${terminated.map((l) => JSON.stringify(l)).join('\n')}\n`);
+
+    const records = correlator.correlate(
+      correlator.parseTapFailures(tapFailure('dist-test/test/studies-api.test.js', '1')),
+      correlator.readChildLogs(logDir),
+      { isWindows: true },
+    );
+
+    assert.equal(records.length, 1);
+    // The failure this guards against is not cosmetic. Concatenating the two processes' events puts
+    // `exit` in the list, and `narrowFromChildEvidence` then states that an external termination and
+    // a native fault are ruled out — a false negative on the one hypothesis still standing.
+    assert.equal(records[0]?.child.ambiguous, true, 'two processes ran this file; neither one is the evidence');
+    assert.equal(records[0]?.child.candidates, 2);
+    assert.deepEqual(records[0]?.child.kinds, [], 'events from two different processes must never be concatenated');
+    assert.equal(records[0]?.narrowed, false);
+    assert.doesNotMatch(
+      String(records[0]?.statement),
+      /rules out an external termination/,
+      'a stale log must never be allowed to rule out the mechanism under investigation',
+    );
+  } finally {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
+test('correlator: reads a child fatal banner from the report Node routes it to, not the parent stderr', () => {
+  // Measured this session on a real bounded V8 heap exhaustion: the parent runner's stderr was zero
+  // bytes, while the TAP report carried the whole banner as `# ` diagnostic lines. Node's runner
+  // attaches a readline Interface to each child's stderr and re-emits every line as a `test:stderr`
+  // report event, so the parent's own stderr structurally cannot hold a child's fatal output.
+  const tapText = [
+    'TAP version 13',
+    '# <--- Last few GCs --->',
+    '# FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory',
+    '# ----- Native stack trace -----',
+    tapFailure('dist-test/test/studies-api.test.js', '134'),
+    '1..1',
+  ].join('\n');
+
+  assert.deepEqual(
+    correlator.fatalMarkersIn(tapText),
+    ['FATAL ERROR:', 'JavaScript heap out of memory', '<--- Last few GCs --->', '----- Native stack trace -----'],
+    'the markers that name a V8 fatal must be recoverable from the reporter output',
+  );
+  assert.deepEqual(correlator.fatalMarkersIn(''), [], 'an empty stream names nothing');
+  assert.deepEqual(correlator.fatalMarkersIn(undefined), [], 'a missing stream names nothing');
+});
+
+test('pass runner: a capture keeps the fatal markers that name the mechanism', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-markers-'));
+  try {
+    // `fs.writeSync(2, ...)` rather than `process.stderr.write`: stderr is a pipe here, its writes
+    // are asynchronous, and an exit on the next line would race them away — which would make this
+    // test flake for a reason that has nothing to do with what it is checking.
+    const target = path.join(dir, 'fatal.test.cjs');
+    fs.writeFileSync(
+      target,
+      "require('node:fs').writeSync(2, 'FATAL ERROR: Reached heap limit Allocation failed - " +
+        "JavaScript heap out of memory\\n');\nprocess.exit(134);\n",
+    );
+    const out = path.join(dir, 'out');
+    const result = runPass(['--runs', '1', '--max-minutes', '1', '--out', out, '--target', target], dir);
+
+    const capturePath = path.join(out, 'capture.json');
+    assert.ok(fs.existsSync(capturePath), `the pass must capture this file-level failure:\n${result.stdout}${result.stderr}`);
+    const capture = JSON.parse(fs.readFileSync(capturePath, 'utf8')) as { fatalMarkers: string[] };
+    assert.deepEqual(
+      capture.fatalMarkers,
+      ['FATAL ERROR:', 'JavaScript heap out of memory'],
+      'the capture must record the banner the child actually printed',
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('pass runner: --package points a pass at another workspace package', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-package-'));
+  try {
+    // Signature B has been observed in packages/persistence as well as packages/api, and a runner
+    // that can only ever run one package cannot capture it in the other. The target is resolved
+    // inside the named package, so a pass that finds this file at all proves it ran there.
+    const pkg = path.join(dir, 'other-package');
+    fs.mkdirSync(pkg, { recursive: true });
+    trivialTarget(pkg);
+    const out = path.join(dir, 'out');
+    const result = runPass(['--runs', '1', '--max-minutes', '1', '--out', out, '--package', pkg, '--target', 'noop.test.cjs'], dir);
+
+    assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+    assert.match(String(result.stdout), /1 run\(s\)/);
+    assert.match(String(result.stdout), /Signature B was not observed/);
+    // A pass whose runner failed to start still prints that summary: zero captures is what a run
+    // that never ran also produces. The runner's own exit status is what separates them, and it is
+    // also what catches a preload this file could no longer resolve from the other package's
+    // directory — `node --require <missing>` exits non-zero before any test runs.
+    const summary = JSON.parse(fs.readFileSync(path.join(out, 'summary.json'), 'utf8')) as {
+      runs: Array<{ runnerExitCode: number | null; collectionError: string | null }>;
+    };
+    assert.equal(summary.runs.length, 1);
+    assert.equal(summary.runs[0]?.runnerExitCode, 0, 'the run must have executed, preload and all');
+    assert.equal(summary.runs[0]?.collectionError, null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('correlator: a fatal banner from an earlier file is not attributed to a later file\'s failure', () => {
+  // A whole-run scan cannot survive this suite's own diagnostics: the pass runner lets a child's
+  // `spec` output through to the terminal, so a test that deliberately prints a fatal banner puts
+  // that banner into the outer run's report. Measured while hunting a real occurrence — every full
+  // `packages/api` run reported two fatal markers that this file had printed itself. Under
+  // `--test-concurrency=1` the child that printed them is the one whose result comes next, so
+  // attribution is exact rather than a guess.
+  const tapText = [
+    'TAP version 13',
+    '# FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory',
+    '# <--- Last few GCs --->',
+    '# Subtest: dist-test/test/noisy.test.js',
+    'ok 1 - dist-test/test/noisy.test.js',
+    '  ---',
+    '  duration_ms: 10',
+    '  ...',
+    tapFailure('dist-test/test/studies-api.test.js', '134').replace('not ok 1 -', 'not ok 2 -'),
+    '1..2',
+  ].join('\n');
+
+  const failures = correlator.parseTapFailures(tapText, { isWindows: false });
+
+  assert.equal(failures.length, 1, 'only the bare file-level failure is a candidate');
+  assert.deepEqual(
+    failures[0]?.fatalMarkers,
+    [],
+    'the banner belongs to the file that printed it, which passed, not to the file that failed later',
+  );
+});
+
+test('correlator: a fatal banner printed by the file that then failed is attributed to it', () => {
+  const tapText = [
+    'TAP version 13',
+    '# Subtest: dist-test/test/quiet.test.js',
+    'ok 1 - dist-test/test/quiet.test.js',
+    '  ---',
+    '  duration_ms: 10',
+    '  ...',
+    '# <--- Last few GCs --->',
+    '# FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory',
+    tapFailure('dist-test/test/studies-api.test.js', '134').replace('not ok 1 -', 'not ok 2 -'),
+    '1..2',
+  ].join('\n');
+
+  const failures = correlator.parseTapFailures(tapText, { isWindows: false });
+
+  assert.equal(failures.length, 1);
+  assert.deepEqual(
+    failures[0]?.fatalMarkers,
+    ['FATAL ERROR:', 'JavaScript heap out of memory', '<--- Last few GCs --->'],
+    'a banner printed after the previous file finished belongs to the file that failed next',
+  );
+});
+
+test('pass runner: a diagnostic report separates a real V8 fatal from a status that merely looks like one', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-report-'));
+  try {
+    // Exit code 134 is produced by a V8 heap exhaustion, by `process.abort()`, and by any process
+    // that chooses to exit 134 — measured all three this session. Node writes a diagnostic report
+    // for the first and not for the others, and names the file after the pid that died, so the
+    // report is what tells them apart even when nothing was printed.
+    const reportDir = path.join(dir, 'reports');
+    fs.mkdirSync(reportDir);
+    const fatal = path.join(dir, 'oom.cjs');
+    // Bounded by construction: a 64 MB ceiling and an allocation loop that stops at 400 MB of
+    // intent, so this can never reach for the host's real memory.
+    fs.writeFileSync(fatal, 'const held = [];\nfor (let i = 0; i < 400; i++) held.push(new Array(131072).fill(i));\n');
+    const crashed = spawnSync(
+      process.execPath,
+      ['--max-old-space-size=64', '--report-on-fatalerror', `--report-directory=${reportDir}`, fatal],
+      { encoding: 'utf8', timeout: 60_000 },
+    );
+
+    assert.ok(
+      diedOfAFault(crashed.status, crashed.signal),
+      `a heap exhaustion must abort, however this platform reports it (status ${crashed.status}, signal ${crashed.signal})`,
+    );
+    const reports = fs.readdirSync(reportDir);
+    assert.equal(reports.length, 1, 'a V8 fatal writes exactly one report');
+    assert.ok(
+      reports[0]?.includes(`.${crashed.pid}.`),
+      `the report must name the process that died (pid ${crashed.pid}, got ${reports[0]})`,
+    );
+
+    // The same status, chosen deliberately rather than reached by a fault, writes none.
+    const quietDir = path.join(dir, 'quiet-reports');
+    fs.mkdirSync(quietDir);
+    const chosen = path.join(dir, 'chosen.cjs');
+    fs.writeFileSync(chosen, 'process.exit(134);\n');
+    const exited = spawnSync(
+      process.execPath,
+      ['--report-on-fatalerror', `--report-directory=${quietDir}`, chosen],
+      { encoding: 'utf8', timeout: 60_000 },
+    );
+
+    assert.equal(exited.status, 134, 'a chosen exit status is the same number on every platform');
+    assert.equal(exited.signal, null, 'and it is an exit, not an abort');
+    assert.deepEqual(fs.readdirSync(quietDir), [], 'choosing the status of a fault is not a fault');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('pass runner: exit 134 alone names nothing, and the capture carries what separates the two', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-capture-reports-'));
+  try {
+    // Two files that die with the SAME status by different means. A capture that could not tell them
+    // apart would be the whole defect this instrumentation exists to fix, so the test runs both
+    // through the real pass runner and asserts the pair of channels that separates them.
+    //
+    // First: a genuine V8 heap exhaustion. The ceiling reaches the child through NODE_OPTIONS, and
+    // is bounded by construction — 80 MB, with the allocation loop stopping at 400 MB of intent —
+    // so this can never reach for the host's real memory.
+    const oom = path.join(dir, 'oom.test.cjs');
+    fs.writeFileSync(oom, 'const held = [];\nfor (let i = 0; i < 400; i++) held.push(new Array(131072).fill(i));\n');
+    const oomOut = path.join(dir, 'oom-out');
+    const oomResult = spawnSync(
+      process.execPath,
+      [path.join(DIAGNOSTICS_DIR, 'run-signature-b-pass.mjs'), '--runs', '1', '--max-minutes', '2', '--out', oomOut, '--target', oom],
+      { cwd: dir, encoding: 'utf8', env: { ...process.env, NODE_TEST_CONTEXT: undefined, NODE_OPTIONS: '--max-old-space-size=80' } },
+    );
+    const oomCapturePath = path.join(oomOut, 'capture.json');
+    assert.ok(fs.existsSync(oomCapturePath), `a heap exhaustion must be captured:\n${oomResult.stdout}${oomResult.stderr}`);
+    const fatal = JSON.parse(fs.readFileSync(oomCapturePath, 'utf8')) as {
+      reportFiles: string[];
+      fatalMarkers: string[];
+      records: Array<{ parent: { exitCode: number | null; signal: string | null }; child: { kinds: string[] } }>;
+    };
+
+    assert.ok(
+      diedOfAFault(fatal.records[0]?.parent.exitCode, fatal.records[0]?.parent.signal),
+      `the child must have aborted (exitCode ${fatal.records[0]?.parent.exitCode}, signal ${fatal.records[0]?.parent.signal})`,
+    );
+    assert.deepEqual(fatal.records[0]?.child.kinds, ['start', 'preload-installed'],
+      'a V8 fatal runs no JS exit path, which is why the status alone cannot name it');
+    assert.ok(fatal.fatalMarkers.includes('JavaScript heap out of memory'),
+      `the banner must be recovered from the report Node routed it to, got ${JSON.stringify(fatal.fatalMarkers)}`);
+    assert.equal(fatal.reportFiles.length, 1, 'a V8 fatal writes exactly one diagnostic report');
+
+    // Second: the same status, chosen rather than suffered. Neither channel fires.
+    const chosen = path.join(dir, 'chosen.test.cjs');
+    fs.writeFileSync(chosen, 'process.exit(134);\n');
+    const chosenOut = path.join(dir, 'chosen-out');
+    const chosenResult = runPass(['--runs', '1', '--max-minutes', '1', '--out', chosenOut, '--target', chosen], dir);
+    const chosenCapturePath = path.join(chosenOut, 'capture.json');
+    assert.ok(fs.existsSync(chosenCapturePath), `${chosenResult.stdout}${chosenResult.stderr}`);
+    const quiet = JSON.parse(fs.readFileSync(chosenCapturePath, 'utf8')) as {
+      reportFiles: string[];
+      fatalMarkers: string[];
+      records: Array<{ parent: { exitCode: number | null; signal: string | null } }>;
+    };
+
+    assert.equal(quiet.records[0]?.parent.exitCode, 134, 'a chosen status, identical on every platform');
+    assert.equal(quiet.records[0]?.parent.signal, null, 'and reached by exiting, not by aborting');
+    assert.deepEqual(quiet.fatalMarkers, [], 'nothing was printed');
+    assert.deepEqual(quiet.reportFiles, [], 'and no report was written, which is what tells them apart');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('correlator: a marker inside an earlier failure\'s own report is not attributed to the next file', () => {
+  // A TAP point line is followed by that test's YAML block, so anchoring the region to the point
+  // line alone leaves the previous failure's whole body inside the next failure's region. A suite
+  // that asserts on a formatter, or that fails with a message quoting one of these banners, would
+  // then hand that banner to whichever file failed next. The region has to start after the block
+  // ends, and only Node's own `# ` diagnostic lines count as a child's output.
+  const tapText = [
+    'TAP version 13',
+    '# Subtest: dist-test/test/formatter.test.js',
+    'not ok 1 - dist-test/test/formatter.test.js',
+    '  ---',
+    '  duration_ms: 5',
+    "  failureType: 'subtestsFailed'",
+    "  error: 'expected FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory'",
+    '  ...',
+    'a bare line mentioning <--- Last few GCs ---> that Node never emitted as a diagnostic',
+    tapFailure('dist-test/test/studies-api.test.js', '134').replace('not ok 1 -', 'not ok 2 -'),
+    '1..2',
+  ].join('\n');
+
+  const failures = correlator.parseTapFailures(tapText, { isWindows: false });
+
+  assert.equal(failures.length, 1, 'the first block failed a subtest, so only the second is a candidate');
+  assert.deepEqual(
+    failures[0]?.fatalMarkers,
+    [],
+    'neither an earlier failure\'s report body nor an undiagnosed bare line is this file\'s banner',
+  );
+});
+
+test('correlator: two runs that reused one pid are not merged into a single process', () => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-pidreuse-'));
+  try {
+    // Bucketing by pid alone is not enough: Windows reuses pids freely, and the preload's default
+    // log directory is never cleaned, so the same pid can name two different processes that both
+    // ran this file. Merging them puts the earlier run's `exit` into the later run's evidence, which
+    // is the false negative the per-process bucketing exists to prevent. Each process writes its own
+    // file — `run-<pid>-<ms>.jsonl` — so the file is the identity the pid alone cannot supply.
+    const line = (kind: string) => JSON.stringify({
+      kind, pid: 1111, testFile: 'C:\\repo\\dist-test\\test\\studies-api.test.js',
+    });
+    fs.writeFileSync(
+      path.join(logDir, 'run-1111-1000.jsonl'),
+      `${['start', 'preload-installed', 'beforeExit', 'exit'].map(line).join('\n')}\n`,
+    );
+    fs.writeFileSync(
+      path.join(logDir, 'run-1111-2000.jsonl'),
+      `${['start', 'preload-installed'].map(line).join('\n')}\n`,
+    );
+
+    const records = correlator.correlate(
+      correlator.parseTapFailures(tapFailure('dist-test/test/studies-api.test.js', '1')),
+      correlator.readChildLogs(logDir),
+      { isWindows: true },
+    );
+
+    assert.equal(records.length, 1);
+    assert.equal(records[0]?.child.ambiguous, true, 'one pid, two processes: neither is the evidence');
+    assert.equal(records[0]?.child.candidates, 2);
+    assert.deepEqual(records[0]?.child.kinds, []);
+    assert.doesNotMatch(
+      String(records[0]?.statement),
+      /rules out an external termination/,
+      'a reused pid must not be allowed to rule out the mechanism under investigation',
+    );
+  } finally {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
+test('pass runner: a relative --out belongs to the caller, not to the package being run', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-relout-'));
+  try {
+    // The parent creates and reads the artifact paths itself, while the child resolves the same
+    // strings against the package it was pointed at. Left relative, those are two different
+    // directories the moment `--package` names anything but this one: the parent would look for a
+    // report the child wrote somewhere else, and the pass would report that it could not read its
+    // own run.
+    const pkg = path.join(dir, 'other-package');
+    fs.mkdirSync(pkg, { recursive: true });
+    trivialTarget(pkg);
+    const result = runPass(
+      ['--runs', '1', '--max-minutes', '1', '--out', 'artifacts', '--package', pkg, '--target', 'noop.test.cjs'],
+      dir,
+    );
+
+    assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+    const summaryPath = path.join(dir, 'artifacts', 'summary.json');
+    assert.ok(fs.existsSync(summaryPath), 'the artifacts belong beside the caller, not inside the package');
+    const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as {
+      runs: Array<{ runnerExitCode: number | null; collectionError: string | null }>;
+    };
+    assert.equal(summary.runs[0]?.collectionError, null, 'the run must be readable, not written out of reach');
+    assert.equal(summary.runs[0]?.runnerExitCode, 0);
+    assert.ok(!fs.existsSync(path.join(pkg, 'artifacts')), 'nothing may be left inside the package under test');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('pass runner: a diagnostic report is attributed to the child that wrote it, and its body is not kept', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-report-attr-'));
+  try {
+    // Bounded by construction: an 80 MB ceiling reached through NODE_OPTIONS, and a loop that stops
+    // at 400 MB of intent.
+    const oom = path.join(dir, 'oom.test.cjs');
+    fs.writeFileSync(oom, 'const held = [];\nfor (let i = 0; i < 400; i++) held.push(new Array(131072).fill(i));\n');
+    const out = path.join(dir, 'out');
+    const result = spawnSync(
+      process.execPath,
+      [path.join(DIAGNOSTICS_DIR, 'run-signature-b-pass.mjs'), '--runs', '1', '--max-minutes', '2', '--out', out, '--target', oom],
+      { cwd: dir, encoding: 'utf8', env: { ...process.env, NODE_TEST_CONTEXT: undefined, NODE_OPTIONS: '--max-old-space-size=80' } },
+    );
+
+    const capturePath = path.join(out, 'capture.json');
+    assert.ok(fs.existsSync(capturePath), `${result.stdout}${result.stderr}`);
+    const capture = JSON.parse(fs.readFileSync(capturePath, 'utf8')) as {
+      records: Array<{ child: { pid: number | null }; reportFiles: string[] }>;
+    };
+
+    // A run can hold several failures. A single flat list cannot say which child suffered the fault,
+    // which is the only thing the report was collected to say — and Node names each report after the
+    // pid that wrote it, so the join needs nothing the capture does not already hold.
+    const record = capture.records[0];
+    assert.ok(record, 'the heap exhaustion must be captured');
+    assert.equal(record.reportFiles.length, 1, `expected one report for this child, got ${JSON.stringify(record.reportFiles)}`);
+    assert.ok(
+      record.reportFiles[0]?.includes(`.${record.child.pid}.`),
+      `the report must name the child that died (pid ${record.child.pid}, got ${record.reportFiles[0]})`,
+    );
+
+    // A report body carries the whole command line and every environment variable — DATABASE_URL and
+    // its password included. The name is the evidence; the body is a credential file, and it is
+    // treated exactly as the raw report transcript is.
+    const leftBehind = fs.existsSync(path.join(out, 'reports-run1'))
+      ? fs.readdirSync(path.join(out, 'reports-run1'))
+      : [];
+    assert.deepEqual(leftBehind, [], 'no report body may be retained in the artifacts');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('pass runner: in a run with two failures, the report goes to the child that faulted', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-two-'));
+  try {
+    // The reason per-record attribution exists. Two files die in one run, with the SAME status where
+    // this platform reports one: the first suffers a real heap exhaustion, the second simply chooses
+    // to leave. Only the first makes Node write a report. A run-level list would hand that report to
+    // both records and say the second faulted too, which is the opposite of what it was collected to
+    // establish.
+    //
+    // Bounded by construction: an 80 MB ceiling reached through NODE_OPTIONS, and a loop that stops
+    // at 400 MB of intent.
+    fs.writeFileSync(
+      path.join(dir, 'a-fault.test.cjs'),
+      'const held = [];\nfor (let i = 0; i < 400; i++) held.push(new Array(131072).fill(i));\n',
+    );
+    fs.writeFileSync(path.join(dir, 'b-chosen.test.cjs'), 'process.exit(134);\n');
+
+    const out = path.join(dir, 'out');
+    const result = spawnSync(
+      process.execPath,
+      [
+        path.join(DIAGNOSTICS_DIR, 'run-signature-b-pass.mjs'),
+        '--runs', '1', '--max-minutes', '3', '--out', out,
+        '--target', path.join(dir, '*.test.cjs'),
+      ],
+      { cwd: dir, encoding: 'utf8', env: { ...process.env, NODE_TEST_CONTEXT: undefined, NODE_OPTIONS: '--max-old-space-size=80' } },
+    );
+
+    const capturePath = path.join(out, 'capture.json');
+    assert.ok(fs.existsSync(capturePath), `both files must be captured:\n${result.stdout}${result.stderr}`);
+    const capture = JSON.parse(fs.readFileSync(capturePath, 'utf8')) as {
+      reportFiles: string[];
+      records: Array<{
+        file: string;
+        parent: { exitCode: number | null; signal: string | null };
+        child: { pid: number | null };
+        reportFiles: string[];
+      }>;
+    };
+
+    assert.equal(capture.records.length, 2, `expected both files to fail, got ${capture.records.map((r) => r.file).join(', ')}`);
+    const faulted = capture.records.find((record) => record.file.includes('a-fault'));
+    const chosen = capture.records.find((record) => record.file.includes('b-chosen'));
+    assert.ok(faulted && chosen, 'both files must appear in the capture');
+
+    assert.ok(diedOfAFault(faulted.parent.exitCode, faulted.parent.signal), 'the first file must have aborted');
+    assert.equal(chosen.parent.exitCode, 134, 'the second file chose the status the first was given');
+
+    assert.equal(faulted.reportFiles.length, 1, `the fault wrote one report, got ${JSON.stringify(faulted.reportFiles)}`);
+    assert.ok(
+      faulted.reportFiles[0]?.includes(`.${faulted.child.pid}.`),
+      `and it names that child (pid ${faulted.child.pid}, got ${faulted.reportFiles[0]})`,
+    );
+    assert.deepEqual(
+      chosen.reportFiles,
+      [],
+      'the file that merely chose the status wrote nothing, and must not inherit the other file\'s report',
+    );
+    assert.equal(capture.reportFiles.length, 1, 'the run as a whole still saw exactly one report');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('pass runner: a reused --out cannot lend one pass a previous pass\'s diagnostic report', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-stale-report-'));
+  try {
+    // The same staleness this correlator refuses on the child-log side, on the artifact side. An
+    // interrupted pass leaves `reports-run1` behind; a later pass given the same `--out` created the
+    // directory without emptying it, so the leftover counted as this run's — and since attribution
+    // accepts any filename carrying the pid, a reused pid would let a file that merely chose its
+    // exit status inherit a native fault it never suffered.
+    const out = path.join(dir, 'out');
+    fs.mkdirSync(path.join(out, 'reports-run1'), { recursive: true });
+    fs.writeFileSync(path.join(out, 'reports-run1', 'report.19700101.000000.4242.0.001.json'), '{"stale":true}\n');
+
+    const result = runPass(['--runs', '1', '--max-minutes', '1', '--out', out, '--target', trivialTarget(dir)], dir);
+
+    assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+    const summary = JSON.parse(fs.readFileSync(path.join(out, 'summary.json'), 'utf8')) as {
+      runs: Array<{ reportFiles: number }>;
+    };
+    assert.equal(summary.runs[0]?.reportFiles, 0, 'a leftover from an earlier pass is not this run\'s evidence');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('pass runner: no diagnostic report body survives a run, whatever the run did', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-no-bodies-'));
+  try {
+    // A report body carries the whole command line and every environment variable, this suite's
+    // DATABASE_URL password included. The names are recorded; the bodies must not outlive the run
+    // that produced them, on the capture path or any other. Run both kinds and check the artifacts.
+    const clean = path.join(dir, 'clean');
+    const cleanResult = runPass(['--runs', '1', '--max-minutes', '1', '--out', clean, '--target', trivialTarget(dir)], dir);
+    assert.equal(cleanResult.status, 0, `${cleanResult.stdout}${cleanResult.stderr}`);
+
+    const failing = path.join(dir, 'fail-target.test.cjs');
+    fs.writeFileSync(failing, 'process.exit(134);\n');
+    const captured = path.join(dir, 'captured');
+    runPass(['--runs', '1', '--max-minutes', '1', '--out', captured, '--target', failing], dir);
+    assert.ok(fs.existsSync(path.join(captured, 'capture.json')), 'the failing target must be captured');
+
+    for (const artifacts of [clean, captured]) {
+      const bodies = fs
+        .readdirSync(artifacts, { recursive: true, encoding: 'utf8' })
+        .filter((entry) => entry.includes('report.') && entry.endsWith('.json'));
+      assert.deepEqual(bodies, [], `a report body survived in ${artifacts}: ${JSON.stringify(bodies)}`);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('pass runner: an --out that already holds a capture is refused, not quietly reused', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-prior-capture-'));
+  try {
+    // A pass owns its artifact directory: it empties each run's child logs so no earlier run can lend
+    // it evidence. That is right for the logs and fatal for a capture — reusing an `--out` would
+    // delete the child logs a previous pass captured while leaving its `capture.json` behind, so the
+    // directory would end up asserting a termination whose evidence no longer exists.
+    //
+    // Deleting the old capture instead would be worse: a capture is the rarest artifact this whole
+    // diagnostic produces. So the pass refuses, before it creates or spawns anything.
+    const out = path.join(dir, 'out');
+    fs.mkdirSync(path.join(out, 'child-logs-run1'), { recursive: true });
+    fs.writeFileSync(path.join(out, 'capture.json'), '{"run":1,"records":[]}\n');
+    // The evidence the capture refers to. It is what a reused `--out` would destroy: the pass
+    // empties each run's child logs before running it, so a replacement pass would delete these and
+    // leave the capture above pointing at nothing.
+    fs.writeFileSync(path.join(out, 'child-logs-run1', 'run-4242-1000.jsonl'), '{"kind":"start","pid":4242}\n');
+
+    const result = runPass(['--runs', '1', '--max-minutes', '1', '--out', out, '--target', trivialTarget(dir)], dir);
+
+    assert.equal(result.status, 2, `${result.stdout}${result.stderr}`);
+    assert.match(String(result.stderr), /capture/i, 'the refusal must say what is in the way');
+    assert.ok(!fs.existsSync(path.join(out, 'summary.json')), 'a refused pass must not have run anything');
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(path.join(out, 'capture.json'), 'utf8')),
+      { run: 1, records: [] },
+      'and must leave the capture it refused to overwrite exactly as it found it',
+    );
+    assert.deepEqual(
+      fs.readdirSync(path.join(out, 'child-logs-run1')),
+      ['run-4242-1000.jsonl'],
+      'the capture must still have the child logs it refers to; refusing early is what protects them',
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });

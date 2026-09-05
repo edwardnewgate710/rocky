@@ -174,6 +174,62 @@ function classifyTermination({ exitCode, signal }) {
 }
 
 /**
+ * The only lines a dying child prints that name its own cause.
+ *
+ * Node prints these itself, and they are what separates a V8 heap exhaustion from a JS
+ * `process.abort()` or an external kill when all three can leave exit code 134.
+ */
+const FATAL_MARKERS = [
+  'FATAL ERROR:',
+  'JavaScript heap out of memory',
+  '<--- Last few GCs --->',
+  '----- Native stack trace -----',
+  '----- JavaScript stack trace -----',
+];
+
+/**
+ * The lines of a TAP region that are Node's own diagnostics, and nothing else.
+ *
+ * A child's stderr reaches the report as `# ` comment lines, which is what makes a banner readable
+ * at all. Ordinary suite output reaches it too — as YAML bodies, as quoted error messages — and a
+ * substring scan over the raw region cannot tell a test that PRINTED `FATAL ERROR:` from a child
+ * that died of one. Keeping only the diagnostic lines is not a complete defence (a test that writes
+ * the banner to its own stderr is indistinguishable by construction) but it removes every case
+ * where the text was never presented as a diagnostic in the first place.
+ *
+ * @param {string} region
+ * @returns {string} the region's `# ` lines, joined
+ */
+function childDiagnostics(region) {
+  return String(region)
+    .split('\n')
+    .filter((line) => /^#\s/.test(line))
+    .join('\n');
+}
+
+/**
+ * Which fatal markers a run's reporter output contained, and never the output itself.
+ *
+ * Read the REPORT, not the parent's stderr. Node's runner attaches a readline interface to each
+ * child's stderr and re-emits every line as a `test:stderr` reporter event, so a child's fatal
+ * banner reaches the TAP file as `# ` diagnostics and never reaches the parent process's own
+ * stderr at all — measured here on a real bounded heap exhaustion as zero bytes on the parent's
+ * stderr against the full banner in the TAP.
+ *
+ * A whitelist rather than a redaction pass: a suite's output can contain anything a test chose to
+ * print, so matching known markers is the only way to be sure a token, request body or connection
+ * string cannot reach a capture file. Presence is all the evidence is worth anyway — the marker
+ * names the mechanism, the surrounding text does not.
+ *
+ * @param {string | undefined} text Reporter output, typically the TAP report.
+ * @returns {string[]} markers present, in the order listed above
+ */
+function fatalMarkersIn(text) {
+  const haystack = String(text ?? '');
+  return FATAL_MARKERS.filter((marker) => haystack.includes(marker));
+}
+
+/**
  * Events that name *why* the process ended: a call the preload intercepted, or a fault it observed.
  */
 const CAUSAL_KINDS = ['process.exit', 'process.abort', 'uncaughtExceptionMonitor'];
@@ -257,13 +313,35 @@ function narrowFromChildEvidence(classification, childKinds) {
 /**
  * @param {string} tapText
  * @param {{ isWindows?: boolean }} [options]
- * @returns {Array<{ file: string, exitCode: number | null, signal: string | null, failureType: string | null, durationMs: number | null, isWindows?: boolean }>}
+ * @returns {Array<{ file: string, exitCode: number | null, signal: string | null, failureType: string | null, durationMs: number | null, fatalMarkers: string[], isWindows?: boolean }>}
  */
 function parseTapFailures(tapText, options = {}) {
-  const blocks = String(tapText).matchAll(/^not ok \d+ - (.+?)$\r?\n\s*---\r?\n([\s\S]*?)^\s*\.\.\.$/gm);
+  const text = String(tapText);
+  const blocks = text.matchAll(/^not ok \d+ - (.+?)$\r?\n\s*---\r?\n([\s\S]*?)^\s*\.\.\.$/gm);
+  // Where each reported test's own output ends, so a run's diagnostic lines can be split between
+  // the files that produced them. Node emits a child's stderr as top-level `# ` diagnostics as it
+  // arrives, ahead of the point line for the file that produced it, so everything between the end of
+  // the previous report and this point line belongs to this file.
+  //
+  // The boundary is the end of the previous test's YAML block, not the end of its point line: the
+  // block comes AFTER the point line, so stopping at the line would leave the previous failure's
+  // whole body — its error message, its stack — inside the next file's region, and a suite that
+  // fails while quoting one of these banners would hand it to whichever file failed next.
+  //
+  // Attribution needs one child reporting at a time. The two packages this runner targets both pass
+  // `--test-concurrency=1` (`packages/api` and `packages/persistence`; no other workspace package
+  // does). A report produced at Node's default concurrency interleaves several children's output and
+  // is not attributable this way — reading one here would be reading a different experiment.
+  const regionEnds = [];
+  for (const point of text.matchAll(/^(?:not )?ok \d+ - .*$/gm)) {
+    const afterPoint = point.index + point[0].length;
+    const yaml = /^\r?\n\s*---\r?\n[\s\S]*?\r?\n\s*\.\.\.[^\r\n]*/.exec(text.slice(afterPoint));
+    regionEnds.push(yaml === null ? afterPoint : afterPoint + yaml[0].length);
+  }
   const out = [];
   const isWin = typeof options?.isWindows === 'boolean' ? options.isWindows : undefined;
-  for (const [, rawName, body] of blocks) {
+  for (const match of blocks) {
+    const [, rawName, body] = match;
     if (!/^\s*error:\s*['"]?test failed['"]?\s*$/m.test(body)) continue;
     if (!/^\s*failureType:\s*['"]?testCodeFailure['"]?\s*$/m.test(body)) continue;
     if (out.length >= MAX_RECORDS) break;
@@ -277,7 +355,13 @@ function parseTapFailures(tapText, options = {}) {
     const dur = unquote(scalar('duration_ms'));
     const parsedExit = exit === null || exit === '~' || exit === '' ? null : Number(exit);
     const parsedDur = dur === null || dur === '~' || dur === '' ? null : Number(dur);
+    let sliceStart = 0;
+    for (const end of regionEnds) {
+      if (end >= match.index) break;
+      sliceStart = end;
+    }
     out.push({
+      fatalMarkers: fatalMarkersIn(childDiagnostics(text.slice(sliceStart, match.index))),
       file: rawName.trim().replace(/\\\\/g, '\\'),
       exitCode: parsedExit !== null && Number.isFinite(parsedExit) ? parsedExit : null,
       signal: sig === null || sig === '~' ? null : sig,
@@ -298,7 +382,9 @@ function parseTapFailures(tapText, options = {}) {
  * final line, and losing that line must not lose the rest of the record.
  *
  * @param {string} logDir
- * @returns {Map<string, { pid: number | null, kinds: string[] }>} keyed by the child's whole normalised path
+ * @returns {Map<string, { pidCount: number, pid: number | null, kinds: string[] }>} keyed by the
+ *   child's whole normalised path. Each entry counts the processes that ran that file, and reports
+ *   a pid and its events only when there was exactly one.
  */
 function readChildLogs(logDir) {
   const byFile = new Map();
@@ -337,21 +423,58 @@ function readChildLogs(logDir) {
       if (isWin) {
         const lower = normalized.toLowerCase();
         for (const existingKey of byFile.keys()) {
-          const entry = byFile.get(existingKey);
-          if (entry?.isWindows && existingKey.toLowerCase() === lower) {
+          const candidate = byFile.get(existingKey);
+          if (candidate?.isWindows && existingKey.toLowerCase() === lower) {
             key = existingKey;
             break;
           }
         }
       }
-      const existing = byFile.get(key) ?? { pid: null, kinds: [], isWindows: false };
-      existing.pid = typeof record.pid === 'number' ? record.pid : existing.pid;
-      if (typeof record.kind === 'string') existing.kinds.push(record.kind);
+      // Events are bucketed by the process that emitted them, never appended to one list. One
+      // directory can hold logs from more than one run of the same file — the preload defaults to a
+      // shared temp directory nothing cleans — and concatenating those would put an earlier run's
+      // `exit` into a later run's evidence, which is exactly what makes `narrowFromChildEvidence`
+      // announce that an external termination and a native fault are ruled out.
+      //
+      // The bucket is keyed by the log FILE as well as the pid, because a pid is not an identity:
+      // Windows reuses them freely, and two runs of one file in one directory can carry the same
+      // number. Each process writes its own `run-<pid>-<ms>.jsonl`, so the file supplies the part
+      // the pid cannot.
+      const pid = typeof record.pid === 'number' ? record.pid : null;
+      const existing = byFile.get(key) ?? { processes: new Map(), isWindows: false };
+      const bucketKey = `${entry}\u0000${pid === null ? 'unknown' : pid}`;
+      const bucket = existing.processes.get(bucketKey) ?? { pid, kinds: [] };
+      if (typeof record.kind === 'string') bucket.kinds.push(record.kind);
+      existing.processes.set(bucketKey, bucket);
       if (isWin) existing.isWindows = true;
       byFile.set(key, existing);
     }
   }
+  // A file with one process on record reports that process. A file with several is not evidence
+  // about either of them, and says so through `pidCount` rather than by picking one.
+  for (const record of byFile.values()) {
+    const buckets = [...record.processes.values()];
+    record.pidCount = buckets.length;
+    record.pid = buckets.length === 1 ? buckets[0].pid : null;
+    record.kinds = buckets.length === 1 ? buckets[0].kinds : [];
+  }
   return byFile;
+}
+
+/**
+ * One path matched one entry — but an entry holding several processes is still not evidence.
+ *
+ * Two runs of the same file in one log directory match that file equally well, and there is no
+ * sound way to choose between them: the newest is not necessarily the failing one, and attaching
+ * either one's lifecycle events to the other's failure would make the diagnostic assert something
+ * false. Reporting that it does not know is the only honest answer.
+ *
+ * @param {{ pidCount?: number, pid: number | null, kinds: string[] }} child
+ */
+function single(child) {
+  const count = child?.pidCount ?? 1;
+  if (count > 1) return { child: null, ambiguous: true, candidates: count };
+  return { child, ambiguous: false, candidates: 1 };
 }
 
 /**
@@ -383,7 +506,7 @@ function matchChild(childLogs, parentFile, parentIsWindows) {
     const keyNorm = isWin ? key.toLowerCase() : key;
     return keyNorm === wantedNorm || keyNorm.endsWith(`/${wantedNorm}`);
   });
-  if (bySuffix.length === 1) return { child: bySuffix[0][1], ambiguous: false, candidates: 1 };
+  if (bySuffix.length === 1) return single(bySuffix[0][1]);
   if (bySuffix.length > 1) return { child: null, ambiguous: true, candidates: bySuffix.length };
 
   // Basename fallback is ONLY for a parent path too short to disambiguate (i.e. bare filename with no slashes).
@@ -399,7 +522,7 @@ function matchChild(childLogs, parentFile, parentIsWindows) {
       }
       return kBase === base;
     });
-    if (byBase.length === 1) return { child: byBase[0][1], ambiguous: false, candidates: 1 };
+    if (byBase.length === 1) return single(byBase[0][1]);
     if (byBase.length > 1) return { child: null, ambiguous: true, candidates: byBase.length };
   }
 
@@ -424,7 +547,7 @@ function correlate(failures, childLogs, options = {}) {
   const defaultIsWin = typeof options?.isWindows === 'boolean' ? options.isWindows : undefined;
   return failures.map((rawFailure) => {
     const failure = typeof rawFailure === 'string'
-      ? { file: rawFailure, exitCode: null, signal: null, failureType: null, durationMs: null }
+      ? { file: rawFailure, exitCode: null, signal: null, failureType: null, durationMs: null, fatalMarkers: [] }
       : rawFailure;
     const parentIsWin = typeof failure?.isWindows === 'boolean'
       ? failure.isWindows
@@ -448,12 +571,13 @@ function correlate(failures, childLogs, options = {}) {
         pid: match.child?.pid ?? null,
         kinds,
       },
+      fatalMarkers: failure.fatalMarkers ?? [],
       classification: classification.id,
       meaning: classification.meaning,
       specific: classification.specific,
       narrowed: match.ambiguous ? false : narrowing.narrowed,
       statement: match.ambiguous
-        ? `${match.candidates} child logs match this file's name and none matches its path, so no lifecycle evidence can be attributed to it without guessing`
+        ? `${match.candidates} child processes are on record for this file — a second directory of the same name, or a second run left in the same log directory — so no lifecycle evidence can be attributed to it without guessing`
         : narrowing.statement,
     };
   });
@@ -461,9 +585,11 @@ function correlate(failures, childLogs, options = {}) {
 
 module.exports = {
   EXIT_CODE_TABLE,
+  FATAL_MARKERS,
   MAX_RECORDS,
   classifyTermination,
   correlate,
+  fatalMarkersIn,
   isWindowsPath,
   matchChild,
   narrowFromChildEvidence,
