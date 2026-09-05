@@ -6,11 +6,48 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-09-05 — M15 Increment 52: deterministic analysis-cache cold-race test._
+_Last updated: 2026-09-06 — M15 Increment 53: trusted edge proxy identity contract (PR-1)._
+
+Prior: _Last updated: 2026-09-05 — M15 Increment 52: deterministic analysis-cache cold-race test._
 
 Prior: _Last updated: 2026-09-05 — M15 Increment 51: Signature B mechanism isolation and diagnostic hardening._
 
 Prior: _Last updated: 2026-09-05 — M15 Increment 50: test:counts / standalone gateway host setup contract._
+
+## M15 Increment 53 — trusted edge proxy identity contract (PR-1)
+
+**Status: RESOLVED — trusted edge client identity contract across WebSocket admission, API rate limiting, and real Nginx path.** Detailed in `docs/adr/0141-trusted-edge-proxy-identity.md`.
+
+### The Defect and Root Cause
+
+The Rookzen launch-readiness audit established two defects sharing the same trusted-edge boundary:
+1. **WebSocket Gateway Per-IP Limit Collapse:** In `services/gateway/src/serve.ts`, connection admission derived client identity directly from `request.socket.remoteAddress`, ignoring upstream reverse proxy headers. In Docker Compose and Kubernetes deployments behind `web` (Nginx) or Ingress, all browser connections arrived from the proxy socket IP. Consequently, `WS_MAX_CONNECTIONS_PER_IP` (20) collapsed into a shared cap across all users behind the proxy, causing connections 21–25 of 25 distinct users to be rejected with WebSocket close code 1013 (`connection limit exceeded`).
+2. **API Rate Limiting Spoof Vulnerability:** In `packages/api/src/http/router.ts`, client identity was resolved from the leftmost token of `X-Forwarded-For` (`fwd.split(',')[0]`). Because Nginx appends the client's socket address via `$proxy_add_x_forwarded_for`, an attacker prepending forged IPs in `X-Forwarded-For` was treated as the forged leftmost IP, completely bypassing per-IP rate limits on sensitive endpoints such as `/v1/auth/register`.
+
+### Architecture and Trusted-Hop Contract
+
+Implemented an explicit trusted-hop proxy contract (`TRUST_PROXY`) in `packages/api/src/http/client-ip.ts`:
+- **Direct connection (`TRUST_PROXY=false` or `0`):** Client identity is derived strictly from `socket.remoteAddress`; forwarded headers are completely ignored.
+- **Reverse proxy (`TRUST_PROXY=<hops>` or `"true"` meaning 1):** Hop count specifies the number of trusted proxy layers. Client IP is resolved from `X-Forwarded-For` by reading **right to left** (`entries.length - hops`), treating any prefixes to the left as untrusted attacker input.
+- **Topology parity:**
+  - Docker Compose: 1 hop (`web` Nginx), `TRUST_PROXY: "1"`.
+  - Helm (Kubernetes): 2 hops (`ingress-nginx` + `web` Nginx), `config.trustProxy: "2"`.
+- **IP normalization:** `normalizeIp` unmaps IPv4-mapped IPv6 literals (`::ffff:x.x.x.x` -> `x.x.x.x`), unbrackets IPv6 literals, validates syntax with `node:net isIP`, and lowers case.
+
+### TDD and Acceptance Proofs
+
+1. **API Rate Limit Spoof Defense (`packages/api/test/rate-limit-spoofing.test.ts`):** Proved RED (attacker making 6 registrations with varying spoofed prefixes was admitted without rate limiting) and GREEN (request 6 blocked with HTTP 429 `rate_limited`).
+2. **Gateway Admission & Spoof Defense (`services/gateway/test/gateway-proxy-admission.test.ts`):** Proved RED (25 distinct clients behind proxy collapsed to 127.0.0.1, rejecting 5 with 1013) and GREEN:
+   - 25 distinct proxied clients all admitted (0 rejected).
+   - Same client capped at 20 connections (21–25 rejected with 1013).
+   - Spoofed XFF prefixes do not bypass connection limits.
+   - Connection closing decrements the active IP count.
+   - Direct socket mode (`TRUST_PROXY=false`) ignores forwarded headers.
+3. **Real Nginx Acceptance Suite (`scripts/test/nginx-trusted-edge.acceptance.test.mjs`):** Runs an automated test against a live container running `nginxinc/nginx-unprivileged:alpine` with `docker/web/nginx.conf.template`:
+   - Real Nginx WebSocket admission: enforces 20-connection limit.
+   - Real Nginx WebSocket spoof defense: spoofed prefixes cannot bypass connection limit.
+   - Real Nginx API rate limit spoof defense: 6th registration blocked with 429.
+   - Real Nginx SEC-1 boundary: `/v1/metrics` and `/v1/metrics/` blocked with 404 while `/v1/health` proxies.
 
 ## M15 Increment 52 — deterministic analysis-cache cold-race test
 

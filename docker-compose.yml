@@ -51,6 +51,7 @@ services:
       DATABASE_URL: postgres://gambit:${POSTGRES_PASSWORD:-gambit_dev}@postgres:5432/gambit
       ACCESS_TOKEN_SECRET: ${ACCESS_TOKEN_SECRET:-dev-secret-change-me-in-production-at-least-32-bytes!!}
       PORT: "8080"
+      TRUST_PROXY: "1"
       # Local development explicitly selects the safe, non-delivering console sender. Production
       # Helm deployments require Resend and fail startup when its configuration is missing.
       NODE_ENV: development
@@ -98,6 +99,7 @@ services:
       PORT: "4175"
       HOST: "0.0.0.0"
       NODE_ENV: production
+      TRUST_PROXY: "1"
       # Redis pub/sub for multi-node fanout (M14 inc 3, ADR-0008).
       REDIS_URL: redis://redis:6379
       # Tournament result reporter (M9 inc 13, ADR-0025): records tournament

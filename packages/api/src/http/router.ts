@@ -18,6 +18,7 @@ import type { Logger } from '../ports/logger';
 import type { Metrics } from '../ports/metrics';
 import type { Tracer } from '../ports/tracer';
 import { parseTraceparent, generateTraceId, formatTraceparent, isSampled } from './traceparent';
+import { resolveClientIp, type TrustProxy } from './client-ip';
 
 /** HTTP methods the router dispatches. */
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -55,7 +56,7 @@ export interface RouterRuntime {
   readonly maxBodyBytes?: number;
   readonly newRequestId: () => string;
   /** Whether to trust `X-Forwarded-For` for the client IP (behind a proxy). */
-  readonly trustProxy?: boolean;
+  readonly trustProxy?: TrustProxy;
   /** Sink for uncaught (non-HttpError) failures; defaults to `console.error`. */
   readonly onInternalError?: (err: unknown, requestId: string) => void;
   readonly logger: Logger;
@@ -264,7 +265,7 @@ export class Router {
         requestId,
         traceId,
         logger,
-        ip: clientIp(req, runtime.trustProxy ?? false),
+        ip: resolveClientIp(req, runtime.trustProxy ?? false),
         userAgent: headerString(req.headers['user-agent']) ?? null,
         auth,
         signal: disconnect.signal,
@@ -366,15 +367,4 @@ function writeResult(res: ServerResponse, result: HandlerResult): void {
 function headerString(value: string | string[] | undefined): string | undefined {
   if (value === undefined) return undefined;
   return Array.isArray(value) ? value[0] : value;
-}
-
-function clientIp(req: IncomingMessage, trustProxy: boolean): string | null {
-  if (trustProxy) {
-    const fwd = headerString(req.headers['x-forwarded-for']);
-    if (fwd) {
-      const first = fwd.split(',')[0]!.trim();
-      if (first) return first;
-    }
-  }
-  return req.socket.remoteAddress ?? null;
 }

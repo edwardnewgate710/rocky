@@ -14,6 +14,9 @@
  * - `HOST` (default 0.0.0.0) — WebSocket listen host
  * - `ACCESS_TOKEN_SECRET` (required) — HMAC secret, must match the API
  * - `ACCESS_TOKEN_TTL_SEC` (default 900) — token lifetime, must match the API
+ * - `TRUST_PROXY` (optional, default false) — trusted reverse proxy hop count
+ *   ("1", "2", ...) or boolean ("true", "false"). Determines how client IP
+ *   is resolved from X-Forwarded-For for per-IP connection limits (ADR-0146).
  * - `DATABASE_URL` (optional) — when set, the authority persists game events
  *   to the shared Postgres event store; when absent, falls back to in-memory
  *   (state lost on restart).
@@ -91,6 +94,8 @@ import {
   RecordingTracer,
   spanSinkFromExporter,
   resolveTracesSampler,
+  resolveClientIp,
+  resolveTrustProxyEnv,
 } from '@chess-platform/api';
 import type { TournamentResultReporter, LaunchInput } from '@chess-platform/api';
 import type { EventStore } from '@chess-platform/persistence';
@@ -142,6 +147,7 @@ async function main(): Promise<void> {
   const joinTimeoutMs = positiveIntEnv('WS_JOIN_TIMEOUT_MS', 10_000);
   const heartbeatIntervalMs = positiveIntEnv('WS_HEARTBEAT_INTERVAL_MS', 30_000);
   const maxRoomsPerConnection = positiveIntEnv('WS_MAX_ROOMS_PER_CONNECTION', 4);
+  const trustProxy = resolveTrustProxyEnv(process.env['TRUST_PROXY']);
 
   const logger = new JsonLogger({ service: 'realtime-gateway', nodeId });
   const metrics = new InMemoryMetrics();
@@ -185,6 +191,7 @@ async function main(): Promise<void> {
   } else {
     logger.info('traces export: log-only');
   }
+  logger.info(`trusted proxy: ${typeof trustProxy === 'number' ? `${trustProxy} hops` : trustProxy ? '1 hop' : 'disabled (direct socket)'}`);
 
   const connectionsCounter = metrics.counter('gateway_connections_opened_total');
   const messagesCounter = metrics.counter('gateway_messages_received_total');
@@ -563,7 +570,7 @@ async function main(): Promise<void> {
   const alive = new WeakSet<WebSocket>();
 
   wss.on('connection', (ws: WebSocket, request) => {
-    const ip = request.socket.remoteAddress ?? 'unknown';
+    const ip = resolveClientIp(request, trustProxy) ?? request.socket.remoteAddress ?? 'unknown';
     const ipConnections = connectionsByIp.get(ip) ?? 0;
     if (wss.clients.size > maxConnections || ipConnections >= maxConnectionsPerIp) {
       ws.close(1013, 'connection limit exceeded');
