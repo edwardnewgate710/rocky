@@ -8,9 +8,9 @@ Postgres, a real API, a real WebSocket gateway, and the web frontend.
 
 - [Docker](https://docs.docker.com/get-docker/) with the Compose plugin (v2+)
 - Postgres and nginx run inside containers — no local install needed
-- [Node.js](https://nodejs.org/) 22+ on the host, only if you want to run
-  `scripts/smoke-test.mjs` outside a container (it uses the built-in `fetch`
-  and `WebSocket` globals)
+- [Node.js](https://nodejs.org/) 22+ on the host for dependency installation,
+  builds, tests (including `test:counts`), or `scripts/smoke-test.mjs` outside
+  containers. The smoke script uses the built-in `fetch` and `WebSocket` globals.
 
 ## Quick start
 
