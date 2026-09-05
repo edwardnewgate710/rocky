@@ -400,11 +400,14 @@ writes exactly one PID-named report for a Node/V8 fatal error and none for `proc
 external kill, so its presence and PID attribution separate those paths.
 
 **What the four fully-instrumented captures exclude, by positive measurement:** `process.exit` and
-`process.exitCode`, an ordinary uncaught exception, a fatal unhandled rejection and an instrumented
-JS `process.abort()` — each of which leaves a lifecycle record and fires Node's `exit` event, and
-none did; the measured V8/Node fatal path including heap OOM — which produces fatal stderr
-diagnostics inside the TAP report **and** a PID-attributable diagnostic report, and these produced
-**neither**; and node:test parent cancellation in this repository's configuration — `FileTest` sets
+`process.exitCode`, an ordinary uncaught exception and a fatal unhandled rejection — each of which
+leaves a lifecycle record **and** fires Node's `exit` event, and none did; an instrumented JS
+`process.abort()`, which is a separate case because it terminates immediately and fires no `exit`
+event at all, and is excluded instead by the record the preload writes synchronously *before*
+delegating to the original binding, as §4 above already sets out; the measured V8/Node fatal path
+including heap OOM — which produces fatal stderr diagnostics inside the TAP report **and** a
+PID-attributable diagnostic report, and these produced **neither**; and node:test parent
+cancellation in this repository's configuration — `FileTest` sets
 `this.timeout = null`, so the parent enforces no file-level wall clock, and a child aborted through
 the runner's `AbortSignal` sets `err` via `child.on('error')` and is reported as an `AbortError`
 rather than the bare fallback shape.
