@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
+import type { Pool } from 'pg';
 import { createPool } from '../src/pg/pool';
 import { migrate } from '../src/pg/migrate';
 import { PgTournamentsRepository } from '../src/pg/repositories';
@@ -9,9 +10,25 @@ import { Tournament } from '@chess-platform/tournament';
 import { createPairingStrategy } from '@chess-platform/tournament';
 import type { TournamentConfig } from '@chess-platform/tournament';
 import { VersionConflictError } from '../src/errors';
+import { withSharedDatabase } from '../src/test-support/fixtures';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
 const skip = DATABASE_URL ? false : 'DATABASE_URL not set';
+
+/**
+ * Remove exactly the tournaments a test created. Nothing references `tournaments`, so there is no
+ * ordering to respect here — only the obligation to do it at all.
+ *
+ * `save(snapshot, 0)` means "create this": expected version 0 says the row does not exist yet, and
+ * the repository turns the resulting `tournaments_pkey` violation into a `VersionConflictError`.
+ * These ids are fixed, so leaving the rows behind made the *second* run of this file report a
+ * version conflict on a tournament nobody was concurrently updating.
+ */
+const deleteTournaments =
+  (ids: readonly string[]) =>
+  async (pool: Pool): Promise<void> => {
+    await pool.query('DELETE FROM tournaments WHERE id = ANY($1::text[])', [[...ids]]);
+  };
 
 test('tournaments repository: migrations apply and are idempotent', { skip }, async () => {
   const pool = createPool();
@@ -25,8 +42,7 @@ test('tournaments repository: migrations apply and are idempotent', { skip }, as
 });
 
 test('tournaments repository: round-trip a round-robin mid-flight snapshot', { skip }, async () => {
-  const pool = createPool();
-  try {
+  await withSharedDatabase({ cleanup: deleteTournaments(['t-rr-test']) }, async (pool) => {
     await migrate(pool, join(process.cwd(), 'migrations'));
     const repo = new PgTournamentsRepository(pool);
 
@@ -85,14 +101,13 @@ test('tournaments repository: round-trip a round-robin mid-flight snapshot', { s
     assert.equal(summary.format, 'round_robin');
     assert.equal(summary.state, 'finished');
     assert.equal(summary.participantCount, 2);
-  } finally {
-    await pool.end();
-  }
+  });
 });
 
 test('tournaments repository: round-trip a swiss mid-flight snapshot', { skip }, async () => {
-  const pool = createPool();
-  try {
+  await withSharedDatabase({
+    cleanup: deleteTournaments(['t-swiss-test', 't-swiss-test-2']),
+  }, async (pool) => {
     await migrate(pool, join(process.cwd(), 'migrations'));
     const repo = new PgTournamentsRepository(pool);
 
@@ -152,15 +167,11 @@ test('tournaments repository: round-trip a swiss mid-flight snapshot', { skip },
     assert.ok(i1 !== -1 && i2 !== -1);
     // created_at is only set on INSERT, so t2 is newer
     assert.ok(i2 < i1, 't2 should be newer than t1');
-
-  } finally {
-    await pool.end();
-  }
+  });
 });
 
 test('tournaments repository: pre-migration rows (no explicit version) stay updatable', { skip }, async () => {
-  const pool = createPool();
-  try {
+  await withSharedDatabase({ cleanup: deleteTournaments(['t-pre-migration']) }, async (pool) => {
     await migrate(pool, join(process.cwd(), 'migrations'));
     const repo = new PgTournamentsRepository(pool);
 
@@ -196,7 +207,5 @@ test('tournaments repository: pre-migration rows (no explicit version) stay upda
     const after = await repo.findById(config.id);
     assert.equal(after!.snapshot.state, 'running');
     assert.equal(after!.version, 2);
-  } finally {
-    await pool.end();
-  }
+  });
 });

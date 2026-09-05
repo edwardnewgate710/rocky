@@ -199,7 +199,7 @@ jobs:
         run: npm run test:scripts
 
 
-  # Builds the two production images and looks inside them.
+  # Builds the three production images (API + gateway + web) and looks inside them.
   #
   # `release.yml` builds these, but only on a `v*` tag — so until M15 Increment 12 nothing checked
   # them before a release was already being cut, and the images had drifted: they installed whatever
@@ -211,14 +211,15 @@ jobs:
   # it proves the *recipe* — the pinned engine is present, executes, identifies itself, resolves its
   # libraries, and carries its licence material — not the application, which build-test already
   # compiles on every run. Gated on the files that change how an image is built, so an ordinary code
-  # change does not pay for two image builds.
+  # change does not pay for image builds.
   docker-images:
     name: production image build (API + gateway + web)
     needs: changes
     if: needs.changes.outputs.images == 'true'
     runs-on: ubuntu-latest
-    # Two full image builds, each compiling the server packages from scratch without the npm cache
-    # action. Twenty minutes is generous against that and still bounds a stall, as on analysis-smoke.
+    # Two full server image builds (API and gateway), each compiling the server packages from scratch
+    # without the npm cache action, alongside the web image built and checked separately. Twenty
+    # minutes is generous against that and still bounds a stall, as on analysis-smoke.
     timeout-minutes: 20
     steps:
       - name: Checkout

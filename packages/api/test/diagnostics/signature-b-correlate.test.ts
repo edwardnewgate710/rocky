@@ -47,21 +47,23 @@ const correlator = require(CORRELATE_PATH) as {
     meaning: string;
     specific: boolean;
   };
-  correlate(failures: unknown[], childLogs: Map<string, unknown>): CorrelatedRecord[];
+  correlate(failures: unknown[], childLogs: Map<string, unknown>, options?: { isWindows?: boolean }): CorrelatedRecord[];
   narrowFromChildEvidence(
     c: { id: string; specific: boolean },
     kinds: readonly string[],
   ): { narrowed: boolean; statement: string };
-  parseTapFailures(tap: string): Array<{
+  parseTapFailures(tap: string, options?: { isWindows?: boolean }): Array<{
     file: string;
     exitCode: number | null;
     signal: string | null;
     failureType: string | null;
     durationMs: number | null;
+    isWindows?: boolean;
   }>;
   readChildLogs(dir: string): Map<string, { pid: number | null; kinds: string[] }>;
-  matchChild(logs: Map<string, unknown>, file: string): { child: unknown; ambiguous: boolean; candidates: number };
+  matchChild(logs: Map<string, unknown>, file: string, parentIsWindows?: boolean): { child: unknown; ambiguous: boolean; candidates: number };
   normalizePath(p: string): string;
+  isWindowsPath(p: string): boolean;
 };
 
 /** A TAP block in the exact shape Node's built-in reporter emits for a file-level failure. */
@@ -718,5 +720,462 @@ test('correlator: captures a real child termination end to end through the paren
     );
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('correlator: a missing child log from one directory is never falsely matched to a child in another directory', () => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-nodup-'));
+  try {
+    // Only bar/a.test.js logged; foo/a.test.js died before writing any log
+    const lines = [
+      { kind: 'start', pid: 222, testFile: 'C:\\r\\dist-test\\test\\bar\\a.test.js' },
+      { kind: 'preload-installed', pid: 222, testFile: 'C:\\r\\dist-test\\test\\bar\\a.test.js' },
+      { kind: 'exit', pid: 222, testFile: 'C:\\r\\dist-test\\test\\bar\\a.test.js' },
+    ];
+    fs.writeFileSync(path.join(logDir, 'run-single.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    const logs = correlator.readChildLogs(logDir);
+
+    // Parent reports dist-test/test/foo/a.test.js failed.
+    const resolved = correlator.correlate(
+      correlator.parseTapFailures(tapFailure('dist-test/test/foo/a.test.js', '1')),
+      logs,
+    );
+    assert.equal(resolved.length, 1);
+    assert.equal(
+      resolved[0]?.child.logFound,
+      false,
+      'a file in foo/ must not claim the log of a different file in bar/ just because the basename matches',
+    );
+    assert.equal(resolved[0]?.child.pid, null, 'no PID may be attributed to the unlogged file');
+    assert.deepEqual(resolved[0]?.child.kinds, [], 'no lifecycle events may be falsely attributed');
+  } finally {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
+test('correlator: classifies signed negative 32-bit NTSTATUS codes identically to unsigned equivalents', () => {
+  // NTSTATUS 0xC0000005 in 32-bit signed two's complement is -1073741819 (unsigned 3221225477)
+  const signedViolation = correlator.classifyTermination({ exitCode: -1073741819, signal: null });
+  assert.equal(signedViolation.id, 'native-access-violation');
+  assert.equal(signedViolation.specific, true);
+
+  // Unmeasured NTSTATUS 0xC0000022 in 32-bit signed is -1073741790
+  const signedUnmeasured = correlator.classifyTermination({ exitCode: -1073741790, signal: null });
+  assert.equal(signedUnmeasured.id, 'ntstatus-unmeasured');
+  assert.equal(signedUnmeasured.specific, false);
+});
+
+test('correlator: parses TAP failure blocks with double-quoted or unquoted YAML values', () => {
+  const doubleQuoted = [
+    '# Subtest: dist-test/test/foo.test.js',
+    'not ok 1 - dist-test/test/foo.test.js',
+    '  ---',
+    '  duration_ms: 123.4',
+    '  failureType: "testCodeFailure"',
+    '  exitCode: 1',
+    '  signal: ~',
+    '  error: "test failed"',
+    '  code: "ERR_TEST_FAILURE"',
+    '  ...',
+  ].join('\n');
+
+  const unquoted = [
+    '# Subtest: dist-test/test/bar.test.js',
+    'not ok 2 - dist-test/test/bar.test.js',
+    '  ---',
+    '  duration_ms: 234.5',
+    '  failureType: testCodeFailure',
+    '  exitCode: 134',
+    '  signal: ~',
+    '  error: test failed',
+    '  code: ERR_TEST_FAILURE',
+    '  ...',
+  ].join('\n');
+
+  const dqFailures = correlator.parseTapFailures(doubleQuoted);
+  assert.equal(dqFailures.length, 1);
+  assert.equal(dqFailures[0]?.file, 'dist-test/test/foo.test.js');
+  assert.equal(dqFailures[0]?.exitCode, 1);
+  assert.equal(dqFailures[0]?.failureType, 'testCodeFailure');
+
+  const uqFailures = correlator.parseTapFailures(unquoted);
+  assert.equal(uqFailures.length, 1);
+  assert.equal(uqFailures[0]?.file, 'dist-test/test/bar.test.js');
+  assert.equal(uqFailures[0]?.exitCode, 134);
+  assert.equal(uqFailures[0]?.failureType, 'testCodeFailure');
+
+  const singleQuoted = [
+    '# Subtest: dist-test/test/baz.test.js',
+    'not ok 3 - dist-test/test/baz.test.js',
+    '  ---',
+    '  duration_ms: \'345.6\'',
+    '  failureType: \'testCodeFailure\'',
+    '  exitCode: \'1\'',
+    '  signal: ~',
+    '  error: \'test failed\'',
+    '  code: \'ERR_TEST_FAILURE\'',
+    '  ...',
+  ].join('\n');
+
+  const sqFailures = correlator.parseTapFailures(singleQuoted);
+  assert.equal(sqFailures.length, 1);
+  assert.equal(sqFailures[0]?.file, 'dist-test/test/baz.test.js');
+  assert.equal(sqFailures[0]?.exitCode, 1);
+  assert.equal(sqFailures[0]?.durationMs, 345.6);
+  assert.equal(sqFailures[0]?.failureType, 'testCodeFailure');
+});
+
+test('correlator: path suffix matching for Windows-origin paths is case-insensitive across platforms', () => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-case-'));
+  try {
+    const lines = [
+      { kind: 'start', pid: 333, testFile: 'C:\\Repo\\Dist-Test\\Test\\Studies-Api.Test.js' },
+      { kind: 'preload-installed', pid: 333, testFile: 'C:\\Repo\\Dist-Test\\Test\\Studies-Api.Test.js' },
+    ];
+    fs.writeFileSync(path.join(logDir, 'run-case.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    const logs = correlator.readChildLogs(logDir);
+
+    // Parent uses lower-case path
+    const resolved = correlator.correlate(
+      correlator.parseTapFailures(tapFailure('dist-test/test/studies-api.test.js', '1')),
+      logs,
+    );
+    assert.equal(resolved.length, 1);
+    assert.equal(resolved[0]?.child.pid, 333, 'casing difference must not prevent matching for Windows-origin paths');
+    assert.equal(resolved[0]?.child.logFound, true);
+    assert.equal(resolved[0]?.child.ambiguous, false);
+  } finally {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
+test('correlator: isWindowsPath identifies Windows drive letters and UNC paths without false-positive on POSIX backslash filenames', () => {
+  assert.equal(correlator.isWindowsPath('C:/repo/test.js'), true);
+  assert.equal(correlator.isWindowsPath('C:\\repo\\test.js'), true);
+  assert.equal(correlator.isWindowsPath('d:/repo/test.js'), true);
+  assert.equal(correlator.isWindowsPath('//server/share/test.js'), false);
+  assert.equal(correlator.isWindowsPath('\\\\server\\share\\test.js'), true);
+  assert.equal(correlator.isWindowsPath('/home/runner/repo/test.js'), false);
+  assert.equal(correlator.isWindowsPath('/home/runner/repo/weird\\name.test.js'), false);
+  assert.equal(correlator.isWindowsPath('weird\\name.test.js'), false);
+  assert.equal(correlator.isWindowsPath('dist-test/test.js'), false);
+});
+
+test('correlator: POSIX paths preserve case sensitivity regardless of analyzer host OS', () => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-posix-case-'));
+  try {
+    const lines = [
+      { kind: 'start', pid: 555, testFile: 'dist-test/test/studies-api.test.js' },
+      { kind: 'preload-installed', pid: 555, testFile: 'dist-test/test/studies-api.test.js' },
+    ];
+    fs.writeFileSync(path.join(logDir, 'run-posix.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    const logs = correlator.readChildLogs(logDir);
+
+    // Parent uses different casing on a purely POSIX relative path
+    const resolved = correlator.correlate(
+      correlator.parseTapFailures(tapFailure('Dist-Test/Test/Studies-Api.Test.js', '1')),
+      logs,
+    );
+    assert.equal(resolved.length, 1);
+    assert.equal(resolved[0]?.child.logFound, false, 'case mismatch on POSIX paths must not match');
+  } finally {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
+test('correlator: relative backslash-delimited Windows child path matches case-insensitively across platforms', () => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-relwin-'));
+  try {
+    const lines = [
+      { kind: 'start', pid: 444, testFile: 'Dist-Test\\Test\\Studies-Api.Test.js', isWindows: true },
+      { kind: 'preload-installed', pid: 444, testFile: 'Dist-Test\\Test\\Studies-Api.Test.js', isWindows: true },
+    ];
+    fs.writeFileSync(path.join(logDir, 'run-relwin.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    const logs = correlator.readChildLogs(logDir);
+
+    // Parent uses lower-case forward-slash path
+    const resolved = correlator.correlate(
+      correlator.parseTapFailures(tapFailure('dist-test/test/studies-api.test.js', '1')),
+      logs,
+    );
+    assert.equal(resolved.length, 1);
+    assert.equal(resolved[0]?.child.pid, 444, 'relative backslash-delimited child path must match case-insensitively');
+    assert.equal(resolved[0]?.child.logFound, true);
+    assert.equal(resolved[0]?.child.ambiguous, false);
+  } finally {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
+test('correlator: POSIX paths with backslashes in filenames preserve filename structure and case sensitivity', () => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-posix-backslash-'));
+  try {
+    const lines = [
+      { kind: 'start', pid: 666, testFile: '/home/runner/repo/dist-test/test/weird\\name.test.js' },
+      { kind: 'preload-installed', pid: 666, testFile: '/home/runner/repo/dist-test/test/weird\\name.test.js' },
+    ];
+    fs.writeFileSync(path.join(logDir, 'run-posix-bs.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    const logs = correlator.readChildLogs(logDir);
+
+    assert.equal(correlator.normalizePath('/home/runner/repo/dist-test/test/weird\\name.test.js'), '/home/runner/repo/dist-test/test/weird\\name.test.js');
+
+    // Matching with correct case
+    const matchOk = correlator.correlate(
+      correlator.parseTapFailures(tapFailure('dist-test/test/weird\\name.test.js', '1')),
+      logs,
+    );
+    assert.equal(matchOk.length, 1);
+    assert.equal(matchOk[0]?.child.pid, 666);
+    assert.equal(matchOk[0]?.child.logFound, true);
+
+    // Mismatched case must not match on POSIX
+    const matchCaseFail = correlator.correlate(
+      correlator.parseTapFailures(tapFailure('dist-test/test/Weird\\name.test.js', '1')),
+      logs,
+    );
+    assert.equal(matchCaseFail.length, 1);
+    assert.equal(matchCaseFail[0]?.child.logFound, false);
+  } finally {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
+test('correlator: readChildLogs aggregates casing variants of the same Windows child file into a single entry', () => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-case-aggregate-'));
+  try {
+    const lines = [
+      { kind: 'start', pid: 777, testFile: 'C:\\Repo\\Dist-Test\\Test\\Studies-Api.Test.js' },
+      { kind: 'preload-installed', pid: 777, testFile: 'c:\\repo\\dist-test\\test\\studies-api.test.js' },
+    ];
+    fs.writeFileSync(path.join(logDir, 'run-case-agg.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    const logs = correlator.readChildLogs(logDir);
+
+    // Both lines must aggregate into one entry rather than creating conflicting entries
+    assert.equal(logs.size, 1);
+
+    const resolved = correlator.correlate(
+      correlator.parseTapFailures(tapFailure('dist-test/test/studies-api.test.js', '1')),
+      logs,
+    );
+    assert.equal(resolved.length, 1);
+    assert.equal(resolved[0]?.child.pid, 777);
+    assert.equal(resolved[0]?.child.logFound, true);
+    assert.equal(resolved[0]?.child.ambiguous, false, 'casing variants of the same child must not cause ambiguity');
+    assert.deepEqual(resolved[0]?.child.kinds, ['start', 'preload-installed']);
+  } finally {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
+test('correlator: parseTapFailures rejects non-finite exitCode and duration_ms scalars', () => {
+  const nonFiniteTap = [
+    'TAP version 13',
+    '# Subtest: dist-test/test/non-finite.test.js',
+    'not ok 1 - dist-test/test/non-finite.test.js',
+    '  ---',
+    '  duration_ms: Infinity',
+    '  failureType: testCodeFailure',
+    '  exitCode: Infinity',
+    '  signal: ~',
+    '  error: test failed',
+    '  code: ERR_TEST_FAILURE',
+    '  ...',
+    '# Subtest: dist-test/test/neg-infinity.test.js',
+    'not ok 2 - dist-test/test/neg-infinity.test.js',
+    '  ---',
+    '  duration_ms: -Infinity',
+    '  failureType: testCodeFailure',
+    '  exitCode: -Infinity',
+    '  signal: ~',
+    '  error: test failed',
+    '  code: ERR_TEST_FAILURE',
+    '  ...',
+    '# Subtest: dist-test/test/nan.test.js',
+    'not ok 3 - dist-test/test/nan.test.js',
+    '  ---',
+    '  duration_ms: NaN',
+    '  failureType: testCodeFailure',
+    '  exitCode: NaN',
+    '  signal: ~',
+    '  error: test failed',
+    '  code: ERR_TEST_FAILURE',
+    '  ...',
+  ].join('\n');
+
+  const failures = correlator.parseTapFailures(nonFiniteTap);
+  assert.equal(failures.length, 3);
+  assert.equal(failures[0]?.exitCode, null);
+  assert.equal(failures[0]?.durationMs, null);
+  assert.equal(failures[1]?.exitCode, null);
+  assert.equal(failures[1]?.durationMs, null);
+  assert.equal(failures[2]?.exitCode, null);
+  assert.equal(failures[2]?.durationMs, null);
+});
+
+test('correlator: POSIX parent path with backslash filename does not falsely match Windows child path with directory segments', () => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-posix-parent-win-child-'));
+  try {
+    // Windows child log where 'weird' is a directory and 'name.test.js' is the file
+    const lines = [
+      { kind: 'start', pid: 888, testFile: 'C:\\repo\\dist-test\\test\\weird\\name.test.js' },
+      { kind: 'preload-installed', pid: 888, testFile: 'C:\\repo\\dist-test\\test\\weird\\name.test.js' },
+    ];
+    fs.writeFileSync(path.join(logDir, 'run-win-child.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    const logs = correlator.readChildLogs(logDir);
+
+    // POSIX parent failure where 'weird\name.test.js' is a single filename in 'test/'
+    const resolved = correlator.correlate(
+      correlator.parseTapFailures(tapFailure('dist-test/test/weird\\name.test.js', '1')),
+      logs,
+    );
+    assert.equal(resolved.length, 1);
+    assert.equal(resolved[0]?.child.logFound, false, 'POSIX parent path with backslash in filename must not match Windows child directory segments');
+  } finally {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
+test('correlator: relative backslash-delimited Windows parent path matches Windows child path with Windows platform context', () => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-relwin-parent-'));
+  try {
+    const lines = [
+      { kind: 'start', pid: 999, testFile: 'C:\\repo\\dist-test\\test\\foo.test.js' },
+      { kind: 'preload-installed', pid: 999, testFile: 'C:\\repo\\dist-test\\test\\foo.test.js' },
+    ];
+    fs.writeFileSync(path.join(logDir, 'run-win.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    const logs = correlator.readChildLogs(logDir);
+
+    // Parent uses backslash-delimited relative path with explicit Windows platform context
+    const resolved = correlator.correlate(
+      correlator.parseTapFailures(tapFailure('dist-test\\test\\foo.test.js', '1'), { isWindows: true }),
+      logs,
+      { isWindows: true },
+    );
+    assert.equal(resolved.length, 1);
+    assert.equal(resolved[0]?.child.pid, 999, 'relative Windows backslash parent must match Windows child');
+    assert.equal(resolved[0]?.child.logFound, true);
+    assert.equal(resolved[0]?.child.ambiguous, false);
+  } finally {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
+test('correlator: correlates bare string failures with normalized null parent fields', () => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-string-failure-'));
+  try {
+    const lines = [
+      { kind: 'start', pid: 777, testFile: '/home/runner/repo/dist-test/test/studies-api.test.js' },
+      { kind: 'preload-installed', pid: 777, testFile: '/home/runner/repo/dist-test/test/studies-api.test.js' },
+    ];
+    fs.writeFileSync(path.join(logDir, 'run-str.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    const logs = correlator.readChildLogs(logDir);
+
+    const resolved = correlator.correlate(['dist-test/test/studies-api.test.js'], logs);
+    assert.equal(resolved.length, 1);
+    assert.equal(resolved[0]?.file, 'dist-test/test/studies-api.test.js');
+    assert.equal(resolved[0]?.parent.exitCode, null);
+    assert.equal(resolved[0]?.parent.signal, null);
+    assert.equal(resolved[0]?.parent.failureType, null);
+    assert.equal(resolved[0]?.parent.durationMs, null);
+    assert.equal(resolved[0]?.child.pid, 777);
+    assert.equal(resolved[0]?.child.logFound, true);
+  } finally {
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
+test('correlator: CLI derives capture platform from child logs without relying on analyzer host platform', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-cli-platform-'));
+  try {
+    const logDir = path.join(tmpDir, 'logs');
+    fs.mkdirSync(logDir);
+    const tapPath = path.join(tmpDir, 'test.tap');
+
+    // Windows capture: child log contains Windows metadata
+    const winChild = [
+      { kind: 'start', pid: 4321, testFile: 'C:\\repo\\dist-test\\test\\windows-target.test.js', isWindows: true },
+      { kind: 'preload-installed', pid: 4321, testFile: 'C:\\repo\\dist-test\\test\\windows-target.test.js', isWindows: true },
+    ];
+    fs.writeFileSync(path.join(logDir, 'run-win.jsonl'), `${winChild.map((l) => JSON.stringify(l)).join('\n')}\n`);
+
+    // TAP failure has backslash-delimited relative path
+    fs.writeFileSync(tapPath, tapFailure('dist-test\\test\\windows-target.test.js', '1'));
+
+    const run = (extraArgs: string[] = []): ReturnType<typeof spawnSync> =>
+      spawnSync(process.execPath, [CORRELATE_PATH, '--tap', tapPath, '--child-logs', logDir, ...extraArgs], {
+        encoding: 'utf8',
+        env: { ...process.env, NODE_TEST_CONTEXT: undefined },
+      });
+
+    // Run CLI without explicit platform flag: must derive Windows from child logs
+    const resultAuto = run();
+    assert.equal(resultAuto.status, 0);
+    const linesAuto = String(resultAuto.stdout).trim().split('\n').filter(Boolean);
+    assert.equal(linesAuto.length, 1);
+    const recordAuto = JSON.parse(linesAuto[0]);
+    assert.equal(recordAuto.child.pid, 4321, 'CLI must derive Windows capture from child log metadata');
+    assert.equal(recordAuto.child.logFound, true);
+
+    // Overriding with --posix forces POSIX semantics (where backslash in relative path does not match)
+    const resultPosix = run(['--posix']);
+    assert.equal(resultPosix.status, 0);
+    const linesPosix = String(resultPosix.stdout).trim().split('\n').filter(Boolean);
+    assert.equal(linesPosix.length, 1);
+    const recordPosix = JSON.parse(linesPosix[0]);
+    assert.equal(recordPosix.child.logFound, false, '--posix flag must override and preserve POSIX backslash semantics');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('correlator: CLI preserves POSIX semantics when log directory contains mixed or stale Windows logs', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-cli-mixed-'));
+  try {
+    const logDir = path.join(tmpDir, 'logs');
+    fs.mkdirSync(logDir);
+    const tapPathCasing = path.join(tmpDir, 'casing.tap');
+    const tapPathExact = path.join(tmpDir, 'exact.tap');
+
+    // Mixed logs: a stale Windows child log and a POSIX child log
+    const staleWinChild = [
+      { kind: 'start', pid: 1111, testFile: 'C:\\stale\\dist-test\\test\\stale.test.js', isWindows: true },
+      { kind: 'preload-installed', pid: 1111, testFile: 'C:\\stale\\dist-test\\test\\stale.test.js', isWindows: true },
+    ];
+    const posixChild = [
+      { kind: 'start', pid: 2222, testFile: '/repo/dist-test/test/posix-target.test.js', isWindows: false },
+      { kind: 'preload-installed', pid: 2222, testFile: '/repo/dist-test/test/posix-target.test.js', isWindows: false },
+    ];
+    fs.writeFileSync(path.join(logDir, 'run-stale-win.jsonl'), `${staleWinChild.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    fs.writeFileSync(path.join(logDir, 'run-posix.jsonl'), `${posixChild.map((l) => JSON.stringify(l)).join('\n')}\n`);
+
+    // TAP failure 1: uppercase POSIX path (should NOT match lowercase posix-target when case-sensitive)
+    fs.writeFileSync(tapPathCasing, tapFailure('dist-test/test/POSIX-TARGET.test.js', '1'));
+    // TAP failure 2: exact lowercase POSIX path
+    fs.writeFileSync(tapPathExact, tapFailure('dist-test/test/posix-target.test.js', '1'));
+
+    const run = (tap: string, extraArgs: string[] = []): ReturnType<typeof spawnSync> =>
+      spawnSync(process.execPath, [CORRELATE_PATH, '--tap', tap, '--child-logs', logDir, ...extraArgs], {
+        encoding: 'utf8',
+        env: { ...process.env, NODE_TEST_CONTEXT: undefined },
+      });
+
+    // Without explicit flags, mixed logs must NOT force Windows semantics globally; POSIX case-sensitivity is preserved
+    const resultCasing = run(tapPathCasing);
+    assert.equal(resultCasing.status, 0);
+    const linesCasing = String(resultCasing.stdout).trim().split('\n').filter(Boolean);
+    assert.equal(linesCasing.length, 1);
+    const recordCasing = JSON.parse(linesCasing[0]);
+    assert.equal(recordCasing.child.logFound, false, 'mixed logs must not force Windows case folding onto POSIX paths');
+
+    // Exact casing matches the POSIX child correctly
+    const resultExact = run(tapPathExact);
+    assert.equal(resultExact.status, 0);
+    const linesExact = String(resultExact.stdout).trim().split('\n').filter(Boolean);
+    assert.equal(linesExact.length, 1);
+    const recordExact = JSON.parse(linesExact[0]);
+    assert.equal(recordExact.child.logFound, true);
+    assert.equal(recordExact.child.pid, 2222);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
