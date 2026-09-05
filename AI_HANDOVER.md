@@ -66,7 +66,7 @@ Milestone progress spans foundational core engines through active production har
   - Production Docker container image build and template verification (`docker-images`).
   - Helm chart linting and kubeconform schema validation against Kubernetes schemas (`helm`).
   - Parity and hygiene guards: CI parity (`check:ci-parity`), variant parity (`check:variant-parity`), engine pin parity (`check:engine-pin-parity`), and observability drift (`check:observability`).
-  - Workflow triggers: on-demand deployment (`deploy.yml`) on workflow dispatch or published release, on-demand chaos engineering (`chaos.yml`) on workflow dispatch, and release tagging (`release.yml`) on version tags (`v*`).
+  - Workflow triggers: on-demand deployment (`deploy.yml`) on workflow dispatch or published release, on-demand chaos engineering (`chaos.yml`) on workflow dispatch, and release container image publishing (`release.yml`) on version-tag pushes (`v*`).
 
 ## Build & Run
 
