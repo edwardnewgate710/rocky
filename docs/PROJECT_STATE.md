@@ -38,7 +38,8 @@ root build (B) left only the gateway failing, with six `TS2307` diagnostics for 
 Root plus gateway installs without root build (C) resolved `ioredis`, but failed on missing
 workspace public outputs. Full preparation (D) made the gateway pass: 16 tests, 11 passed,
 5 skipped. D's aggregate still exited 1 because `openapi.test.js` produced a bare file-level
-`test failed`; its isolated rerun passed all 18 tests. That observation proves no mechanism.
+`test failed`; its isolated rerun passed all 18 tests. The failure did not reproduce in that
+isolated run, and the observation does not identify its mechanism.
 
 Adding only the gateway install to B made its direct test pass, with no root rebuild or
 gateway production build. Repeating root `npm ci` then preserved both the gateway dependency
