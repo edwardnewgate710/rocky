@@ -19,6 +19,7 @@ import type {
   SeekColor,
   BotLevel,
   CreateBotGameRequest,
+  SocialPlayer,
 } from '../api/models.js';
 
 /** The outcome of a bot-game create: the new game's id, or why it failed. */
@@ -29,7 +30,7 @@ export type BotGameResult =
 /** Callbacks the bootstrap wires to DOM elements. */
 export interface LobbyCallbacks {
   /** Called when the seek list is refreshed (full replacement). */
-  onSeeks: (seeks: readonly SeekView[]) => void;
+  onSeeks: (seeks: readonly SeekView[], names?: ReadonlyMap<string, SocialPlayer>) => void;
   /** Called when a seek is being created (for UI spinner/disabled state). */
   onCreatePending: (pending: boolean) => void;
   /** Called when an error occurs (for UI error display). */
@@ -101,7 +102,20 @@ export class LobbyController {
       }
 
       // Filter out matched seeks before passing to the UI
-      this.callbacks.onSeeks(this.seeks.filter((s) => s.gameId === null));
+      const openSeeks = this.seeks.filter((s) => s.gameId === null);
+      let names: ReadonlyMap<string, SocialPlayer> = new Map();
+      try {
+        const creatorIds = [...new Set(openSeeks.map((s) => s.creatorId))];
+        if (creatorIds.length > 0 && this.client.graphql?.resolvePlayers) {
+          names = await this.client.graphql.resolvePlayers(creatorIds);
+        }
+      } catch {
+        // Graceful degradation when player handle resolution fails
+      }
+
+      if (this.disposed) return;
+
+      this.callbacks.onSeeks(openSeeks, names);
     } catch (err) {
       if (!this.disposed) {
         this.callbacks.onError(err instanceof Error ? err.message : String(err));

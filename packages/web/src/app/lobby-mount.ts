@@ -1,5 +1,6 @@
 import type { GambitClient } from '../api/client.js';
-import type { SeekView } from '../api/models.js';
+import type { SeekView, SocialPlayer } from '../api/models.js';
+import { shortId } from '../api/graphql.js';
 import type { KeyValueStorage } from '../net/session.js';
 import { CreateGamePanel } from './create-game-panel.js';
 import { LobbyController } from './lobby-controller.js';
@@ -16,6 +17,7 @@ export function renderSeeks(
   container: HTMLElement,
   seeks: readonly SeekView[],
   currentUserId: string | null,
+  names?: ReadonlyMap<string, SocialPlayer>,
 ): void {
   container.innerHTML = '';
   if (seeks.length === 0) {
@@ -65,6 +67,44 @@ export function renderSeeks(
       const main = doc.createElement('div');
       main.className = 'seek-main';
       main.appendChild(info);
+
+      const player = names?.get(seek.creatorId);
+      const opponentEl = doc.createElement('span');
+      opponentEl.className = 'seek-opponent';
+
+      if (player?.handle) {
+        const link = doc.createElement('a');
+        link.className = 'row-link';
+        link.setAttribute('href', `/profile/${player.handle}`);
+        link.textContent = player.handle;
+        opponentEl.appendChild(link);
+      } else {
+        opponentEl.textContent = shortId(seek.creatorId);
+      }
+      main.appendChild(opponentEl);
+
+      const detailParts: string[] = [];
+      if (seek.color === 'white') {
+        detailParts.push('plays White');
+      } else if (seek.color === 'black') {
+        detailParts.push('plays Black');
+      }
+
+      if (seek.minRating !== null && seek.maxRating !== null) {
+        detailParts.push(`${seek.minRating}–${seek.maxRating}`);
+      } else if (seek.minRating !== null) {
+        detailParts.push(`≥ ${seek.minRating}`);
+      } else if (seek.maxRating !== null) {
+        detailParts.push(`≤ ${seek.maxRating}`);
+      }
+
+      if (detailParts.length > 0) {
+        const detailsEl = doc.createElement('span');
+        detailsEl.className = 'seek-details';
+        detailsEl.textContent = detailParts.join(' · ');
+        main.appendChild(detailsEl);
+      }
+
       row.appendChild(main);
 
       const acceptBtn = doc.createElement('button');
@@ -72,7 +112,10 @@ export function renderSeeks(
       acceptBtn.className = 'seek-accept button primary';
       acceptBtn.textContent = 'Play';
       acceptBtn.dataset.seekId = seek.id;
-      acceptBtn.setAttribute('aria-label', 'Accept seek');
+      acceptBtn.setAttribute(
+        'aria-label',
+        player?.handle ? `Accept seek from ${player.handle}` : 'Accept seek',
+      );
       row.appendChild(acceptBtn);
     }
 
@@ -127,8 +170,8 @@ export function mountLobby(deps: LobbyMountDependencies): MountedLobby {
   const lobby = new LobbyController({
     client,
     callbacks: {
-      onSeeks: (seeks) => {
-        if (seekListEl) renderSeeks(seekListEl, seeks, client.session.current?.user.id ?? null);
+      onSeeks: (seeks, names) => {
+        if (seekListEl) renderSeeks(seekListEl, seeks, client.session.current?.user.id ?? null, names);
       },
       onCreatePending: (pending) => {
         panel?.setPending(pending);

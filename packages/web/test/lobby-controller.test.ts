@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { LobbyController } from '../src/app/lobby-controller.js';
 import type { GambitClient } from '../src/api/client.js';
-import type { GameSummary, SeekView, Variant } from '../src/api/models.js';
+import type { GameSummary, SeekView, Variant, SocialPlayer } from '../src/api/models.js';
 
 function deferred<T>(): {
   readonly promise: Promise<T>;
@@ -301,4 +301,37 @@ test('currentSeeks returns the last fetched list', async () => {
   });
   await ctrl.refresh();
   assert.equal(ctrl.currentSeeks.length, 3);
+});
+
+test('refresh resolves player names via graphql and passes them to onSeeks', async () => {
+  const seeks = [makeSeek({ id: 's1', creatorId: 'p1' })];
+  const fake = makeFakeClient(seeks);
+  const fakeWithGql = {
+    ...fake,
+    graphql: {
+      resolvePlayers: async (ids: readonly string[]) => {
+        const map = new Map<string, SocialPlayer>();
+        for (const id of ids) {
+          map.set(id, {
+            id,
+            handle: `handle-${id}`,
+          });
+        }
+        return map;
+      },
+    },
+  };
+  const client = fakeWithGql as unknown as GambitClient;
+  let receivedNames: ReadonlyMap<string, SocialPlayer> | undefined;
+  const ctrl = new LobbyController({
+    client,
+    callbacks: {
+      onSeeks: (_s, names) => { receivedNames = names; },
+      onCreatePending: () => {},
+      onError: () => {},
+    },
+  });
+  await ctrl.refresh();
+  assert.ok(receivedNames);
+  assert.equal(receivedNames.get('p1')?.handle, 'handle-p1');
 });

@@ -10,7 +10,7 @@ import type { Variant } from '@chess-platform/core';
 import { FenError } from '@chess-platform/core';
 import { coreFenValidator } from './analysis/fen-validator.js';
 import type { TiebreakKey } from '@chess-platform/tournament';
-import type { RatingRow, TournamentsRepository } from '@chess-platform/persistence';
+import { SEEK_TTL_MS, type RatingRow, type TournamentsRepository } from '@chess-platform/persistence';
 import { AuthService } from './auth/service';
 import type { RequestMeta } from './auth/service';
 import { EMAIL_ADDRESS_PATTERN } from './email/address.js';
@@ -1277,7 +1277,9 @@ export function buildRouter(deps: RouteDeps): Router {
     async (ctx) => {
       const identity = requireAuth(ctx);
       const seek = await repos.seeks.findById(ctx.params['id']!);
-      if (!seek || seek.gameId !== null) throw HttpError.notFound('seek not found or already accepted');
+      if (!seek || seek.gameId !== null || clock.now() - seek.createdAt.getTime() >= SEEK_TTL_MS) {
+        throw HttpError.notFound('seek not found or already accepted');
+      }
       if (seek.creatorId === identity.userId) throw HttpError.badRequest('cannot accept own seek');
 
       // Before the rating checks, deliberately. This variant comes from a stored row rather than from

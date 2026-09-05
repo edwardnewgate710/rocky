@@ -579,17 +579,18 @@ export class PgSeeksRepository implements SeeksRepository {
     const cid = creatorId ?? '00000000-0000-0000-0000-000000000000';
     const res = await this.pool.query<SeekDbRow>(
       `(
-         SELECT id, creator_id, variant, time_control, rated, color, min_rating, max_rating, created_at, game_id, accepted_at
-         FROM seeks
-         WHERE creator_id = $2 AND game_id IS NOT NULL AND accepted_at > NOW() - interval '5 minutes'
-         ORDER BY accepted_at DESC, created_at DESC
+         SELECT s.id, s.creator_id, s.variant, s.time_control, s.rated, s.color, s.min_rating, s.max_rating, s.created_at, s.game_id, s.accepted_at
+         FROM seeks s
+         LEFT JOIN games g ON g.id = s.game_id
+         WHERE s.creator_id = $2 AND s.game_id IS NOT NULL AND s.accepted_at > NOW() - interval '5 minutes' AND (g.id IS NULL OR g.ended_at IS NULL)
+         ORDER BY s.accepted_at DESC, s.created_at DESC
          LIMIT 1
        )
        UNION ALL
        (
          SELECT id, creator_id, variant, time_control, rated, color, min_rating, max_rating, created_at, game_id, accepted_at
          FROM seeks
-         WHERE game_id IS NULL
+         WHERE game_id IS NULL AND created_at > NOW() - interval '10 minutes'
          ORDER BY created_at ASC
          LIMIT $1
        )`,
@@ -608,8 +609,10 @@ export class PgSeeksRepository implements SeeksRepository {
 
   async cleanup(at: Date): Promise<void> {
     await this.pool.query(
-      `DELETE FROM seeks WHERE game_id IS NOT NULL AND accepted_at <= $1 - interval '5 minutes'`,
-      [at]
+      `DELETE FROM seeks
+       WHERE (game_id IS NOT NULL AND accepted_at <= $1 - interval '5 minutes')
+          OR (game_id IS NULL AND created_at <= $1 - interval '10 minutes')`,
+      [at],
     );
   }
 }
@@ -622,9 +625,10 @@ export class PgSeekAcceptor implements SeekAcceptor {
     try {
       await client.query('BEGIN');
       const seekRes = await client.query<SeekDbRow>(
-        `UPDATE seeks SET game_id = $1, accepted_at = NOW() WHERE id = $2 AND game_id IS NULL
+        `UPDATE seeks SET game_id = $1, accepted_at = NOW()
+         WHERE id = $2 AND game_id IS NULL AND created_at > NOW() - interval '10 minutes'
          RETURNING id, creator_id, variant, time_control, rated, color, min_rating, max_rating, created_at, game_id, accepted_at`,
-        [gameId, seekId]
+        [gameId, seekId],
       );
       if (seekRes.rowCount === 0) {
         await client.query('ROLLBACK');

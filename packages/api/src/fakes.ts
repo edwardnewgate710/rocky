@@ -36,7 +36,7 @@ import type {
   NewIdentityToken,
   IdentityTokensRepository,
 } from '@chess-platform/persistence';
-import { DuplicateUserError, VersionConflictError } from '@chess-platform/persistence';
+import { DuplicateUserError, VersionConflictError, SEEK_TTL_MS } from '@chess-platform/persistence';
 
 import { InMemoryLearningRepository } from '@chess-platform/learning';
 import type { AuditEntry, AuditRepository } from './ports/audit';
@@ -369,7 +369,10 @@ export class InMemorySeeksRepository implements SeeksRepository {
   private seq = 0;
   private readonly order = new Map<string, number>();
 
-  constructor(private readonly clock: Clock = systemClock) {}
+  constructor(
+    private readonly clock: Clock = systemClock,
+    private readonly games?: GamesRepository,
+  ) {}
 
   async create(seek: NewSeek): Promise<SeekRow> {
     const row: SeekRow = {
@@ -399,13 +402,13 @@ export class InMemorySeeksRepository implements SeeksRepository {
     const fiveMinsAgo = now - 5 * 60 * 1000;
     const rows = [...this.byId.values()];
     const open = rows
-      .filter((s) => s.gameId === null)
+      .filter((s) => s.gameId === null && now - s.createdAt.getTime() < SEEK_TTL_MS)
       .sort((a, b) => (this.order.get(a.id) ?? 0) - (this.order.get(b.id) ?? 0))
       .slice(0, limit);
 
     if (!creatorId) return open;
 
-    const latestMatch = rows
+    const matchedCandidates = rows
       .filter(
         (s) =>
           s.creatorId === creatorId &&
@@ -417,7 +420,21 @@ export class InMemorySeeksRepository implements SeeksRepository {
         (a, b) =>
           b.acceptedAt!.getTime() - a.acceptedAt!.getTime() ||
           (this.order.get(b.id) ?? 0) - (this.order.get(a.id) ?? 0),
-      )[0];
+      );
+
+    let latestMatch: SeekRow | undefined;
+    for (const match of matchedCandidates) {
+      if (!this.games) {
+        latestMatch = match;
+        break;
+      }
+      const game = await this.games.findById(match.gameId!);
+      if (game && game.endedAt !== null) {
+        continue;
+      }
+      latestMatch = match;
+      break;
+    }
 
     return latestMatch ? [latestMatch, ...open] : open;
   }
@@ -434,6 +451,7 @@ export class InMemorySeeksRepository implements SeeksRepository {
   _claim(id: string, gameId: string, acceptedAt: Date): SeekRow | null {
     const existing = this.byId.get(id);
     if (!existing || existing.gameId !== null) return null;
+    if (this.clock.now() - existing.createdAt.getTime() >= SEEK_TTL_MS) return null;
     const claimed = { ...existing, gameId, acceptedAt };
     this.byId.set(id, claimed);
     return claimed;
@@ -449,8 +467,12 @@ export class InMemorySeeksRepository implements SeeksRepository {
 
   async cleanup(at: Date): Promise<void> {
     const cutoff = at.getTime() - 5 * 60 * 1000;
+    const openCutoff = at.getTime() - SEEK_TTL_MS;
     for (const [id, seek] of this.byId) {
       if (seek.gameId !== null && seek.acceptedAt && seek.acceptedAt.getTime() <= cutoff) {
+        this.byId.delete(id);
+        this.order.delete(id);
+      } else if (seek.gameId === null && seek.createdAt.getTime() <= openCutoff) {
         this.byId.delete(id);
         this.order.delete(id);
       }
@@ -756,8 +778,8 @@ export interface InMemoryRepositories extends Repositories {
 
 /** Construct a fresh set of in-memory repositories sharing a clock. */
 export function createInMemoryRepositories(clock: Clock = systemClock): InMemoryRepositories {
-  const seeks = new InMemorySeeksRepository(clock);
   const games = new InMemoryGamesRepository();
+  const seeks = new InMemorySeeksRepository(clock, games);
   const events = new InMemoryEventStore(() => clock.now());
   const users = new InMemoryUsersRepository(clock);
   

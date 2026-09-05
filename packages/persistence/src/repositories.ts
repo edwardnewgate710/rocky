@@ -276,6 +276,12 @@ export interface GamesRepository {
  */
 export type SeekColor = 'white' | 'black' | 'random';
 
+/**
+ * Deterministic TTL for open seeks (10 minutes). An unaccepted seek past this age
+ * expires, is omitted from open-seek listings, cannot be accepted, and is purged by cleanup.
+ */
+export const SEEK_TTL_MS = 10 * 60 * 1000;
+
 export interface SeekRow {
   readonly id: string;
   readonly creatorId: string;
