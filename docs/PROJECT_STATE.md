@@ -70,6 +70,11 @@ the historical 3269/115 measurement for this revision only.
 **Signature B remains UNRESOLVED and under separate investigation.** The D observation above
 is retained independently of the resolved setup defect. No mechanism or unmerged findings
 from the separate diagnostic PR are adopted here. Successful later runs do not resolve it.
+During the post-review verification repeat, `learning-api.test.js` also produced a bare
+file-level `test failed`: API reported 975 tests, 927 passed, 1 failed and 47 skipped.
+Its isolated rerun passed all 22 tests. This is another observation of the failure shape,
+not proof of a mechanism or a gateway setup failure; the earlier successful aggregate
+measurement above is retained as a separate run.
 Environment-gated skips are not passes; Redis-backed tests require a separate Redis-enabled run.
 
 
