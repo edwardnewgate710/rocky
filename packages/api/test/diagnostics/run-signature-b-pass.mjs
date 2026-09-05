@@ -13,7 +13,9 @@
  *   throws, `spec` discards them (its `formatError` replaces the error with `error.cause`, the bare
  *   string `'test failed'`), and `tap` serializes them into its YAML block. Running both recovers
  *   the exit status without a custom reporter, without patching Node internals, and without changing
- *   what a human sees on stdout.
+ *   what a human sees on stdout. It is also the only place a dying child's own fatal banner
+ *   survives: the runner re-emits child stderr as `test:stderr` reporter events, so a heap
+ *   exhaustion's `FATAL ERROR:` lands in the report and never on this process's stderr.
  *
  * The pass is **bounded by construction** and stops at the first capture. The wall-clock ceiling is
  * an absolute deadline enforced *during* a run, not merely consulted before starting another, and
@@ -46,10 +48,11 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const API_DIR = path.resolve(HERE, '../..');
-const { correlate, parseTapFailures, readChildLogs } = createRequire(import.meta.url)('./signature-b-correlate.cjs');
+const { correlate, fatalMarkersIn, parseTapFailures, readChildLogs } =
+  createRequire(import.meta.url)('./signature-b-correlate.cjs');
 
 /** Every option this script accepts, so one cannot be consumed as another's value. */
-const KNOWN_FLAGS = new Set(['runs', 'max-minutes', 'out', 'target']);
+const KNOWN_FLAGS = new Set(['runs', 'max-minutes', 'out', 'package', 'target']);
 
 /** Refuse before anything is created or spawned; a usage error must not leave artifacts behind. */
 function usageError(message) {
@@ -77,35 +80,6 @@ const flag = (name, fallback) => {
   }
   return value;
 };
-
-/**
- * The only stderr lines a dying child produces that name its own cause. Node prints these itself,
- * and they are what separates a V8 heap exhaustion from a JS `process.abort()` when both leave the
- * same exit code 134.
- */
-const FATAL_MARKERS = [
-  'FATAL ERROR:',
-  'JavaScript heap out of memory',
-  '<--- Last few GCs --->',
-  '----- Native stack trace -----',
-  '----- JavaScript stack trace -----',
-];
-
-/**
- * Record which fatal markers a run's stderr contained, and never the stderr itself.
- *
- * A whitelist rather than a redaction pass: the suite's own output can contain anything a test
- * chose to print, so matching known markers is the only way to be sure a token, request body or
- * connection string cannot reach the capture file. Presence is all the evidence is worth anyway —
- * the marker names the mechanism, the surrounding text does not.
- *
- * @param {string | undefined} stderr
- * @returns {string[]} markers present, in the order listed above
- */
-function fatalMarkersIn(stderr) {
-  const text = String(stderr ?? '');
-  return FATAL_MARKERS.filter((marker) => text.includes(marker));
-}
 
 /**
  * A ceiling that does not describe a real experiment must stop the run, not shrink it.
@@ -137,12 +111,24 @@ const maxRuns = positiveNumber('runs', flag('runs', 20), 20, { integer: true });
 const maxMs = positiveNumber('max-minutes', flag('max-minutes', 45), 45) * 60_000;
 // The fallback is computed only when --out is absent: an argument is evaluated before the call,
 // so an eager mkdtemp would create an unused directory on every run that supplies its own.
-const outDir = flag('out', null) ?? fs.mkdtempSync(path.join(tmpdir(), 'sigb-pass-'));
+//
+// Resolved against THIS process's working directory, because the paths derived from it are used by
+// two processes with different ones: this process creates and reads them, while the spawned runner
+// resolves the same strings against the package it was pointed at. Left relative, `--out artifacts`
+// with `--package ../persistence` would have the child write its report into the other package and
+// this process look for it here — a pass that cannot read its own run.
+const outDir = path.resolve(flag('out', null) ?? fs.mkdtempSync(path.join(tmpdir(), 'sigb-pass-')));
 
 // What each run executes. The default is the whole compiled suite, which is what reproducing
 // Signature B requires; `--target` exists so this script's own tests can point a run at one trivial
 // file instead of launching a second copy of the suite against the same database.
 const target = flag('target', 'dist-test/test/**/*.test.js');
+
+// Which package a run executes in. Signature B has been observed in `packages/persistence` as well
+// as `packages/api`, and a runner that can only ever run one of them cannot capture it in the
+// other. Resolved against `packages/api` so `--package ../persistence` reads the way it is written,
+// and defaulting to this package so every existing invocation means exactly what it meant before.
+const packageDir = path.resolve(API_DIR, String(flag('package', '.')));
 
 /**
  * Make the artifact directory owner-only, or refuse to write into it.
@@ -175,6 +161,16 @@ function ensurePrivateDirectory(dir) {
 }
 
 ensurePrivateDirectory(outDir);
+
+// A pass owns its artifact directory: it empties each run's child logs so that no earlier run can
+// lend it evidence. That is right for the logs and fatal for a capture — reusing an `--out` would
+// delete the child logs an earlier pass captured while leaving its `capture.json` behind, and the
+// directory would then assert a termination whose evidence no longer exists. Deleting the old
+// capture instead would be worse: it is the rarest artifact this produces. So refuse, here, before
+// anything is created or spawned.
+if (fs.existsSync(path.join(outDir, 'capture.json'))) {
+  usageError(`--out ${outDir} already holds a capture from an earlier pass; move it aside or choose another directory`);
+}
 console.log(`Signature B bounded pass — ceiling ${maxRuns} runs or ${maxMs / 60_000} minutes, stopping at first capture.`);
 console.log(`Artifacts: ${outDir}\n`);
 
@@ -215,6 +211,7 @@ function killTree(child) {
  *
  * @param {string} tapPath
  * @param {string} logDir
+ * @param {string} reportDir
  * @param {number} budgetMs
  * @returns {Promise<{ status: number|null, signal: string|null, timedOut: boolean, error: Error|null, stderr: string }>}
  */
@@ -230,26 +227,45 @@ function killTree(child) {
  */
 let activeChild = null;
 
+/**
+ * The report directory of the run in flight, for the same reason `activeChild` exists.
+ *
+ * An interrupt reaches this process between a child writing a report and this script reading and
+ * deleting it, and a report body carries the whole command line and every environment variable.
+ * Killing the tree without this would leave that file on disk.
+ *
+ * @type {string | null}
+ */
+let activeReportDir = null;
+
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
     if (activeChild !== null) killTree(activeChild);
+    if (activeReportDir !== null) fs.rmSync(activeReportDir, { recursive: true, force: true });
     // 128 + signal number, the conventional shell encoding for "terminated by this signal".
     process.exit(signal === 'SIGINT' ? 130 : 143);
   });
 }
 
-function runOnce(tapPath, logDir, budgetMs) {
+function runOnce(tapPath, logDir, reportDir, budgetMs) {
   return new Promise((resolve) => {
     const child = spawn(
       process.execPath,
       [
-        '--require', './test/diagnostics/signature-b-preload.cjs',
+        '--require', path.join(HERE, 'signature-b-preload.cjs'),
+        // Node writes one of these, named after the pid that died, when it dies of its OWN fatal
+        // error — a V8 heap exhaustion, an internal assertion. Measured here: a heap exhaustion
+        // leaves a report, while `process.abort()` and an external kill leave none, and all three
+        // can leave exit code 134. The report is therefore what separates a fault Node suffered
+        // from a status something else chose, and unlike the printed banner it is attributable to
+        // an exact process rather than to a position in the report stream.
+        '--report-on-fatalerror', `--report-directory=${reportDir}`,
         '--test-reporter=spec', '--test-reporter-destination=stdout',
         '--test-reporter=tap', `--test-reporter-destination=${tapPath}`,
         '--test', '--test-concurrency=1', target,
       ],
       {
-        cwd: API_DIR,
+        cwd: packageDir,
         env: { ...process.env, SIGB_LOG_DIR: logDir },
         // `spec` goes straight to this terminal, which is the whole point of running it alongside
         // `tap`: the human-facing output must stay exactly what it would be without the diagnostic.
@@ -298,11 +314,21 @@ for (let run = 1; run <= maxRuns; run++) {
 
   const tapPath = path.join(outDir, `run${run}.tap`);
   const logDir = path.join(outDir, `child-logs-run${run}`);
+  const reportDir = path.join(outDir, `reports-run${run}`);
+  // Emptied, not merely created. `mkdirSync` is happy with a directory that already holds an
+  // interrupted pass's artifacts, and this is the same staleness the correlator refuses on the child
+  // -log side: a leftover report would be counted as this run's, and since a report is attributed by
+  // the pid in its name, a reused pid would let a file that merely chose its exit status inherit a
+  // native fault it never suffered.
+  fs.rmSync(logDir, { recursive: true, force: true });
+  fs.rmSync(reportDir, { recursive: true, force: true });
   fs.mkdirSync(logDir, { recursive: true, mode: 0o700 });
+  fs.mkdirSync(reportDir, { recursive: true, mode: 0o700 });
+  activeReportDir = reportDir;
 
   const freeBefore = freemem();
   const startedRun = Date.now();
-  const result = await runOnce(tapPath, logDir, Math.max(1, maxMs - elapsed));
+  const result = await runOnce(tapPath, logDir, reportDir, Math.max(1, maxMs - elapsed));
   const durationMs = Date.now() - startedRun;
 
   // A run whose report cannot be read has not answered the question, and must not be filed next to
@@ -313,14 +339,38 @@ for (let run = 1; run <= maxRuns; run++) {
   if (collectionError === null) {
     try {
       const isWin = process.platform === 'win32';
+      const tapText = fs.readFileSync(tapPath, 'utf8');
       records = correlate(
-        parseTapFailures(fs.readFileSync(tapPath, 'utf8'), { isWindows: isWin }),
+        parseTapFailures(tapText, { isWindows: isWin }),
         readChildLogs(logDir),
         { isWindows: isWin },
       );
     } catch (error) {
       collectionError = `${error.name}: ${error.message}`;
     }
+  }
+
+  // Names only. A report BODY carries the whole command line and every environment variable — this
+  // suite runs with DATABASE_URL and its password in the environment — so the body is never retained
+  // and never printed. The name is the whole of the evidence: Node writes one only for a fault it
+  // suffered itself, and names it after the pid that died.
+  let reportFiles = [];
+  try {
+    reportFiles = fs.readdirSync(reportDir);
+  } catch {
+    /* nothing wrote one, which is itself the observation */
+  }
+  // Deleted here rather than on the way out of a branch, so that a run which is captured, a run
+  // which is clean and a run whose report could not be read all leave the same nothing behind.
+  fs.rmSync(reportDir, { recursive: true, force: true });
+  activeReportDir = null;
+
+  // Attributed to the failure whose child wrote it. A run can hold several failures, and a single
+  // flat list cannot say which child suffered the fault — which is the only thing the report was
+  // collected to say.
+  for (const record of records) {
+    const pid = record.child?.pid ?? null;
+    record.reportFiles = pid === null ? [] : reportFiles.filter((name) => name.includes(`.${pid}.`));
   }
 
   const summary = {
@@ -335,6 +385,7 @@ for (let run = 1; run <= maxRuns; run++) {
     freeMemAfterMb: Math.round(freemem() / 1048576),
     totalMemMb: Math.round(totalmem() / 1048576),
     captures: records.length,
+    reportFiles: reportFiles.length,
     collectionError,
   };
   runs.push(summary);
@@ -352,11 +403,19 @@ for (let run = 1; run <= maxRuns; run++) {
   }
 
   if (records.length > 0) {
-    capture = { run, records, fatalMarkers: fatalMarkersIn(result.stderr) };
+    // A child's fatal banner reaches the REPORT, never this process's stderr: the runner reads each
+    // child's stderr line by line and re-emits it as a `test:stderr` reporter event. Measured on a
+    // real bounded heap exhaustion, this process's stderr held zero bytes while the report held the
+    // whole banner. So the markers come from each record's own region of the report, and this
+    // process's stderr is recorded separately, as what it actually is: the runner's own.
+    const fatalMarkers = [...new Set(records.flatMap((record) => record.fatalMarkers))];
+    capture = { run, records, fatalMarkers, reportFiles, runnerStderrMarkers: fatalMarkersIn(result.stderr) };
     fs.writeFileSync(path.join(outDir, 'capture.json'), `${JSON.stringify(capture, null, 2)}\n`, { mode: 0o600 });
-    // The raw TAP has served its purpose the moment `capture.json` exists. It is a full transcript
-    // of whatever the suite printed, so keeping it past the normalised record retains arbitrary
-    // test output for no diagnostic gain; the child logs stay, being enumerated lifecycle events.
+    // The raw TAP has served its purpose the moment `capture.json` exists — which now includes the
+    // fatal markers read out of it, the evidence the first real capture of this investigation lost
+    // by looking for them on the parent's stderr instead. It is a full transcript of whatever the
+    // suite printed, so keeping it past the normalised record retains arbitrary test output for no
+    // diagnostic gain; the child logs stay, being enumerated lifecycle events.
     fs.rmSync(tapPath, { force: true });
     console.log(`\nCAPTURED on run ${run}:\n${records.map((r) => JSON.stringify(r, null, 2)).join('\n')}`);
     console.log(`\nRaw TAP discarded; the normalised record is ${path.join(outDir, 'capture.json')}.`);

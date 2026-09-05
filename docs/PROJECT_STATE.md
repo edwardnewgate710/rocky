@@ -4,7 +4,205 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-09-05 — M15 Increment 50: test:counts / standalone gateway host setup contract._
+_Last updated: 2026-09-05 — M15 Increment 51: Signature B mechanism isolation and diagnostic hardening._
+
+Prior: _Last updated: 2026-09-05 — M15 Increment 50: test:counts / standalone gateway host setup contract._
+
+## M15 Increment 51 — Signature B mechanism isolation and diagnostic hardening
+
+**Status: UNRESOLVED — exact terminating source unproven.** Root-cause acceptance: **LEVEL C —
+narrowed to one mechanism family, exact source not established.** No production code, workflow,
+migration or repository semantic changed; the increment is diagnostic and test infrastructure only.
+Increment 50's setup/documentation contract remains resolved and is not altered here.
+
+This increment did not set out to fix Signature B. It set out to identify the process-termination
+mechanism, and it is reported at the level the evidence actually reaches: a mechanism **family** is
+now established by positive measurement, and the party that terminates the child is not.
+
+**Bounded real campaign: 39 runs, 5 real Signature B captures**, across both `packages/api` and
+`packages/persistence` (six arms: API pre-fix 5 runs / 1 capture; API final 8 / 1; persistence 2 / 1
+and 1 / 1; Node 22 persistence 17 / 0; mixed-ordered persistence-then-api 6 / 1). Free memory
+ranged 718–1533 MB of 16077 MB, with other agents' processes concurrently running; that
+concurrent-load confounder is disclosed, not leaned on.
+
+**All five captures reported the identical exit status.**
+
+| # | Package | File | `exitCode` | `signal` | Child lifecycle | Fatal markers | Reports |
+|---|---|---|---|---|---|---|---|
+| 1 | api | `pg-security-ownership.integration` (641.1 ms) | `3221226505` | `null` | `start`, `preload-installed` | *not captured* | *n/a* |
+| 2 | persistence | `studies.integration` (529.5 ms) | `3221226505` | `null` | `start`, `preload-installed` | `[]` | `[]` |
+| 3 | persistence | `learning.integration` (523.4 ms) | `3221226505` | `null` | `start`, `preload-installed` | `[]` | `[]` |
+| 4 | api | `pg-security.integration` (629.2 ms) | `3221226505` | `null` | `start`, `preload-installed` | `[]` | `[]` |
+| 5 | api | `auth-signin-schema.integration` (734.5 ms) | `3221226505` | `null` | `start`, `preload-installed` | `[]` | `[]` |
+
+`3221226505` is `0xC0000409`, the Windows status `STATUS_STACK_BUFFER_OVERRUN` — the fail-fast-class
+status. Every capture ran no normal JavaScript shutdown hook: the child log holds exactly `start`
+and `preload-installed` and nothing else, including Node's own unconditional `exit`.
+
+**Capture 1 is deliberately not claimed as decisive.** It was taken by the pre-fix harness, whose
+raw TAP and fatal-marker evidence for that run was discarded before it could be read. Its exit
+status and lifecycle log stand; its marker and report channels do not exist. Captures 2–5 carry the
+full evidence set and are what the exclusions below rest on.
+
+### What the evidence excludes
+
+Excluded by positive measurement on captures 2–5, not by absence of a hypothesis:
+
+- ordinary `process.exit` / `process.exitCode` — would have written a log line and fired `exit`;
+- an ordinary uncaught JS exception — same;
+- a fatal unhandled rejection — same;
+- an instrumented JS `process.abort()` — the preload wraps it and records before delegating;
+- **the measured V8/Node fatal path (including heap OOM)** — the synthetic fatal path produces
+  fatal stderr diagnostics inside the TAP report **and** a PID-attributable Node diagnostic report
+  under `--report-on-fatalerror`. Captures 2–5 produced **neither**: `fatalMarkers` is `[]` and
+  `reportFiles` is `[]` for each;
+- **node:test parent cancellation in this repository's configuration** — the runner's own source
+  was read (`node --expose-internals`, `internal/test_runner/runner.js`): `FileTest` sets
+  `this.timeout = null`, so the parent enforces no file-level wall clock, and a child aborted
+  through `spawn(..., { signal })` sets `err` via `child.on('error')` first, so the runner throws an
+  `AbortError` rather than the bare fallback shape. There is no parent path in this configuration
+  that produces what was observed.
+
+### What remains possible
+
+Two sources remain, and the evidence does not choose between them:
+
+- **A.** an in-process Windows fail-fast path — a security mitigation, `RaiseFailFastException`, or
+  an equivalent native fail-fast source;
+- **B.** an external party calling `TerminateProcess` with `0xC0000409` as the chosen exit status.
+
+An exit status is a 32-bit integer the terminating party picks, so the status alone cannot separate
+A from B. Choosing between them requires a channel this increment deliberately did not open: ETW
+`Microsoft-Windows-Kernel-Process` tracing, or WER `LocalDumps`. Both change the machine's
+configuration, and neither was enabled.
+
+**Windows-side corroboration, recorded as measurement not conclusion.** No Windows Error Reporting
+record exists for `node.exe` in the capture windows, though WER is enabled and logged other events
+that day. Only two `.node` addons exist in the tree (rollup's, unused by tests). Avast Antivirus is
+present, and `aswhook.dll` was observed loaded inside a live `node.exe` process. **Injection is not
+causation.** This makes the AV/injection path a concrete leading candidate worth a controlled future
+A/B test; it is not a root cause. No security exclusion was added, no antivirus was disabled, and no
+security posture was changed. A controlled AV A/B experiment requires explicit owner authorization
+and is a separate future step.
+
+**Node version evidence.** Node 22 and Node 24 both reproduce the fingerprint distinctions the
+correlator depends on, and the diagnostics suite is identical on both. The Node 22 bounded arm was
+**17 runs, 0 captures**. That does **not** prove a Node-version difference and no inference that
+Node 24 causes the defect is drawn from it; 17 runs at the historically observed rate bounds little.
+
+### Synthetic fingerprint matrix
+
+Seventeen termination mechanisms were measured under the runner to build fingerprints **before** any
+real capture was compared against them, with the match criteria stated in advance and multi-field
+(exit status, signal, failure type, child lifecycle events, fatal stderr markers, diagnostic report
+presence and PID attribution). Exactly three reproduce the historical child-side lifecycle shape —
+`taskkill /F` (exit `1`), `Stop-Process -Force` (`4294967295`) and a V8 heap OOM (`134` on Windows,
+`SIGABRT` on POSIX) — and each is separated from the real captures by at least one other field. Any
+memory-pressure experiment ran in a child process under a strict heap limit and a bounded wall clock
+with process-tree cleanup; the host's real memory was never deliberately exhausted.
+
+### Diagnostic improvements delivered
+
+Two blind spots were proven, not guessed, and only those were closed:
+
+- **fatal markers now come from the per-failure TAP diagnostic region** instead of the parent
+  runner's stderr. The runner re-emits each child stderr line as a `test:stderr` reporter event, so
+  a child's `FATAL ERROR:` banner lands in the TAP report and **never** on the parent's stderr —
+  measured at 0 bytes while the report held the banner. The previous channel could only ever read
+  empty;
+- **lifecycle logs are isolated per process**, keyed by log file and PID, instead of merged by test
+  file path. The merged form produced the statement "rules out an external termination and a native
+  fault" — a false negative against the live hypothesis.
+
+Also delivered, each with tests: stale or PID-reused evidence becomes an explicit ambiguity rather
+than a silent merge; diagnostic report existence and PID attribution separate fatal paths, attributed
+per failure rather than per run; sensitive report bodies are never retained on any exit path,
+including error and `SIGINT`; artifact paths are independent of the selected package's working
+directory; a run's artifact directories start empty and an `--out` already holding a capture is
+refused rather than reused; cross-package Signature B runs support `packages/api` and
+`packages/persistence` via `--package`; POSIX OOM signal/status behaviour is covered alongside the
+Windows encoding; and false-attribution regressions are covered directly.
+
+The correlator suite grew **41 → 57 tests (55 pass, 2 pre-existing POSIX-only skips, 0 fail)**,
+identical on Node 22 and Node 24. Falsification killed **13 of 14 mutations**; the sole survivor is
+a region-boundary mutant that is equivalent under the TAP grammar Node can emit, and it is reported
+rather than hidden. All mutated sources were restored byte-identically, verified by SHA-256.
+
+### Validation
+
+Measured on 2026-09-05 on Windows 11 with Node 24.15.0 and npm 11.12.1, after merging
+`origin/main` `48209e8074e00632b1f3ed29d68d3fe099eed6cf` (PR #42) into this branch with no rebase
+and no conflicts. Host preparation followed Increment 50's contract exactly — `npm ci`,
+`npm run build`, `npm ci --prefix services/gateway`, each exit **0**.
+
+- `npm run lint` **0**; `git diff --check` clean.
+- `npm test` **exit 0**: **19 workspaces, 3320 tests, 3292 pass, 0 fail, 28 skipped**, with **0**
+  suites self-skipping for a missing `DATABASE_URL`.
+- `npm run test:counts` **exit 0**: **3336 tests, 33 skipped** across the 19 root workspaces plus
+  the standalone gateway (`api` 1012/10, `web` 1030/0, `persistence` 186/0, `gateway-service` 16/5).
+- `npm run test:scripts`, `check:ci-parity`, `check:adr-claims`, `check:variant-parity`,
+  `check:engine-pin-parity`, `check:observability`, `check:build-order`, `check:deploy-gates` and
+  `npm run test:load-harness` — each **0**.
+- `services/gateway`: `build` **0**, `lint` **0**, `test` **0** (16 tests, 11 passed, 5 skipped).
+- The diagnostics correlator suite: **57 tests, 55 pass, 0 fail, 2 skipped**, identical on Node
+  24.15.0 and on Node 22.23.2.
+
+`DATABASE_URL` pointed at a dedicated PostgreSQL 16 container with `pgvector`, created for this
+validation and removed afterwards; **`REDIS_URL` was unset, so Redis-backed testing was NOT RUN**.
+Environment-gated skips are not passes.
+
+### Signature B during this increment's own final validation
+
+**It occurred twice, and neither occurrence is dismissed because a rerun passed.**
+
+| Package | File | Wall time | Node | Exit status | Child lifecycle | Fatal markers | Reports |
+|---|---|---|---|---|---|---|---|
+| api | `auth-signin-schema.integration.test.js` | 618.7 ms | 24.15.0 | *not captured* | *not captured* | *not captured* | *not captured* |
+| api | `cookie-auth.test.js` | 707.0 ms | 24.15.0 | *not captured* | *not captured* | *not captured* | *not captured* |
+
+Both showed the documented shape exactly — a bare file-level `'test failed'`, no assertion, no
+stack, and none of the file's own tests reported — and both occurred under the plain `npm test` /
+`npm run test:counts` path, which runs the `spec` reporter with no TAP destination and no preload.
+That is precisely the blind spot this increment's instrumentation exists to close, and it means
+**neither occurrence has exit-status, lifecycle, marker or report evidence**: nothing here narrows
+Level C, and nothing here is claimed to. A bounded instrumented pass of 3 further runs over the same
+package, taken immediately after the first, produced **0 captures** — which bounds nothing at that
+size and is reported only so the attempt is on the record.
+
+Two conditions are worth recording without being leaned on. The host was under heavy memory
+pressure from unrelated concurrent work: **699 MB free of 16077 MB** at the time of the first
+occurrence, against 1384–1428 MB during the instrumented pass that saw nothing, and roughly 2.5 GB
+at the earliest historical captures. And an *earlier* attempt at the same full-repository run died
+differently — `npm` reported exit status **3221225794** (`0xC0000142`,
+`STATUS_DLL_INIT_FAILED`) for the whole `packages/api` command, a process that failed to start
+rather than a file that failed to run. That is **not** Signature B and is not counted as one: the
+shape, the status and the layer all differ. It is recorded because it is the same host condition,
+and because omitting it would make the memory-pressure correlation look cleaner than it is.
+
+### Separate known defect observed during this increment — not fixed here
+
+**The durable analysis-cache race test `two live instances racing a cold position both compute it`
+has now failed twice.** It lives in `packages/api/test/analysis-cache-durable.integration.test.ts`,
+the Increment 49 suite, which this increment does not touch. First locally, during this increment's
+work; then again in CI's `postgres integration (persistence)` job on Linux at this branch's HEAD,
+where it failed with `cross-process single-flight does not exist` — `expected: 2, actual: 1`,
+`ERR_ASSERTION`, at `analysis-cache-durable.integration.test.js:385`. It passed at the two prior
+HEADs and passes on rerun.
+
+This is **not** Signature B: it is an ordinary assertion failure with a full stack and a named
+assertion, not a bare file-level termination with no test reported. It is also not caused by this
+increment, which changes only diagnostics and documentation. **A rerun passing does not resolve
+it** — the second occurrence, on a different operating system from the first, makes it a real
+intermittent defect rather than local noise. Recorded here as a separate bounded follow-up, not
+fixed here.
+
+### Still open after Increment 51
+
+- **Signature B — UNRESOLVED**, now at Level C: the mechanism family is established, the terminating
+  source is not. The controlled AV A/B test and OS-level tracing (ETW / WER `LocalDumps`) are the
+  named next steps, and both need owner authorization because they change machine configuration.
+- **The analysis-cache race flake above — OPEN**, separate from Signature B, now observed twice (locally on Windows and in CI on Linux) and owned by the Increment 49 suite.
+
 
 ## M15 Increment 50 — test:counts / standalone gateway host setup contract
 
