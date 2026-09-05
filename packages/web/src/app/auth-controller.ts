@@ -112,6 +112,15 @@ export class AuthController {
         this.adoptSession(session.user);
       }
     });
+
+    this.client.session.onReset?.(() => {
+      if (!this.disposed) {
+        this.sessionGeneration++;
+        this.session = null;
+        this.clearPersisted();
+        this.callbacks.onSessionChange(null);
+      }
+    });
   }
 
   /** Current session (snapshot), or null when unauthenticated. */

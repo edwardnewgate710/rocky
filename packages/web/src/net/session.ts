@@ -114,6 +114,7 @@ export class SessionManager {
   private readonly leewayMs: number;
   private invalidatedHandler: (() => void) | null = null;
   private adoptedHandler: ((session: StoredSession) => void) | null = null;
+  private resetHandler: (() => void) | null = null;
   private refreshInFlight: Promise<StoredSession> | null = null;
   private channel: SessionChannel | null = null;
 
@@ -147,6 +148,7 @@ export class SessionManager {
       this.adopt(msg['auth'], false);
     } else if (msg['type'] === 'session_reset') {
       this.reset(false);
+      this.resetHandler?.();
     }
   }
 
@@ -182,6 +184,13 @@ export class SessionManager {
    */
   onAdopted(handler: (session: StoredSession) => void): void {
     this.adoptedHandler = handler;
+  }
+
+  /**
+   * Register the handler for when a session is reset from a peer tab via channel broadcast.
+   */
+  onReset(handler: () => void): void {
+    this.resetHandler = handler;
   }
 
   /**

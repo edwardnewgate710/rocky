@@ -14,16 +14,27 @@ function makeFakeStorage() {
   };
 }
 
+interface FakeSession {
+  resets: number;
+  invalidate: (() => void) | null;
+  resetCallback: (() => void) | null;
+  reset(): void;
+  onInvalidated(handler: () => void): void;
+  onReset(handler: () => void): void;
+}
+
 /**
- * The fake exposes the invalidation handler the controller registers, so a test can fire the one
- * thing `SessionManager` would fire — a refresh that failed — without driving a real refresh.
+ * The fake exposes the invalidation and reset handlers the controller registers, so a test can fire the
+ * callbacks `SessionManager` would fire without driving real network/channel events.
  */
-function makeFakeSession() {
+function makeFakeSession(): FakeSession {
   return {
     resets: 0,
-    invalidate: null as null | (() => void),
+    invalidate: null,
+    resetCallback: null,
     reset(): void { this.resets++; },
     onInvalidated(handler: () => void): void { this.invalidate = handler; },
+    onReset(handler: () => void): void { this.resetCallback = handler; },
   };
 }
 
@@ -221,6 +232,39 @@ test('a session invalidated by a failed refresh stops the UI showing a signed-in
   assert.equal(ctrl.currentSession, null);
   assert.equal(sessions[sessions.length - 1], null, 'the UI was told to drop the session');
   assert.equal(storage.getItem('gambit-session'), null, 'the persisted hint went too');
+});
+
+test('when session is reset on another tab (onReset), AuthController clears local state and storage without calling client.session.reset()', async () => {
+  const storage = makeFakeStorage();
+  const fakeSession = makeFakeSession();
+  const client = {
+    ...makeFakeClient(),
+    session: fakeSession,
+  };
+  const sessions: (AuthSession | null)[] = [];
+  const ctrl = new AuthController({
+    client: client as unknown as GambitClient,
+    callbacks: {
+      onSessionChange: (s) => { sessions.push(s); },
+      onPending: () => {},
+      onError: () => {},
+    },
+    storage,
+  });
+  await ctrl.login('alice', 'pw');
+  assert.equal(ctrl.isAuthenticated(), true);
+  assert.equal(storage.getItem('gambit-session') !== null, true);
+  assert.equal(fakeSession.resets, 0);
+
+  // Trigger the cross-tab reset callback
+  assert.ok(fakeSession.resetCallback, 'the controller registered for onReset');
+  fakeSession.resetCallback();
+
+  assert.equal(ctrl.isAuthenticated(), false);
+  assert.equal(ctrl.currentSession, null);
+  assert.equal(sessions[sessions.length - 1], null, 'the UI was told to drop the session');
+  assert.equal(storage.getItem('gambit-session'), null, 'the persisted state was cleared');
+  assert.equal(fakeSession.resets, 0, 'must not trigger client.session.reset() again');
 });
 
 test('M12 inc 2: restore takes identity from cookie refresh, not storage', async () => {

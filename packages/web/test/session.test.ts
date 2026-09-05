@@ -271,12 +271,17 @@ test('two session managers synchronize adoption across tabs via channel', async 
 test('concurrent refreshes from two tabs: loser adopts winner without destroying session', async () => {
   const [ch1, ch2] = createMockChannelPair();
   const mgr1 = new SessionManager({
-    refresh: async () => authResponse('winner-token', 'r-winner', 3600),
+    refresh: async () => {
+      await new Promise<void>((r) => queueMicrotask(() => r()));
+      return authResponse('winner-token', 'r-winner', 3600);
+    },
     now: () => 1000,
     channel: ch1,
   });
   const mgr2 = new SessionManager({
     refresh: async () => {
+      await new Promise<void>((r) => queueMicrotask(() => r()));
+      await new Promise<void>((r) => queueMicrotask(() => r()));
       // Tab 2 loses race; server returns 401 because Tab 1 refreshed first
       throw new Error('401 Unauthorized: refresh token has been revoked');
     },
@@ -291,12 +296,14 @@ test('concurrent refreshes from two tabs: loser adopts winner without destroying
   let mgr2Invalidated = false;
   mgr2.onInvalidated(() => { mgr2Invalidated = true; });
 
-  // Tab 1 wins refresh
-  const s1 = await mgr1.refreshNow();
-  assert.equal(s1.tokens.accessToken, 'winner-token');
+  // Both tabs invoke refreshNow() concurrently
+  const [s1, s2] = await Promise.all([
+    mgr1.refreshNow(),
+    mgr2.refreshNow(),
+  ]);
 
-  // Let the broadcast reach tab 2
-  await new Promise<void>((r) => queueMicrotask(() => r()));
+  assert.equal(s1.tokens.accessToken, 'winner-token');
+  assert.equal(s2.tokens.accessToken, 'winner-token', 'Tab 2 must recover by returning winner session');
 
   // Tab 2 now has the winner's token and is still authenticated
   assert.equal(mgr2.isAuthenticated, true);
@@ -312,6 +319,11 @@ test('session reset synchronizes across tabs via channel', async () => {
   const mgr1 = new SessionManager({ refresh: async () => authResponse(), now: () => 1000, channel: ch1 });
   const mgr2 = new SessionManager({ refresh: async () => authResponse(), now: () => 1000, channel: ch2 });
 
+  let mgr2ResetFired = false;
+  mgr2.onReset(() => {
+    mgr2ResetFired = true;
+  });
+
   mgr1.adopt(authResponse('tok', 'r', 3600), false);
   mgr2.adopt(authResponse('tok', 'r', 3600), false);
   assert.equal(mgr2.isAuthenticated, true);
@@ -322,6 +334,7 @@ test('session reset synchronizes across tabs via channel', async () => {
   await new Promise<void>((r) => queueMicrotask(() => r()));
 
   assert.equal(mgr2.isAuthenticated, false);
+  assert.equal(mgr2ResetFired, true, 'mgr2.onReset must be notified when peer resets');
 
   mgr1.dispose();
   mgr2.dispose();
