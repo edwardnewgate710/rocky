@@ -1745,8 +1745,12 @@ test('pass runner: an --out that already holds a capture is refused, not quietly
     // Deleting the old capture instead would be worse: a capture is the rarest artifact this whole
     // diagnostic produces. So the pass refuses, before it creates or spawns anything.
     const out = path.join(dir, 'out');
-    fs.mkdirSync(out, { recursive: true });
+    fs.mkdirSync(path.join(out, 'child-logs-run1'), { recursive: true });
     fs.writeFileSync(path.join(out, 'capture.json'), '{"run":1,"records":[]}\n');
+    // The evidence the capture refers to. It is what a reused `--out` would destroy: the pass
+    // empties each run's child logs before running it, so a replacement pass would delete these and
+    // leave the capture above pointing at nothing.
+    fs.writeFileSync(path.join(out, 'child-logs-run1', 'run-4242-1000.jsonl'), '{"kind":"start","pid":4242}\n');
 
     const result = runPass(['--runs', '1', '--max-minutes', '1', '--out', out, '--target', trivialTarget(dir)], dir);
 
@@ -1757,6 +1761,11 @@ test('pass runner: an --out that already holds a capture is refused, not quietly
       JSON.parse(fs.readFileSync(path.join(out, 'capture.json'), 'utf8')),
       { run: 1, records: [] },
       'and must leave the capture it refused to overwrite exactly as it found it',
+    );
+    assert.deepEqual(
+      fs.readdirSync(path.join(out, 'child-logs-run1')),
+      ['run-4242-1000.jsonl'],
+      'the capture must still have the child logs it refers to; refusing early is what protects them',
     );
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
