@@ -1618,3 +1618,67 @@ test('pass runner: a diagnostic report is attributed to the child that wrote it,
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('pass runner: in a run with two failures, the report goes to the child that faulted', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-two-'));
+  try {
+    // The reason per-record attribution exists. Two files die in one run, with the SAME status where
+    // this platform reports one: the first suffers a real heap exhaustion, the second simply chooses
+    // to leave. Only the first makes Node write a report. A run-level list would hand that report to
+    // both records and say the second faulted too, which is the opposite of what it was collected to
+    // establish.
+    //
+    // Bounded by construction: an 80 MB ceiling reached through NODE_OPTIONS, and a loop that stops
+    // at 400 MB of intent.
+    fs.writeFileSync(
+      path.join(dir, 'a-fault.test.cjs'),
+      'const held = [];\nfor (let i = 0; i < 400; i++) held.push(new Array(131072).fill(i));\n',
+    );
+    fs.writeFileSync(path.join(dir, 'b-chosen.test.cjs'), 'process.exit(134);\n');
+
+    const out = path.join(dir, 'out');
+    const result = spawnSync(
+      process.execPath,
+      [
+        path.join(DIAGNOSTICS_DIR, 'run-signature-b-pass.mjs'),
+        '--runs', '1', '--max-minutes', '3', '--out', out,
+        '--target', path.join(dir, '*.test.cjs'),
+      ],
+      { cwd: dir, encoding: 'utf8', env: { ...process.env, NODE_TEST_CONTEXT: undefined, NODE_OPTIONS: '--max-old-space-size=80' } },
+    );
+
+    const capturePath = path.join(out, 'capture.json');
+    assert.ok(fs.existsSync(capturePath), `both files must be captured:\n${result.stdout}${result.stderr}`);
+    const capture = JSON.parse(fs.readFileSync(capturePath, 'utf8')) as {
+      reportFiles: string[];
+      records: Array<{
+        file: string;
+        parent: { exitCode: number | null; signal: string | null };
+        child: { pid: number | null };
+        reportFiles: string[];
+      }>;
+    };
+
+    assert.equal(capture.records.length, 2, `expected both files to fail, got ${capture.records.map((r) => r.file).join(', ')}`);
+    const faulted = capture.records.find((record) => record.file.includes('a-fault'));
+    const chosen = capture.records.find((record) => record.file.includes('b-chosen'));
+    assert.ok(faulted && chosen, 'both files must appear in the capture');
+
+    assert.ok(diedOfAFault(faulted.parent.exitCode, faulted.parent.signal), 'the first file must have aborted');
+    assert.equal(chosen.parent.exitCode, 134, 'the second file chose the status the first was given');
+
+    assert.equal(faulted.reportFiles.length, 1, `the fault wrote one report, got ${JSON.stringify(faulted.reportFiles)}`);
+    assert.ok(
+      faulted.reportFiles[0]?.includes(`.${faulted.child.pid}.`),
+      `and it names that child (pid ${faulted.child.pid}, got ${faulted.reportFiles[0]})`,
+    );
+    assert.deepEqual(
+      chosen.reportFiles,
+      [],
+      'the file that merely chose the status wrote nothing, and must not inherit the other file\'s report',
+    );
+    assert.equal(capture.reportFiles.length, 1, 'the run as a whole still saw exactly one report');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
