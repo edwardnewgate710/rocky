@@ -69,6 +69,18 @@ const correlator = require(CORRELATE_PATH) as {
   isWindowsPath(p: string): boolean;
 };
 
+/**
+ * Whether a child died of a fault it suffered, rather than by choosing its own exit status.
+ *
+ * The two platforms report the same event differently and neither encoding is the contract. Windows
+ * has no signals, so a V8 fatal error reaches the parent as exit code 134 with `signal: null`; POSIX
+ * raises SIGABRT, and the exit code is then null. Asserting 134 alone passes on the machine this was
+ * written on and fails everywhere CI runs it — which is exactly how it did fail.
+ */
+function diedOfAFault(exitCode: number | null | undefined, signal: string | null | undefined): boolean {
+  return exitCode === 134 || signal === 'SIGABRT';
+}
+
 /** A TAP block in the exact shape Node's built-in reporter emits for a file-level failure. */
 function tapFailure(file: string, exitCode: string, signal = '~', failureType = 'testCodeFailure'): string {
   return [
@@ -1376,7 +1388,10 @@ test('pass runner: a diagnostic report separates a real V8 fatal from a status t
       { encoding: 'utf8', timeout: 60_000 },
     );
 
-    assert.equal(crashed.status, 134, 'a heap exhaustion leaves 134, the same status three mechanisms leave');
+    assert.ok(
+      diedOfAFault(crashed.status, crashed.signal),
+      `a heap exhaustion must abort, however this platform reports it (status ${crashed.status}, signal ${crashed.signal})`,
+    );
     const reports = fs.readdirSync(reportDir);
     assert.equal(reports.length, 1, 'a V8 fatal writes exactly one report');
     assert.ok(
@@ -1395,7 +1410,8 @@ test('pass runner: a diagnostic report separates a real V8 fatal from a status t
       { encoding: 'utf8', timeout: 60_000 },
     );
 
-    assert.equal(exited.status, 134);
+    assert.equal(exited.status, 134, 'a chosen exit status is the same number on every platform');
+    assert.equal(exited.signal, null, 'and it is an exit, not an abort');
     assert.deepEqual(fs.readdirSync(quietDir), [], 'choosing the status of a fault is not a fault');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -1425,10 +1441,13 @@ test('pass runner: exit 134 alone names nothing, and the capture carries what se
     const fatal = JSON.parse(fs.readFileSync(oomCapturePath, 'utf8')) as {
       reportFiles: string[];
       fatalMarkers: string[];
-      records: Array<{ parent: { exitCode: number }; child: { kinds: string[] } }>;
+      records: Array<{ parent: { exitCode: number | null; signal: string | null }; child: { kinds: string[] } }>;
     };
 
-    assert.equal(fatal.records[0]?.parent.exitCode, 134);
+    assert.ok(
+      diedOfAFault(fatal.records[0]?.parent.exitCode, fatal.records[0]?.parent.signal),
+      `the child must have aborted (exitCode ${fatal.records[0]?.parent.exitCode}, signal ${fatal.records[0]?.parent.signal})`,
+    );
     assert.deepEqual(fatal.records[0]?.child.kinds, ['start', 'preload-installed'],
       'a V8 fatal runs no JS exit path, which is why the status alone cannot name it');
     assert.ok(fatal.fatalMarkers.includes('JavaScript heap out of memory'),
@@ -1445,10 +1464,11 @@ test('pass runner: exit 134 alone names nothing, and the capture carries what se
     const quiet = JSON.parse(fs.readFileSync(chosenCapturePath, 'utf8')) as {
       reportFiles: string[];
       fatalMarkers: string[];
-      records: Array<{ parent: { exitCode: number } }>;
+      records: Array<{ parent: { exitCode: number | null; signal: string | null } }>;
     };
 
-    assert.equal(quiet.records[0]?.parent.exitCode, 134, 'the same status as the fault above');
+    assert.equal(quiet.records[0]?.parent.exitCode, 134, 'a chosen status, identical on every platform');
+    assert.equal(quiet.records[0]?.parent.signal, null, 'and reached by exiting, not by aborting');
     assert.deepEqual(quiet.fatalMarkers, [], 'nothing was printed');
     assert.deepEqual(quiet.reportFiles, [], 'and no report was written, which is what tells them apart');
   } finally {
@@ -1523,5 +1543,78 @@ test('correlator: two runs that reused one pid are not merged into a single proc
     );
   } finally {
     fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
+test('pass runner: a relative --out belongs to the caller, not to the package being run', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-relout-'));
+  try {
+    // The parent creates and reads the artifact paths itself, while the child resolves the same
+    // strings against the package it was pointed at. Left relative, those are two different
+    // directories the moment `--package` names anything but this one: the parent would look for a
+    // report the child wrote somewhere else, and the pass would report that it could not read its
+    // own run.
+    const pkg = path.join(dir, 'other-package');
+    fs.mkdirSync(pkg, { recursive: true });
+    trivialTarget(pkg);
+    const result = runPass(
+      ['--runs', '1', '--max-minutes', '1', '--out', 'artifacts', '--package', pkg, '--target', 'noop.test.cjs'],
+      dir,
+    );
+
+    assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+    const summaryPath = path.join(dir, 'artifacts', 'summary.json');
+    assert.ok(fs.existsSync(summaryPath), 'the artifacts belong beside the caller, not inside the package');
+    const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as {
+      runs: Array<{ runnerExitCode: number | null; collectionError: string | null }>;
+    };
+    assert.equal(summary.runs[0]?.collectionError, null, 'the run must be readable, not written out of reach');
+    assert.equal(summary.runs[0]?.runnerExitCode, 0);
+    assert.ok(!fs.existsSync(path.join(pkg, 'artifacts')), 'nothing may be left inside the package under test');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('pass runner: a diagnostic report is attributed to the child that wrote it, and its body is not kept', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-report-attr-'));
+  try {
+    // Bounded by construction: an 80 MB ceiling reached through NODE_OPTIONS, and a loop that stops
+    // at 400 MB of intent.
+    const oom = path.join(dir, 'oom.test.cjs');
+    fs.writeFileSync(oom, 'const held = [];\nfor (let i = 0; i < 400; i++) held.push(new Array(131072).fill(i));\n');
+    const out = path.join(dir, 'out');
+    const result = spawnSync(
+      process.execPath,
+      [path.join(DIAGNOSTICS_DIR, 'run-signature-b-pass.mjs'), '--runs', '1', '--max-minutes', '2', '--out', out, '--target', oom],
+      { cwd: dir, encoding: 'utf8', env: { ...process.env, NODE_TEST_CONTEXT: undefined, NODE_OPTIONS: '--max-old-space-size=80' } },
+    );
+
+    const capturePath = path.join(out, 'capture.json');
+    assert.ok(fs.existsSync(capturePath), `${result.stdout}${result.stderr}`);
+    const capture = JSON.parse(fs.readFileSync(capturePath, 'utf8')) as {
+      records: Array<{ child: { pid: number | null }; reportFiles: string[] }>;
+    };
+
+    // A run can hold several failures. A single flat list cannot say which child suffered the fault,
+    // which is the only thing the report was collected to say — and Node names each report after the
+    // pid that wrote it, so the join needs nothing the capture does not already hold.
+    const record = capture.records[0];
+    assert.ok(record, 'the heap exhaustion must be captured');
+    assert.equal(record.reportFiles.length, 1, `expected one report for this child, got ${JSON.stringify(record.reportFiles)}`);
+    assert.ok(
+      record.reportFiles[0]?.includes(`.${record.child.pid}.`),
+      `the report must name the child that died (pid ${record.child.pid}, got ${record.reportFiles[0]})`,
+    );
+
+    // A report body carries the whole command line and every environment variable — DATABASE_URL and
+    // its password included. The name is the evidence; the body is a credential file, and it is
+    // treated exactly as the raw report transcript is.
+    const leftBehind = fs.existsSync(path.join(out, 'reports-run1'))
+      ? fs.readdirSync(path.join(out, 'reports-run1'))
+      : [];
+    assert.deepEqual(leftBehind, [], 'no report body may be retained in the artifacts');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });

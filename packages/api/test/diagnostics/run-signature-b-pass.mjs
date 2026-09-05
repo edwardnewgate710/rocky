@@ -111,7 +111,13 @@ const maxRuns = positiveNumber('runs', flag('runs', 20), 20, { integer: true });
 const maxMs = positiveNumber('max-minutes', flag('max-minutes', 45), 45) * 60_000;
 // The fallback is computed only when --out is absent: an argument is evaluated before the call,
 // so an eager mkdtemp would create an unused directory on every run that supplies its own.
-const outDir = flag('out', null) ?? fs.mkdtempSync(path.join(tmpdir(), 'sigb-pass-'));
+//
+// Resolved against THIS process's working directory, because the paths derived from it are used by
+// two processes with different ones: this process creates and reads them, while the spawned runner
+// resolves the same strings against the package it was pointed at. Left relative, `--out artifacts`
+// with `--package ../persistence` would have the child write its report into the other package and
+// this process look for it here — a pass that cannot read its own run.
+const outDir = path.resolve(flag('out', null) ?? fs.mkdtempSync(path.join(tmpdir(), 'sigb-pass-')));
 
 // What each run executes. The default is the whole compiled suite, which is what reproducing
 // Signature B requires; `--target` exists so this script's own tests can point a run at one trivial
@@ -314,13 +320,23 @@ for (let run = 1; run <= maxRuns; run++) {
     }
   }
 
-  // Names only. A report body carries the whole command line and every environment variable, so
-  // the file stays on disk for a reader who wants it and never reaches an artifact this prints.
+  // Names only. A report BODY carries the whole command line and every environment variable — this
+  // suite runs with DATABASE_URL and its password in the environment — so the body is never retained
+  // and never printed. The name is the whole of the evidence: Node writes one only for a fault it
+  // suffered itself, and names it after the pid that died.
   let reportFiles = [];
   try {
     reportFiles = fs.readdirSync(reportDir);
   } catch {
     /* nothing wrote one, which is itself the observation */
+  }
+
+  // Attributed to the failure whose child wrote it. A run can hold several failures, and a single
+  // flat list cannot say which child suffered the fault — which is the only thing the report was
+  // collected to say.
+  for (const record of records) {
+    const pid = record.child?.pid ?? null;
+    record.reportFiles = pid === null ? [] : reportFiles.filter((name) => name.includes(`.${pid}.`));
   }
 
   const summary = {
@@ -367,6 +383,10 @@ for (let run = 1; run <= maxRuns; run++) {
     // suite printed, so keeping it past the normalised record retains arbitrary test output for no
     // diagnostic gain; the child logs stay, being enumerated lifecycle events.
     fs.rmSync(tapPath, { force: true });
+    // Same treatment, same reason: every report name is recorded above, and a report body is a file
+    // of credentials. Windows cannot be given the POSIX mode this directory was created with, so
+    // leaving one behind would rest on ACLs this script does not control.
+    fs.rmSync(reportDir, { recursive: true, force: true });
     console.log(`\nCAPTURED on run ${run}:\n${records.map((r) => JSON.stringify(r, null, 2)).join('\n')}`);
     console.log(`\nRaw TAP discarded; the normalised record is ${path.join(outDir, 'capture.json')}.`);
     break;
