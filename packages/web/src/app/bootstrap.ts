@@ -193,7 +193,7 @@ export function bootstrap(
   const showEmailVerify = route.name === 'email-verify';
   const activeResetToken = showPasswordReset ? captureAndStripToken('/password-reset') : null;
   const activeVerificationToken = showEmailVerify ? captureAndStripToken('/email-verify') : null;
-  const hideAuthSection = showPasswordReset || showEmailVerify;
+  const hideAuthSection = showPasswordReset || showEmailVerify || route.name === 'not-found';
 
   const config = deps?.config ?? resolveConfig();
   const appDeps: AppDependencies = {
@@ -223,7 +223,7 @@ export function bootstrap(
         }
         if ('querySelector' in doc && typeof doc.querySelector === 'function') {
           const themeColor = doc.querySelector('meta[name="theme-color"]');
-          themeColor?.setAttribute('content', t === 'dark' ? '#161512' : '#f7f6f5');
+          themeColor?.setAttribute('content', t === 'dark' ? '#242224' : '#F5F1ED');
         }
       },
     },

@@ -1,11 +1,11 @@
 {
-  "name": "Gambit",
-  "short_name": "Gambit",
+  "name": "Rookzen",
+  "short_name": "Rookzen",
   "description": "Open-source chess platform — play, learn, and analyze.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#161512",
-  "theme_color": "#161512",
+  "background_color": "#242224",
+  "theme_color": "#242224",
   "icons": [
     {
       "src": "/icon-192.png",

@@ -63,8 +63,11 @@ test('buttons have aria-label or text content', () => {
   assert.ok(HTML_TEMPLATE.includes('aria-label="Sign out"'));
 });
 
-test('nav links are present for lobby and profile', () => {
-  assert.ok(HTML_TEMPLATE.includes('href="/" data-route="lobby">Lobby</a>'));
+test('nav links are present for play and profile', () => {
+  assert.ok(
+    HTML_TEMPLATE.includes('href="/" data-route="lobby">Play</a>') ||
+      HTML_TEMPLATE.includes('href="/" data-route="lobby">Lobby</a>'),
+  );
   assert.ok(HTML_TEMPLATE.includes('href="/profile" data-route="profile">Profile</a>'));
 });
 

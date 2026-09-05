@@ -55,7 +55,7 @@ export function renderSearchResults(
 export function renderSearchPrompt(container: HTMLElement): void {
   renderEmpty(container, {
     mark: '🔍',
-    title: 'Search Gambit',
+    title: 'Search Rookzen',
     body: 'Search for players, games, or tournaments above.',
   });
 }
@@ -91,6 +91,6 @@ export function renderSearchUndetermined(container: HTMLElement): void {
   renderEmpty(container, {
     mark: '🔍',
     title: 'Search is unavailable',
-    body: 'Gambit could not check whether this server offers search. Reload the page to try again.',
+    body: 'Rookzen could not check whether this server offers search. Reload the page to try again.',
   });
 }

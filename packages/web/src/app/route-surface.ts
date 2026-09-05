@@ -24,7 +24,7 @@ const ROUTE_SURFACE_IDS: Readonly<Record<Route['name'], string | null>> = {
   'study-chapter': 'study-chapter',
   'password-reset': 'password-reset',
   'email-verify': 'email-verify',
-  'not-found': null,
+  'not-found': 'not-found',
 };
 
 const GAME_ONLY_CONTROL_IDS = ['flip', 'skip-board'] as const;
