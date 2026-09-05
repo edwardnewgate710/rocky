@@ -35,13 +35,13 @@ test('theme toggle changes the actual colour scheme and exposes the next action'
   const toggle = page.locator('#theme-toggle');
   await expect(page.locator('html')).toHaveClass(/dark/);
   await expect(toggle).toHaveAttribute('aria-label', 'Switch to light theme');
-  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(22, 21, 18)');
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(36, 34, 36)');
 
   await toggle.click();
 
   await expect(page.locator('html')).toHaveClass(/light/);
   await expect(toggle).toHaveAttribute('aria-label', 'Switch to dark theme');
-  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(247, 246, 245)');
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(245, 241, 237)');
 });
 
 test('skip link is present for keyboard users', async ({ page }) => {
