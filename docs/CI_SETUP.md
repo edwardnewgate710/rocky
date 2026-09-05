@@ -65,8 +65,12 @@ ADR-0121 is additionally guarded in seconds by
 
 ## Notes
 
-- Installs use `npm ci` against the committed root `package-lock.json` for
-  reproducible builds.
+- Root workspace installs use `npm ci` against the committed root `package-lock.json`.
+  The `gateway-service` job then builds the root packages and runs a second `npm ci`
+  in `services/gateway`, using that service's own committed `package-lock.json`,
+  before building, typechecking, and testing the service. Root install/build commands
+  exclude the standalone service. Host preparation for these checks is documented in
+  [RUNNING.md](RUNNING.md#host-build-tests-and-live-counts).
 - The deeper chart-wiring checks (env-var ordering, gateway `replicas: 2`,
   secret sourcing, the search kill switches, and search indexer isolation) live
   in `scripts/helm-snapshot-test.sh`. The default of 2 gateway replicas enables

@@ -55,7 +55,7 @@ Milestone progress spans foundational core engines through active production har
 ## Test Verification & CI
 
 - **Suite execution**: Run `npm test` across all root workspaces via `node --test`.
-- **Live metrics**: `npm run test:counts` aggregates test and skip counts across package and service suites; consult [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md) for current tooling caveats and measured validation status.
+- **Live metrics**: After the host setup below, `npm run test:counts` aggregates test and skip counts across root workspace packages and the standalone gateway service. Skipped integration tests are not passes; consult [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md) for measured validation status and active defects.
 - **Hermetic defaults**: Unit and domain suites run offline without external infrastructure. Integration suites gate on environment variables: `DATABASE_URL` (PostgreSQL persistence), `REDIS_URL` (gateway Redis integration and scaling), and provider API keys (live AI features).
 - **Continuous Integration (`.github/workflows`)**:
   - Multi-version Node matrix (Node 22 / 24) with strict typechecking, linting, and ADR claim validation (`npm run check:adr-claims`).
@@ -71,14 +71,16 @@ Milestone progress spans foundational core engines through active production har
 ## Build & Run
 
 ```bash
-npm ci               # reproducible install (root package-lock.json is committed)
-npm run build        # builds all root workspace packages in dependency order
-npm test             # executes workspace package test suites via node --test
-npm run lint         # strict typecheck across all root workspaces
-npm run test:counts  # aggregates test and skip counts across suites (see PROJECT_STATE caveats)
+npm ci                           # install root workspace dependencies from the root lockfile
+npm run build                    # build root workspace packages in dependency order
+npm ci --prefix services/gateway # install the standalone service from its own lockfile
+npm test                         # execute root workspace package test suites
+npm run lint                     # strict typecheck across root workspaces
+npm run test:counts              # execute and count workspace + gateway service tests
 ```
 
 - **Build order**: Run **`npm run build` before `lint` or `test` on a fresh clone** — downstream packages resolve upstream types from built `dist/`.
+- **Standalone gateway**: Root `npm ci` and `npm run build` exclude `services/gateway`. Its separate install is required before `test:counts` or direct gateway tests, even without `REDIS_URL`. The test command compiles its own `dist-test/`; a gateway production build is only needed for its `dist/` output. See [`docs/RUNNING.md`](docs/RUNNING.md#host-build-tests-and-live-counts) for host setup and troubleshooting.
 - **Local full stack**: `docker compose up --build` (see [`docs/RUNNING.md`](docs/RUNNING.md)).
 - **Helm chart validation**: `bash scripts/helm-snapshot-test.sh` (or lint with test secrets: `helm lint deploy/helm/gambit --set secrets.accessTokenSecret=test-only-access-token-secret-32-bytes-minimum --set secrets.postgresPassword=test-only-postgres-password --set config.nodeEnv=development --set email.provider=console`).
 

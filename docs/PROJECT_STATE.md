@@ -4,7 +4,78 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-09-05 — M15 Increment 49: the durable analysis-cache suite establishes its own database._
+_Last updated: 2026-09-05 — M15 Increment 50: test:counts / standalone gateway host setup contract._
+
+## M15 Increment 50 — test:counts / standalone gateway host setup contract
+
+**Status: RESOLVED — SETUP / DOCUMENTATION CONTRACT DRIFT CORRECTED.** The bounded
+gateway setup investigation recorded in Increments 48 and 49 is closed. The gateway
+intentionally remains outside the root `packages/*` workspaces. No gateway implementation
+defect was proven, and no workspace topology, script, lockfile, CI, Docker or runtime change
+is required. Increment 49's durable analysis-cache database-ownership defect remains resolved.
+
+**Supported host preparation, from the repository root with Node.js 22+:**
+
+```sh
+npm ci
+npm run build
+npm ci --prefix services/gateway
+npm run test:counts
+```
+
+Root `npm ci` installs the root workspaces, but not the standalone gateway dependencies.
+Root build establishes the workspace public `dist` outputs used by the gateway's local
+`file:` dependencies; installing those links does not build their targets. The gateway has
+its own manifest, lockfile and install lifecycle. `test:counts` includes the 19 root workspace
+suites and the standalone gateway suite, but neither installs dependencies nor establishes
+the workspace public outputs. Gateway tests compile `dist-test`; a prior gateway production
+build is not required. The sequence above follows the existing CI preparation order.
+
+**Controlled evidence on historical main `771b1f93c05585294474e95fcb24bf116766db3d`.**
+Four independent archives began without dependency trees or build outputs. Root install
+alone (A) failed with missing workspace outputs and gateway dependencies. Root install plus
+root build (B) left only the gateway failing, with six `TS2307` diagnostics for `ioredis`.
+Root plus gateway installs without root build (C) resolved `ioredis`, but failed on missing
+workspace public outputs. Full preparation (D) made the gateway pass: 16 tests, 11 passed,
+5 skipped. D's aggregate still exited 1 because `openapi.test.js` produced a bare file-level
+`test failed`; its isolated rerun passed all 18 tests. The failure did not reproduce in that
+isolated run, and the observation does not identify its mechanism.
+
+Adding only the gateway install to B made its direct test pass, with no root rebuild or
+gateway production build. Repeating root `npm ci` then preserved both the gateway dependency
+tree and existing workspace outputs, and the direct gateway test still passed. A root clean
+install in an already prepared checkout is therefore not a wholly clean repository state.
+This explains the setup-dependent exit-1 versus exit-0 observations: host preparation and
+documentation had drifted, rather than the gateway needing to become a root workspace.
+The exact sequence on the original historical machine cannot be recovered. An independent
+prepared acceptance tree subsequently measured `test:counts` exit 0, 3269 total, 115 skipped;
+those numbers predate PR #43 and are historical, not current counts.
+
+**Documentation correction.** `AI_HANDOVER.md`, `README.md`, `docs/RUNNING.md` and
+`docs/CI_SETUP.md` now state or link the complete host setup. This entry and `docs/ROADMAP.md`
+synchronize the canonical record after PR #43, without changing the counting implementation.
+Both lockfiles were unchanged throughout the controlled investigation.
+
+**Current measurement after synchronizing PR #43's main
+`026005b2420006e04028bff4c69a16f30c78a905`, on 2026-09-05.** On Windows with Node
+24.15.0 and npm 11.12.1, root `npm ci`, root build and gateway `npm ci` each exited 0.
+`npm run test:counts` then exited **0: 3272 tests, 118 skipped**. The root subtotal was
+**3256 tests, 113 skipped** across 19 workspaces; gateway was **16 tests, 11 passed,
+5 skipped**. Root `npm test` also exited 0. This remeasurement used the task's previously
+prepared checkout with both installs repeated; the independent clean-state proof is above.
+`DATABASE_URL` and `REDIS_URL` were unset. Redis-backed tests were **NOT RUN**; skipped
+database/Redis coverage is not a passing integration result. These current counts supersede
+the historical 3269/115 measurement for this revision only.
+
+**Signature B remains UNRESOLVED and under separate investigation.** The D observation above
+is retained independently of the resolved setup defect. No mechanism or unmerged findings
+from the separate diagnostic PR are adopted here. Successful later runs do not resolve it.
+During the post-review verification repeat, `learning-api.test.js` also produced a bare
+file-level `test failed`: API reported 975 tests, 927 passed, 1 failed and 47 skipped.
+Its isolated rerun passed all 22 tests. This is another observation of the failure shape,
+not proof of a mechanism or a gateway setup failure; the earlier successful aggregate
+measurement above is retained as a separate run.
+Environment-gated skips are not passes; Redis-backed tests require a separate Redis-enabled run.
 
 
 ## M15 Increment 49 — the durable analysis-cache suite establishes its own database
