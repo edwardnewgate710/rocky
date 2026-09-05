@@ -24,6 +24,7 @@ import {
   FakeEngineTransport,
   stockfishPlugin,
   type EngineResult,
+  type EngineTransport,
 } from '@chess-platform/engine';
 import { migrate, migrationsDir, PgAnalysisCache } from '@chess-platform/persistence/pg';
 import { withSharedDatabase } from '@chess-platform/persistence/test-support/fixtures';
@@ -174,6 +175,109 @@ async function deleteMintedRows(pool: Pool): Promise<void> {
   await pool.query('DELETE FROM engine_analysis_cache WHERE fen = ANY($1::text[])', [fens]);
 }
 
+/**
+ * A rendezvous the two racing instances must both reach before either may search.
+ *
+ * The thing being tested is what two processes do when they miss the same cold row *at the same
+ * time*. `Promise.all` cannot arrange that: it starts both analyses and then waits for both to
+ * finish, imposing no order on anything in between. Each instance owns a separate lazily-connected
+ * pool, so whether B's `SELECT` reaches PostgreSQL before or after A's `UPSERT` commits is decided
+ * by connection setup and OS scheduling — and when A wins, B legitimately reads A's row and never
+ * searches. That is correct behaviour and the other half of this file already asserts it; it is
+ * simply not the scenario this test is about.
+ *
+ * `go` is the boundary that says so. The orchestrator only reaches `execution.execute` after
+ * `readCache` returned nothing, and `go` is sent once inside that search, so an instance arriving
+ * here has provably observed a cold miss and provably not stored anything yet. Holding every `go`
+ * until both have arrived makes the simultaneous cold miss a fact of the test rather than a hope
+ * about timing.
+ *
+ * Only `go` is held; `uci`, `setoption`, `position`, `stop` and `quit` pass straight through, so
+ * the protocol the engine sees is otherwise untouched.
+ *
+ * **A slot belongs to an instance, not to a worker.** If a held search times out, `EnginePool`
+ * retries it — `EngineTimeoutError` is `retryable` (`packages/engine/src/errors.ts:53`) and
+ * `maxAttempts` defaults to 2 (`packages/engine/src/pool.ts:103`) — on a *fresh* worker with a
+ * fresh transport, which sends its own `go`. A barrier that counted `go` lines would count that
+ * second worker as a second party, open, and let one lonely instance satisfy an assertion about
+ * two. Keying by instance is what stops the barrier lying about simultaneity; a retry replaces
+ * that instance's slot instead of adding to it.
+ *
+ * The ceiling is a failure ceiling, not a delay, and never runs on a passing run: both instances
+ * reach `go` within milliseconds, and the barrier opens synchronously the moment the second does.
+ * It exists because the bound underneath it is the wrong one — the engine's 15s search watchdog
+ * would retry once before giving up, so a stuck barrier would surface after ~30s as an
+ * `EngineTimeoutError` about an engine rather than as the thing that actually broke. On expiry the
+ * barrier lets everyone go so teardown does not stall, leaving `peakHeld` to report what really
+ * happened.
+ */
+interface ColdMissBarrier {
+  /** Claim a slot for one instance; the result wraps every transport that instance builds. */
+  readonly party: () => (inner: EngineTransport) => EngineTransport;
+  /**
+   * The most instances ever held here at one instant.
+   *
+   * This is the measurement that matters, and the reason it is not simply a count of arrivals: two
+   * instances arriving one after the other proves nothing, because that is what happened on the
+   * runs this test used to fail. Reaching two *held at once* can only happen if neither had
+   * finished its cold read into a stored row before the other started — which is the simultaneous
+   * cold miss the test claims to be about.
+   */
+  peakHeld(): number;
+}
+
+/**
+ * How long a barrier waits before giving up on a party that is never going to arrive.
+ *
+ * Comfortably above the milliseconds a real arrival takes, and comfortably below the engine's own
+ * 15s search watchdog, so that a stuck barrier is reported as a stuck barrier rather than as an
+ * engine that went quiet.
+ */
+const BARRIER_CEILING_MS = 10_000;
+
+function createColdMissBarrier(parties: number): ColdMissBarrier {
+  const held = new Map<number, () => void>();
+  let nextParty = 0;
+  let peakHeld = 0;
+  let ceiling: NodeJS.Timeout | undefined;
+
+  const releaseAll = (): void => {
+    clearTimeout(ceiling);
+    ceiling = undefined;
+    const pending = [...held.values()];
+    held.clear();
+    // Everyone is let go in the order they were held, the last arrival included.
+    for (const release of pending) release();
+  };
+
+  return {
+    party: () => {
+      const slot = nextParty++;
+      return (inner) => ({
+        send: (line) => {
+          if (!/^go(\s|$)/.test(line.trim())) {
+            inner.send(line);
+            return;
+          }
+          held.set(slot, () => inner.send(line));
+          peakHeld = Math.max(peakHeld, held.size);
+          if (held.size >= parties) {
+            releaseAll();
+            return;
+          }
+          // `unref` so a barrier waiting on an instance that will never arrive cannot be the reason
+          // the process stays alive.
+          ceiling ??= setTimeout(releaseAll, BARRIER_CEILING_MS).unref();
+        },
+        onLine: (listener) => inner.onLine(listener),
+        onExit: (listener) => inner.onExit(listener),
+        kill: (signal) => inner.kill(signal),
+      });
+    },
+    peakHeld: () => peakHeld,
+  };
+}
+
 interface Instance {
   readonly manager: EngineManager;
   readonly tier: AnalysisCacheComposition;
@@ -187,7 +291,14 @@ interface Instance {
  * One process's worth of the production composition: a cache tier from the real factory, and an
  * `EngineManager` wired to it exactly as `createAnalysisEngine` wires one.
  */
-function instance(options: { engineName?: string; connectionString?: string } = {}): Instance {
+function instance(
+  options: {
+    engineName?: string;
+    connectionString?: string;
+    /** Wrap this instance's transport — used only by the race test, to hold its `go`. */
+    holdSearch?: (inner: EngineTransport) => EngineTransport;
+  } = {},
+): Instance {
   const metrics = new InMemoryMetrics();
   const logger = new JsonLogger({}, { level: 'error', sink: () => {} });
   const tier = createAnalysisCacheComposition({
@@ -199,15 +310,17 @@ function instance(options: { engineName?: string; connectionString?: string } = 
 
   let searches = 0;
   const manager = new EngineManager({
-    transportFactory: () =>
-      new FakeEngineTransport({
+    transportFactory: () => {
+      const transport = new FakeEngineTransport({
         name: options.engineName ?? 'Stockfish 16',
         optionLines: STOCKFISH_OPTIONS,
         go: () => {
           searches += 1;
           return { info: [INFO], bestmove: 'e2e4' };
         },
-      }),
+      });
+      return options.holdSearch ? options.holdSearch(transport) : transport;
+    },
     ...(tier.cache !== undefined ? { cache: tier.cache } : {}),
     observer: tier.observer,
     minWorkers: 0,
@@ -389,20 +502,69 @@ test('a storm of identical requests against a dead cache still runs one search',
  * search on a cold miss, which is the price of not adding a distributed lock.
  */
 test('two live instances racing a cold position both compute it', { skip }, async () => {
-  await withDatabase(async () => {
+  await withDatabase(async (pool) => {
     const fen = freshFen();
-    const a = instance();
-    const b = instance();
+    // Both instances are held at `go` until both have arrived, which is what makes the cold miss
+    // simultaneous instead of merely concurrent. See `createColdMissBarrier`.
+    const barrier = createColdMissBarrier(2);
+    const a = instance({ holdSearch: barrier.party() });
+    const b = instance({ holdSearch: barrier.party() });
     try {
-      await Promise.all([analyze(a, fen), analyze(b, fen)]);
+      const [fromA, fromB] = await Promise.all([analyze(a, fen), analyze(b, fen)]);
 
-      assert.equal(a.searches() + b.searches(), 2, 'cross-process single-flight does not exist');
+      // Both reached the boundary, and each read the table before either wrote to it. Without this
+      // the search counts below would only describe the ordering this particular run happened to
+      // get; the barrier is what turns them into a statement about the system.
+      assert.equal(barrier.peakHeld(), 2, 'both instances were at the cold-miss boundary at once');
+      for (const [name, node, results] of [
+        ['A', a, fromA],
+        ['B', b, fromB],
+      ] as const) {
+        assert.equal(results[0]?.depth, 10, `instance ${name} returned the search it ran`);
+        assert.equal(
+          counter(node.metrics, 'analysis_cache_events_total{event="cache_miss"}'),
+          1,
+          `instance ${name} must have missed the cold row`,
+        );
+        assert.equal(
+          counter(node.metrics, 'analysis_cache_events_total{event="cache_hit"}'),
+          0,
+          `instance ${name} must not have read the other's row`,
+        );
+        // A miss and a failed read are not the same thing, and the cache deliberately makes them
+        // look the same to the orchestrator: `PgAnalysisCache` absorbs a read fault and answers
+        // `undefined`, which is recorded as a miss. Without this, a run where the database was
+        // unreachable would satisfy every assertion above while proving nothing at all.
+        assert.equal(
+          counter(node.metrics, 'analysis_cache_faults_total{fault="read"}'),
+          0,
+          `instance ${name} must have read the table, not failed to`,
+        );
+        assert.equal(
+          counter(node.metrics, 'analysis_cache_faults_total{fault="write"}'),
+          0,
+          `instance ${name} must have stored what it found`,
+        );
+      }
+
+      assert.equal(a.searches(), 1, 'cross-process single-flight does not exist');
+      assert.equal(b.searches(), 1, 'cross-process single-flight does not exist');
+
+      // The duplicated work converges: one row, carrying a whole depth-10 search rather than
+      // whatever a half-finished one would have left behind.
+      const stored = await pool.query<{ n: string; depth: number | null }>(
+        'SELECT count(*)::text AS n, max(achieved_depth) AS depth FROM engine_analysis_cache WHERE fen = $1',
+        [fen],
+      );
+      assert.equal(stored.rows[0]?.n, '1', 'the race resolves to exactly one row');
+      assert.equal(stored.rows[0]?.depth, 10, 'and that row carries the search that was run');
 
       // And the race resolves to one row that either of them can then read.
       const reader = instance();
       try {
-        await analyze(reader, fen);
+        const results = await analyze(reader, fen);
         assert.equal(reader.searches(), 0, 'the duplicated work still leaves one usable row');
+        assert.equal(results[0]?.depth, 10, 'and the row it reads is the analysis, not a stub');
       } finally {
         await reader.shutdown();
       }
