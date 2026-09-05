@@ -2,99 +2,113 @@
 
 > Quickstart for any engineer or AI agent continuing this project **from GitHub alone**.
 > The detailed, living handover is [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md) — read it
-> next. This file is the 60-second orientation and the guardrails.
+> next. This file provides the 60-second orientation and enduring architectural guardrails.
 
 ## What this is
 
-*Gambit* — an AGPL-3.0 open-source chess platform (feature parity with Lichess/Chess.com plus
-a first-class AI layer), built as an npm-workspaces monorepo of **strict-TypeScript,
-dependency-free domain packages** tested with the built-in `node --test` runner.
+*Gambit* — an AGPL-3.0-or-later open-source chess platform (targeting feature parity with
+Lichess and Chess.com, plus a first-class AI layer), built as an npm-workspaces monorepo
+(`packages/*`), with deployable services (`services/gateway`) wired alongside. It maintains
+a strict boundary between **strict-TypeScript, zero-external-dependency domain packages**
+(rules, game authority, tournaments, social, search, learning) and **infrastructure adapters**
+(`pg`, `ioredis`, `ws`, external AI SDKs) wired at application entry points. All package suites
+execute via the built-in `node --test` runner.
 
 ## Where things are
 
-- `docs/ARCHITECTURE.md` — the target system architecture (the design everything builds toward).
-- `docs/ROADMAP.md` — milestones (M1–M14) with explicit acceptance criteria; ✅/🚧/⬜ status.
-- `docs/PROJECT_STATE.md` — the **living handover**: what's done, how it's built, decisions,
-  deferrals, and the exact next step. Update it after every milestone.
-- `docs/DATABASE.md` + `docs/adr/*` — the approved data contract and Architecture Decision Records.
-- `docs/RUNNING.md` — the one-command local stack (`docker compose up`).
-- `docs/DEPLOYING.md` — the Kubernetes/Helm deployment flow (`deploy/helm/gambit`).
-- `packages/*` — the domain/service packages. `services/gateway` — the deployable realtime
-  gateway binary (infra adapters: Postgres event log, Redis pub/sub, `ws`).
+- `docs/ARCHITECTURE.md` — target system architecture and core design principles.
+- `docs/ROADMAP.md` — milestone definitions and acceptance criteria.
+- `docs/PROJECT_STATE.md` — the **authoritative living handover**: active increment progress
+  (including M15 hardening), architectural decisions, active defect tracking, and exact next steps.
+  Updated after every increment.
+- `docs/DATABASE.md` + `docs/adr/*` — approved data contracts and Architecture Decision Records.
+- `docs/RUNNING.md` — local development stack (`docker compose up`).
+- `docs/DEPLOYING.md` — Kubernetes / Helm deployment architecture (`deploy/helm/gambit`).
+- `packages/*` — domain packages and service libraries (root npm workspaces).
+- `services/gateway` — deployable realtime WebSocket gateway binary (wiring Postgres event log,
+  Redis pub/sub, and connection management; standalone service outside root workspaces).
 
-## Current status (2026-07-18)
+## Architecture & Milestone Overview
 
-| Milestone | Package(s) | Status | Tests |
-|---|---|---|---|
-| M1 | `@chess-platform/core` | ✅ rules engine (perft-verified) | 16 |
-| M2 | `@chess-platform/game` | ✅ event-sourced game aggregate + clocks + threefold repetition | 25 |
-| M3 | `@chess-platform/realtime-gateway` | ✅ realtime WS edge + token auth + durable `EventLog` port + `PubSub` (in-memory & Redis) | 61 |
-| M4a | `@chess-platform/persistence` | ✅ durable event store + repositories + Glicko-2 | 20 (6 DB-gated) |
-| M4b | `@chess-platform/api` | ✅ stateless REST + identity (scrypt, rotating refresh, RBAC, password reset + email verification — ADR-0026) | 128 (3 DB-gated) |
-| M5 | `@chess-platform/engine` | ✅ provider-agnostic UCI engine bridge | 50 |
-| M6 | `@chess-platform/web` + `@chess-platform/e2e-harness` | ✅ playable frontend; Playwright full-game e2e + Lighthouse a11y ≥ 0.95 in CI | 260 + 4 |
-| M7 | `@chess-platform/ai-orchestrator` | ✅ AI routing/failover/caching + engine-grounded prompts | 117 (2 key-gated) |
-| M8 | `@chess-platform/ai-features` | ✅ 9 features (Move Explanation → Tournament Commentator) | 140 (16 key-gated) |
-| M9 | `@chess-platform/tournament` (+ api/realtime integration) | ✅ round-robin, Swiss, and Arena formats; persistence + REST API; durable game launcher; realtime result recording (production reporter hosted by the gateway behind `TOURNAMENT_REPORTER=1`, with optimistic-concurrency CAS on tournament saves — inc 13, ADR-0025); live broadcast (ADR-0014 → ADR-0025) | 49 |
-| M12 | api security & anti-cheat | 🚧 **increments 1–4 complete:** CORS + security headers (ADR-0011) · httpOnly refresh cookie (ADR-0012) · auth rate limiting w/ Postgres buckets (ADR-0013) · **anti-cheat inc 1–4:** analyzer (ADR-0029) + cross-game aggregation (ADR-0030) + engine adapter (ADR-0031) + service/repo (ADR-0032) | 31 (anti-cheat) |
-| M13 | `@chess-platform/api` + `services/gateway` | 🚧 **inc 1 complete:** dependency-free `Logger`/`Metrics` ports + `traceparent` correlation; structured JSON logs, Prometheus `/v1/metrics` & gateway `/metrics`, real readiness; PII/cardinality-safe (ADR-0028) | — |
-| **M14** | compose + `services/gateway` + `deploy/helm` | 🚧 **increments 1–4 complete:** local compose stack · durable game authority (write-through `EventLog` → Postgres, evict/rehydrate) · Redis pub/sub multi-node fanout (ADR-0008) · Helm chart + kubeconform CI gate (ADR-0009) · threefold-repetition fix (en-passant legality in repetition key) | 4 (Redis-gated) |
+Milestone progress spans foundational core engines through active production hardening:
 
-**Whole repo: 960 total tests, 0 failures** (skips: 33 = 8 Postgres-gated + 21
-API-key-gated + 4 Redis-gated — run `npm run test:counts` for the live per-package
-breakdown). Strict TS, lint clean. **CI is active** (`.github/workflows/ci.yml`, 6 jobs:
-build+typecheck+test on Node 22/24, Postgres integration, M6 Playwright+Lighthouse acceptance,
-helm lint+kubeconform, gateway service).
+- **Foundations (M1–M9)**:
+  - Rules engine (`@chess-platform/core` with perft verification across all eight supported variants, including standard chess).
+  - Event-sourced game aggregate and deterministic clock model (`@chess-platform/game`).
+  - Realtime edge gateway with token authentication and pub/sub ports (`@chess-platform/realtime-gateway`).
+  - PostgreSQL persistence, event store, and Glicko-2 ratings (`@chess-platform/persistence`).
+  - Stateless REST API, identity, and RBAC (`@chess-platform/api`).
+  - Provider-agnostic UCI engine bridge (`@chess-platform/engine`, with pools for Stockfish and Fairy-Stockfish, persistent Postgres analysis cache seam, and priority scheduling; remote distributed engine workers remain deferred).
+  - Playable web client with Playwright e2e and accessibility standards (`@chess-platform/web`).
+  - Pluggable AI routing, caching, and evaluation features (`@chess-platform/ai-orchestrator`, `@chess-platform/ai-features`).
+  - Tournaments (round-robin, Swiss, Arena), game launcher, and live broadcast (`@chess-platform/tournament`).
+- **Feature & Platform Expansions (M10–M14)**:
+  - **M10 (Social & learning)**: Social graph, 1:1 messaging, teams/communities, forums, achievements, collaborative studies, interactive lessons, and read-only GraphQL read layer.
+  - **M11 (Search)**: Keyword search, full-text Postgres indexing, live game indexing worker, natural-language normalization, pgvector semantic search (HNSW cosine similarity), and hybrid search (RRF).
+  - **M12 (Security & anti-cheat)**: CORS, security headers, httpOnly cookies, durable rate limiting, pure-domain engine-correlation anti-cheat scoring, behavioral bot detection, gateway hosting, and STRIDE pen-test audit (closed).
+  - **M13 (Observability & SRE)**: Dependency-free structured logger, metrics (Prometheus `/v1/metrics`), W3C `traceparent` propagation, OTLP tracing pipeline with batch processor and self-instrumentation, alert rules, Grafana dashboards, runbooks, and SLO definitions (closed).
+  - **M14 (Deployment & scale)**: Local multi-service Compose stack, multi-node gateway scaling with Redis ownership and command forwarding (ADR-0010), Helm chart with kubeconform CI validation (ADR-0009), External Secrets Operator integration (ADR-0044), blue/green and canary delivery (ADR-0075), automated deploy gates (ADR-0076), load and chaos test baselines (ADR-0065, ADR-0077, ADR-0078, ADR-0111), and comprehensive web UI surfaces for account security (WebAuthn passkeys, session visibility/revocation, password recovery, email verification).
+- **Active Milestone — M15 (Productionization & Hardening)**:
+  - M15 is active production hardening, reliability, integration correctness, test/database isolation, and unresolved-defect closure.
+  - See [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md) for the active increment log, current defects, and immediate next steps.
 
-M10 and M11 (social/learning + GraphQL, search) are ⬜ planned; M13 observability inc 1 is
-done (metrics/tracing export is a later increment); M12's anti-cheat half is also still ahead —
-see the ROADMAP.
+## Test Verification & CI
 
-## Build & test
+- **Suite execution**: Run `npm test` across all root workspaces via `node --test`.
+- **Live metrics**: `npm run test:counts` aggregates test and skip counts across package and service suites; consult [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md) for current tooling caveats and measured validation status.
+- **Hermetic defaults**: Unit and domain suites run offline without external infrastructure. Integration suites gate on environment variables: `DATABASE_URL` (PostgreSQL persistence), `REDIS_URL` (gateway Redis integration and scaling), and provider API keys (live AI features).
+- **Continuous Integration (`.github/workflows`)**:
+  - Multi-version Node matrix (Node 22 / 24) with strict typechecking, linting, and ADR claim validation (`npm run check:adr-claims`).
+  - Path-filtered workflows for efficient change detection (`changes` job).
+  - Real PostgreSQL integration suite for schema migrations, persistence repositories, and API pg-security tests (`postgres-integration`).
+  - Real UCI engine analysis smoke testing with pinned Stockfish and Fairy-Stockfish binaries (`analysis-smoke`).
+  - End-to-end acceptance testing with Playwright browser tests and Lighthouse accessibility scoring (`m6-acceptance`).
+  - Production Docker container image build and template verification (`docker-images`).
+  - Helm chart linting and kubeconform schema validation against Kubernetes schemas (`helm`).
+  - Parity and hygiene guards: CI parity (`check:ci-parity`), variant parity (`check:variant-parity`), engine pin parity (`check:engine-pin-parity`), and observability drift (`check:observability`).
+  - Workflow triggers: on-demand deployment (`deploy.yml`) on workflow dispatch or published release, on-demand chaos engineering (`chaos.yml`) on workflow dispatch, and release container image publishing (`release.yml`) on version-tag pushes (`v*`).
+
+## Build & Run
 
 ```bash
-npm ci          # reproducible install (root package-lock.json is committed)
-npm run build   # dependency order: core → game → realtime-gateway → persistence → api → engine → web → e2e-harness → ai-*
-npm test        # all package suites via node --test
-npm run lint    # strict typecheck across packages
+npm ci               # reproducible install (root package-lock.json is committed)
+npm run build        # builds all root workspace packages in dependency order
+npm test             # executes workspace package test suites via node --test
+npm run lint         # strict typecheck across all root workspaces
+npm run test:counts  # aggregates test and skip counts across suites (see PROJECT_STATE caveats)
 ```
-Run **build before lint/test** on a fresh clone — downstream packages resolve upstream types
-from built `dist/`. Postgres-gated tests need `DATABASE_URL`; AI-adapter integration tests need
-provider API keys; everything else is hermetic. Local full stack: `docker compose up --build`
-(see RUNNING.md). Helm chart checks: `helm lint deploy/helm/gambit`,
-`helm template deploy/helm/gambit | kubeconform -strict -summary`,
-`bash scripts/helm-snapshot-test.sh`.
 
-## Working method (do not skip)
+- **Build order**: Run **`npm run build` before `lint` or `test` on a fresh clone** — downstream packages resolve upstream types from built `dist/`.
+- **Local full stack**: `docker compose up --build` (see [`docs/RUNNING.md`](docs/RUNNING.md)).
+- **Helm chart validation**: `bash scripts/helm-snapshot-test.sh` (or lint with test secrets: `helm lint deploy/helm/gambit --set secrets.accessTokenSecret=test-only-access-token-secret-32-bytes-minimum --set secrets.postgresPassword=test-only-postgres-password --set config.nodeEnv=development --set email.provider=console`).
 
-Every milestone: **build to explicit acceptance criteria with tests → self-critique loop →
-multi-perspective review (distributed-systems, performance, security, chess-server maintainer)
-→ refactor → document → commit → push.** Advance only when clean — run the full
-`npm ci && npm run build && npm test && npm run lint` gate before reporting done.
-Architectural decisions that introduce a durable/shared contract get a **gate** (a design doc +
-ADR, approved before code) — see `DATABASE.md` (M4), `ENGINE_BRIDGE.md` (M5), ADR-0008/0009 (M14).
+## Working Method (Do Not Skip)
 
-## Guardrails
+Every increment: **build to explicit acceptance criteria with tests → self-critique loop → multi-perspective review (distributed-systems, performance, security, chess-server maintainer) → refactor → document → commit → push.**
 
-- **Gateway horizontal scaling requires Redis.** Since M14 inc 5 (ADR-0010) the gateway is
-  safe to scale (single-owner authority + Redis command forwarding; the Helm chart defaults to
-  `gateway.replicas: 2`), but ONLY with `REDIS_URL` set — never scale beyond 1 replica without
-  Redis command routing.
-- Keep domain packages **dependency-free**; native/infra code (pg, ioredis, ws) enters only via
-  documented ports (`EventLog`, `PubSub`/`RedisLike`, `TokenVerifier`, `EngineTransport`) wired
-  in `services/gateway` or package `/pg`-style subpaths — never in domain code.
-- No placeholders, TODO-implementations, or temporary hacks — production quality only.
-- Keep GitHub authoritative: after each checkpoint update README/ROADMAP/PROJECT_STATE/this
-  file, then commit and push, so the next agent needs no conversation history.
+- **Validation gate**: Advance only when clean — run `npm run build && npm run lint && npm test` before reporting done.
+- **Architectural gates**: Decisions that introduce a durable or shared contract require an Architecture Decision Record (ADR) approved under `docs/adr/` before implementation.
+- **Documentation hygiene**: Update documentation (`README.md`, `docs/ROADMAP.md`, `docs/PROJECT_STATE.md`) at every milestone checkpoint.
 
-## Known tech debt (tracked, updated 2026-07-18)
+## Enduring Guardrails
 
-- **Identity hardening (M4 follow-up)** — WebAuthn/passkeys (table exists, flow doesn't). Password reset + email verification are complete. (Refresh-token storage moved to an httpOnly cookie in
-  M12 inc 2; auth rate limiting landed in M12 inc 3.)
-- **Tournament reporter refinements (ADR-0025)** — event-log catch-up for ended-broadcasts
-  missed before subscription; dedicated single-replica reporter Deployment. Arena
-  withdraw is permanent (pause/rejoin needs a domain decision + ADR).
-- **M14 remaining** — Terraform, CI/CD deploy gates (blue/green), load/chaos testing,
-  secrets management.
+- **Gateway horizontal scaling requires Redis.** Since M14 inc 5 (ADR-0010) the gateway is safe to scale (single-owner authority + Redis command forwarding; Helm chart defaults to `gateway.replicas: 2`), but ONLY with `REDIS_URL` set — never scale beyond 1 replica without Redis command routing.
+- **Strict package boundaries and dependency-free domain core.** Keep domain packages (`core`, `game`, `tournament`, `social`, `messaging`, `community`, `achievements`, `studies`, `learning`, `search`, `anti-cheat`) strictly free of external runtime dependencies; native/infra code (`pg`, `ioredis`, `ws`, AI SDKs) enters only via documented ports (`EventLog`, `PubSub`/`RedisLike`, `TokenVerifier`, `EngineTransport`, repositories) wired in application bootstrap or package `/pg`-style subpaths — never in domain code. Pure domains must not read wall clocks directly (`Date.now()`); inject time/clock as a parameter.
+- **No placeholders or mock shortcuts.** No stubs, TODO implementations, or temporary hacks in production paths — production quality only.
+- **GitHub-authoritative workflow.** Keep GitHub authoritative: document changes in the repository, commit, and push so any engineer or AI agent continuing the work has full context without conversation history.
 
-Full details and the exact next step: `docs/PROJECT_STATE.md`.
+## Tracked Tech Debt & Deferred Work
+
+Only actionable, genuinely open architectural debt is tracked here:
+
+- **Tournament reporter refinements (ADR-0025)**:
+  - Event-log catch-up for `EndedBroadcast`s missed between game end and first subscription.
+  - Dedicated single-replica reporter Deployment (currently hosted across gateway replicas with optimistic-concurrency CAS on tournament saves).
+  - Arena withdrawal is permanent by design (pause/rejoin requires an explicit domain decision and ADR).
+- **Scale & Infrastructure (M14 deferred)**:
+  - Terraform IaC for cloud provisioning.
+  - 100k-user cluster load testing (workstation-bounded k6 and chaos baselines are implemented).
+- **Active defects and investigations**:
+  - For active defects and investigations (including Node test runner Signature B diagnostic tracking, isolated fresh-database suite dependencies, and gateway test tooling caveats), consult [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md) as the single authoritative source of truth.
+
+For full project state, increment details, and the immediate next task, see [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md).
