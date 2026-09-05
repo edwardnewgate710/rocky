@@ -4,7 +4,248 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-09-03 — M15 Increment 45: PostgreSQL isolated-database teardown race._
+_Last updated: 2026-09-05 — M15 Increment 48: shared-database ownership for API pg-security integration tests._
+
+
+## M15 Increment 48 — shared-database ownership for API pg-security integration tests
+
+**Status: RESOLVED.** The defect Increment 46 recorded as out of its own scope is closed. No
+production code, migration, constraint, foreign key or repository semantic changed.
+
+**The defect: silent accumulation, not test failure.** `packages/api/test/pg-security.integration.test.ts`
+created rows in the shared database through real repositories and closed its connection pools without
+removing any of them. Because every identifier it mints is a fresh `uuidv7()`, no run ever collided
+with another, so the suite stayed green indefinitely while the database grew. Measured on PostgreSQL
+16.14 (`pgvector/pgvector:pg16`), Node v24.15.0, `pg` 8.22.0, with `DATABASE_URL` set, before any
+edit: **run 1 = all 11 tests passed and leaked 25 rows** — 4 users, 4 password credentials, 4 roles,
+4 sessions, 9 rate-limit buckets — and **run 2 against the same database passed all 11 again and
+leaked an identical further 25**. UUID uniqueness hid the problem by preventing collisions; the tests
+could not observe it because nothing in the file asserts on state it did not create.
+
+**Root cause.** One mechanism, not several: the suite creates uniquely identified shared-database
+rows and closes its pools without removing the rows it owns. Nothing in the file ever issued a
+`DELETE`. `rate_limit_buckets` is the sharpest case — no foreign key references it, so no cascade can
+ever reach those rows, and `PgRateLimiter.sweep` only evicts buckets that expired more than an hour
+ago. The only thing that removes such a row is naming it.
+
+**The ownership fix.** Each test now runs inside Increment 46's `withSharedDatabase` contract
+(`packages/persistence/src/test-support/fixtures.ts`) and names what it owns. Users are deleted by
+exact owned id, and the proven `ON DELETE CASCADE` foreign keys remove their credentials, roles and
+sessions with them — the only references to `users` that do not cascade are `games.white_id` and
+`games.black_id`, and this file creates no games. Rate-limit buckets are deleted by exact owned key.
+Identifiers are recorded *before* the statement that creates the row, so a body that throws after a
+commit still surrenders it. Explicitly not used: prefix-matched cleanup, `TRUNCATE`, broad `DELETE`,
+random-identifier workarounds, retries, conflict suppression, and serialization.
+
+**Package export.** `./test-support/fixtures` was added to the `exports` map of
+`packages/persistence/package.json` so API tests can reuse the canonical helper rather than grow a
+second, competing database-lifecycle abstraction. `packages/api` already consumed `./test-support`
+for `withTestDatabase`. No production semantics changed.
+
+**Secondary defect fixed in this increment.** In the bucket-creation race test, leased-client release
+protection started too late: the two `backendPid` reads sat between `admin.connect()` and the `try`
+whose `finally` releases the client. A failure in either read left the client checked out, and a pool
+with a client still checked out never settles `pool.end()` — verified directly, it had not resolved
+after 3s — so the file would hang instead of reporting the error that caused it. Both reads now occur
+inside the protected region.
+
+**Regression coverage.** `packages/api/test/pg-security-ownership.integration.test.ts` runs the real
+compiled suite as a child process against a disposable database and compares row *identity* before
+and after, because the defect is invisible from inside a suite whose assertions all pass on a
+polluted database. Proven RED against the pre-fix code, reporting the exact leaked-state difference
+(8 users against 4 expected; 5 credentials, 5 roles and 5 sessions against 1 each; 10 buckets against
+1), and GREEN after the fix. Sentinel rows standing in for another suite — including a bucket
+carrying the same `integration:` prefix the suite uses for its own keys — prove the cleanup is scoped
+rather than broad.
+
+**Repeated-database acceptance.** Runs A, B and C against one migrated PostgreSQL 16 database with no
+reset between them: **11/11, 11/11, 11/11**, with the database state identical to its pre-run reading
+after every run. Migration-owned seeds and unrelated sentinels were preserved, 0 leaked `test_db_*`
+databases remained, and 0 lingering backends.
+
+**Falsification.** 8 of 9 mutations killed, each applied to real source, rebuilt, run, and restored
+byte-identically (SHA-256 verified). **M9 survived honestly** — killing the `backendPid` error path
+requires fault injection that no passing suite currently performs. This is 8/9 and is not to be
+reported as 9/9.
+
+**Validation, as measured during Increment 48** (readings taken at this increment's HEAD, not standing
+invariants): build passed; lint passed; the full repository `npm test` passed with 19 packages
+reporting `fail 0` and no database suite self-skipping; `check:ci-parity`, `check:variant-parity`,
+`check:adr-claims`, `check:engine-pin-parity`, `check:observability` and `test:scripts` all passed;
+`git diff --check` was clean.
+
+The `packages/api` suite was measured twice, because this increment was synchronized with `main`
+mid-flight: **978 total / 968 pass / 10 skipped / 0 fail** at the implementation HEAD before the
+merge, and **993 / 983 / 10 / 0** after merging Increment 47, whose expanded correlator suite accounts
+for the difference. Both readings are of the same increment; neither is a standing figure.
+
+### Known defect discovered during Increment 48 — OPEN, not fixed here
+
+`packages/api/test/analysis-cache-durable.integration.test.ts` **depends on database state it does not
+establish.** It never calls `migrate()`; it opens pools and assumes the schema already exists. Run
+inside the full repository suite it passes, because `packages/persistence` migrates the shared
+database first. Run on its own against a fresh database it **fails 6 of 10**. Proven by running that
+one file against three databases: against a fresh database, 6 failures; against two previously
+migrated databases, 0 failures.
+
+**Status: OPEN / NOT FIXED IN INCREMENT 48.** This is the mirror image of the defect Increment 48
+fixed — a suite depending on state it does not establish, rather than leaking state it does not
+remove — and it belongs to the same ownership family. It is a bounded follow-up defect and must be
+fixed in a separate PR after #41.
+
+### Tooling/workspace issue observed during Increment 48 — OPEN, not fixed here
+
+`npm run test:counts` **exited 1**, reporting **3286 tests (28 skipped)** at the implementation HEAD
+and **3301 tests (28 skipped)** after this increment was synchronized with `main`. The non-zero exit
+came entirely from `services/gateway`, which is not included in the root npm workspaces (`packages/*`),
+so its local `ioredis` module resolution failed. The exit code and its cause were unchanged by the
+merge; only the test total moved, with Increment 47's expanded correlator suite accounting for it. Nothing in Increment 48 touched that service, and no
+gateway dependency was installed or mutated, because doing so would modify
+`services/gateway/package-lock.json` outside this increment's scope.
+
+**Status: OPEN / NOT FIXED IN INCREMENT 48.** Recorded as a separate bounded tooling/workspace
+follow-up requiring its own investigation. The correct remedy is **not** assumed to be "make gateway a
+workspace"; that must be established separately rather than presumed here.
+
+### Signature B
+
+**Signature B remains UNRESOLVED** — an open tracked defect after the Increment 47 diagnostic
+correlator hardening. Increment 48 recorded **0 Signature B occurrences** across its baseline runs,
+A/B/C acceptance, mutation rounds and full-repository validation. As with Increment 47's 26 bounded
+runs, zero occurrences bounds the rate under those conditions and does not resolve the defect.
+
+## M15 Increment 47 — Signature B diagnostic correlator hardening
+
+**Status: Root cause UNPROVEN and UNRESOLVED.** This increment contributes diagnostic correlator
+hardening only. No production or runtime code was modified, and no speculative fix was introduced.
+
+**Context and observed scope.** Signature B is an intermittent whole-file failure where Node's test
+runner marks an entire test file as `'test failed'` with no assertion error, no stack trace, and no
+tests within the file reporting. During M15 Increment 46 validation, Signature B was directly observed
+three times in the persistence suite (`search-backfill.integration.test.ts`,
+`learning.integration.test.ts`, and `test-database.integration.test.ts`). Each exhibited the exact
+documented bare whole-file failure shape, and each passed standalone on immediate re-run. This
+broadened the confirmed scope beyond `packages/api` into `packages/persistence`, demonstrating that
+the failure is not confined to the HTTP API test harness or a single package.
+
+**Own bounded reproduction passes.** Bounded local reproduction passes were executed across 26 runs
+total:
+- 1 baseline full-suite run (clean pass);
+- 20 sequential runs under `run-signature-b-pass.mjs` (3,084–3,834 MB free memory; 0 captures);
+- 5 concurrent repository-native load runs under simultaneous test activity (0 captures).
+
+Zero captures across 26 bounded runs establishes an empirical upper bound under those conditions, but
+**0 captures does NOT mean resolved**. Flaky failures with low frequency (~1-in-5 historically under
+high machine load) naturally produce zero occurrences in small bounded samples without resolving the
+underlying race or external cause.
+
+**Four proven correlator defects identified and hardened.** Analysis of the diagnostic harness
+(`packages/api/test/diagnostics/signature-b-correlate.cjs`) revealed four concrete blind spots in how
+parent TAP diagnostic logs and child JSONL preloads were matched and parsed:
+1. **Cross-directory basename fallback collision:** `correlateFileLogs` fell back to matching on
+   `path.basename` whenever an exact normalized match was missing. If a target relative path contained
+   slashes (e.g. `test/diagnostics/sample.test.ts`), a child log from an unrelated directory with the
+   same basename could be falsely attributed. Hardened to require `!wanted.includes('/')` before
+   allowing basename fallback.
+2. **Host-independent Windows path case folding:** Case folding in `matchChild` previously depended on
+   the analyzer host platform (`process.platform === 'win32'`). When logs recorded on Windows were
+   analyzed on POSIX, comparisons remained case-sensitive; conversely, POSIX captures analyzed on
+   Windows were erroneously treated as case-insensitive. Hardened `isWindowsPath` to detect
+   Windows-origin paths strictly from path syntax (drive letters or UNC prefixes) and explicit capture
+   metadata independently of the executing host OS, ensuring case-insensitive matching for Windows
+   captures while strictly preserving case-sensitivity and filename integrity for POSIX captures
+   (avoiding false-positive Windows classification on POSIX backslash filenames).
+3. **Signed 32-bit NTSTATUS exit code wrapping:** On Windows, crash exit codes such as `0xC0000005`
+   (access violation) or `STATUS_CONTROL_C_EXIT` can surface in Node/libuv or TAP as negative 32-bit
+   integers (e.g. `-1073741819`). Hardened exit code parsing to normalize negative 32-bit values via
+   unsigned right shift `(exitCode >>> 0)`, correctly recovering the standard `0xC0000005` representation.
+4. **Quoted and non-finite TAP YAML scalar parsing:** Node's TAP reporter emits single- or double-quoted
+   scalars around certain YAML values (e.g. `exitCode: '1'` or duration strings). Strict numeric conversion
+   previously yielded `NaN` or dropped exit codes, and non-finite numbers (`Infinity`, `-Infinity`) leaked
+   through. Hardened YAML extraction to unquote scalar tokens prior to conversion and convert non-finite
+   values to `null`.
+
+**Verification and mutation falsification.**
+- Targeted correlator suite (`signature-b-correlate.test.ts`): expanded from 23 to 41 tests
+  (39 pass, 2 skip for deliberate platform-gated checks, 0 fail).
+- Mutation falsification: four targeted mutations reversing each of the four hardened behaviors were
+  verified to be killed by the expanded test suite.
+- Monorepo validation: full build, lint, counts, and guard scripts pass cleanly.
+
+**Signature B remains UNRESOLVED.** The harness is hardened so that when the next occurrence happens,
+the parent-to-child log correlation is robust across operating systems and crash code representations.
+
+
+## M15 Increment 46 — the persistence suite is idempotent on a reused database
+
+The defect Increment 45 recorded and deliberately left open is closed. Against a fresh PostgreSQL 16
+database the persistence suite passed; run a second time against the *same* database it failed nine
+tests, every time, in the three families Increment 45 named. Measured here on PostgreSQL 16.14
+(`pgvector/pgvector:pg16`, matching CI) before any edit: **run 1 = 173 pass / 0 fail, run 2 on the
+same database = 164 pass / 9 fail**. CI provisions a fresh server per run, which is the only reason
+this never showed there.
+
+**One contract was being broken, in two directions.** Suites share `chess_test` because they need a
+migrated schema, not a private one, and that only works while each suite removes every row it
+created and removes nothing else. Each failure family is one half of that:
+
+| Failing tests | Where | PostgreSQL error | Why |
+|---|---|---|---|
+| 5 | `achievements.integration.test.ts` `beforeEach` | `23503` on `games_white_id_fkey` | it deleted rows it did not own |
+| 2 | `pg/identity-tokens.test.ts` | `23505` on `users_pkey` | it never removed the rows it did own |
+| 2 | `tournaments.pg.integration.test.ts` | `23505` on `tournaments_pkey`, surfaced as `VersionConflictError` | same |
+
+The achievements case is the one worth remembering. Its `beforeEach` ran an unqualified
+`DELETE FROM users`, which is a claim to own the whole database. `games.white_id` and
+`games.black_id` are the **only** references to `users` without `ON DELETE CASCADE` — verified against
+the live catalogue: thirty-one foreign keys point at `users`, twenty-nine cascade, and the two that do
+not are both on `games` — so a single game left behind by `pg.integration.test.ts` made the wipe abort
+before any assertion ran. The same statement also destroyed the bot accounts migration 0021 seeds, and
+nothing puts them back: `migrate` has already recorded 0021 as applied, so a database that had run the
+suite once was permanently missing them.
+
+**The fix is ownership, not a bigger reset.** Suites that legitimately share the database now delete
+exactly their own rows through `withSharedDatabase` in
+`packages/persistence/src/test-support/fixtures.ts` — the sibling of Increment 45's
+`withTestDatabase`, inheriting that increment's precedence rule: a cleanup failure never replaces the
+assertion that actually failed, and never disappears either.
+
+`pg.integration.test.ts` moved to disposable databases instead, because it *cannot* meet the cleanup
+half. It appends to `game_events`, which is append-only by production trigger
+(`game_events_block_mutate`), so `DELETE` raises; cleaning up after itself would have meant weakening
+a production safety rule to suit a test. Two of its tests also edit `schema_migrations` deliberately —
+that used to rest on `--test-concurrency=1` keeping other files away from a corrupted ledger, and now
+rests on nothing, because no other file can reach the database.
+
+`--test-concurrency=1` is an existing, documented invariant, not something introduced here, and it was
+never the fix: the second run failed identically with files already serialized.
+
+**Also corrected, same contract, no failure of their own:** `users-batch`, `anti-cheat`, `bot-reports`
+and `analysis-cache` wrote rows they never removed. Fresh `uuidv7()` ids meant they could not collide,
+so nothing ever failed — the tables simply grew on every run against a database anyone reuses. Unique
+keys stop the *next* run failing; they are not cleanup.
+
+**Verified.** Thirteen regression tests in `reused-database.integration.test.ts` pin the mechanism, each
+in its own disposable database so it can make claims about what a database contains. Acceptance is
+three consecutive runs against one PostgreSQL 16.14 database with no reset between them:
+**186 / 186 / 186, zero failures**, after which the database holds no test rows at all — only the
+three migration-seeded bot accounts — with zero leaked disposable databases and zero lingering
+backends. Falsification killed **17 of 20** mutations; the survivors are named in the PR.
+
+No production code, migration, checksum, constraint or repository conflict semantic changed.
+
+**Signature B remains UNRESOLVED**, and was observed three times during this increment — on the
+`search-backfill`, `learning` and `test-database` integration files. Each was a whole file failing
+with a bare `'test failed'`, no assertion, no stack and none of its own tests reported: the
+documented Signature B shape, now seen in **`packages/persistence` as well as `packages/api`**, which
+is new information about a defect previously recorded only in the API suite. None recurred — each
+file passes standalone against the exact database state it died on, and re-running the same command
+was green. Nothing here touches it.
+
+**Found and not fixed here:** `packages/api/test/pg-security.integration.test.ts` leaks users into
+the shared database (`rotate…`, `revoke…`, `race…`, `meta…` handles, minted with `uuidv7()` so they
+never collide). That is the same ownership contract this increment corrected, in a package this
+increment's scope did not cover — recorded rather than silently widened into.
 
 
 ## M15 Increment 45 — PostgreSQL isolated-database teardown race
@@ -65,7 +306,9 @@ before force-dropping, because a client the callback checked out and never relea
 database. A second consecutive run against the same server fails — 12 tests on `b95065f`, 9 with
 this change — in the achievements, identity-tokens and tournaments repositories, which share
 `chess_test` rather than taking a database of their own. CI provisions a fresh server every run, so
-it has never surfaced there. Pre-existing, and out of scope for this increment.
+it has never surfaced there. Pre-existing, and out of scope for this increment. **Closed in
+Increment 46**; the finding above is left as written, because it is what was true when this
+increment shipped.
 
 **Signature B remains UNRESOLVED.** It is a separate defect and nothing here touches it.
 
