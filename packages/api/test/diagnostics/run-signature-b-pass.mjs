@@ -161,6 +161,16 @@ function ensurePrivateDirectory(dir) {
 }
 
 ensurePrivateDirectory(outDir);
+
+// A pass owns its artifact directory: it empties each run's child logs so that no earlier run can
+// lend it evidence. That is right for the logs and fatal for a capture — reusing an `--out` would
+// delete the child logs an earlier pass captured while leaving its `capture.json` behind, and the
+// directory would then assert a termination whose evidence no longer exists. Deleting the old
+// capture instead would be worse: it is the rarest artifact this produces. So refuse, here, before
+// anything is created or spawned.
+if (fs.existsSync(path.join(outDir, 'capture.json'))) {
+  usageError(`--out ${outDir} already holds a capture from an earlier pass; move it aside or choose another directory`);
+}
 console.log(`Signature B bounded pass — ceiling ${maxRuns} runs or ${maxMs / 60_000} minutes, stopping at first capture.`);
 console.log(`Artifacts: ${outDir}\n`);
 

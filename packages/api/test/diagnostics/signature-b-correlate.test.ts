@@ -1733,3 +1733,32 @@ test('pass runner: no diagnostic report body survives a run, whatever the run di
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('pass runner: an --out that already holds a capture is refused, not quietly reused', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigb-prior-capture-'));
+  try {
+    // A pass owns its artifact directory: it empties each run's child logs so no earlier run can lend
+    // it evidence. That is right for the logs and fatal for a capture — reusing an `--out` would
+    // delete the child logs a previous pass captured while leaving its `capture.json` behind, so the
+    // directory would end up asserting a termination whose evidence no longer exists.
+    //
+    // Deleting the old capture instead would be worse: a capture is the rarest artifact this whole
+    // diagnostic produces. So the pass refuses, before it creates or spawns anything.
+    const out = path.join(dir, 'out');
+    fs.mkdirSync(out, { recursive: true });
+    fs.writeFileSync(path.join(out, 'capture.json'), '{"run":1,"records":[]}\n');
+
+    const result = runPass(['--runs', '1', '--max-minutes', '1', '--out', out, '--target', trivialTarget(dir)], dir);
+
+    assert.equal(result.status, 2, `${result.stdout}${result.stderr}`);
+    assert.match(String(result.stderr), /capture/i, 'the refusal must say what is in the way');
+    assert.ok(!fs.existsSync(path.join(out, 'summary.json')), 'a refused pass must not have run anything');
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(path.join(out, 'capture.json'), 'utf8')),
+      { run: 1, records: [] },
+      'and must leave the capture it refused to overwrite exactly as it found it',
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
