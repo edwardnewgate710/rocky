@@ -4,7 +4,173 @@
 > to read **only this file** and continue immediately. Updated after every
 > milestone and every significant architectural step.
 
-_Last updated: 2026-09-05 — M15 Increment 48: shared-database ownership for API pg-security integration tests._
+_Last updated: 2026-09-05 — M15 Increment 49: the durable analysis-cache suite establishes its own database._
+
+
+## M15 Increment 49 — the durable analysis-cache suite establishes its own database
+
+**Status: RESOLVED.** The defect Increment 48 recorded as out of its own scope is closed. No
+production code, migration, constraint, foreign key or repository semantic changed; the whole change
+is test lifecycle.
+
+**The defect, re-proven on current `main` before any edit.** Measured on PostgreSQL 16.14
+(`pgvector/pgvector:pg16`), Node v24.15.0, `pg` 8.22.0, at `origin/main`
+`771b1f93c05585294474e95fcb24bf116766db3d`:
+
+- **A — a genuinely fresh, never-migrated database:** `packages/api/test/analysis-cache-durable.integration.test.ts`
+  run alone gave **10 tests, 4 pass, 6 fail**. Three failed by throwing SQLSTATE **42P01**
+  (`relation "engine_analysis_cache" does not exist`) from the test's own statements — the
+  `LOCK TABLE` in "a lookup that would hang is bounded by the pool the factory built", the `DELETE`
+  in "a hot entry outlives the row it came from", and the `UPDATE` in "the retention sweep runs
+  against the composed cache". The other three failed as ordinary assertion failures: "a cold
+  position is computed once and then served from the database", "a second instance reuses what the
+  first stored" and "two live instances racing a cold position both compute it" each expected a
+  durable row and got a recomputation instead.
+- **The four that passed did so vacuously.** `PgAnalysisCache` absorbs a database fault, reports it
+  through `onError`, and returns a miss, so the engine recomputes: a suite about durability went on
+  running with no durability at all. "A different engine build does not read the first build's rows"
+  asserts two searches and no cache hit, which a table that does not exist satisfies perfectly; the
+  two dead-cache tests shut the tier down before touching the table; and the unreachable-server test
+  never uses `DATABASE_URL` at all.
+- **B — an already-migrated database:** **10 tests, 10 pass, 0 fail** — and **5 rows left behind in
+  `engine_analysis_cache`** every run, one each from the two durable-read tests and the race test and
+  two from the engine-upgrade test (same FEN, two fingerprints). The four remaining tests never
+  successfully wrote.
+- **C — the masking order, measured rather than assumed.** The whole `packages/api` package against a
+  fresh database gave **993 tests, 977 pass, 6 fail** — the same six, so no sibling API test masks
+  it. Running `packages/persistence` first against the same fresh database (**186 pass**) and then
+  the target file gave **10 pass, 0 fail**. The masking is entirely `packages/persistence`: seventeen
+  of its suites call `migrate()` on the shared `DATABASE_URL`, and both the root `test` script
+  (`package.json`, persistence before api) and the CI `postgres-integration` job (`npm test
+  --workspace @chess-platform/persistence` before `--workspace @chess-platform/api`) run that package
+  first.
+
+**Root cause.** The suite required schema it did not establish. `engine_analysis_cache` is created by
+`packages/persistence/migrations/0026_engine_analysis_cache.sql` and indexed by `0027`; the file
+never called `migrate()`, never used `withTestDatabase` or `withSharedDatabase`, and opened pools
+straight onto `DATABASE_URL`. It was the only file in the repository operating on application tables
+while neither migrating nor creating scratch DDL of its own. The residue is the same ownership
+question from the other side: `freshFen()` minted a unique position per test, which is
+collision-avoidance and not cleanup — a fresh identity means the *next* run never collides, not that
+this one took its rows back.
+
+**Ownership and lifecycle design.** Three candidates were compared against the repository's own
+patterns before anything was written: (A) migrate the shared `DATABASE_URL` once per file and own the
+rows; (B) a disposable migrated database per test via `withTestDatabase`; (C) migrate inside every
+test body. **A was chosen.** It is the shape of the sibling suite for this exact table,
+`packages/persistence/test/analysis-cache.integration.test.ts` — a file-scoped `migrated` flag, an
+`ensureMigrated(pool)`, `withSharedDatabase`, and cleanup scoped to minted identities. It matches
+`packages/api/test/analysis-real-stack.test.ts`, which runs the same composition and applies the
+canonical migrations itself, and which CI already proves against a never-migrated database in the
+`analysis-smoke` job. B was rejected on cost and blast radius: ten `CREATE DATABASE` statements, ten
+passes over 31 migrations, ten quiescence waits and ten drops, for a suite that needs one table, and
+a crash mid-run would leave orphaned `test_db_*` databases behind. C was rejected as A without the
+flag — the same semantics, re-walking 31 migrations ten times.
+
+**Regression first, proven RED for the right reason.**
+`packages/api/test/analysis-cache-durable-ownership.integration.test.ts` was written before the fix
+and run against the unmodified suite: **3 tests, 0 pass, 3 fail**, with
+`relation "engine_analysis_cache" does not exist` appearing four times in the output and the residue
+check reporting the exact five surplus rows by identity. It follows the parent/child harness
+Increment 48 established: a disposable database from `withTestDatabase` — which creates a database
+and applies nothing, so it *is* the fresh condition — and the compiled suite spawned as a child with
+`NODE_TEST_CONTEXT` deleted (a child that inherits it silently declines to run the file and exits 0)
+and `--test-reporter=tap` pinned. The three readings are: the suite passes against a database nothing
+else prepared and leaves it empty; any single one of its tests can be the only one that runs
+(`--test-name-pattern`, so that establishing the schema in the first test would not satisfy the
+check); and against a migrated database carrying a stranger's row the table is byte-for-byte as it
+was found. The child is deliberately spawned from the repository root, not from `packages/api`, so a
+working directory the suite does not control cannot decide whether its schema gets built.
+
+**Implementation.** `MIGRATIONS` asks the persistence package for the directory it ships, through
+its own `migrationsDir()`, instead of assembling a path from `process.cwd()`;
+`ensureMigrated(pool)` applies the canonical ledger once behind a file-scoped flag; every test now
+runs inside `withDatabase`, which is `withSharedDatabase({ max: 2, cleanup: deleteMintedRows })`;
+`freshFen()` records each identity before returning it, so a body that throws after a commit still
+hands cleanup something it owns; and cleanup deletes by exact FEN equality
+(`WHERE fen = ANY($1::text[])`), never by the `rnbqkbnr/...` prefix every standard starting position
+shares. The minted counters start at a million because the persistence package's own cache suite keys
+its rows on the canonical `... 0 1` and this file deletes by FEN without regard to fingerprint. Tests
+that previously built their own single-connection pools use the one `withDatabase` hands them, and
+the two ad-hoc `finally` deletes — which swallowed their own failures with `.catch(() => {})` — are
+gone, because cleanup now owns those rows on the failure path as well. An `after` hook audits that
+the file left nothing behind, which is the reading a developer running only this file still gets.
+Two lifecycle holes found in adversarial review were closed while the code was open: the lock-holding
+test acquired its client outside the `try` that guarantees the engine is shut down, and the racing
+test awaited two shutdowns in sequence so that a rejection from the first skipped the second.
+
+**Acceptance, on the final code.** Three independent brand-new empty databases: **10/10, 10/10,
+10/10**, with **0 rows** left in `engine_analysis_cache` in each. An already-migrated database
+carrying five unrelated rows: **10/10**, and all five still there afterwards — cleanup is scoped to
+what the run owns, not to the table. The whole `packages/api` package against a brand-new database,
+with no other package run first: **996 tests, 986 pass, 0 fail, 10 skipped** (the engine-binary smoke
+files, which self-skip without `STOCKFISH_PATH`), **0** rows of residue and **0** leaked `test_db_*`
+databases.
+
+**Falsification: 7 of 9 mutations killed, and the two survivors are reported as they are.** Killed:
+removing the schema establishment; asserting the ledger was already applied; pointing the composition
+at no database so the durable tier silently switches off; skipping teardown; widening cleanup to
+`DELETE FROM engine_analysis_cache`; resolving the migrations from the working directory again; and
+recording the minted identity for the audit but not for the cleanup that has to act on it.
+**Survivor 1** lets a teardown failure replace the body failure — that precedence contract belongs to
+`withSharedDatabase`, not to this file, and the same mutation is killed by the suite that owns it
+(`packages/persistence/test/reused-database.integration.test.ts`, 6 failing). **Survivor 2** migrates
+only on the first body to run instead of behind the flag; it is an equivalent mutant, because with
+tests running one at a time the two are the same observable behaviour. Every mutated source was
+restored and verified byte-identical by SHA-256.
+
+**Validation, run fresh on the final code.** `npm run build` and `npm run lint` clean. The ownership
+regression 3/3. The full repository suite against one PostgreSQL 16.14 database: **exit 0, 19
+packages, 3304 tests, 3276 pass, 0 fail, 28 skipped**, with **0** suites self-skipping for a missing
+`DATABASE_URL` — so the database-backed tests, which are the ones this increment touches, actually
+ran. `check:ci-parity`, `check:variant-parity`, `check:adr-claims`, `check:engine-pin-parity`,
+`check:observability` and `test:scripts` all exit 0; `git diff --check` clean.
+
+**Review findings, and what they turned out to be.** Adversarial review found four things worth
+acting on and two worth stating: the sentinel row in the ownership regression used the canonical
+`... 0 1`, which the suite's own minting could produce roughly once in two million and would then
+have deleted, so minted counters now start at a million; the lock-holding test acquired its client
+outside the `try` that guarantees a shutdown; the racing test awaited two shutdowns in sequence;
+and the TAP tally parser anchored on `$` without allowing the carriage return Windows puts before
+it. Qodo then flagged the migrations path as encoding the emitted `dist-test` layout. Its stated
+failure mode — running the TypeScript source directly — is not reachable in this repository: every
+test file, including untouched ones on `main`, fails first at ESM resolution of its extensionless
+relative imports, so Node never reaches the path. The underlying concern was right regardless, and
+the answer already existed: `migrationsDir()` walks up from the persistence module itself and was
+added in response to an earlier path-portability finding, so the file now knows nothing about any
+layout. Verified both ways round — the compiled suite passes on a fresh database run from
+`packages/api` and from the repository root.
+
+### Known limits recorded rather than fixed
+
+- The retention test calls `deleteExpired(new Date('2000-01-01'), 100)`, which is table-wide by
+  design — it is the production sweep under test, not cleanup this increment added. Nothing else
+  writes a row dated 1999, but on a database shared with a suite that does, this delete is not
+  identity-scoped. Pre-existing and unchanged.
+- `mintedFens` is module-scoped and drained by whichever cleanup runs next, which assumes tests run
+  one at a time. That is what `--test-concurrency=1` and node's sequential top-level tests give, and
+  it is the same assumption the sibling persistence suite makes; a test that opted itself into
+  concurrency would have its rows removed by a neighbour's cleanup. Now stated in the file rather
+  than implied.
+- The `finally` blocks that shut engines down are still plain `try/finally`, so a `shutdown()` that
+  rejects while an assertion is already failing replaces it. Pre-existing, unchanged, and now said
+  out loud where the opposite could have been read into the cleanup docstring.
+
+### Still open after Increment 49
+
+- **Signature B — UNRESOLVED.** Increment 49 recorded **0 occurrences** across its baseline
+  reproduction, acceptance runs, two mutation rounds and full-repository validation. Like Increment
+  47's 26 bounded runs and Increment 48's zero, that bounds the rate under those conditions and
+  resolves nothing.
+- **`npm run test:counts` exits non-zero because `services/gateway` sits outside the npm
+  workspaces — OPEN, not fixed here.** Increment 49 measured it again, without piping the command
+  through anything that could swallow its status: it **exited 1**, reporting **3256 tests (113
+  skipped)** and `gateway-service: ERROR` — six `TS2307: Cannot find module 'ioredis'` diagnostics,
+  because the root `workspaces` field is `packages/*` and that service's dependencies are never
+  installed by a root `npm install`. Its own totals are lower than the suite's above because it runs
+  without `DATABASE_URL`, so the database suites self-skip; that is a property of how the script is
+  invoked, not a change in coverage. No gateway dependency was installed or mutated in this
+  increment, and the remedy is still not assumed to be "add it to the workspaces".
 
 
 ## M15 Increment 48 — shared-database ownership for API pg-security integration tests
