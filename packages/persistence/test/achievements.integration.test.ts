@@ -7,26 +7,87 @@ import { createPool, migrate, PgAchievementsRepository } from '../src/pg/index.j
 
 const databaseUrl = process.env.DATABASE_URL;
 
+/**
+ * Every user this file creates. Cleanup removes exactly these and nothing else.
+ *
+ * This suite used to open each test with an unqualified `DELETE FROM achievement_progress` and
+ * `DELETE FROM users`, which is a claim to own the whole shared database. It does not own it:
+ * those statements destroyed rows belonging to other suites, and against a database that had
+ * already been used they failed outright. `games.white_id` and `games.black_id` are the only
+ * references to `users` without `ON DELETE CASCADE`, so one game left behind by another file made
+ * the wipe abort with SQLSTATE 23503 in `beforeEach`, before any assertion in this file ran.
+ *
+ * Deleting this suite's own user is what it actually needed: `achievement_progress` cascades from
+ * `users`, so the fixture goes with it.
+ */
+const FIXTURE_USER_IDS = ['018f3a5b-7c9d-7000-8000-000000000001'];
+
+/** The bot accounts migration 0021 seeds. They belong to the schema, not to this suite. */
+const SEEDED_BOT_HANDLES = ['gambit-novice', 'gambit-club', 'gambit-master'];
+
 describe('PgAchievementsRepository (integration)', { skip: !databaseUrl }, () => {
   let pool: Pool;
   let repo: PgAchievementsRepository;
 
+  /** Which seeded bot accounts this database actually had before the suite touched anything. */
+  let seedBaseline: string[] = [];
+
+  /**
+   * The seeded bot handles present right now, ordered so two readings compare directly.
+   *
+   * Read twice — once in `before` for the baseline, once per cleanup — because the question is
+   * whether cleanup changed the set, not how large it is.
+   */
+  const seededBotsNow = async (): Promise<string[]> => {
+    const { rows } = await pool.query<{ handle: string }>(
+      'SELECT handle FROM users WHERE handle = ANY($1::citext[]) ORDER BY handle',
+      [SEEDED_BOT_HANDLES],
+    );
+    return rows.map((row) => row.handle);
+  };
+
+  /** Remove this suite's own rows. Safe when they are already gone, so it runs before and after. */
+  const deleteFixtures = async (): Promise<void> => {
+    await pool.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [FIXTURE_USER_IDS]);
+
+    // The second half of the contract, checked where it would be broken. The wipe this replaced
+    // did not only destroy other suites' fixtures: it took the bot accounts migration 0021 seeds,
+    // and nothing restores them — `migrate` has recorded 0021 as applied, so the database simply
+    // stays without them. Widening the delete again fails here instead of silently years later.
+    //
+    // Compared against what this database had at `before`, not against all three. A database that
+    // already ran the old suite is *already* missing them, permanently, and demanding three here
+    // would fail every run on that database for a reason this suite did not cause and must not try
+    // to repair — restoring schema-owned rows is not cleanup's job. Holding the count steady still
+    // catches a widened delete, which is the whole point.
+    assert.deepEqual(
+      await seededBotsNow(),
+      seedBaseline,
+      'cleanup must leave rows this suite did not create, including the migration seed',
+    );
+  };
+
   before(async () => {
     pool = createPool({ connectionString: databaseUrl });
     await migrate(pool, join(process.cwd(), 'migrations'));
+    seedBaseline = await seededBotsNow();
     repo = new PgAchievementsRepository(pool);
   });
 
   after(async () => {
-    if (pool) {
+    if (!pool) return;
+    // Leave the shared database as this suite found it, so the next run begins from the same
+    // preconditions this one did — but close the pool whatever that delete does. Awaiting the
+    // cleanup first and closing second would skip `end()` on exactly the runs where cleanup
+    // failed, leaving a backend attached and the worker unable to exit cleanly.
+    try {
+      await deleteFixtures();
+    } finally {
       await pool.end();
     }
   });
 
-  beforeEach(async () => {
-    await pool.query('DELETE FROM achievement_progress');
-    await pool.query('DELETE FROM users');
-  });
+  beforeEach(deleteFixtures);
 
   async function createTestUser(id: string, handle: string): Promise<void> {
     await pool.query(
