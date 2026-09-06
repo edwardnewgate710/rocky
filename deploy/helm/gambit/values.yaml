@@ -301,7 +301,7 @@ config:
   cmdForwardTimeoutMs: "5000"
   ownershipLeaseTtlSec: "30"
   ownershipRenewalIntervalSec: "15"
-  # Trusted reverse proxy hop count (ADR-0146). Ingress + web nginx = 2 hops.
+  # Trusted reverse proxy hop count (ADR-0141). Ingress + web nginx = 2 hops.
   trustProxy: "2"
 
 # --- Tracing (M13 inc 6, ADR-0062) ---
