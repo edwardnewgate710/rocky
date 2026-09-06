@@ -146,30 +146,38 @@ class FakeDOMNode {
 // Polyfill Element and HTMLElement for Node test runner
 import { before, after } from 'node:test';
 
-let prevElement: unknown;
-let prevHTMLElement: unknown;
+let installedElement = false;
+let installedHTMLElement = false;
+let origElementDesc: PropertyDescriptor | undefined;
+let origHTMLElementDesc: PropertyDescriptor | undefined;
 
 before(() => {
-  prevElement = globalThis.Element;
   if (typeof globalThis.Element === 'undefined') {
+    origElementDesc = Object.getOwnPropertyDescriptor(globalThis, 'Element');
     Object.defineProperty(globalThis, 'Element', { configurable: true, value: FakeDOMNode });
+    installedElement = true;
   }
-  prevHTMLElement = globalThis.HTMLElement;
   if (typeof globalThis.HTMLElement === 'undefined') {
+    origHTMLElementDesc = Object.getOwnPropertyDescriptor(globalThis, 'HTMLElement');
     Object.defineProperty(globalThis, 'HTMLElement', { configurable: true, value: FakeDOMNode });
+    installedHTMLElement = true;
   }
 });
 
 after(() => {
-  if (prevElement !== undefined) {
-    Object.defineProperty(globalThis, 'Element', { configurable: true, value: prevElement });
-  } else {
-    Reflect.deleteProperty(globalThis, 'Element');
+  if (installedElement) {
+    if (origElementDesc) {
+      Object.defineProperty(globalThis, 'Element', origElementDesc);
+    } else {
+      Reflect.deleteProperty(globalThis, 'Element');
+    }
   }
-  if (prevHTMLElement !== undefined) {
-    Object.defineProperty(globalThis, 'HTMLElement', { configurable: true, value: prevHTMLElement });
-  } else {
-    Reflect.deleteProperty(globalThis, 'HTMLElement');
+  if (installedHTMLElement) {
+    if (origHTMLElementDesc) {
+      Object.defineProperty(globalThis, 'HTMLElement', origHTMLElementDesc);
+    } else {
+      Reflect.deleteProperty(globalThis, 'HTMLElement');
+    }
   }
 });
 
