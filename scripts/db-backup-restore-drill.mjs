@@ -275,7 +275,12 @@ export function resolvePgTooling(options = {}) {
     } catch {}
   }
 
-  if (hasNativePgDump && hasNativePgRestore) {
+  const isPlain = (options.format || 'custom') === 'plain';
+  const hasRequiredNativeTools = isPlain
+    ? (hasNativePgDump && hasNativePsql)
+    : (hasNativePgDump && hasNativePgRestore);
+
+  if (hasRequiredNativeTools) {
     return {
       type: 'native',
       runDump: (args, env) => execFileSync('pg_dump', args, { env: { ...process.env, ...env }, stdio: 'pipe' }),
@@ -292,8 +297,9 @@ export function resolvePgTooling(options = {}) {
   } catch {}
 
   if (!hasDocker) {
+    const requiredTools = isPlain ? 'pg_dump, psql' : 'pg_dump, pg_restore';
     throw new Error(
-      'Neither native PostgreSQL tools (pg_dump, pg_restore) nor Docker are available in PATH. Please install postgresql-client or ensure Docker is running.',
+      `Neither native PostgreSQL tools (${requiredTools}) nor Docker are available in PATH. Please install postgresql-client or ensure Docker is running.`,
     );
   }
 

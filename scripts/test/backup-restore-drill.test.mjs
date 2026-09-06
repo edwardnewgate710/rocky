@@ -25,6 +25,7 @@ import {
   parseArgs,
   generateIsolatedDbName,
   runBackupRestoreDrill,
+  resolvePgTooling,
   CRITICAL_APPLICATION_TABLES,
   REQUIRED_EXTENSIONS,
 } from '../db-backup-restore-drill.mjs';
@@ -530,6 +531,17 @@ test('cli: parseArgs defaults to safe isolated target when not specified', () =>
       process.env.BACKUP_DRILL_TARGET_URL = originalEnv;
     }
   }
+});
+
+test('tooling: resolvePgTooling accepts options and detects native or docker runner', () => {
+  const customTooling = resolvePgTooling({ format: 'custom' });
+  assert.ok(customTooling.type === 'native' || customTooling.type === 'docker');
+  assert.equal(typeof customTooling.runDump, 'function');
+  assert.equal(typeof customTooling.runRestore, 'function');
+  assert.equal(typeof customTooling.runPsql, 'function');
+
+  const plainTooling = resolvePgTooling({ format: 'plain' });
+  assert.ok(plainTooling.type === 'native' || plainTooling.type === 'docker');
 });
 
 test(
