@@ -107,8 +107,9 @@ export class AuthController {
     // that session goes away without the user asking — an expired refresh token, or the session
     // revoked from another device — the mirror has to go with it. Otherwise the header and account
     // controls keep showing a signed-in user whose every protected request 401s, until a reload.
+    // Clears controller state without re-calling `session.reset()` to avoid broadcasting a spurious logout.
     this.client.session.onInvalidated(() => {
-      if (!this.disposed) this.clearLocalSession();
+      if (!this.disposed) this.clearControllerSession();
     });
 
     // Peer-tab adoption: when another tab signs in or restores, mirror the new user session here.
@@ -124,10 +125,7 @@ export class AuthController {
     // state, remove persisted storage credentials, and inform the UI via onSessionChange(null).
     this.client.session.onReset?.(() => {
       if (!this.disposed) {
-        this.sessionGeneration++;
-        this.session = null;
-        this.clearPersisted();
-        this.callbacks.onSessionChange(null);
+        this.clearControllerSession();
       }
     });
   }
@@ -258,20 +256,31 @@ export class AuthController {
     } catch {
       // Server-side logout failure is non-fatal — clear locally regardless.
     } finally {
-      this.session = null;
-      this.clearPersisted();
-      this.callbacks.onSessionChange(null);
+      this.clearControllerSession();
       this.callbacks.onPending(false);
     }
   }
 
-  /** Clear local session state without issuing server logout (e.g. after password reset confirm). */
-  clearLocalSession(): void {
+  /**
+   * Clear local controller session state, storage, and notify UI subscribers without
+   * invoking `SessionManager.reset()`.
+   *
+   * Used when `SessionManager` has already cleared or invalidated its own session state
+   * (e.g. via `onInvalidated` or `onReset`) so that the controller does not re-trigger
+   * `SessionManager.reset()` and inadvertently broadcast a secondary `session_reset`
+   * message with `cause: 'logout'`.
+   */
+  private clearControllerSession(): void {
     this.sessionGeneration++;
     this.session = null;
     this.clearPersisted();
-    this.client.session.reset();
     this.callbacks.onSessionChange(null);
+  }
+
+  /** Clear local session state without issuing server logout (e.g. after password reset confirm). */
+  clearLocalSession(): void {
+    this.clearControllerSession();
+    this.client.session.reset();
   }
 
   /** Permanently dispose the controller. */

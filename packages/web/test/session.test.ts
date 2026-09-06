@@ -560,3 +560,40 @@ test('asynchronous throw in doRefresh clears refreshInFlight and allows subseque
 
   mgr.dispose();
 });
+
+test('in-flight refresh started before adopt() cannot overwrite the newly adopted session', async () => {
+  let finishRefresh!: (auth: AuthResponse) => void;
+  const refreshPromise = new Promise<AuthResponse>((resolve) => {
+    finishRefresh = resolve;
+  });
+
+  const mgr = new SessionManager({
+    refresh: async () => refreshPromise,
+    now: () => 1000,
+  });
+
+  // Tab has initial session S1
+  mgr.adopt(authResponse('s1-token', 's1-refresh', 3600), false);
+
+  // Tab starts refreshNow() based on S1
+  const refreshInFlight = mgr.refreshNow();
+
+  // Concurrently, a peer tab broadcast or re-auth adopts S2
+  mgr.adopt(authResponse('s2-token', 's2-refresh', 7200), false);
+  assert.equal(mgr.current?.tokens.accessToken, 's2-token');
+
+  // Now the delayed refresh based on S1 finishes with S1-successor
+  finishRefresh(authResponse('s1-delayed-successor', 's1-delayed-r', 3600));
+
+  // The in-flight refresh MUST reject with NoSessionError because sessionGeneration was bumped by adopt()
+  await assert.rejects(
+    async () => refreshInFlight,
+    NoSessionError,
+  );
+
+  // CRITICAL: The adopted S2 session must NOT be overwritten by the delayed refresh!
+  assert.equal(mgr.current?.tokens.accessToken, 's2-token', 'retained adopted session token');
+  assert.equal(mgr.isAuthenticated, true);
+
+  mgr.dispose();
+});

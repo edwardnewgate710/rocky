@@ -222,8 +222,16 @@ export class SessionManager {
     return this.store.load() !== null;
   }
 
-  /** Persist tokens+user from an auth response, computing access-token expiry. */
+  /**
+   * Persist tokens+user from an auth response, computing access-token expiry.
+   *
+   * Increments `sessionGeneration` and clears `refreshInFlight` so that any stale in-flight
+   * refresh started before this adoption cannot overwrite the freshly adopted session.
+   * Optionally broadcasts a `session_adopted` message to notify peer tabs.
+   */
   adopt(auth: AuthResponse, broadcast = true): StoredSession {
+    this.sessionGeneration++;
+    this.refreshInFlight = null;
     const session: StoredSession = {
       user: auth.user,
       tokens: auth.tokens,
@@ -368,21 +376,23 @@ export class SessionManager {
         }
         return this.adopt(auth);
       } catch (error) {
+        if (!(error instanceof NoSessionError)) {
+          // If a concurrent tab refreshed and updated our store with a fresh successor token,
+          // adopt that valid session rather than destroying it.
+          const current = this.store.load();
+          if (
+            current &&
+            current.tokens.accessToken !== session.tokens.accessToken &&
+            !this.isAccessTokenExpired(current)
+          ) {
+            return current;
+          }
+        }
         if (this.sessionGeneration !== opGen) {
           if (error instanceof NoSessionError) {
             throw error;
           }
           throw new NoSessionError('session was reset while refresh was in flight');
-        }
-        // If a concurrent tab refreshed and updated our store with a fresh token,
-        // adopt that valid session rather than destroying it.
-        const current = this.store.load();
-        if (
-          current &&
-          current.tokens.accessToken !== session.tokens.accessToken &&
-          !this.isAccessTokenExpired(current)
-        ) {
-          return current;
         }
         this.reset({ broadcast: true, cause: 'invalidation', token: session.tokens.accessToken });
         this.invalidatedHandler?.();

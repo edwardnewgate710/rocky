@@ -213,12 +213,16 @@ test('logout clears session and calls onSessionChange(null)', async () => {
  * hint: without this the header and account controls kept showing a signed-in user whose every
  * protected request answered 401.
  */
-test('a session invalidated by a failed refresh stops the UI showing a signed-in user', async () => {
+test('a session invalidated by a failed refresh stops the UI showing a signed-in user without re-calling client.session.reset()', async () => {
   const storage = makeFakeStorage();
-  const client = makeFakeClient() as any;
+  const fakeSession = makeFakeSession();
+  const client = {
+    ...makeFakeClient(),
+    session: fakeSession,
+  };
   const sessions: (AuthSession | null)[] = [];
   const ctrl = new AuthController({
-    client,
+    client: client as unknown as GambitClient,
     callbacks: {
       onSessionChange: (s) => { sessions.push(s); },
       onPending: () => {},
@@ -228,15 +232,17 @@ test('a session invalidated by a failed refresh stops the UI showing a signed-in
   });
   await ctrl.login('alice', 'pw');
   assert.equal(ctrl.isAuthenticated(), true);
+  assert.equal(fakeSession.resets, 0);
 
   // Exactly what SessionManager does when a refresh fails.
-  assert.ok(client.session.invalidate, 'the controller registered for invalidation');
-  client.session.invalidate();
+  assert.ok(fakeSession.invalidate, 'the controller registered for invalidation');
+  fakeSession.invalidate();
 
   assert.equal(ctrl.isAuthenticated(), false);
   assert.equal(ctrl.currentSession, null);
   assert.equal(sessions[sessions.length - 1], null, 'the UI was told to drop the session');
   assert.equal(storage.getItem('gambit-session'), null, 'the persisted hint went too');
+  assert.equal(fakeSession.resets, 0, 'must not trigger client.session.reset() again on invalidation');
 });
 
 test('when session is reset on another tab (onReset), AuthController clears local state and storage without calling client.session.reset()', async () => {
