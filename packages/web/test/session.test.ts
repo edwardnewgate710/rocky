@@ -439,3 +439,124 @@ test('synchronous throw in doRefresh clears refreshInFlight and allows subsequen
 
   mgr.dispose();
 });
+
+test('loser tab refresh failure before adoption broadcast does NOT clear winner tab', async () => {
+  // A controlled channel where delivery between peers can be delayed deterministically
+  let ch1ToCh2Queue: unknown[] = [];
+  let ch2ToCh1Queue: unknown[] = [];
+
+  const ch1: SessionChannel = {
+    postMessage(data: unknown): void {
+      ch1ToCh2Queue.push(data);
+    },
+    onmessage: null,
+    close(): void {},
+  };
+
+  const ch2: SessionChannel = {
+    postMessage(data: unknown): void {
+      ch2ToCh1Queue.push(data);
+    },
+    onmessage: null,
+    close(): void {},
+  };
+
+  const mgr1 = new SessionManager({
+    refresh: async () => authResponse('winner-token', 'r-winner', 3600),
+    now: () => 1000,
+    channel: ch1,
+  });
+
+  const mgr2 = new SessionManager({
+    refresh: async () => {
+      throw new Error('401 Unauthorized: refresh token has been revoked');
+    },
+    now: () => 1000,
+    channel: ch2,
+  });
+
+  // Both tabs hold the same initial session
+  mgr1.adopt(authResponse('old-token', 'r-old', 1), false);
+  mgr2.adopt(authResponse('old-token', 'r-old', 1), false);
+
+  // Tab 1 wins refresh and adopts valid successor
+  const s1 = await mgr1.refreshNow();
+  assert.equal(s1.tokens.accessToken, 'winner-token');
+  assert.equal(mgr1.isAuthenticated, true);
+  // ch1 queued a 'session_adopted' message for ch2, but ch2 has not processed it yet
+  assert.equal(ch1ToCh2Queue.length, 1);
+
+  // Tab 2 loses refresh BEFORE processing Tab 1's adoption broadcast
+  await assert.rejects(
+    async () => mgr2.refreshNow(),
+    /401 Unauthorized/,
+  );
+
+  // Tab 2 followed failure reset path and posted 'session_reset' to ch2
+  assert.equal(ch2ToCh1Queue.length, 1);
+
+  // Deliver Tab 2's reset message to Tab 1 (Winner Tab)
+  for (const msg of ch2ToCh1Queue) {
+    ch1.onmessage?.(new MessageEvent('message', { data: msg }));
+  }
+  ch2ToCh1Queue = [];
+
+  // CRITICAL INVARIANT: The winner tab must NOT have its valid successor session cleared by loser tab reset!
+  assert.equal(mgr1.isAuthenticated, true, 'winner tab must remain authenticated');
+  assert.equal(mgr1.current?.tokens.accessToken, 'winner-token', 'winner tab must retain winner token');
+
+  // Now deliver Tab 1's adoption broadcast to Tab 2
+  for (const msg of ch1ToCh2Queue) {
+    ch2.onmessage?.(new MessageEvent('message', { data: msg }));
+  }
+  ch1ToCh2Queue = [];
+
+  // Tab 2 recovers and adopts the winner session
+  assert.equal(mgr2.isAuthenticated, true, 'loser tab adopts winner after broadcast is delivered');
+  assert.equal(mgr2.current?.tokens.accessToken, 'winner-token');
+
+  // Explicit logout MUST still synchronize across tabs
+  mgr1.reset();
+  assert.equal(ch1ToCh2Queue.length, 1);
+  for (const msg of ch1ToCh2Queue) {
+    ch2.onmessage?.(new MessageEvent('message', { data: msg }));
+  }
+  assert.equal(mgr2.isAuthenticated, false, 'explicit logout must synchronize across tabs');
+
+  mgr1.dispose();
+  mgr2.dispose();
+});
+
+test('asynchronous throw in doRefresh clears refreshInFlight and allows subsequent retry', async () => {
+  let attempts = 0;
+  const mgr = new SessionManager({
+    refresh: async () => {
+      attempts++;
+      await new Promise<void>((r) => queueMicrotask(r));
+      if (attempts === 1) {
+        throw new Error('async network error during refresh');
+      }
+      return authResponse('token-async-retry', 'refresh-retry', 3600);
+    },
+    now: () => 1000,
+  });
+
+  mgr.adopt(authResponse('old-token', 'old-r', 3600));
+
+  // First call rejects asynchronously
+  await assert.rejects(
+    async () => mgr.refreshNow(),
+    /async network error during refresh/,
+  );
+
+  // Re-adopt to simulate having a session for the retry
+  mgr.adopt(authResponse('retry-base', 'retry-r', 3600));
+
+  // Second call must NOT return a stale cached rejected promise; it must invoke doRefresh again
+  const refreshed = await mgr.refreshNow();
+  assert.equal(attempts, 2, 'doRefresh should be invoked on subsequent attempt');
+  assert.equal(refreshed.tokens.accessToken, 'token-async-retry');
+  assert.equal(mgr.current?.tokens.accessToken, 'token-async-retry');
+
+  mgr.dispose();
+});

@@ -89,6 +89,10 @@ export class AuthController {
   private readonly storage: KeyValueStorage | undefined;
   private readonly storageKey: string;
   private session: AuthSession | null = null;
+  /**
+   * Logical generation counter protecting async operations (e.g. restore/login) from applying
+   * stale results if the controller is reset or invalidated while a network call is in flight.
+   */
   private sessionGeneration = 0;
   private disposed = false;
 
@@ -107,12 +111,17 @@ export class AuthController {
       if (!this.disposed) this.clearLocalSession();
     });
 
+    // Peer-tab adoption: when another tab signs in or restores, mirror the new user session here.
+    // Internal deduplication in `adoptSession` ensures this does not re-emit onSessionChange
+    // when local authentication or background token rotation occurs.
     this.client.session.onAdopted?.((session) => {
       if (!this.disposed) {
         this.adoptSession(session.user);
       }
     });
 
+    // Cross-tab reset: when another tab explicitly logs out or clears the session, clear local
+    // state, remove persisted storage credentials, and inform the UI via onSessionChange(null).
     this.client.session.onReset?.(() => {
       if (!this.disposed) {
         this.sessionGeneration++;
@@ -271,7 +280,23 @@ export class AuthController {
     this.client.session.dispose?.();
   }
 
+  /**
+   * Adopt user identity into local controller state and notify UI subscribers.
+   *
+   * Deduplicates by checking whether the controller already holds the exact same user
+   * session (matching handle and userId). This prevents duplicate `onSessionChange` events,
+   * redundant storage persistence, and unnecessary downstream UI re-renders when:
+   * 1. `client.auth.login/register/refresh` internally calls `session.adopt(auth)` (which triggers
+   *    the controller's `onAdopted` listener) and then returns `result` to the controller method
+   *    which calls `adoptSession(result.user)`.
+   * 2. Background token refreshes rotate credentials in memory for the currently signed-in user.
+   *
+   * Peer-tab adoptions for a newly signed-in user or different identity still transition cleanly.
+   */
   private adoptSession(user: { handle: string; id: string }): AuthSession {
+    if (this.session && this.session.userId === user.id && this.session.handle === user.handle) {
+      return this.session;
+    }
     this.session = {
       handle: user.handle,
       userId: user.id,

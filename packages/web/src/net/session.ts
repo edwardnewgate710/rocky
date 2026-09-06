@@ -72,10 +72,36 @@ export class NoSessionError extends Error {
   }
 }
 
+/**
+ * Cross-tab messaging channel abstraction for multi-tab session synchronization.
+ * Uses BroadcastChannel when available in browser environments.
+ */
 export interface SessionChannel {
   postMessage(message: unknown): void;
   onmessage: ((event: MessageEvent) => void) | null;
   close(): void;
+}
+
+/**
+ * Reason or trigger for a session reset across tabs.
+ *
+ * - `logout`: Voluntary explicit user sign-out (e.g. user clicked log out or reset local session).
+ *   All peer tabs must immediately clear their session unconditionally.
+ * - `invalidation`: Involuntary failed token refresh (e.g. concurrent race loser or network failure).
+ *   Peer tabs that hold an active, valid successor session must NOT be cleared by a loser tab.
+ */
+export type SessionResetCause = 'logout' | 'invalidation';
+
+/**
+ * Options configuring local and cross-tab session reset semantics.
+ */
+export interface SessionResetOptions {
+  /** Whether to broadcast the reset over the cross-tab channel. Default true. */
+  readonly broadcast?: boolean;
+  /** Cause of the reset. Defaults to 'logout' (voluntary explicit sign-out). */
+  readonly cause?: SessionResetCause;
+  /** Access token of the session that was reset, if known. Used by peers for freshness checks. */
+  readonly token?: string;
 }
 
 function isAuthResponse(val: unknown): val is AuthResponse {
@@ -116,6 +142,12 @@ export class SessionManager {
   private adoptedHandler: ((session: StoredSession) => void) | null = null;
   private resetHandler: (() => void) | null = null;
   private refreshInFlight: Promise<StoredSession> | null = null;
+  /**
+   * Monotonically increasing generation counter tracking local session lifecycle changes
+   * (resets, adoptions, and disposals). In-flight refreshes capture the generation at initiation
+   * and check it upon completion to ensure stale responses from an older session do not resurrect
+   * or poison newly adopted or cleared sessions.
+   */
   private sessionGeneration = 0;
   private channel: SessionChannel | null = null;
 
@@ -142,21 +174,50 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Handle incoming cross-tab channel events.
+   *
+   * Enforces ordering and freshness invariants:
+   * - `session_adopted`: Adopts fresh auth tokens received from a peer tab without re-broadcasting.
+   * - `session_reset`:
+   *   - If cause is 'invalidation' (involuntary failed refresh from a peer), verifies whether this
+   *     manager already holds an active, non-expired successor session. A legitimate concurrent
+   *     refresh loser must never invalidate the winner's valid session.
+   *   - If cause is 'logout' (or unspecified legacy), unconditionally clears the session.
+   */
   private handleChannelMessage(data: unknown): void {
     if (!data || typeof data !== 'object') return;
     const msg = data as Record<string, unknown>;
     if (msg['type'] === 'session_adopted' && isAuthResponse(msg['auth'])) {
       this.adopt(msg['auth'], false);
     } else if (msg['type'] === 'session_reset') {
+      const cause = typeof msg['cause'] === 'string' ? msg['cause'] : 'logout';
+      if (cause === 'invalidation') {
+        const current = this.store.load();
+        const resetToken = typeof msg['token'] === 'string' ? msg['token'] : undefined;
+        // If this manager holds an active, non-expired session that has already rotated
+        // beyond the failed token (or is a valid successor), do NOT clear it.
+        if (current && !this.isAccessTokenExpired(current)) {
+          if (!resetToken || current.tokens.accessToken !== resetToken) {
+            return;
+          }
+        }
+      }
       this.reset(false);
       this.resetHandler?.();
     }
   }
 
+  /**
+   * Current session snapshot stored in memory, or null when unauthenticated.
+   */
   get current(): StoredSession | null {
     return this.store.load();
   }
 
+  /**
+   * True if there is currently an active stored session.
+   */
   get isAuthenticated(): boolean {
     return this.store.load() !== null;
   }
@@ -206,21 +267,41 @@ export class SessionManager {
     this.invalidatedHandler = handler;
   }
 
-  /** Forget the local session (does not call the server). */
-  reset(broadcast = true): void {
+  /**
+   * Forget the local session (does not call the server).
+   *
+   * Bumps `sessionGeneration` to invalidate in-flight refresh requests, clears local store,
+   * and optionally broadcasts a `session_reset` message tagged with cause and token for cross-tab sync.
+   *
+   * @param options - Structured {@link SessionResetOptions} or a boolean broadcast flag for backwards compatibility.
+   */
+  reset(options: boolean | SessionResetOptions = true): void {
+    const broadcast = typeof options === 'boolean' ? options : (options.broadcast ?? true);
+    const cause: SessionResetCause = typeof options === 'object' && options.cause ? options.cause : 'logout';
+    const currentToken = this.store.load()?.tokens.accessToken;
+    const token = typeof options === 'object' && options.token !== undefined ? options.token : currentToken;
+
     this.sessionGeneration++;
     this.store.clear();
     this.refreshInFlight = null;
     if (broadcast && this.channel) {
       try {
-        this.channel.postMessage({ type: 'session_reset' });
+        this.channel.postMessage({
+          type: 'session_reset',
+          cause,
+          token,
+          generation: this.sessionGeneration,
+        });
       } catch {
         // Channel closed or in error state.
       }
     }
   }
 
-  /** Permanently close the cross-tab channel. */
+  /**
+   * Permanently close the cross-tab channel and invalidate any in-flight refresh requests.
+   * Increments `sessionGeneration` so pending asynchronous responses cannot mutate state after disposal.
+   */
   dispose(): void {
     this.sessionGeneration++;
     this.refreshInFlight = null;
@@ -230,6 +311,12 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Whether the stored session's access token is expired or within the leeway window.
+   *
+   * @param session - The stored session to evaluate (defaults to loading current store).
+   * @returns True if expired or near expiry (within `expiryLeewayMs`), or if no session exists.
+   */
   isAccessTokenExpired(session: StoredSession | null = this.store.load()): boolean {
     if (!session) return true;
     return this.now() >= session.accessTokenExpiresAt - this.leewayMs;
@@ -297,7 +384,7 @@ export class SessionManager {
         ) {
           return current;
         }
-        this.reset();
+        this.reset({ broadcast: true, cause: 'invalidation', token: session.tokens.accessToken });
         this.invalidatedHandler?.();
         throw error;
       }

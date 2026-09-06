@@ -241,6 +241,11 @@ export class AuthService {
    * - It was **rotated away** by a legitimate refresh, and a live successor is holding the account.
    *   Something is replaying a token the real client already exchanged, so the whole account is
    *   burned — this is the reuse detection the rotation scheme exists for.
+   *   To prevent false-positive account burns under near-simultaneous multi-tab refreshes or immediate
+   *   network retries, presentations within `[0, refreshGracePeriodMs]` of rotation are tolerated
+   *   (rejected with 401 without burning the account). Presentations with negative elapsed time
+   *   (e.g. wall clock rollback or NTP skew) or elapsed time exceeding the grace window are strictly
+   *   treated as illegitimate and trigger the full session chain burn.
    * - It was **deliberately revoked**, by {@link revokeSession} or {@link logout}. Then the browser
    *   presenting it is simply the one the user just signed out, doing what any client does when its
    *   access token expires. Burning the account here would mean that revoking one session signs the
@@ -266,7 +271,10 @@ export class AuthService {
     if (rotatedAway && !isConcurrentRotation) {
       const rotatedAt = session.revokedAt ? session.revokedAt.getTime() : 0;
       const elapsed = now - rotatedAt;
-      if (elapsed > this.refreshGracePeriodMs) {
+      // Legitimate concurrent/retry refresh can only happen forward within [0, gracePeriodMs].
+      // A negative elapsed time (e.g. wall clock rollback/skew) must NOT extend or reopen the grace
+      // window; any presentation outside [0, gracePeriodMs] triggers the reuse security response.
+      if (elapsed < 0 || elapsed > this.refreshGracePeriodMs) {
         await this.revokeAllForUser(session.userId, now);
         await this.audit(meta, session.userId, 'auth.refresh.reuse', session.id);
       }

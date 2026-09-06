@@ -227,6 +227,36 @@ test('reusing a rotated refresh token burns the whole session chain', async () =
   }
 });
 
+test('clock rollback when replaying a rotated token triggers reuse detection', async () => {
+  const h = await startHarness();
+  try {
+    const reg = await h.json('POST', '/v1/auth/register', {
+      body: { handle: 'clock-skew-user', password: 'passw0rd!!' },
+    });
+    const t0 = reg.body.tokens.refreshToken;
+    const r1 = await h.json('POST', '/v1/auth/refresh', { body: { refreshToken: t0 } });
+    assert.equal(r1.status, 200);
+    const t1 = r1.body.tokens.refreshToken;
+
+    // Simulate clock rollback: clock moves backwards by 10s (now < rotatedAt, elapsed < 0)
+    h.clock.advance(-10_000);
+
+    const replay = await h.json('POST', '/v1/auth/refresh', { body: { refreshToken: t0 } });
+    assert.equal(replay.status, 401);
+    assert.equal(
+      h.repos.audit.withAction('auth.refresh.reuse').length,
+      1,
+      'negative elapsed time must NOT suppress reuse detection',
+    );
+
+    // The current token must be revoked (whole chain burned)
+    const afterBurn = await h.json('POST', '/v1/auth/refresh', { body: { refreshToken: t1 } });
+    assert.equal(afterBurn.status, 401);
+  } finally {
+    await h.close();
+  }
+});
+
 test('expired refresh tokens are rejected', async () => {
   const h = await startHarness({ refreshTokenTtlSec: 60 });
   try {
