@@ -1505,9 +1505,9 @@ export interface GameReviewView {
     readonly classification: GameReviewClassification;
   }[];
   readonly summary: GameReviewSummary;
-  readonly isPartial?: boolean;
-  readonly totalPlayerMoves?: number;
-  readonly analyzedPlayerMoves?: number;
+  readonly isPartial: boolean;
+  readonly totalPlayerMoves: number;
+  readonly analyzedPlayerMoves: number;
   readonly cutoffReason?: 'move_limit';
 }
 
@@ -1530,9 +1530,9 @@ export function gameReviewView(
       classification: move.classification,
     })),
     summary: { ...outcome.summary },
-    isPartial: outcome.isPartial ?? false,
-    totalPlayerMoves: outcome.totalPlayerMoves ?? outcome.moves.length,
-    analyzedPlayerMoves: outcome.analyzedPlayerMoves ?? outcome.moves.length,
+    isPartial: outcome.isPartial,
+    totalPlayerMoves: outcome.totalPlayerMoves,
+    analyzedPlayerMoves: outcome.analyzedPlayerMoves,
     ...(outcome.cutoffReason ? { cutoffReason: outcome.cutoffReason } : {}),
   };
 }

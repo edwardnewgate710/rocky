@@ -2163,7 +2163,18 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
 
   GameReviewResponse: {
     type: 'object',
-    required: ['gameId', 'variant', 'playerColor', 'result', 'termination', 'moves', 'summary'],
+    required: [
+      'gameId',
+      'variant',
+      'playerColor',
+      'result',
+      'termination',
+      'moves',
+      'summary',
+      'isPartial',
+      'totalPlayerMoves',
+      'analyzedPlayerMoves',
+    ],
     properties: {
       gameId: { type: 'string', format: 'uuid' },
       variant: { type: 'string', enum: [...VARIANTS] },

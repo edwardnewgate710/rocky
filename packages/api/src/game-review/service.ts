@@ -51,9 +51,9 @@ export interface GameReviewOutcome {
   readonly termination: string;
   readonly moves: readonly GameReviewMove[];
   readonly summary: GameReviewSummary;
-  readonly isPartial?: boolean;
-  readonly totalPlayerMoves?: number;
-  readonly analyzedPlayerMoves?: number;
+  readonly isPartial: boolean;
+  readonly totalPlayerMoves: number;
+  readonly analyzedPlayerMoves: number;
   readonly cutoffReason?: 'move_limit';
 }
 

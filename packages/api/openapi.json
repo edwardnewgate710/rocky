@@ -18127,7 +18127,10 @@
           "result",
           "termination",
           "moves",
-          "summary"
+          "summary",
+          "isPartial",
+          "totalPlayerMoves",
+          "analyzedPlayerMoves"
         ],
         "properties": {
           "gameId": {
