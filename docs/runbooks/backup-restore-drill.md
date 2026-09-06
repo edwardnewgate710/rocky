@@ -1,0 +1,222 @@
+# Gambit — Database Backup & Restore Drill Runbook
+
+> **Audience:** Operators, SREs, Database Administrators.<br>
+> **Frequency:** Monthly scheduled drill, pre-release rehearsal for major schema migrations, disaster recovery validation.<br>
+> **Target RTO:** < 15 minutes for 100k games.<br>
+> **Target RPO:** 0 data loss for committed transactions (append-only event store).
+
+---
+
+## 1. Objectives & Overview
+
+Gambit's system of record relies on PostgreSQL 16 with the `citext` and `vector` (pgvector) extensions. The primary source of truth is the append-only `game_events` event store, supported by relational projections (`users`, `credentials`, `games`, `ratings`, `tournaments`, `search_embeddings`).
+
+This runbook defines the operational procedure to:
+1. Generate a consistent backup of the application database without downtime.
+2. Restore the backup into a brand-new, isolated target database.
+3. Validate that all durable application data, triggers, indexes, and extensions survived.
+4. Ensure safety: destructive actions are strictly guarded against touching the primary or production databases.
+
+---
+
+## 2. Automated Drill Execution
+
+The platform includes an automated, operator-usable drill tool: [`scripts/db-backup-restore-drill.mjs`](../../scripts/db-backup-restore-drill.mjs).
+
+### 2.1 Basic Usage
+
+Run against the default `DATABASE_URL` or an explicit source URL:
+
+```bash
+# Run with default environment DATABASE_URL
+node scripts/db-backup-restore-drill.mjs
+
+# Run with explicit source URL
+node scripts/db-backup-restore-drill.mjs --source-url "postgres://gambit:secret@localhost:5432/gambit"
+```
+
+The script will automatically:
+1. Connect to the source and record a baseline of tables, row counts, migrations, and sample data.
+2. Resolve pg tooling (native `pg_dump`/`pg_restore` if installed, or automatic Docker `pgvector/pgvector:pg16` fallback).
+3. Create a custom-format archive (`-Fc`).
+4. Validate the backup file size and `PGDMP` header magic.
+5. Create a disposable isolated target database (e.g. `gambit_backup_drill_restore_<timestamp>_<random>`).
+6. Restore the backup into the isolated database.
+7. Perform deep structural and functional verification.
+8. Drop the isolated target database and clean up the temporary dump file.
+9. Print a structured diagnostic summary.
+
+### 2.2 CLI Options & Flags
+
+| Option | Default | Description |
+|---|---|---|
+| `--source-url <url>` | `$DATABASE_URL` | Source database connection URL |
+| `--target-url <url>` | Auto-generated | Target database connection URL (must be isolated) |
+| `--backup-file <path>` | Temp file | Path to write backup dump file |
+| `--keep-backup` | `false` | Preserve the backup dump file after the drill completes |
+| `--keep-target` | `false` | Preserve the restored target DB for forensic inspection |
+| `--format <custom\|plain>` | `custom` | Dump format (`custom` = `-Fc`, `plain` = SQL) |
+| `--use-docker` | `auto` | Force execution inside `pgvector/pgvector:pg16` container |
+| `--allow-custom-target-name`| `false` | Allow target DB name without default isolation markers |
+| `--json` | `false` | Output machine-readable JSON report |
+
+### 2.3 Retaining the Target Database for Forensic Inspection
+
+When diagnosing schema discrepancies or inspecting restore behavior, instruct the drill to keep the restored database:
+
+```bash
+node scripts/db-backup-restore-drill.mjs \
+  --source-url "postgres://gambit:secret@localhost:5432/gambit" \
+  --keep-target \
+  --keep-backup
+```
+
+Output will report the exact target database name created:
+```
+Target: postgres://gambit:***@localhost:5432/gambit_backup_drill_restore_1788672281592_96c80ce5
+Backup: /tmp/gambit_backup_1788672281593_2706.dump
+```
+
+When finished with forensic analysis, drop the database manually:
+```sql
+DROP DATABASE "gambit_backup_drill_restore_1788672281592_96c80ce5" WITH (FORCE);
+```
+
+---
+
+## 3. Manual Operator Walkthrough
+
+If the automated script is unavailable, perform the drill manually using standard PostgreSQL client utilities (`pg_dump`, `pg_restore`, `psql`).
+
+### Step 1: Create Backup
+
+Generate a PostgreSQL custom archive format backup. The custom format includes a table of contents (TOC) for selective restore and parallel processing:
+
+```bash
+pg_dump \
+  -h "${PGHOST:-localhost}" \
+  -p "${PGPORT:-5432}" \
+  -U "${PGUSER:-gambit}" \
+  -d "${PGDATABASE:-gambit}" \
+  -F c \
+  -f "/tmp/gambit_manual_drill_$(date +%s).dump"
+```
+
+### Step 2: Validate Backup File Integrity
+
+Ensure the dump file is non-empty and starts with the PostgreSQL dump magic bytes (`PGDMP`):
+
+```bash
+# Check size
+ls -lh /tmp/gambit_manual_drill_*.dump
+
+# Check header magic (should print PGDMP)
+head -c 5 /tmp/gambit_manual_drill_*.dump
+```
+
+### Step 3: Provision Clean Isolated Target Database
+
+Connect to the PostgreSQL administrative database (`postgres` or `template1`) and create a dedicated drill database:
+
+```bash
+TARGET_DB="gambit_backup_drill_restore_$(date +%s)"
+
+psql -h "${PGHOST:-localhost}" -p "${PGPORT:-5432}" -U "${PGUSER:-gambit}" -d postgres -c "
+  CREATE DATABASE \"${TARGET_DB}\";
+"
+```
+
+### Step 4: Restore into Isolated Target
+
+Restore the custom archive into the target database:
+
+```bash
+pg_restore \
+  -h "${PGHOST:-localhost}" \
+  -p "${PGPORT:-5432}" \
+  -U "${PGUSER:-gambit}" \
+  -d "${TARGET_DB}" \
+  --clean \
+  --if-exists \
+  "/tmp/gambit_manual_drill_*.dump"
+```
+
+### Step 5: Verification Checklist
+
+Connect to the restored database (`${TARGET_DB}`) and execute the following checks:
+
+#### 1. Extension Verification
+Verify that both `citext` and `vector` extensions exist:
+```sql
+SELECT extname, extversion FROM pg_extension WHERE extname IN ('citext', 'vector');
+-- Expected: 2 rows (citext and vector)
+```
+
+#### 2. Schema Migrations Ledger
+Verify that all migrations are present and checksums match the source:
+```sql
+SELECT count(*) FROM schema_migrations WHERE state = 'applied';
+-- Must match count of migration files in packages/persistence/migrations/ (e.g. 31)
+```
+
+#### 3. Append-Only Trigger Verification
+Verify that the `game_events` immutability trigger is active by testing an `UPDATE`:
+```sql
+BEGIN;
+UPDATE game_events SET seq = seq WHERE game_id IN (SELECT game_id FROM game_events LIMIT 1);
+-- Expected error: "game_events is append-only (UPDATE.game_events attempted)"
+ROLLBACK;
+```
+If the statement succeeds without raising an exception, the trigger is missing or inactive!
+
+#### 4. Durable State Row Counts
+Compare row counts between source and restored databases:
+```sql
+SELECT 'users' AS tbl, count(*) FROM users
+UNION ALL
+SELECT 'game_events', count(*) FROM game_events
+UNION ALL
+SELECT 'games', count(*) FROM games
+UNION ALL
+SELECT 'tournaments', count(*) FROM tournaments
+UNION ALL
+SELECT 'ratings', count(*) FROM ratings
+UNION ALL
+SELECT 'search_embeddings', count(*) FROM search_embeddings;
+```
+
+#### 5. Vector Query Functionality
+Verify pgvector cosine distance operations and HNSW indexing:
+```sql
+-- Test distance operator (<->)
+SELECT id, embedding <-> embedding AS distance FROM search_embeddings LIMIT 1;
+```
+
+### Step 6: Cleanup Isolated Target
+
+After verification succeeds, drop the temporary drill database:
+
+```sql
+DROP DATABASE "gambit_backup_drill_restore_<timestamp>" WITH (FORCE);
+```
+
+---
+
+## 4. Safety & Isolation Guardrails
+
+1. **Never Overwrite Source:** The drill script explicitly compares the normalized source and target URLs. If the host, port, and database name match, execution aborts immediately.
+2. **Protected Databases:** Destructive commands will refuse to drop databases named `gambit`, `postgres`, `template1`, `production`, `master`, or `main`.
+3. **Naming Convention:** Target databases must contain an isolation indicator (`drill`, `restore`, `disposable`, `test`, or `isolated`) unless the `--allow-custom-target-name` flag is explicitly provided.
+4. **Credential Security:** Database URLs are masked in all logs and console output (`postgres://user:***@host:port/db`). Passwords are passed via environment variables (`PGPASSWORD`), never exposed in `ps` process arguments.
+
+---
+
+## 5. Troubleshooting Failed Restores
+
+| Symptom | Probable Cause | Corrective Action |
+|---|---|---|
+| `extension "vector" is not available` | Target PostgreSQL instance lacks `pgvector` library | Install `postgresql-16-pgvector` package or use `pgvector/pgvector:pg16` image. |
+| `Trigger on game_events failed: mutation was not blocked` | Restore command stripped or disabled triggers | Ensure `pg_restore` did not run with `--disable-triggers` without re-enabling them. |
+| `Row count mismatch for table "X"` | Partial dump or table-level exclusion | Ensure `pg_dump` was run for the whole database without `--schema-only` or `--exclude-table`. |
+| `Migration checksum mismatch` | Working copy newline translation or modified migration | Run `npm run check:ci-parity` and ensure canonical LF newlines in migration files. |
+| `Backup file does not exist or empty` | Permissions or disk space exhaustion | Check disk space in `/tmp` and file write permissions for PostgreSQL process. |
