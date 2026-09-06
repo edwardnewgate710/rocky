@@ -63,22 +63,53 @@ test('shell: light theme defines proper stone & deep burgundy derivatives', () =
   assert.match(CSS, /--light-bg\s*:\s*#F5F1ED/i, 'Light stone background derivative #F5F1ED');
   assert.match(CSS, /--light-fg\s*:\s*#242224/i, 'Dark neutral text on light #242224');
   assert.match(CSS, /--sel-deep\s*:\s*#83414B/i, 'Deep burgundy #83414B for light surfaces');
+  assert.match(CSS, /--light-accent\s*:\s*#83414B/i, 'Deep burgundy #83414B as light accent');
+  assert.match(CSS, /--light-accent-hover\s*:\s*#72373F/i, 'Deep burgundy #72373F as light accent hover');
 });
 
-test('shell: primary hover state meets WCAG AA >= 4.5:1 contrast against #E9E4DE', () => {
-  const hoverMatch = CSS.match(/--accent-hover\s*:\s*(#[0-9a-fA-F]{6})/i);
-  assert.ok(hoverMatch, 'must define --accent-hover token in CSS');
-  const hoverHex = hoverMatch[1] ?? '';
+test('shell: primary hover state meets WCAG AA >= 4.5:1 contrast against #E9E4DE in dark and light themes', () => {
+  // Dark theme root
+  const darkHoverMatch = CSS.match(/--accent-hover\s*:\s*(#[0-9a-fA-F]{6})/i);
+  assert.ok(darkHoverMatch, 'must define --accent-hover token in :root');
+  const darkHoverHex = darkHoverMatch[1] ?? '';
   const textHex = '#E9E4DE';
-  const ratio = contrastRatio(textHex, hoverHex);
+  const darkRatio = contrastRatio(textHex, darkHoverHex);
   assert.ok(
-    ratio >= 4.5,
-    `Primary hover contrast with text ${textHex} on background ${hoverHex} must be >= 4.5:1 (got ${ratio.toFixed(2)}:1)`,
+    darkRatio >= 4.5,
+    `Dark primary hover contrast with text ${textHex} on background ${darkHoverHex} must be >= 4.5:1 (got ${darkRatio.toFixed(2)}:1)`,
   );
-  const restMatch = CSS.match(/--accent\s*:\s*(#[0-9a-fA-F]{6})/i);
-  assert.ok(restMatch, 'must define --accent token in CSS');
-  const restHex = restMatch[1] ?? '';
-  assert.notEqual(hoverHex.toLowerCase(), restHex.toLowerCase(), 'hover must be visually distinct from rest');
+  const darkRestMatch = CSS.match(/--accent\s*:\s*(#[0-9a-fA-F]{6})/i);
+  assert.ok(darkRestMatch, 'must define --accent token in :root');
+  const darkRestHex = darkRestMatch[1] ?? '';
+  assert.notEqual(darkHoverHex.toLowerCase(), darkRestHex.toLowerCase(), 'dark hover must be visually distinct from rest');
+
+  // Light theme tokens and mappings
+  const lightRestMatch = CSS.match(/--light-accent\s*:\s*(#[0-9a-fA-F]{6})/i);
+  assert.ok(lightRestMatch, 'must define --light-accent token in :root');
+  const lightRestHex = lightRestMatch[1] ?? '';
+
+  const lightHoverMatch = CSS.match(/--light-accent-hover\s*:\s*(#[0-9a-fA-F]{6})/i);
+  assert.ok(lightHoverMatch, 'must define --light-accent-hover token in :root');
+  const lightHoverHex = lightHoverMatch[1] ?? '';
+
+  const lightRatio = contrastRatio(textHex, lightHoverHex);
+  assert.ok(
+    lightRatio >= 4.5,
+    `Light primary hover contrast with text ${textHex} on background ${lightHoverHex} must be >= 4.5:1 (got ${lightRatio.toFixed(2)}:1)`,
+  );
+  assert.notEqual(lightHoverHex.toLowerCase(), lightRestHex.toLowerCase(), 'light hover must be visually distinct from rest');
+
+  // Both light entry points must bind --accent-hover to var(--light-accent-hover)
+  assert.match(
+    CSS,
+    /@media\s*\(prefers-color-scheme:\s*light\)[\s\S]*?:root:not\(\.light\):not\(\.dark\)[\s\S]*?--accent-hover:\s*var\(--light-accent-hover\);/,
+    'prefers-color-scheme: light entry point must assign --accent-hover',
+  );
+  assert.match(
+    CSS,
+    /:root\.light[\s\S]*?--accent-hover:\s*var\(--light-accent-hover\);/,
+    ':root.light entry point must assign --accent-hover',
+  );
 });
 
 test('shell: index.html has explicit favicon links to Rookzen icon assets', () => {

@@ -38,6 +38,8 @@
   --light-panel-strong: rgba(36, 34, 36, 0.08);
   --light-muted: #686466;
   --light-accent: #83414B;
+  --light-accent-hover: #72373F;
+  --light-accent-active: #622D35;
   /* Review verdicts are semantic data, not interactive accents. Each hue has a
      dark- and light-surface value so its compact text stays at WCAG AA. */
   --review-brilliant: #a78bfa;
@@ -81,6 +83,8 @@
     /* Selection/focus deepens on light surfaces (see --sel-deep). */
     --sel: var(--sel-deep);
     --accent: var(--light-accent);
+    --accent-hover: var(--light-accent-hover);
+    --accent-active: var(--light-accent-active);
     color-scheme: light;
   }
 }
@@ -106,6 +110,8 @@
   /* Selection/focus deepens on light surfaces (see --sel-deep). */
   --sel: var(--sel-deep);
   --accent: var(--light-accent);
+  --accent-hover: var(--light-accent-hover);
+  --accent-active: var(--light-accent-active);
   color-scheme: light;
 }
 
