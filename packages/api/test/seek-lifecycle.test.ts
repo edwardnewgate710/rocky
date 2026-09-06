@@ -222,3 +222,43 @@ test('seek with unresolvable or deleted user falls back to null creatorHandle', 
     await h.close();
   }
 });
+
+test('accept defers entirely to storage layer to avoid split-brain under clock skew', async () => {
+  const h = await startHarness();
+  try {
+    const creator = await h.makeUser('creator-skew', ['user']);
+    const acceptor = await h.makeUser('acceptor-skew', ['user']);
+
+    const seekRes = await h.json('POST', '/v1/seeks', {
+      token: creator.token,
+      body: {
+        variant: 'standard',
+        timeControl: { initialMs: 300_000, incrementMs: 0, delayMs: 0, kind: 'sudden_death' },
+        rated: false,
+      },
+    });
+    assert.equal(seekRes.status, 201);
+    const seekId = seekRes.body.id;
+
+    // Advance clock past expiration
+    h.clock.advance(SEEK_TTL_MS + 1_000);
+
+    // Stub the storage layer to pretend the DB clock hasn't expired yet
+    const originalAccept = h.repos.seekAcceptor.accept;
+    h.repos.seekAcceptor.accept = async (sid, gid, events, gameStart) => {
+      // Temporarily rewind clock just for the inner storage check
+      h.clock.advance(-(SEEK_TTL_MS + 1_000));
+      const res = await originalAccept.call(h.repos.seekAcceptor, sid, gid, events, gameStart);
+      h.clock.advance(SEEK_TTL_MS + 1_000);
+      return res;
+    };
+
+    const acceptRes = await h.json('POST', `/v1/seeks/${seekId}/accept`, {
+      token: acceptor.token,
+    });
+    assert.equal(acceptRes.status, 200, 'API must allow acceptance if the storage layer atomically accepts it');
+  } finally {
+    await h.close();
+  }
+});
+
