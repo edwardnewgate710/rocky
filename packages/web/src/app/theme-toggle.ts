@@ -9,13 +9,20 @@
  */
 import type { KeyValueStorage } from '../net/session.js';
 
+/**
+ * Represents the available themes.
+ */
 export type Theme = 'light' | 'dark';
 
 /** Callbacks the bootstrap wires to DOM elements. */
 export interface ThemeCallbacks {
+  /** Invoked when the theme changes. */
   onTheme: (theme: Theme) => void;
 }
 
+/**
+ * Configuration options for the theme toggle controller.
+ */
 export interface ThemeToggleOptions {
   readonly callbacks: ThemeCallbacks;
   /** Injected storage (defaults to localStorage). */

@@ -6,6 +6,12 @@ import { el } from './dom.js';
 import { renderEmpty } from './render-helpers.js';
 import type { SearchRow, SearchEntityType } from './search-results.js';
 
+/**
+ * Formats a search entity type for display.
+ *
+ * @param type - The entity type to format.
+ * @returns The formatted display string.
+ */
 export function formatEntityType(type: SearchEntityType | null): string {
   switch (type) {
     case 'game':
@@ -19,6 +25,12 @@ export function formatEntityType(type: SearchEntityType | null): string {
   }
 }
 
+/**
+ * Renders search results into the given container.
+ *
+ * @param container - The DOM element to render into.
+ * @param hits - The list of search results.
+ */
 export function renderSearchResults(
   container: HTMLElement,
   hits: readonly SearchRow[],
@@ -52,6 +64,11 @@ export function renderSearchResults(
   }
 }
 
+/**
+ * Renders the initial search prompt when no search has been performed.
+ *
+ * @param container - The DOM element to render into.
+ */
 export function renderSearchPrompt(container: HTMLElement): void {
   renderEmpty(container, {
     mark: '🔍',
