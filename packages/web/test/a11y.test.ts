@@ -80,6 +80,11 @@ test('manifest link is present for PWA', () => {
   assert.ok(HTML_TEMPLATE.includes('rel="manifest"'));
 });
 
+test('favicon icon link is present in head', () => {
+  assert.ok(HTML_TEMPLATE.includes('rel="icon"'));
+  assert.ok(HTML_TEMPLATE.includes('href="/icon.svg"'));
+});
+
 test('theme-color meta is present', () => {
   assert.ok(HTML_TEMPLATE.includes('name="theme-color"'));
 });
