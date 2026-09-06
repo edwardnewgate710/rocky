@@ -1490,7 +1490,7 @@ export function mistakePredictionView(
   };
 }
 
-export interface GameReviewView {
+export type GameReviewView = {
   readonly gameId: string;
   readonly variant: string;
   readonly playerColor: 'white' | 'black';
@@ -1505,17 +1505,18 @@ export interface GameReviewView {
     readonly classification: GameReviewClassification;
   }[];
   readonly summary: GameReviewSummary;
-  readonly isPartial: boolean;
   readonly totalPlayerMoves: number;
   readonly analyzedPlayerMoves: number;
-  readonly cutoffReason?: 'move_limit';
-}
+} & (
+  | { readonly isPartial: false; readonly cutoffReason?: never }
+  | { readonly isPartial: true; readonly cutoffReason: 'move_limit' }
+);
 
 /** Present the private service outcome through the stable public Game Review contract. */
 export function gameReviewView(
   outcome: import('./game-review/service.js').GameReviewOutcome,
 ): GameReviewView {
-  return {
+  const base = {
     gameId: outcome.gameId,
     variant: outcome.variant,
     playerColor: outcome.playerColor,
@@ -1530,11 +1531,13 @@ export function gameReviewView(
       classification: move.classification,
     })),
     summary: { ...outcome.summary },
-    isPartial: outcome.isPartial,
     totalPlayerMoves: outcome.totalPlayerMoves,
     analyzedPlayerMoves: outcome.analyzedPlayerMoves,
-    ...(outcome.cutoffReason ? { cutoffReason: outcome.cutoffReason } : {}),
   };
+
+  return outcome.isPartial
+    ? { ...base, isPartial: true, cutoffReason: outcome.cutoffReason }
+    : { ...base, isPartial: false };
 }
 
 export function moveExplanationView(

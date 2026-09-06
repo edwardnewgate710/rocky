@@ -43,7 +43,7 @@ export interface GameReviewMove {
   readonly classification: GameReviewClassification;
 }
 
-export interface GameReviewOutcome {
+export type GameReviewOutcome = {
   readonly gameId: string;
   readonly variant: string;
   readonly playerColor: 'white' | 'black';
@@ -51,11 +51,12 @@ export interface GameReviewOutcome {
   readonly termination: string;
   readonly moves: readonly GameReviewMove[];
   readonly summary: GameReviewSummary;
-  readonly isPartial: boolean;
   readonly totalPlayerMoves: number;
   readonly analyzedPlayerMoves: number;
-  readonly cutoffReason?: 'move_limit';
-}
+} & (
+  | { readonly isPartial: false; readonly cutoffReason?: never }
+  | { readonly isPartial: true; readonly cutoffReason: 'move_limit' }
+);
 
 export interface GameReviewServiceOptions {
   readonly archive: FinishedGameReviewArchive;
@@ -123,7 +124,6 @@ export class GameReviewService {
     const totalPlayerMoves = moves.length;
     const isPartial = totalPlayerMoves > MAX_REVIEWED_PLAYER_MOVES;
     const analyzedMoves = isPartial ? moves.slice(0, MAX_REVIEWED_PLAYER_MOVES) : moves;
-    const cutoffReason = isPartial ? ('move_limit' as const) : undefined;
 
     // Archive/ownership/length validation is complete before quota is spent. One accepted review
     // consumes one quota unit even though it contains several fixed-policy engine assessments.
@@ -174,7 +174,7 @@ export class GameReviewService {
         summary[classification] += 1;
       }
 
-      return {
+      const base = {
         gameId: game.gameId,
         variant: game.variant,
         playerColor,
@@ -182,11 +182,13 @@ export class GameReviewService {
         termination: game.termination,
         moves: reviewed,
         summary,
-        isPartial,
         totalPlayerMoves,
         analyzedPlayerMoves: reviewed.length,
-        ...(cutoffReason ? { cutoffReason } : {}),
       };
+      
+      return isPartial
+        ? { ...base, isPartial: true, cutoffReason: 'move_limit' as const }
+        : { ...base, isPartial: false };
     } catch (error: unknown) {
       throwIfReviewCancelled(input.signal, deadline.signal);
       throw error;

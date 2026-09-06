@@ -1241,7 +1241,7 @@ export interface GameReviewMove {
   readonly classification: GameReviewClassification;
 }
 
-export interface GameReviewResponse {
+export type GameReviewResponse = {
   readonly gameId: string;
   readonly variant: string;
   readonly playerColor: 'white' | 'black';
@@ -1249,11 +1249,12 @@ export interface GameReviewResponse {
   readonly termination: string;
   readonly moves: readonly GameReviewMove[];
   readonly summary: Readonly<Record<GameReviewClassification, number>>;
-  readonly isPartial: boolean;
   readonly totalPlayerMoves: number;
   readonly analyzedPlayerMoves: number;
-  readonly cutoffReason?: 'move_limit';
-}
+} & (
+  | { readonly isPartial: false; readonly cutoffReason?: never }
+  | { readonly isPartial: true; readonly cutoffReason: 'move_limit' }
+);
 
 // --- Study Partner v1 -------------------------------------------------------
 
