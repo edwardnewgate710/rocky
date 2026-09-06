@@ -44,7 +44,9 @@ async function waitForHealth(url, name) {
   const deadline = Date.now() + TIMEOUT_MS;
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(url);
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      const res = await fetch(url, { signal: AbortSignal.timeout(remaining) });
       if (res.ok) {
         log(`✓ ${name} healthy`);
         return true;

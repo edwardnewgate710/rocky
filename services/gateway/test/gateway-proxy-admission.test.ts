@@ -29,7 +29,11 @@ async function waitForHealth(healthPort: number, timeoutMs = 10_000): Promise<vo
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(`http://127.0.0.1:${healthPort}/health`);
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      const res = await fetch(`http://127.0.0.1:${healthPort}/health`, {
+        signal: AbortSignal.timeout(remaining)
+      });
       if (res.ok) return;
     } catch {
       // wait
