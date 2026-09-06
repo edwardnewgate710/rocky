@@ -454,14 +454,18 @@ export class BoardView {
           ? `<span class="cb-coordinate cb-file" aria-hidden="true">${String.fromCharCode(97 + file)}</span>`
           : '';
 
-        let descAttr = '';
+        const states: string[] = [];
         if (legal.has(sq)) {
-          descAttr = piece ? ' aria-description="capture"' : ' aria-description="legal move"';
-        } else if (last.has(sq)) {
-          descAttr = ' aria-description="last move"';
-        } else if (premove.has(sq)) {
-          descAttr = ' aria-description="premove"';
+          states.push(piece ? 'capture' : 'legal move');
         }
+        if (last.has(sq)) {
+          states.push('last move');
+        }
+        if (premove.has(sq)) {
+          states.push('premove');
+        }
+        
+        const descAttr = states.length > 0 ? ` aria-description="${states.join(', ')}"` : '';
 
         const currentAttr = sq === lastMoveTo ? ' aria-current="true"' : '';
 
@@ -470,7 +474,7 @@ export class BoardView {
         );
       }
       rowElements.push(
-        `<div class="cb-row" role="row" aria-rowindex="${rowIndex}" style="display: contents">${cellElements.join('')}</div>`,
+        `<div class="cb-row" role="row" aria-rowindex="${rowIndex}">${cellElements.join('')}</div>`,
       );
     }
     // Preserve the overlay across re-renders.

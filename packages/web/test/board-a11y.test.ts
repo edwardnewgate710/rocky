@@ -144,12 +144,34 @@ class FakeDOMNode {
 }
 
 // Polyfill Element and HTMLElement for Node test runner
-if (typeof globalThis.Element === 'undefined') {
-  Object.defineProperty(globalThis, 'Element', { configurable: true, value: FakeDOMNode });
-}
-if (typeof globalThis.HTMLElement === 'undefined') {
-  Object.defineProperty(globalThis, 'HTMLElement', { configurable: true, value: FakeDOMNode });
-}
+import { before, after } from 'node:test';
+
+let prevElement: unknown;
+let prevHTMLElement: unknown;
+
+before(() => {
+  prevElement = globalThis.Element;
+  if (typeof globalThis.Element === 'undefined') {
+    Object.defineProperty(globalThis, 'Element', { configurable: true, value: FakeDOMNode });
+  }
+  prevHTMLElement = globalThis.HTMLElement;
+  if (typeof globalThis.HTMLElement === 'undefined') {
+    Object.defineProperty(globalThis, 'HTMLElement', { configurable: true, value: FakeDOMNode });
+  }
+});
+
+after(() => {
+  if (prevElement !== undefined) {
+    Object.defineProperty(globalThis, 'Element', { configurable: true, value: prevElement });
+  } else {
+    Reflect.deleteProperty(globalThis, 'Element');
+  }
+  if (prevHTMLElement !== undefined) {
+    Object.defineProperty(globalThis, 'HTMLElement', { configurable: true, value: prevHTMLElement });
+  } else {
+    Reflect.deleteProperty(globalThis, 'HTMLElement');
+  }
+});
 
 /**
  * Robust stack-based HTML parser for BoardView.render() fragments.

@@ -288,7 +288,15 @@ test('promotion cancellation stays lifecycle-safe across Escape, position sync, 
     assert.equal(finalOverlay.removed, true);
   } finally {
     mounted.destroy();
-    Object.defineProperty(globalThis, 'document', { configurable: true, value: previousDocument });
-    Object.defineProperty(globalThis, 'HTMLElement', { configurable: true, value: previousHTMLElement });
+    if (previousDocument !== undefined) {
+      Object.defineProperty(globalThis, 'document', { configurable: true, value: previousDocument });
+    } else {
+      Reflect.deleteProperty(globalThis, 'document');
+    }
+    if (previousHTMLElement !== undefined) {
+      Object.defineProperty(globalThis, 'HTMLElement', { configurable: true, value: previousHTMLElement });
+    } else {
+      Reflect.deleteProperty(globalThis, 'HTMLElement');
+    }
   }
 });
