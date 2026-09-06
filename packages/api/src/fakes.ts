@@ -442,46 +442,58 @@ export class InMemorySeeksRepository implements SeeksRepository {
       .sort((a, b) => (this.order.get(a.id) ?? 0) - (this.order.get(b.id) ?? 0))
       .slice(0, limit);
 
-    const enrich = async (s: SeekRow): Promise<SeekRow> => {
-      if (s.creatorHandle || !this.users) return s;
-      const user = await this.users.findById(s.creatorId);
-      return user?.handle ? { ...s, creatorHandle: user.handle } : s;
-    };
+    const candidatesToEnrich = [...open];
+    let latestCandidate: SeekRow | undefined;
 
-    const enrichedOpen = await Promise.all(open.map(enrich));
+    if (creatorId) {
+      const matchedCandidates = rows
+        .filter(
+          (s) =>
+            s.creatorId === creatorId &&
+            s.gameId !== null &&
+            s.acceptedAt !== null &&
+            s.acceptedAt.getTime() > fiveMinsAgo,
+        )
+        .sort(
+          (a, b) =>
+            b.acceptedAt!.getTime() - a.acceptedAt!.getTime() ||
+            (this.order.get(b.id) ?? 0) - (this.order.get(a.id) ?? 0),
+        );
 
-    if (!creatorId) return enrichedOpen;
-
-    const matchedCandidates = rows
-      .filter(
-        (s) =>
-          s.creatorId === creatorId &&
-          s.gameId !== null &&
-          s.acceptedAt !== null &&
-          s.acceptedAt.getTime() > fiveMinsAgo,
-      )
-      .sort(
-        (a, b) =>
-          b.acceptedAt!.getTime() - a.acceptedAt!.getTime() ||
-          (this.order.get(b.id) ?? 0) - (this.order.get(a.id) ?? 0),
-      );
-
-    let latestMatch: SeekRow | undefined;
-    for (const match of matchedCandidates) {
-      if (!this.games) {
-        latestMatch = match;
+      for (const match of matchedCandidates) {
+        if (!this.games) {
+          latestCandidate = match;
+          break;
+        }
+        const game = await this.games.findById(match.gameId!);
+        if (game && game.endedAt !== null) {
+          continue;
+        }
+        latestCandidate = match;
         break;
       }
-      const game = await this.games.findById(match.gameId!);
-      if (game && game.endedAt !== null) {
-        continue;
-      }
-      latestMatch = match;
-      break;
+      if (latestCandidate) candidatesToEnrich.push(latestCandidate);
     }
 
-    const enrichedLatest = latestMatch ? await enrich(latestMatch) : undefined;
-    return enrichedLatest ? [enrichedLatest, ...enrichedOpen] : enrichedOpen;
+    const missingIds = [...new Set(candidatesToEnrich.filter((s) => !s.creatorHandle).map((s) => s.creatorId))];
+    const userMap = new Map<string, string>();
+    if (this.users && missingIds.length > 0) {
+      const users = await this.users.findByIds(missingIds);
+      for (const u of users) {
+        userMap.set(u.id, u.handle);
+      }
+    }
+
+    const enrich = (s: SeekRow): SeekRow => {
+      if (s.creatorHandle) return s;
+      const handle = userMap.get(s.creatorId);
+      return handle ? { ...s, creatorHandle: handle } : s;
+    };
+
+    const enrichedOpen = open.map(enrich);
+    if (!creatorId || !latestCandidate) return enrichedOpen;
+
+    return [enrich(latestCandidate), ...enrichedOpen];
   }
 
   async remove(id: string): Promise<boolean> {

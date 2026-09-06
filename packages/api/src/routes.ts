@@ -1195,8 +1195,8 @@ export function buildRouter(deps: RouteDeps): Router {
       // Fallback: If any seek lacks creatorHandle (e.g. custom or legacy repository), batch-resolve from users
       const missingCreatorIds = [...new Set(seeks.filter((s) => !s.creatorHandle).map((s) => s.creatorId))];
       if (missingCreatorIds.length > 0) {
-        const users = await Promise.all(missingCreatorIds.map((id) => repos.users.findById(id)));
-        const userMap = new Map(users.filter((u): u is NonNullable<typeof u> => u !== null).map((u) => [u.id, u.handle]));
+        const users = await repos.users.findByIds(missingCreatorIds);
+        const userMap = new Map(users.map((u) => [u.id, u.handle]));
         const enrichedSeeks = seeks.map((s) => s.creatorHandle ? s : { ...s, creatorHandle: userMap.get(s.creatorId) ?? null });
         return json(200, enrichedSeeks.map(seekView));
       }
