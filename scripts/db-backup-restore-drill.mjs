@@ -373,13 +373,16 @@ export function resolvePgTooling(options = {}) {
 /**
  * Capture source database state baseline before running backup.
  */
-export async function collectSourceBaseline(pool) {
-  const client = await pool.connect();
-  await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+export async function collectSourceBaseline(pool, existingClient = null) {
+  const client = existingClient || (await pool.connect());
+  const shouldManageTx = !existingClient;
+  if (shouldManageTx) {
+    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+  }
   try {
-    // 1. Extensions
+    // 1. Extensions with versions
     const extRes = await client.query('SELECT extname, extversion FROM pg_extension ORDER BY extname');
-    const extensions = extRes.rows.map((r) => r.extname);
+    const extensions = extRes.rows.map((r) => ({ extname: r.extname, extversion: r.extversion }));
 
     // 2. Schema migrations
     const hasMigrationsTable = await client.query(
@@ -437,8 +440,10 @@ export async function collectSourceBaseline(pool) {
       sampleData,
     };
   } finally {
-    await client.query('ROLLBACK');
-    client.release();
+    if (shouldManageTx) {
+      await client.query('ROLLBACK');
+      client.release();
+    }
   }
 }
 
@@ -458,17 +463,43 @@ export async function verifyRestoredDatabase(sourceBaseline, targetPool, options
 
   // Check 1: Extensions
   const extRes = await targetPool.query('SELECT extname, extversion FROM pg_extension ORDER BY extname');
-  const targetExts = new Set(extRes.rows.map((r) => r.extname));
+  const targetExtMap = new Map();
+  for (const r of extRes.rows || []) {
+    targetExtMap.set(r.extname, r.extversion || null);
+  }
+  const targetExts = new Set(targetExtMap.keys());
 
   for (const requiredExt of REQUIRED_EXTENSIONS) {
-    const present = targetExts.has(requiredExt);
+    const present = targetExtMap.has(requiredExt);
     recordCheck(
-      `Extension: ${requiredExt}`,
+      `Required Extension: ${requiredExt}`,
       present,
       present ? 'Installed and active' : `Missing required extension in restored database: ${requiredExt}`,
     );
     if (!present) {
       throw new Error(`Missing required extension in restored database: ${requiredExt}`);
+    }
+  }
+
+  // Compare every source extension and version with restored database
+  for (const srcExt of sourceBaseline.extensions || []) {
+    const name = typeof srcExt === 'string' ? srcExt : srcExt.extname;
+    const version = typeof srcExt === 'string' ? null : (srcExt.extversion || null);
+    const present = targetExtMap.has(name);
+    const targetVersion = targetExtMap.get(name);
+    const versionMatch = !version || !targetVersion || targetVersion === version;
+    recordCheck(
+      `Source Extension: ${name}`,
+      present && versionMatch,
+      present
+        ? (versionMatch ? `Installed version ${targetVersion || 'active'}` : `Version mismatch: source ${version} vs restored ${targetVersion}`)
+        : `Missing source extension in restored database: ${name}`,
+    );
+    if (!present) {
+      throw new Error(`Missing source extension in restored database: ${name}`);
+    }
+    if (!versionMatch) {
+      throw new Error(`Extension version mismatch in restored database for ${name}: source ${version} vs restored ${targetVersion}`);
     }
   }
 
@@ -755,49 +786,70 @@ export async function runBackupRestoreDrill(options = {}) {
   };
 
   try {
-    // 1. Capture source baseline
+    // 1. Capture source baseline and export snapshot
     log(`Capturing source baseline from ${report.source}...`);
-    const sourceBaseline = await collectSourceBaseline(sourcePool);
-    log(`Source baseline captured: ${sourceBaseline.tables.length} tables, ${sourceBaseline.migrations.length} migrations.`);
+    const baselineClient = await sourcePool.connect();
+    let snapshotId = null;
+    let sourceBaseline = null;
+    try {
+      await baselineClient.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      try {
+        const snapRes = await baselineClient.query('SELECT pg_export_snapshot() AS snap');
+        snapshotId = snapRes.rows[0]?.snap || null;
+      } catch {
+        // Snapshot export might not be supported in some test or replica configurations
+      }
+      sourceBaseline = await collectSourceBaseline(sourcePool, baselineClient);
+      log(`Source baseline captured: ${sourceBaseline.tables.length} tables, ${sourceBaseline.migrations.length} migrations.`);
 
-    // 2. Resolve tooling
-    const tooling = resolvePgTooling(options);
-    log(`Resolved PostgreSQL tooling (${tooling.type})...`);
+      // 2. Resolve tooling
+      const tooling = resolvePgTooling(options);
+      log(`Resolved PostgreSQL tooling (${tooling.type})...`);
 
-    // 3. Perform backup using pg_dump
-    log(`Creating ${options.format || 'custom'} backup to ${backupPath}...`);
-    const dumpStart = Date.now();
-    const isCustom = (options.format || 'custom') === 'custom';
+      // 3. Perform backup using pg_dump
+      log(`Creating ${options.format || 'custom'} backup to ${backupPath}...`);
+      const dumpStart = Date.now();
+      const isCustom = (options.format || 'custom') === 'custom';
 
-    if (tooling.type === 'native') {
-      const dumpArgs = [
-        '-h', parsedSource.host,
-        '-p', String(parsedSource.port),
-        '-U', parsedSource.user,
-        '-d', parsedSource.database,
-        '-F', isCustom ? 'c' : 'p',
-        '-f', backupPath,
-      ];
-      tooling.runDump(dumpArgs, { PGPASSWORD: parsedSource.password, ...parsedSource.sslParams });
-    } else {
-      // Docker mode
-      const hostForDocker =
-        parsedSource.host === 'localhost' || parsedSource.host === '127.0.0.1'
-          ? (process.platform === 'linux' ? '127.0.0.1' : 'host.docker.internal')
-          : parsedSource.host;
+      if (tooling.type === 'native') {
+        const dumpArgs = [
+          '-h', parsedSource.host,
+          '-p', String(parsedSource.port),
+          '-U', parsedSource.user,
+          '-d', parsedSource.database,
+          '-F', isCustom ? 'c' : 'p',
+          '-f', backupPath,
+        ];
+        if (snapshotId && isCustom) {
+          dumpArgs.push(`--snapshot=${snapshotId}`);
+        }
+        tooling.runDump(dumpArgs, { PGPASSWORD: parsedSource.password, ...parsedSource.sslParams });
+      } else {
+        // Docker mode
+        const hostForDocker =
+          parsedSource.host === 'localhost' || parsedSource.host === '127.0.0.1'
+            ? (process.platform === 'linux' ? '127.0.0.1' : 'host.docker.internal')
+            : parsedSource.host;
 
-      const dumpArgs = [
-        '-h', hostForDocker,
-        '-p', String(parsedSource.port),
-        '-U', parsedSource.user,
-        '-d', parsedSource.database,
-        '-F', isCustom ? 'c' : 'p',
-        '-f', `/work/${backupFileName}`,
-      ];
-      tooling.runDump(dumpArgs, { PGPASSWORD: parsedSource.password, ...parsedSource.sslParams }, backupDir);
+        const dumpArgs = [
+          '-h', hostForDocker,
+          '-p', String(parsedSource.port),
+          '-U', parsedSource.user,
+          '-d', parsedSource.database,
+          '-F', isCustom ? 'c' : 'p',
+          '-f', `/work/${backupFileName}`,
+        ];
+        if (snapshotId && isCustom) {
+          dumpArgs.push(`--snapshot=${snapshotId}`);
+        }
+        tooling.runDump(dumpArgs, { PGPASSWORD: parsedSource.password, ...parsedSource.sslParams }, backupDir);
+      }
+      report.timings.backupMs = Date.now() - dumpStart;
+      log(`Backup completed in ${report.timings.backupMs}ms.`);
+    } finally {
+      await baselineClient.query('ROLLBACK').catch(() => {});
+      baselineClient.release();
     }
-    report.timings.backupMs = Date.now() - dumpStart;
-    log(`Backup completed in ${report.timings.backupMs}ms.`);
 
     // 4. Validate backup file
     const backupMeta = await validateBackupFile(backupPath, options.format || 'custom');

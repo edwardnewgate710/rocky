@@ -213,6 +213,34 @@ test('verification engine: detects missing extensions in restored database', asy
   );
 });
 
+test('verification engine: detects extension version mismatch between source and restored database', async () => {
+  const sourceBaseline = {
+    extensions: [{ extname: 'citext', extversion: '1.6' }, { extname: 'vector', extversion: '0.5.1' }],
+    migrations: [],
+    tables: [],
+    rowCounts: {},
+    sampleData: {},
+  };
+
+  const mockTargetPool = {
+    async connect() { return { query: this.query, release: () => {} }; },
+    async query(text) {
+      if (text.includes('pg_extension')) {
+        return { rows: [{ extname: 'citext', extversion: '1.6' }, { extname: 'vector', extversion: '0.4.0' }] };
+      }
+      return { rows: [] };
+    },
+  };
+
+  await assert.rejects(
+    () => verifyRestoredDatabase(sourceBaseline, mockTargetPool),
+    (err) => {
+      assert.match(err.message, /Extension version mismatch in restored database for vector: source 0.5.1 vs restored 0.4.0/);
+      return true;
+    },
+  );
+});
+
 test('verification engine: detects missing schema_migrations table', async () => {
   const sourceBaseline = {
     extensions: ['citext', 'vector'],
