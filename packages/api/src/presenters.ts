@@ -1505,6 +1505,10 @@ export interface GameReviewView {
     readonly classification: GameReviewClassification;
   }[];
   readonly summary: GameReviewSummary;
+  readonly isPartial?: boolean;
+  readonly totalPlayerMoves?: number;
+  readonly analyzedPlayerMoves?: number;
+  readonly cutoffReason?: 'move_limit';
 }
 
 /** Present the private service outcome through the stable public Game Review contract. */
@@ -1526,6 +1530,10 @@ export function gameReviewView(
       classification: move.classification,
     })),
     summary: { ...outcome.summary },
+    isPartial: outcome.isPartial ?? false,
+    totalPlayerMoves: outcome.totalPlayerMoves ?? outcome.moves.length,
+    analyzedPlayerMoves: outcome.analyzedPlayerMoves ?? outcome.moves.length,
+    ...(outcome.cutoffReason ? { cutoffReason: outcome.cutoffReason } : {}),
   };
 }
 

@@ -57,6 +57,14 @@ const COMPLETED_REVIEW_WITH_MOVE: GameReviewResponse = {
   }],
 };
 
+const COMPLETED_REVIEW_PARTIAL: GameReviewResponse = {
+  ...COMPLETED_REVIEW_WITH_MOVE,
+  isPartial: true,
+  totalPlayerMoves: 55,
+  analyzedPlayerMoves: 40,
+  cutoffReason: 'move_limit',
+};
+
 interface PendingReview {
   readonly request: HttpRequest;
   readonly resolve: (response: HttpResponse) => void;
@@ -330,6 +338,48 @@ test('a completed game with an unsupported variant never offers Game Review', as
     assert.equal(mountedGame.elements.get('game-review-run')!.disabled, true);
     mountedGame.elements.get('game-review-run')!.click();
     assert.equal(mountedGame.pendingReviews.length, 0);
+  } finally {
+    dispose(mountedGame);
+  }
+});
+
+test('a complete review displays standard navigation note', async () => {
+  const mountedGame = setup();
+  try {
+    await waitUntil(() => mountedGame.elements.get('game-review-run')!.disabled === false);
+    runReview(mountedGame.elements);
+    await waitUntil(() => mountedGame.pendingReviews.length === 1);
+    mountedGame.pendingReviews[0]!.resolve(json(200, COMPLETED_REVIEW_WITH_MOVE));
+    await waitUntil(() => mountedGame.elements.get('game-review-moves')!.childElementCount === 1);
+
+    const note = mountedGame.elements.get('game-review-note')!;
+    assert.equal(note.textContent, 'Select a move to see the position before it was played.');
+  } finally {
+    dispose(mountedGame);
+  }
+});
+
+test('a partial review truthfully displays bounded analysis notice with move counts', async () => {
+  const mountedGame = setup();
+  try {
+    await waitUntil(() => mountedGame.elements.get('game-review-run')!.disabled === false);
+    runReview(mountedGame.elements);
+    await waitUntil(() => mountedGame.pendingReviews.length === 1);
+    mountedGame.pendingReviews[0]!.resolve(json(200, COMPLETED_REVIEW_PARTIAL));
+    await waitUntil(() => mountedGame.elements.get('game-review-moves')!.childElementCount === 1);
+
+    const note = mountedGame.elements.get('game-review-note')!;
+    assert.equal(
+      note.textContent,
+      'Partial review: first 40 of 55 player moves analyzed due to move limit. Select a move to see the position before it was played.',
+    );
+    const summary = mountedGame.elements.get('game-review-summary')!;
+    assert.equal(summary.hidden, false);
+
+    const reviewedMove = mountedGame.elements.get('game-review-moves')!.children[0]!;
+    reviewedMove.click();
+    const status = mountedGame.elements.get('status')!;
+    assert.match(status.textContent, /^Reviewing e4\. Best move:/);
   } finally {
     dispose(mountedGame);
   }

@@ -1249,6 +1249,10 @@ export interface GameReviewResponse {
   readonly termination: string;
   readonly moves: readonly GameReviewMove[];
   readonly summary: Readonly<Record<GameReviewClassification, number>>;
+  readonly isPartial?: boolean;
+  readonly totalPlayerMoves?: number;
+  readonly analyzedPlayerMoves?: number;
+  readonly cutoffReason?: 'move_limit';
 }
 
 // --- Study Partner v1 -------------------------------------------------------

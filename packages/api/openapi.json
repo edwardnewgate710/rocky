@@ -18276,6 +18276,23 @@
               }
             },
             "additionalProperties": false
+          },
+          "isPartial": {
+            "type": "boolean"
+          },
+          "totalPlayerMoves": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "analyzedPlayerMoves": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cutoffReason": {
+            "type": "string",
+            "enum": [
+              "move_limit"
+            ]
           }
         },
         "additionalProperties": false

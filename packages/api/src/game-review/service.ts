@@ -51,6 +51,10 @@ export interface GameReviewOutcome {
   readonly termination: string;
   readonly moves: readonly GameReviewMove[];
   readonly summary: GameReviewSummary;
+  readonly isPartial?: boolean;
+  readonly totalPlayerMoves?: number;
+  readonly analyzedPlayerMoves?: number;
+  readonly cutoffReason?: 'move_limit';
 }
 
 export interface GameReviewServiceOptions {
@@ -67,8 +71,10 @@ export interface GameReviewServiceOptions {
 /**
  * Produces a player's engine-grounded review only after a game is durable and over.
  *
- * The service returns no partial review: a cancelled or unavailable engine operation fails the
- * request, so callers never mistake an incomplete set of findings for a complete assessment.
+ * For long games exceeding the engine move budget, the service returns a bounded partial review
+ * with explicit partial-review metadata, ensuring callers never mistake an incomplete set of
+ * findings for a complete assessment. A cancelled or unavailable engine operation fails the
+ * request, so callers never mistake an interrupted engine run for an assessment.
  */
 export class GameReviewService {
   private readonly archive: FinishedGameReviewArchive;
@@ -112,12 +118,12 @@ export class GameReviewService {
     }
 
     const moves = game.moves.filter((move) => move.by === (playerColor === 'white' ? 'w' : 'b'));
-    if (moves.length > MAX_REVIEWED_PLAYER_MOVES) {
-      throw HttpError.validation('game is too long for an instant review', {
-        moves: `at most ${MAX_REVIEWED_PLAYER_MOVES} player moves are supported`,
-      });
-    }
     if (moves.length === 0) throw HttpError.validation('game has no moves to review');
+
+    const totalPlayerMoves = moves.length;
+    const isPartial = totalPlayerMoves > MAX_REVIEWED_PLAYER_MOVES;
+    const analyzedMoves = isPartial ? moves.slice(0, MAX_REVIEWED_PLAYER_MOVES) : moves;
+    const cutoffReason = isPartial ? ('move_limit' as const) : undefined;
 
     // Archive/ownership/length validation is complete before quota is spent. One accepted review
     // consumes one quota unit even though it contains several fixed-policy engine assessments.
@@ -134,7 +140,7 @@ export class GameReviewService {
       const assessor = this.createMoveAssessment(scoped);
       const reviewed: GameReviewMove[] = [];
       const summary = emptyGameReviewSummary();
-      for (const move of moves) {
+      for (const move of analyzedMoves) {
         throwIfReviewCancelled(input.signal, deadline.signal);
         // The review owns this fixed two-line pre-move search. Passing the same evidence into the
         // predictor preserves the normal mistake verdict while avoiding a duplicate first search.
@@ -176,6 +182,10 @@ export class GameReviewService {
         termination: game.termination,
         moves: reviewed,
         summary,
+        isPartial,
+        totalPlayerMoves,
+        analyzedPlayerMoves: reviewed.length,
+        ...(cutoffReason ? { cutoffReason } : {}),
       };
     } catch (error: unknown) {
       throwIfReviewCancelled(input.signal, deadline.signal);
