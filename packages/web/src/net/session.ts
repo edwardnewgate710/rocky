@@ -271,8 +271,7 @@ export class SessionManager {
 
     const opGen = this.sessionGeneration;
 
-    let pending: Promise<StoredSession> | null = null;
-    pending = (async (): Promise<StoredSession> => {
+    const pending = (async (): Promise<StoredSession> => {
       try {
         // Pass the refresh token if available (non-browser path).
         // For the browser flow, the token is undefined and the cookie is sent.
@@ -301,14 +300,18 @@ export class SessionManager {
         this.reset();
         this.invalidatedHandler?.();
         throw error;
-      } finally {
-        if (this.refreshInFlight === pending) {
-          this.refreshInFlight = null;
-        }
       }
     })();
 
     this.refreshInFlight = pending;
+    pending
+      .finally(() => {
+        if (this.refreshInFlight === pending) {
+          this.refreshInFlight = null;
+        }
+      })
+      .catch(() => {});
+
     return pending;
   }
 }

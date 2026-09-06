@@ -405,3 +405,37 @@ test('deferred refresh is invalidated when peer reset arrives before refresh res
   mgr1.dispose();
   mgr2.dispose();
 });
+
+test('synchronous throw in doRefresh clears refreshInFlight and allows subsequent retry', async () => {
+  let attempts = 0;
+  const mgr = new SessionManager({
+    refresh: () => {
+      attempts++;
+      if (attempts === 1) {
+        // Synchronous throw before returning a Promise
+        throw new Error('sync error during refresh initialization');
+      }
+      return Promise.resolve(authResponse('token-retry', 'refresh-retry', 3600));
+    },
+    now: () => 1000,
+  });
+
+  mgr.adopt(authResponse('old-token', 'old-r', 3600));
+
+  // First call throws synchronously inside doRefresh
+  await assert.rejects(
+    async () => mgr.refreshNow(),
+    /sync error during refresh initialization/,
+  );
+
+  // Re-adopt to simulate having a session for the retry
+  mgr.adopt(authResponse('retry-base', 'retry-r', 3600));
+
+  // Second call must NOT return a stale cached rejected promise; it must invoke doRefresh again
+  const refreshed = await mgr.refreshNow();
+  assert.equal(attempts, 2, 'doRefresh should be invoked on retry');
+  assert.equal(refreshed.tokens.accessToken, 'token-retry');
+  assert.equal(mgr.current?.tokens.accessToken, 'token-retry');
+
+  mgr.dispose();
+});
