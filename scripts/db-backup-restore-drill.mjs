@@ -304,9 +304,9 @@ export function resolvePgTooling(options = {}) {
   if (hasRequiredNativeTools) {
     return {
       type: 'native',
-      runDump: (args, env) => execFileSync('pg_dump', args, { env: { ...process.env, ...env }, stdio: 'pipe' }),
-      runRestore: (args, env) => execFileSync('pg_restore', args, { env: { ...process.env, ...env }, stdio: 'pipe' }),
-      runPsql: (args, env) => execFileSync('psql', args, { env: { ...process.env, ...env }, stdio: 'pipe' }),
+      runDump: (args, env) => execSyncFn('pg_dump', args, { env: { ...process.env, ...env }, stdio: 'pipe' }),
+      runRestore: (args, env) => execSyncFn('pg_restore', args, { env: { ...process.env, ...env }, stdio: 'pipe' }),
+      runPsql: (args, env) => execSyncFn('psql', args, { env: { ...process.env, ...env }, stdio: 'pipe' }),
     };
   }
 
@@ -339,7 +339,7 @@ export function resolvePgTooling(options = {}) {
         dockerArgs.push('--net=host');
       }
       dockerArgs.push(dockerImage, 'pg_dump', ...args);
-      return execFileSync('docker', dockerArgs, { env: { ...process.env, ...env }, stdio: 'pipe' });
+      return execSyncFn('docker', dockerArgs, { env: { ...process.env, ...env }, stdio: 'pipe' });
     },
     runRestore: (args, env, mountDir) => {
       const dockerArgs = ['run', '--rm'];
@@ -352,7 +352,7 @@ export function resolvePgTooling(options = {}) {
         dockerArgs.push('--net=host');
       }
       dockerArgs.push(dockerImage, 'pg_restore', ...args);
-      return execFileSync('docker', dockerArgs, { env: { ...process.env, ...env }, stdio: 'pipe' });
+      return execSyncFn('docker', dockerArgs, { env: { ...process.env, ...env }, stdio: 'pipe' });
     },
     runPsql: (args, env, mountDir) => {
       const dockerArgs = ['run', '--rm'];
@@ -365,9 +365,31 @@ export function resolvePgTooling(options = {}) {
         dockerArgs.push('--net=host');
       }
       dockerArgs.push(dockerImage, 'psql', ...args);
-      return execFileSync('docker', dockerArgs, { env: { ...process.env, ...env }, stdio: 'pipe' });
+      return execSyncFn('docker', dockerArgs, { env: { ...process.env, ...env }, stdio: 'pipe' });
     },
   };
+}
+
+/**
+ * Parse pg_restore errors to distinguish harmless drop-if-not-exists warnings from real failures.
+ */
+export function parsePgRestoreError(err) {
+  const status = err?.status ?? err?.code;
+  if (status === 1 || err?.message?.includes('exit code 1')) {
+    const stderrStr = err?.stderr ? err.stderr.toString().trim() : '';
+    if (stderrStr) {
+      const lines = stderrStr.split('\n');
+      const hasRealError = lines.some(line => {
+        return line.includes('pg_restore: error:') && !/does not exist|no existe/i.test(line);
+      });
+      if (hasRealError) {
+        throw err;
+      }
+      return stderrStr;
+    }
+    return '';
+  }
+  throw err;
 }
 
 /**
@@ -891,13 +913,8 @@ export async function runBackupRestoreDrill(options = {}) {
         try {
           tooling.runRestore(restoreArgs, { PGPASSWORD: parsedTarget.password, ...parsedTarget.sslParams });
         } catch (err) {
-          // pg_restore may exit with status 1 for non-critical warnings on drops of non-existent objects
-          const status = err?.status ?? err?.code;
-          if (status === 1 || err?.message?.includes('exit code 1')) {
-            if (err?.stderr) log(`pg_restore notice: ${err.stderr.toString().trim()}`);
-          } else {
-            throw err;
-          }
+          const notice = parsePgRestoreError(err);
+          if (notice) log(`pg_restore notice: ${notice}`);
         }
       } else {
         const psqlArgs = [
@@ -930,12 +947,8 @@ export async function runBackupRestoreDrill(options = {}) {
         try {
           tooling.runRestore(restoreArgs, { PGPASSWORD: parsedTarget.password, ...parsedTarget.sslParams }, backupDir);
         } catch (err) {
-          const status = err?.status ?? err?.code;
-          if (status === 1 || err?.message?.includes('exit code 1')) {
-            if (err?.stderr) log(`pg_restore notice: ${err.stderr.toString().trim()}`);
-          } else {
-            throw err;
-          }
+          const notice = parsePgRestoreError(err);
+          if (notice) log(`pg_restore notice: ${notice}`);
         }
       } else {
         const psqlArgs = [

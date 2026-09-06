@@ -28,6 +28,7 @@ import {
   resolvePgTooling,
   CRITICAL_APPLICATION_TABLES,
   REQUIRED_EXTENSIONS,
+  parsePgRestoreError,
 } from '../db-backup-restore-drill.mjs';
 
 test('security: sanitizeDatabaseUrl masks plaintext passwords in postgres URLs', () => {
@@ -585,6 +586,60 @@ test('tooling: resolvePgTooling accepts options and detects native or docker run
 
   const plainTooling = resolvePgTooling({ format: 'plain', execSyncFn: mockExec });
   assert.ok(plainTooling.type === 'native' || plainTooling.type === 'docker');
+});
+
+test('pg_restore: parsePgRestoreError treats "does not exist" warnings as benign', () => {
+  const err = new Error('Command failed: pg_restore exit code 1');
+  err.status = 1;
+  err.stderr = Buffer.from(
+    'pg_restore: warning: errors ignored on restore: 1\n' +
+    'pg_restore: error: could not execute query: ERROR:  schema "public" does not exist\n' +
+    'pg_restore: error: could not execute query: ERROR:  role "postgres" does not exist'
+  );
+  
+  const notice = parsePgRestoreError(err);
+  assert.ok(notice.includes('does not exist'));
+});
+
+test('pg_restore: parsePgRestoreError throws on real errors', () => {
+  const err = new Error('Command failed: pg_restore exit code 1');
+  err.status = 1;
+  err.stderr = Buffer.from(
+    'pg_restore: warning: errors ignored on restore: 1\n' +
+    'pg_restore: error: could not execute query: ERROR:  syntax error at or near "SELECT"\n' +
+    'pg_restore: error: could not execute query: ERROR:  role "postgres" does not exist'
+  );
+  
+  assert.throws(() => parsePgRestoreError(err), /Command failed/);
+});
+
+test('verification engine: checks REQUIRED_EXTENSIONS even when not present in source baseline', async () => {
+  const sourceBaseline = {
+    extensions: [], // Missing from source!
+    migrations: [{ version: 1, name: '0001_init.sql', checksum: 'abc', state: 'applied' }],
+    tables: ['schema_migrations', 'users'],
+    rowCounts: { schema_migrations: 1, users: 1 },
+    sampleData: {},
+  };
+
+  // Mock target database pool where required extension "vector" is missing
+  const mockTargetPool = {
+    async connect() { return { query: this.query, release: () => {} }; },
+    async query(text) {
+      if (text.includes('pg_extension')) {
+        return { rows: [{ extname: 'citext', extversion: '1.6' }] }; // "vector" missing
+      }
+      return { rows: [] };
+    },
+  };
+
+  await assert.rejects(
+    () => verifyRestoredDatabase(sourceBaseline, mockTargetPool),
+    (err) => {
+      assert.match(err.message, /Missing required extension in restored database: vector/);
+      return true;
+    },
+  );
 });
 
 test(
