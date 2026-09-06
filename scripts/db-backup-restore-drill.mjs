@@ -659,13 +659,17 @@ export async function runBackupRestoreDrill(options = {}) {
   };
 
   const parsedSource = parseDatabaseUrl(options.sourceUrl);
-  const parsedTarget = parseDatabaseUrl(options.targetUrl);
+  const targetUrl = options.targetUrl || urlWithDatabase(
+    options.sourceUrl,
+    `${parsedSource.database}_backup_drill_restore_${Date.now()}_${Math.floor(Math.random() * 0xffff).toString(16)}`,
+  );
+  const parsedTarget = parseDatabaseUrl(targetUrl);
 
   report.source = sanitizeDatabaseUrl(options.sourceUrl);
-  report.target = sanitizeDatabaseUrl(options.targetUrl);
+  report.target = sanitizeDatabaseUrl(targetUrl);
 
   // Validate isolation
-  validateTargetIsolation(options.sourceUrl, options.targetUrl, {
+  validateTargetIsolation(options.sourceUrl, targetUrl, {
     allowCustomTargetName: options.allowCustomTargetName,
   });
 
@@ -740,13 +744,13 @@ export async function runBackupRestoreDrill(options = {}) {
 
     // 5. Create isolated target database
     log(`Provisioning isolated target database "${parsedTarget.database}"...`);
-    const adminUrl = urlWithDatabase(options.sourceUrl, 'postgres');
+    const adminUrl = urlWithDatabase(targetUrl, 'postgres');
     adminClient = new Client({ connectionString: adminUrl });
     try {
       await adminClient.connect();
     } catch {
       // Try template1 if postgres db is not accessible
-      adminClient = new Client({ connectionString: urlWithDatabase(options.sourceUrl, 'template1') });
+      adminClient = new Client({ connectionString: urlWithDatabase(targetUrl, 'template1') });
       await adminClient.connect();
     }
 
@@ -770,8 +774,13 @@ export async function runBackupRestoreDrill(options = {}) {
         try {
           tooling.runRestore(restoreArgs, { PGPASSWORD: parsedTarget.password });
         } catch (err) {
-          // pg_restore may exit with non-critical warnings on drops of non-existent objects
-          if (!err.message?.includes('exit code 1')) throw err;
+          // pg_restore may exit with status 1 for non-critical warnings on drops of non-existent objects
+          const status = err?.status ?? err?.code;
+          if (status === 1 || err?.message?.includes('exit code 1')) {
+            if (err?.stderr) log(`pg_restore notice: ${err.stderr.toString().trim()}`);
+          } else {
+            throw err;
+          }
         }
       } else {
         const psqlArgs = [
@@ -803,7 +812,12 @@ export async function runBackupRestoreDrill(options = {}) {
         try {
           tooling.runRestore(restoreArgs, { PGPASSWORD: parsedTarget.password }, backupDir);
         } catch (err) {
-          if (!err.message?.includes('exit code 1')) throw err;
+          const status = err?.status ?? err?.code;
+          if (status === 1 || err?.message?.includes('exit code 1')) {
+            if (err?.stderr) log(`pg_restore notice: ${err.stderr.toString().trim()}`);
+          } else {
+            throw err;
+          }
         }
       } else {
         const psqlArgs = [
@@ -822,7 +836,7 @@ export async function runBackupRestoreDrill(options = {}) {
     // 7. Verify restored database
     log('Running comprehensive structural and functional verification...');
     const verifyStart = Date.now();
-    targetPool = new Pool({ connectionString: options.targetUrl, max: 2 });
+    targetPool = new Pool({ connectionString: targetUrl, max: 2 });
     const verifyResult = await verifyRestoredDatabase(sourceBaseline, targetPool, options);
     report.timings.verifyMs = Date.now() - verifyStart;
     report.checks = verifyResult.checks;

@@ -516,12 +516,20 @@ test('cli: parseArgs parses options, flags, and environment fallbacks', () => {
 });
 
 test('cli: parseArgs defaults to safe isolated target when not specified', () => {
-  const parsed = parseArgs(['--source-url', 'postgres://u:p@localhost:5432/gambit']);
-  assert.equal(parsed.sourceUrl, 'postgres://u:p@localhost:5432/gambit');
-  assert.match(parsed.targetUrl, /^postgres:\/\/u:p@localhost:5432\/gambit_backup_drill_restore_\d+_[a-f0-9]+$/);
-  assert.equal(parsed.keepBackup, false);
-  assert.equal(parsed.keepTarget, false);
-  assert.equal(parsed.format, 'custom');
+  const originalEnv = process.env.BACKUP_DRILL_TARGET_URL;
+  delete process.env.BACKUP_DRILL_TARGET_URL;
+  try {
+    const parsed = parseArgs(['--source-url', 'postgres://u:p@localhost:5432/gambit']);
+    assert.equal(parsed.sourceUrl, 'postgres://u:p@localhost:5432/gambit');
+    assert.match(parsed.targetUrl, /^postgres:\/\/u:p@localhost:5432\/gambit_backup_drill_restore_\d+_[a-f0-9]+$/);
+    assert.equal(parsed.keepBackup, false);
+    assert.equal(parsed.keepTarget, false);
+    assert.equal(parsed.format, 'custom');
+  } finally {
+    if (originalEnv !== undefined) {
+      process.env.BACKUP_DRILL_TARGET_URL = originalEnv;
+    }
+  }
 });
 
 test(
