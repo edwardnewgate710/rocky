@@ -282,7 +282,14 @@ export class AuthService {
     throw HttpError.unauthorized('refresh token has been revoked');
   }
 
-  /** Rotate a refresh token, detecting reuse of an already-rotated token. */
+  /**
+   * Rotate a refresh token, detecting reuse of an already-rotated token.
+   *
+   * Concurrent state transitions are explicitly handled:
+   * - A grace period applies to newly rotated sessions to tolerate benign races (e.g. multi-tab refresh).
+   * - Presentations outside the grace window trigger the full session chain burn (reuse detection).
+   * - If a session was explicitly logged out, a concurrent refresh attempt correctly throws 401 without burning all sessions.
+   */
   async refresh(refreshToken: string, meta: RequestMeta): Promise<AuthResult> {
     const hash = hashRefreshToken(refreshToken);
     const session = await this.repos.sessions.findByRefreshHash(hash);

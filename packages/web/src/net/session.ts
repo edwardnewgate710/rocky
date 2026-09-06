@@ -352,6 +352,12 @@ export class SessionManager {
    * Refresh the session now, coalescing concurrent callers onto one in-flight
    * refresh. On failure the local session is cleared and the error rethrown.
    *
+   * Concurrent state transitions:
+   * - If the manager adopts a newer session while the refresh is in flight, the
+   *   in-flight refresh result is discarded to prevent stale overwrite.
+   * - A failed refresh checks if a valid successor was adopted concurrently. If so,
+   *   the session is preserved instead of being cleared.
+   *
    * M12 inc 2: The refresh token is passed from the in-memory session if
    * available, but the browser flow relies on the httpOnly cookie (the
    * `RefreshFn` sends `credentials: 'include'` so the cookie is attached

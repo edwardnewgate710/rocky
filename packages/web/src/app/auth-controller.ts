@@ -265,6 +265,7 @@ export class AuthController {
    * Clear local controller session state, storage, and notify UI subscribers without
    * invoking `SessionManager.reset()`.
    *
+   * Concurrent state transitions:
    * Used when `SessionManager` has already cleared or invalidated its own session state
    * (e.g. via `onInvalidated` or `onReset`) so that the controller does not re-trigger
    * `SessionManager.reset()` and inadvertently broadcast a secondary `session_reset`
@@ -292,6 +293,7 @@ export class AuthController {
   /**
    * Adopt user identity into local controller state and notify UI subscribers.
    *
+   * Concurrent state transitions:
    * Deduplicates by checking whether the controller already holds the exact same user
    * session (matching handle and userId). This prevents duplicate `onSessionChange` events,
    * redundant storage persistence, and unnecessary downstream UI re-renders when:
