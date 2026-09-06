@@ -412,6 +412,7 @@ export class BoardView {
     const legal = new Set(hl.legal);
     const premove = new Set(hl.premove);
     const last = new Set<Square>(hl.lastMove ?? []);
+    const lastMoveTo = hl.lastMove ? hl.lastMove[1] : null;
     const ranks = ranksForOrientation(this.orientation);
     const files = filesForOrientation(this.orientation);
     this.focusedSquare ??= toSquare(files[0]!, ranks[0]!);
@@ -462,7 +463,7 @@ export class BoardView {
           descAttr = ' aria-description="premove"';
         }
 
-        const currentAttr = last.has(sq) ? ' aria-current="true"' : '';
+        const currentAttr = sq === lastMoveTo ? ' aria-current="true"' : '';
 
         cellElements.push(
           `<div class="${classes.join(' ')}" role="gridcell" data-square="${sq}" aria-label="${label}" aria-selected="${sq === hl.selected}" aria-rowindex="${rowIndex}" aria-colindex="${colIndex}" tabindex="${sq === this.focusedSquare ? '0' : '-1'}"${descAttr}${currentAttr}>${rankCoordinate}${fileCoordinate}${inner}</div>`,

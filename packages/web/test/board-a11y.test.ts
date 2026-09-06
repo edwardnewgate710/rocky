@@ -418,7 +418,7 @@ test('capture destination announces piece identity with capture description', ()
   assert.equal(d5.getAttribute('aria-description'), 'capture', 'capture announced via aria-description');
 });
 
-test('last move squares declare semantic state', () => {
+test('last move squares declare semantic state with aria-current only on destination', () => {
   const { root, view } = createHarness();
   view.setLastMove('e2' as Square, 'e4' as Square);
 
@@ -427,8 +427,13 @@ test('last move squares declare semantic state', () => {
   assert.ok(e2);
   assert.ok(e4);
 
-  assert.equal(e2.getAttribute('aria-current'), 'true');
-  assert.equal(e4.getAttribute('aria-current'), 'true');
+  // Both squares carry the last-move highlight and description
+  assert.equal(e2.getAttribute('aria-description'), 'last move');
+  assert.equal(e4.getAttribute('aria-description'), 'last move');
+
+  // WAI-ARIA / MDN: Only the destination square represents the current piece position
+  assert.equal(e2.hasAttribute('aria-current'), false, 'origin square must not have aria-current');
+  assert.equal(e4.getAttribute('aria-current'), 'true', 'destination square must have aria-current="true"');
 
   const e3 = root.querySelector('[data-square="e3"]');
   assert.ok(e3);
@@ -575,8 +580,10 @@ test('promotion overlay announces accessible dialog and full piece labels', () =
     assert.equal(buttons[3]?.getAttribute('aria-label'), 'Promote to knight');
     assert.equal(buttons[4]?.getAttribute('aria-label'), 'Cancel promotion');
   } finally {
-    if (prevDoc) {
+    if (prevDoc !== undefined) {
       Object.defineProperty(globalThis, 'document', { configurable: true, value: prevDoc });
+    } else {
+      Reflect.deleteProperty(globalThis, 'document');
     }
   }
 });
