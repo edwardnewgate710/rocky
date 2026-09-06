@@ -54,53 +54,53 @@ test('security: sanitizeDatabaseUrl handles non-URL strings and errors safely', 
   assert.equal(sanitizeDatabaseUrl(''), '');
 });
 
-test('isolation: validateTargetIsolation rejects when target URL matches source URL', () => {
+test('isolation: validateTargetIsolation rejects when target URL matches source URL', async () => {
   const source = 'postgres://gambit:pass@localhost:5432/gambit';
   const target = 'postgres://gambit:pass@localhost:5432/gambit';
 
-  assert.throws(
-    () => validateTargetIsolation(source, target),
+  await assert.rejects(
+    async () => await validateTargetIsolation(source, target),
     /Target database URL must not be identical to source database URL/,
   );
 });
 
-test('isolation: validateTargetIsolation rejects when source and target have identical DB name on same host/port', () => {
+test('isolation: validateTargetIsolation rejects when source and target have identical DB name on same host/port', async () => {
   const source = 'postgres://gambit:pass1@localhost:5432/gambit';
   const target = 'postgres://gambit_admin:pass2@localhost:5432/gambit';
 
-  assert.throws(
-    () => validateTargetIsolation(source, target),
+  await assert.rejects(
+    async () => await validateTargetIsolation(source, target),
     /Target database name "gambit" matches source database name on the same host/,
   );
 });
 
-test('isolation: validateTargetIsolation rejects dangerous production or system databases as target', () => {
+test('isolation: validateTargetIsolation rejects dangerous production or system databases as target', async () => {
   const source = 'postgres://gambit:pass@localhost:5432/source_test';
   for (const dangerous of ['gambit', 'postgres', 'template1', 'template0', 'production']) {
     const target = `postgres://gambit:pass@localhost:5432/${dangerous}`;
-    assert.throws(
-      () => validateTargetIsolation(source, target),
+    await assert.rejects(
+    async () => await validateTargetIsolation(source, target),
       /Target database name .* is a protected or non-isolated database/,
     );
   }
 });
 
-test('isolation: validateTargetIsolation rejects target names without isolated naming markers unless explicitly allowed', () => {
+test('isolation: validateTargetIsolation rejects target names without isolated naming markers unless explicitly allowed', async () => {
   const source = 'postgres://gambit:pass@localhost:5432/gambit';
   const target = 'postgres://gambit:pass@localhost:5432/arbitrary_name';
 
-  assert.throws(
-    () => validateTargetIsolation(source, target, { allowCustomTargetName: false }),
+  await assert.rejects(
+    async () => await validateTargetIsolation(source, target, { allowCustomTargetName: false }),
     /Target database name "arbitrary_name" does not contain an isolated drill marker/,
   );
 
   // When explicitly permitted via allowCustomTargetName flag
-  const result = validateTargetIsolation(source, target, { allowCustomTargetName: true });
+  const result = await validateTargetIsolation(source, target, { allowCustomTargetName: true });
   assert.equal(result.isolated, true);
   assert.equal(result.targetDbName, 'arbitrary_name');
 });
 
-test('isolation: validateTargetIsolation accepts valid isolated database names', () => {
+test('isolation: validateTargetIsolation accepts valid isolated database names', async () => {
   const source = 'postgres://gambit:pass@localhost:5432/gambit';
   const validTargets = [
     'gambit_backup_drill_restore',
@@ -112,33 +112,43 @@ test('isolation: validateTargetIsolation accepts valid isolated database names',
 
   for (const name of validTargets) {
     const target = `postgres://gambit:pass@localhost:5432/${name}`;
-    const validated = validateTargetIsolation(source, target);
+    const validated = await validateTargetIsolation(source, target);
     assert.equal(validated.isolated, true);
     assert.equal(validated.targetDbName, name);
   }
 });
 
-test('isolation: generateIsolatedDbName generates prefixed unique name', () => {
+test('isolation: generateIsolatedDbName generates prefixed unique name', async () => {
   const name1 = generateIsolatedDbName('gambit');
   const name2 = generateIsolatedDbName('gambit');
   assert.match(name1, /^gambit_backup_drill_restore_\d+_[a-f0-9]+$/);
   assert.notEqual(name1, name2);
 });
 
-test('backup validation: validateBackupFile rejects non-existent file', () => {
+test('isolation: validateTargetIsolation rejects malicious injection payloads in target URL', async () => {
+  const source = 'postgres://gambit:pass@localhost:5432/gambit';
+  const maliciousTarget = 'postgres://gambit:pass@localhost:5432/test" OR 1=1; DROP DATABASE production; --';
+  
+  await assert.rejects(
+    async () => await validateTargetIsolation(source, maliciousTarget, { allowCustomTargetName: true }),
+    /Invalid target database name format/
+  );
+});
+
+test('backup validation: validateBackupFile rejects non-existent file', async () => {
   const nonExistent = join(tmpdir(), 'non-existent-backup-file-12345.dump');
-  assert.throws(
-    () => validateBackupFile(nonExistent, 'custom'),
+  await assert.rejects(
+    async () => await validateBackupFile(nonExistent, 'custom'),
     /Backup file does not exist/,
   );
 });
 
-test('backup validation: validateBackupFile rejects 0-byte empty file', () => {
+test('backup validation: validateBackupFile rejects 0-byte empty file', async () => {
   const emptyFile = join(tmpdir(), `test-empty-backup-${Date.now()}.dump`);
   writeFileSync(emptyFile, Buffer.alloc(0));
   try {
-    assert.throws(
-      () => validateBackupFile(emptyFile, 'custom'),
+    await assert.rejects(
+      async () => await validateBackupFile(emptyFile, 'custom'),
       /Backup file is empty \(0 bytes\)/,
     );
   } finally {
@@ -146,12 +156,12 @@ test('backup validation: validateBackupFile rejects 0-byte empty file', () => {
   }
 });
 
-test('backup validation: validateBackupFile rejects corrupted custom format archive without PGDMP header', () => {
+test('backup validation: validateBackupFile rejects corrupted custom format archive without PGDMP header', async () => {
   const corruptFile = join(tmpdir(), `test-corrupt-backup-${Date.now()}.dump`);
   writeFileSync(corruptFile, Buffer.from('NOT_A_VALID_PG_DUMP_HEADER'));
   try {
-    assert.throws(
-      () => validateBackupFile(corruptFile, 'custom'),
+    await assert.rejects(
+      async () => await validateBackupFile(corruptFile, 'custom'),
       /Invalid custom-format backup: missing PostgreSQL dump magic header "PGDMP"/,
     );
   } finally {
@@ -159,12 +169,12 @@ test('backup validation: validateBackupFile rejects corrupted custom format arch
   }
 });
 
-test('backup validation: validateBackupFile accepts valid custom format archive with PGDMP header', () => {
+test('backup validation: validateBackupFile accepts valid custom format archive with PGDMP header', async () => {
   const validFile = join(tmpdir(), `test-valid-backup-${Date.now()}.dump`);
   const header = Buffer.from('PGDMP\x01\x10\x00\x01');
   writeFileSync(validFile, header);
   try {
-    const meta = validateBackupFile(validFile, 'custom');
+    const meta = await validateBackupFile(validFile, 'custom');
     assert.equal(meta.valid, true);
     assert.equal(meta.sizeBytes, header.length);
     assert.equal(typeof meta.sha256, 'string');
@@ -185,6 +195,7 @@ test('verification engine: detects missing extensions in restored database', asy
 
   // Mock target database pool missing the 'vector' extension
   const mockTargetPool = {
+    async connect() { return { query: this.query, release: () => {} }; },
     async query(text, params) {
       if (text.includes('pg_extension')) {
         return { rows: [{ extname: 'citext', extversion: '1.6' }] };
@@ -213,6 +224,7 @@ test('verification engine: detects missing schema_migrations table', async () =>
 
   // Mock target where schema_migrations table does not exist
   const mockTargetPool = {
+    async connect() { return { query: this.query, release: () => {} }; },
     async query(text, params) {
       if (text.includes('pg_extension')) {
         return { rows: [{ extname: 'citext' }, { extname: 'vector' }] };
@@ -247,6 +259,7 @@ test('verification engine: detects missing schema_migrations table or count mism
 
   // Mock target where only migration 1 is present
   const mockTargetPool = {
+    async connect() { return { query: this.query, release: () => {} }; },
     async query(text, params) {
       if (text.includes('pg_extension')) {
         return { rows: [{ extname: 'citext' }, { extname: 'vector' }] };
@@ -283,6 +296,7 @@ test('verification engine: detects corrupted or modified migration checksum in r
 
   // Mock target where migration 1 has altered checksum
   const mockTargetPool = {
+    async connect() { return { query: this.query, release: () => {} }; },
     async query(text, params) {
       if (text.includes('pg_extension')) {
         return { rows: [{ extname: 'citext' }, { extname: 'vector' }] };
@@ -300,7 +314,7 @@ test('verification engine: detects corrupted or modified migration checksum in r
   await assert.rejects(
     () => verifyRestoredDatabase(sourceBaseline, mockTargetPool),
     (err) => {
-      assert.match(err.message, /Migration 1 checksum mismatch/);
+      assert.match(err.message, /Migration 1 mismatch/);
       return true;
     },
   );
@@ -317,6 +331,7 @@ test('verification engine: detects missing tables in restored database', async (
 
   // Mock target where 'tournaments' table is missing
   const mockTargetPool = {
+    async connect() { return { query: this.query, release: () => {} }; },
     async query(text, params) {
       if (text.includes('pg_extension')) {
         return { rows: [{ extname: 'citext' }, { extname: 'vector' }] };
@@ -354,6 +369,7 @@ test('verification engine: detects row count mismatch in critical tables', async
 
   // Mock target where game_events only has 90 rows restored (incomplete restore!)
   const mockTargetPool = {
+    async connect() { return { query: this.query, release: () => {} }; },
     async query(text, params) {
       if (text.includes('pg_extension')) {
         return { rows: [{ extname: 'citext' }, { extname: 'vector' }] };
@@ -365,7 +381,7 @@ test('verification engine: detects row count mismatch in critical tables', async
         return { rows: [{ version: 1, name: '0001_init.sql', checksum: 'abc', state: 'applied' }] };
       }
       if (text.includes('information_schema.tables') || text.includes('pg_tables')) {
-        return { rows: [{ tablename: 'schema_migrations' }, { tablename: 'users' }, { tablename: 'game_events' }] };
+        return { rows: [...CRITICAL_APPLICATION_TABLES.map(t => ({ tablename: t })), ...CRITICAL_APPLICATION_TABLES.map(t => ({ tablename: t }))] };
       }
       if (text.includes('COUNT(*) FROM "users"') || text.includes('COUNT(*) AS count FROM "users"')) {
         return { rows: [{ count: '5' }] };
@@ -400,6 +416,7 @@ test('verification engine: detects missing or inactive append-only trigger on ga
 
   // Mock target where table exists and row count matches, but trigger probe does NOT throw
   const mockTargetPool = {
+    async connect() { return { query: this.query, release: () => {} }; },
     async query(text, params) {
       if (text.includes('pg_extension')) {
         return { rows: [{ extname: 'citext' }, { extname: 'vector' }] };
@@ -411,7 +428,7 @@ test('verification engine: detects missing or inactive append-only trigger on ga
         return { rows: [{ version: 1, name: '0001_init.sql', checksum: 'abc', state: 'applied' }] };
       }
       if (text.includes('information_schema.tables') || text.includes('pg_tables')) {
-        return { rows: [{ tablename: 'schema_migrations' }, { tablename: 'users' }, { tablename: 'game_events' }] };
+        return { rows: [...CRITICAL_APPLICATION_TABLES.map(t => ({ tablename: t })), ...CRITICAL_APPLICATION_TABLES.map(t => ({ tablename: t }))] };
       }
       if (text.includes('COUNT(*)')) {
         return { rows: [{ count: '1' }] };
@@ -446,6 +463,7 @@ test('verification engine: passes when all structural and functional checks succ
   };
 
   const mockTargetPool = {
+    async connect() { return { query: this.query, release: () => {} }; },
     async query(text, params) {
       if (text.includes('pg_extension')) {
         return { rows: [{ extname: 'citext' }, { extname: 'vector' }] };
@@ -458,12 +476,7 @@ test('verification engine: passes when all structural and functional checks succ
       }
       if (text.includes('information_schema.tables') || text.includes('pg_tables')) {
         return {
-          rows: [
-            { tablename: 'schema_migrations' },
-            { tablename: 'users' },
-            { tablename: 'game_events' },
-            { tablename: 'variants' },
-          ],
+          rows: CRITICAL_APPLICATION_TABLES.map(t => ({ tablename: t })),
         };
       }
       if (text.includes('COUNT(*)')) {
@@ -483,7 +496,7 @@ test('verification engine: passes when all structural and functional checks succ
         throw error;
       }
       if (text.includes('search_embeddings')) {
-        return { rows: [] };
+        return { rows: [{ index_name: 'search_embeddings_hnsw_idx', access_method: 'hnsw' }] };
       }
       return { rows: [] };
     },
@@ -534,13 +547,15 @@ test('cli: parseArgs defaults to safe isolated target when not specified', () =>
 });
 
 test('tooling: resolvePgTooling accepts options and detects native or docker runner', () => {
-  const customTooling = resolvePgTooling({ format: 'custom' });
+  const mockExec = (cmd, args) => { return Buffer.from('mock version'); };
+  
+  const customTooling = resolvePgTooling({ format: 'custom', execSyncFn: mockExec });
   assert.ok(customTooling.type === 'native' || customTooling.type === 'docker');
   assert.equal(typeof customTooling.runDump, 'function');
   assert.equal(typeof customTooling.runRestore, 'function');
   assert.equal(typeof customTooling.runPsql, 'function');
 
-  const plainTooling = resolvePgTooling({ format: 'plain' });
+  const plainTooling = resolvePgTooling({ format: 'plain', execSyncFn: mockExec });
   assert.ok(plainTooling.type === 'native' || plainTooling.type === 'docker');
 });
 

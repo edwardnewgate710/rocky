@@ -52,10 +52,12 @@
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, statSync, unlinkSync, readFileSync, openSync, readSync, closeSync } from 'node:fs';
+import { existsSync, statSync, unlinkSync, readFileSync, openSync, readSync, closeSync, createReadStream } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { lookup } from 'node:dns/promises';
+import { pipeline } from 'node:stream/promises';
 import pg from 'pg';
 
 const { Pool, Client } = pg;
@@ -126,12 +128,16 @@ export function generateIsolatedDbName(base = 'gambit') {
   return `${base}_backup_drill_restore_${timestamp}_${random}`;
 }
 
-/**
- * Parse a PostgreSQL connection string into host, port, user, password, and database.
- */
 export function parseDatabaseUrl(urlString) {
   const parsed = new URL(urlString);
   const dbName = parsed.pathname.replace(/^\//, '') || 'postgres';
+  const sslParams = {};
+  for (const [key, value] of parsed.searchParams.entries()) {
+    if (key.startsWith('ssl')) {
+      const envKey = 'PG' + key.toUpperCase();
+      sslParams[envKey] = value;
+    }
+  }
   return {
     host: parsed.hostname || 'localhost',
     port: parsed.port ? parseInt(parsed.port, 10) : 5432,
@@ -139,6 +145,7 @@ export function parseDatabaseUrl(urlString) {
     password: decodeURIComponent(parsed.password || ''),
     database: decodeURIComponent(dbName),
     searchParams: parsed.searchParams,
+    sslParams,
     protocol: parsed.protocol,
   };
 }
@@ -155,7 +162,7 @@ export function urlWithDatabase(urlString, databaseName) {
 /**
  * Enforce target isolation guardrails to guarantee the drill cannot overwrite or drop source/production DBs.
  */
-export function validateTargetIsolation(sourceUrl, targetUrl, options = {}) {
+export async function validateTargetIsolation(sourceUrl, targetUrl, options = {}) {
   if (!sourceUrl) {
     throw new Error('Source database URL is required');
   }
@@ -165,6 +172,10 @@ export function validateTargetIsolation(sourceUrl, targetUrl, options = {}) {
 
   const source = parseDatabaseUrl(sourceUrl);
   const target = parseDatabaseUrl(targetUrl);
+  
+  if (!/^[a-zA-Z0-9_-]+$/.test(target.database)) {
+    throw new Error('Invalid target database name format');
+  }
 
   // 1. URLs must not be identical
   if (sourceUrl.trim() === targetUrl.trim()) {
@@ -173,9 +184,20 @@ export function validateTargetIsolation(sourceUrl, targetUrl, options = {}) {
     );
   }
 
+  const resolveHost = async (host) => {
+    try {
+      return (await lookup(host)).address;
+    } catch {
+      return host;
+    }
+  };
+
+  const sourceIp = await resolveHost(source.host);
+  const targetIp = await resolveHost(target.host);
+
   // 2. Target must not target the same database on the same host/port
   if (
-    source.host.toLowerCase() === target.host.toLowerCase() &&
+    sourceIp === targetIp &&
     source.port === target.port &&
     source.database.toLowerCase() === target.database.toLowerCase()
   ) {
@@ -208,7 +230,7 @@ export function validateTargetIsolation(sourceUrl, targetUrl, options = {}) {
 /**
  * Validate a backup file's existence, size, header magic, and digest.
  */
-export function validateBackupFile(filePath, format = 'custom') {
+export async function validateBackupFile(filePath, format = 'custom') {
   if (!existsSync(filePath)) {
     throw new Error(`Backup file does not exist: ${filePath}`);
   }
@@ -238,8 +260,9 @@ export function validateBackupFile(filePath, format = 'custom') {
   }
 
   // Compute SHA-256 digest
-  const fileBytes = readFileSync(filePath);
-  const sha256 = createHash('sha256').update(fileBytes).digest('hex');
+  const hash = createHash('sha256');
+  await pipeline(createReadStream(filePath), hash);
+  const sha256 = hash.digest('hex');
 
   return {
     valid: true,
@@ -249,10 +272,8 @@ export function validateBackupFile(filePath, format = 'custom') {
   };
 }
 
-/**
- * Inspect installed PostgreSQL tools or fallback to Docker.
- */
 export function resolvePgTooling(options = {}) {
+  const execSyncFn = options.execSyncFn || execFileSync;
   const forceDocker = options.useDocker === true || options.useDocker === 'true';
   const dockerImage = options.dockerImage || 'pgvector/pgvector:pg16';
 
@@ -262,15 +283,15 @@ export function resolvePgTooling(options = {}) {
 
   if (!forceDocker) {
     try {
-      execFileSync('pg_dump', ['--version'], { stdio: 'ignore' });
+      execSyncFn('pg_dump', ['--version'], { stdio: 'ignore' });
       hasNativePgDump = true;
     } catch {}
     try {
-      execFileSync('pg_restore', ['--version'], { stdio: 'ignore' });
+      execSyncFn('pg_restore', ['--version'], { stdio: 'ignore' });
       hasNativePgRestore = true;
     } catch {}
     try {
-      execFileSync('psql', ['--version'], { stdio: 'ignore' });
+      execSyncFn('psql', ['--version'], { stdio: 'ignore' });
       hasNativePsql = true;
     } catch {}
   }
@@ -292,7 +313,7 @@ export function resolvePgTooling(options = {}) {
   // Fallback: Check if Docker is available
   let hasDocker = false;
   try {
-    execFileSync('docker', ['--version'], { stdio: 'ignore' });
+    execSyncFn('docker', ['--version'], { stdio: 'ignore' });
     hasDocker = true;
   } catch {}
 
@@ -308,34 +329,43 @@ export function resolvePgTooling(options = {}) {
     dockerImage,
     runDump: (args, env, mountDir) => {
       const dockerArgs = ['run', '--rm'];
-      if (env.PGPASSWORD) dockerArgs.push('-e', `PGPASSWORD=${env.PGPASSWORD}`);
+      if (env.PGPASSWORD) dockerArgs.push('-e', 'PGPASSWORD');
+      for (const key of Object.keys(env)) {
+        if (key.startsWith('PGSSL')) dockerArgs.push('-e', key);
+      }
       if (mountDir) dockerArgs.push('-v', `${mountDir}:/work`);
       // Network host so it can reach localhost postgres
       if (process.platform === 'linux') {
         dockerArgs.push('--net=host');
       }
       dockerArgs.push(dockerImage, 'pg_dump', ...args);
-      return execFileSync('docker', dockerArgs, { stdio: 'pipe' });
+      return execFileSync('docker', dockerArgs, { env: { ...process.env, ...env }, stdio: 'pipe' });
     },
     runRestore: (args, env, mountDir) => {
       const dockerArgs = ['run', '--rm'];
-      if (env.PGPASSWORD) dockerArgs.push('-e', `PGPASSWORD=${env.PGPASSWORD}`);
+      if (env.PGPASSWORD) dockerArgs.push('-e', 'PGPASSWORD');
+      for (const key of Object.keys(env)) {
+        if (key.startsWith('PGSSL')) dockerArgs.push('-e', key);
+      }
       if (mountDir) dockerArgs.push('-v', `${mountDir}:/work`);
       if (process.platform === 'linux') {
         dockerArgs.push('--net=host');
       }
       dockerArgs.push(dockerImage, 'pg_restore', ...args);
-      return execFileSync('docker', dockerArgs, { stdio: 'pipe' });
+      return execFileSync('docker', dockerArgs, { env: { ...process.env, ...env }, stdio: 'pipe' });
     },
     runPsql: (args, env, mountDir) => {
       const dockerArgs = ['run', '--rm'];
-      if (env.PGPASSWORD) dockerArgs.push('-e', `PGPASSWORD=${env.PGPASSWORD}`);
+      if (env.PGPASSWORD) dockerArgs.push('-e', 'PGPASSWORD');
+      for (const key of Object.keys(env)) {
+        if (key.startsWith('PGSSL')) dockerArgs.push('-e', key);
+      }
       if (mountDir) dockerArgs.push('-v', `${mountDir}:/work`);
       if (process.platform === 'linux') {
         dockerArgs.push('--net=host');
       }
       dockerArgs.push(dockerImage, 'psql', ...args);
-      return execFileSync('docker', dockerArgs, { stdio: 'pipe' });
+      return execFileSync('docker', dockerArgs, { env: { ...process.env, ...env }, stdio: 'pipe' });
     },
   };
 }
@@ -344,65 +374,72 @@ export function resolvePgTooling(options = {}) {
  * Capture source database state baseline before running backup.
  */
 export async function collectSourceBaseline(pool) {
-  // 1. Extensions
-  const extRes = await pool.query('SELECT extname, extversion FROM pg_extension ORDER BY extname');
-  const extensions = extRes.rows.map((r) => r.extname);
+  const client = await pool.connect();
+  await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+  try {
+    // 1. Extensions
+    const extRes = await client.query('SELECT extname, extversion FROM pg_extension ORDER BY extname');
+    const extensions = extRes.rows.map((r) => r.extname);
 
-  // 2. Schema migrations
-  const hasMigrationsTable = await pool.query(
-    "SELECT to_regclass('schema_migrations') IS NOT NULL AS present",
-  );
-  let migrations = [];
-  if (hasMigrationsTable.rows[0]?.present) {
-    const migRes = await pool.query(
-      'SELECT version, name, checksum, state FROM schema_migrations ORDER BY version',
+    // 2. Schema migrations
+    const hasMigrationsTable = await client.query(
+      "SELECT to_regclass('schema_migrations') IS NOT NULL AS present",
     );
-    migrations = migRes.rows;
-  }
-
-  // 3. Existing tables in public schema
-  const tableRes = await pool.query(
-    "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
-  );
-  const tables = tableRes.rows.map((r) => r.tablename);
-
-  // 4. Row counts across critical tables
-  const rowCounts = {};
-  for (const table of tables) {
-    try {
-      const countRes = await pool.query(`SELECT COUNT(*) AS count FROM "${table}"`);
-      rowCounts[table] = parseInt(countRes.rows[0].count, 10);
-    } catch {
-      // Non-readable table or view
+    let migrations = [];
+    if (hasMigrationsTable.rows[0]?.present) {
+      const migRes = await client.query(
+        'SELECT version, name, checksum, state FROM schema_migrations ORDER BY version',
+      );
+      migrations = migRes.rows;
     }
-  }
 
-  // 5. Sample records for integrity comparison
-  const sampleData = {};
-  if (tables.includes('users') && (rowCounts['users'] || 0) > 0) {
-    const sampleUsers = await pool.query('SELECT id, handle FROM users ORDER BY created_at LIMIT 5');
-    sampleData.users = sampleUsers.rows;
-  }
-  if (tables.includes('game_events') && (rowCounts['game_events'] || 0) > 0) {
-    const sampleEvents = await pool.query(
-      'SELECT game_id, seq, type FROM game_events ORDER BY server_ts DESC LIMIT 5',
+    // 3. Existing tables in public schema
+    const tableRes = await client.query(
+      "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
     );
-    sampleData.game_events = sampleEvents.rows;
-  }
-  if (tables.includes('tournaments') && (rowCounts['tournaments'] || 0) > 0) {
-    const sampleTournaments = await pool.query(
-      'SELECT id, name, format FROM tournaments ORDER BY created_at DESC LIMIT 5',
-    );
-    sampleData.tournaments = sampleTournaments.rows;
-  }
+    const tables = tableRes.rows.map((r) => r.tablename);
 
-  return {
-    extensions,
-    migrations,
-    tables,
-    rowCounts,
-    sampleData,
-  };
+    // 4. Row counts across critical tables
+    const rowCounts = {};
+    for (const table of tables) {
+      try {
+        const countRes = await client.query(`SELECT COUNT(*) AS count FROM "${table}"`);
+        rowCounts[table] = parseInt(countRes.rows[0].count, 10);
+      } catch {
+        // Non-readable table or view
+      }
+    }
+
+    // 5. Sample records for integrity comparison
+    const sampleData = {};
+    if (tables.includes('users') && (rowCounts['users'] || 0) > 0) {
+      const sampleUsers = await client.query('SELECT id, handle FROM users ORDER BY created_at LIMIT 5');
+      sampleData.users = sampleUsers.rows;
+    }
+    if (tables.includes('game_events') && (rowCounts['game_events'] || 0) > 0) {
+      const sampleEvents = await client.query(
+        'SELECT game_id, seq, type FROM game_events ORDER BY server_ts DESC LIMIT 5',
+      );
+      sampleData.game_events = sampleEvents.rows;
+    }
+    if (tables.includes('tournaments') && (rowCounts['tournaments'] || 0) > 0) {
+      const sampleTournaments = await client.query(
+        'SELECT id, name, format FROM tournaments ORDER BY created_at DESC LIMIT 5',
+      );
+      sampleData.tournaments = sampleTournaments.rows;
+    }
+
+    return {
+      extensions,
+      migrations,
+      tables,
+      rowCounts,
+      sampleData,
+    };
+  } finally {
+    await client.query('ROLLBACK');
+    client.release();
+  }
 }
 
 /**
@@ -424,16 +461,14 @@ export async function verifyRestoredDatabase(sourceBaseline, targetPool, options
   const targetExts = new Set(extRes.rows.map((r) => r.extname));
 
   for (const requiredExt of REQUIRED_EXTENSIONS) {
-    if (sourceBaseline.extensions.includes(requiredExt)) {
-      const present = targetExts.has(requiredExt);
-      recordCheck(
-        `Extension: ${requiredExt}`,
-        present,
-        present ? 'Installed and active' : `Missing required extension in restored database: ${requiredExt}`,
-      );
-      if (!present) {
-        throw new Error(`Missing required extension in restored database: ${requiredExt}`);
-      }
+    const present = targetExts.has(requiredExt);
+    recordCheck(
+      `Extension: ${requiredExt}`,
+      present,
+      present ? 'Installed and active' : `Missing required extension in restored database: ${requiredExt}`,
+    );
+    if (!present) {
+      throw new Error(`Missing required extension in restored database: ${requiredExt}`);
     }
   }
 
@@ -469,8 +504,8 @@ export async function verifyRestoredDatabase(sourceBaseline, targetPool, options
       if (!tgtMig) {
         throw new Error(`Restored database is missing recorded migration version ${srcMig.version}`);
       }
-      if (tgtMig.checksum !== srcMig.checksum) {
-        const msg = `Migration ${srcMig.version} checksum mismatch: source="${srcMig.checksum}", restored="${tgtMig.checksum}"`;
+      if (tgtMig.checksum !== srcMig.checksum || tgtMig.name !== srcMig.name || tgtMig.state !== srcMig.state || tgtMig.state !== 'applied') {
+        const msg = `Migration ${srcMig.version} mismatch: source="${srcMig.checksum}/${srcMig.name}/${srcMig.state}", restored="${tgtMig.checksum}/${tgtMig.name}/${tgtMig.state}" (must be 'applied')`;
         recordCheck(`Migration Checksum ${srcMig.version}`, false, msg);
         throw new Error(msg);
       }
@@ -484,7 +519,7 @@ export async function verifyRestoredDatabase(sourceBaseline, targetPool, options
   );
   const targetTables = new Set(tgtTableRes.rows.map((r) => r.tablename));
 
-  for (const expectedTable of sourceBaseline.tables) {
+  for (const expectedTable of new Set([...sourceBaseline.tables, ...CRITICAL_APPLICATION_TABLES])) {
     const present = targetTables.has(expectedTable);
     if (!present) {
       const msg = `Missing required table in restored database: ${expectedTable}`;
@@ -536,15 +571,17 @@ export async function verifyRestoredDatabase(sourceBaseline, targetPool, options
   // Check 6: Append-only trigger enforcement on game_events
   if (targetTables.has('game_events')) {
     let triggerActive = false;
+    const client = await targetPool.connect();
     try {
-      const res = await targetPool.query(
+      await client.query('BEGIN');
+      const res = await client.query(
         'UPDATE game_events SET seq = seq WHERE game_id IN (SELECT game_id FROM game_events LIMIT 1)',
       );
       if (res.rowCount && res.rowCount > 0) {
         triggerActive = false;
       } else {
         // Table was empty; verify trigger registration in pg_trigger catalog
-        const trigRes = await targetPool.query(
+        const trigRes = await client.query(
           "SELECT tgname FROM pg_trigger WHERE tgname = 'game_events_block_mutate' AND tgenabled = 'O'",
         );
         triggerActive = trigRes.rows.length > 0;
@@ -558,6 +595,9 @@ export async function verifyRestoredDatabase(sourceBaseline, targetPool, options
       } else {
         throw err;
       }
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
     }
 
     if (!triggerActive) {
@@ -573,8 +613,21 @@ export async function verifyRestoredDatabase(sourceBaseline, targetPool, options
     try {
       // Test vector operator syntax and index validity
       const testVec = `[${new Array(256).fill(0.1).join(',')}]`;
-      await targetPool.query('SELECT $1::vector(256) <-> $1::vector(256) AS dist', [testVec]);
-      recordCheck('pgvector Functionality', true, 'Vector distance operator (<->) functional');
+      await targetPool.query('SELECT $1::vector(256) <=> $1::vector(256) AS dist', [testVec]);
+      
+      const idxRes = await targetPool.query(`
+        SELECT i.relname AS index_name, am.amname AS access_method
+        FROM pg_index ix
+        JOIN pg_class i ON i.oid = ix.indexrelid
+        JOIN pg_class t ON t.oid = ix.indrelid
+        JOIN pg_am am ON i.relam = am.oid
+        WHERE t.relname = 'search_embeddings' AND am.amname = 'hnsw'
+      `);
+      if (idxRes.rows.length === 0) {
+        throw new Error('HNSW index missing on search_embeddings table');
+      }
+      
+      recordCheck('pgvector Functionality', true, 'Vector cosine operator (<=>) and HNSW index functional');
     } catch (err) {
       const msg = `Vector functionality verification failed: ${err.message}`;
       recordCheck('pgvector Functionality', false, msg);
@@ -624,6 +677,9 @@ export function parseArgs(args = process.argv.slice(2)) {
       result.keepTarget = true;
     } else if (arg === '--format' && i + 1 < args.length) {
       result.format = args[++i];
+      if (result.format !== 'custom' && result.format !== 'plain') {
+        throw new Error(`Invalid format "${result.format}". Only "custom" and "plain" are allowed.`);
+      }
     } else if (arg === '--use-docker') {
       result.useDocker = true;
     } else if (arg === '--no-docker') {
@@ -675,13 +731,14 @@ export async function runBackupRestoreDrill(options = {}) {
   report.target = sanitizeDatabaseUrl(targetUrl);
 
   // Validate isolation
-  validateTargetIsolation(options.sourceUrl, targetUrl, {
+  await validateTargetIsolation(options.sourceUrl, targetUrl, {
     allowCustomTargetName: options.allowCustomTargetName,
   });
 
   const sourcePool = new Pool({ connectionString: options.sourceUrl, max: 2 });
   let targetPool = null;
   let adminClient = null;
+  let targetCreatedByThisRun = false;
 
   const rawBackupPath =
     options.backupFile ||
@@ -721,7 +778,7 @@ export async function runBackupRestoreDrill(options = {}) {
         '-F', isCustom ? 'c' : 'p',
         '-f', backupPath,
       ];
-      tooling.runDump(dumpArgs, { PGPASSWORD: parsedSource.password });
+      tooling.runDump(dumpArgs, { PGPASSWORD: parsedSource.password, ...parsedSource.sslParams });
     } else {
       // Docker mode
       const hostForDocker =
@@ -737,13 +794,13 @@ export async function runBackupRestoreDrill(options = {}) {
         '-F', isCustom ? 'c' : 'p',
         '-f', `/work/${backupFileName}`,
       ];
-      tooling.runDump(dumpArgs, { PGPASSWORD: parsedSource.password }, backupDir);
+      tooling.runDump(dumpArgs, { PGPASSWORD: parsedSource.password, ...parsedSource.sslParams }, backupDir);
     }
     report.timings.backupMs = Date.now() - dumpStart;
     log(`Backup completed in ${report.timings.backupMs}ms.`);
 
     // 4. Validate backup file
-    const backupMeta = validateBackupFile(backupPath, options.format || 'custom');
+    const backupMeta = await validateBackupFile(backupPath, options.format || 'custom');
     report.backupSizeBytes = backupMeta.sizeBytes;
     report.backupSha256 = backupMeta.sha256;
     log(`Backup file validated: ${backupMeta.sizeBytes} bytes (SHA-256: ${backupMeta.sha256.substring(0, 12)}...).`);
@@ -751,16 +808,18 @@ export async function runBackupRestoreDrill(options = {}) {
     // 5. Create isolated target database
     log(`Provisioning isolated target database "${parsedTarget.database}"...`);
     const adminUrl = urlWithDatabase(targetUrl, 'postgres');
-    adminClient = new Client({ connectionString: adminUrl });
+    adminClient = new Client({ connectionString: adminUrl, statement_timeout: 10000 });
     try {
       await adminClient.connect();
     } catch {
       // Try template1 if postgres db is not accessible
-      adminClient = new Client({ connectionString: urlWithDatabase(targetUrl, 'template1') });
+      adminClient = new Client({ connectionString: urlWithDatabase(targetUrl, 'template1'), statement_timeout: 10000 });
       await adminClient.connect();
     }
 
-    await adminClient.query(`CREATE DATABASE "${parsedTarget.database}"`);
+    await adminClient.query(`SET statement_timeout = 10000`);
+    await adminClient.query(`CREATE DATABASE "` + parsedTarget.database.replace(/"/g, '""') + `"`);
+    targetCreatedByThisRun = true;
     log(`Target database "${parsedTarget.database}" created.`);
 
     // 6. Restore backup into target
@@ -778,7 +837,7 @@ export async function runBackupRestoreDrill(options = {}) {
           backupPath,
         ];
         try {
-          tooling.runRestore(restoreArgs, { PGPASSWORD: parsedTarget.password });
+          tooling.runRestore(restoreArgs, { PGPASSWORD: parsedTarget.password, ...parsedTarget.sslParams });
         } catch (err) {
           // pg_restore may exit with status 1 for non-critical warnings on drops of non-existent objects
           const status = err?.status ?? err?.code;
@@ -794,9 +853,10 @@ export async function runBackupRestoreDrill(options = {}) {
           '-p', String(parsedTarget.port),
           '-U', parsedTarget.user,
           '-d', parsedTarget.database,
+          '-v', 'ON_ERROR_STOP=1',
           '-f', backupPath,
         ];
-        tooling.runPsql(psqlArgs, { PGPASSWORD: parsedTarget.password });
+        tooling.runPsql(psqlArgs, { PGPASSWORD: parsedTarget.password, ...parsedTarget.sslParams });
       }
     } else {
       // Docker mode
@@ -816,7 +876,7 @@ export async function runBackupRestoreDrill(options = {}) {
           `/work/${backupFileName}`,
         ];
         try {
-          tooling.runRestore(restoreArgs, { PGPASSWORD: parsedTarget.password }, backupDir);
+          tooling.runRestore(restoreArgs, { PGPASSWORD: parsedTarget.password, ...parsedTarget.sslParams }, backupDir);
         } catch (err) {
           const status = err?.status ?? err?.code;
           if (status === 1 || err?.message?.includes('exit code 1')) {
@@ -831,9 +891,10 @@ export async function runBackupRestoreDrill(options = {}) {
           '-p', String(parsedTarget.port),
           '-U', parsedTarget.user,
           '-d', parsedTarget.database,
+          '-v', 'ON_ERROR_STOP=1',
           '-f', `/work/${backupFileName}`,
         ];
-        tooling.runPsql(psqlArgs, { PGPASSWORD: parsedTarget.password }, backupDir);
+        tooling.runPsql(psqlArgs, { PGPASSWORD: parsedTarget.password, ...parsedTarget.sslParams }, backupDir);
       }
     }
     report.timings.restoreMs = Date.now() - restoreStart;
@@ -858,13 +919,15 @@ export async function runBackupRestoreDrill(options = {}) {
 
     // Teardown target database if not keeping
     if (adminClient) {
-      if (!options.keepTarget && parsedTarget.database) {
+      if (!options.keepTarget && parsedTarget.database && targetCreatedByThisRun) {
         try {
           log(`Cleaning up isolated target database "${parsedTarget.database}"...`);
-          await adminClient.query(`DROP DATABASE IF EXISTS "${parsedTarget.database}" WITH (FORCE)`);
+          await adminClient.query(`DROP DATABASE IF EXISTS "` + parsedTarget.database.replace(/"/g, '""') + `" WITH (FORCE)`);
           log('Target database dropped.');
         } catch (err) {
           log(`Warning: Failed to drop isolated target database: ${err.message}`);
+          report.success = false;
+          throw err;
         }
       }
       await adminClient.end().catch(() => {});
@@ -918,7 +981,8 @@ Options:
   runBackupRestoreDrill(args)
     .then((report) => {
       if (args.json) {
-        console.log(JSON.stringify(report, null, 2));
+        process.stdout.write(JSON.stringify(report, null, 2) + '\n', () => process.exit(0));
+        return;
       } else {
         console.log('\n========================================');
         console.log('✅ BACKUP & RESTORE DRILL SUCCESSFUL');

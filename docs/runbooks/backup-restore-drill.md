@@ -50,15 +50,18 @@ The script will automatically:
 
 | Option | Default | Description |
 |---|---|---|
-| `--source-url <url>` | `$DATABASE_URL` | Source database connection URL |
-| `--target-url <url>` | Auto-generated | Target database connection URL (must be isolated) |
-| `--backup-file <path>` | Temp file | Path to write backup dump file |
-| `--keep-backup` | `false` | Preserve the backup dump file after the drill completes |
-| `--keep-target` | `false` | Preserve the restored target DB for forensic inspection |
-| `--format <custom\|plain>` | `custom` | Dump format (`custom` = `-Fc`, `plain` = SQL) |
-| `--use-docker` | `auto` | Force execution inside `pgvector/pgvector:pg16` container |
-| `--allow-custom-target-name`| `false` | Allow target DB name without default isolation markers |
-| `--json` | `false` | Output machine-readable JSON report |
+| `--source-url <url>` | `$DATABASE_URL` | Source database URL (defaults to DATABASE_URL) |
+| `--target-url <url>` | Auto-generated | Explicit target database URL (must be isolated) |
+| `--target-db-name <name>` | Auto-generated | Target database name (default: auto-generated isolated name) |
+| `--backup-file <path>` | Temp file | Path for backup dump file (default: temporary file) |
+| `--keep-backup` | `false` | Preserve the backup dump file after the drill |
+| `--keep-target` | `false` | Preserve the restored target database after the drill |
+| `--format <custom\|plain>` | `custom` | pg_dump format (default: custom) |
+| `--use-docker` | `auto` | Force execution of pg tools via Docker container |
+| `--docker-image <image>` | `pgvector/pgvector:pg16` | Docker image for pg tools (default: pgvector/pgvector:pg16) |
+| `--allow-custom-target-name`| `false` | Permit target name without default isolation markers |
+| `--json` | `false` | Output drill report in JSON format |
+| `--help` | `false` | Show help message |
 
 ### 2.3 Retaining the Target Database for Forensic Inspection
 
@@ -72,7 +75,7 @@ node scripts/db-backup-restore-drill.mjs \
 ```
 
 Output will report the exact target database name created:
-```
+```text
 Target: postgres://gambit:***@localhost:5432/gambit_backup_drill_restore_1788672281592_96c80ce5
 Backup: /tmp/gambit_backup_1788672281593_2706.dump
 ```
@@ -131,6 +134,8 @@ psql -h "${PGHOST:-localhost}" -p "${PGPORT:-5432}" -U "${PGUSER:-gambit}" -d po
 Restore the custom archive into the target database:
 
 ```bash
+BACKUP_FILE=$(ls -t /tmp/gambit_manual_drill_*.dump | head -n 1)
+
 pg_restore \
   -h "${PGHOST:-localhost}" \
   -p "${PGPORT:-5432}" \
@@ -138,7 +143,7 @@ pg_restore \
   -d "${TARGET_DB}" \
   --clean \
   --if-exists \
-  "/tmp/gambit_manual_drill_*.dump"
+  "${BACKUP_FILE}"
 ```
 
 ### Step 5: Verification Checklist
@@ -188,8 +193,10 @@ SELECT 'search_embeddings', count(*) FROM search_embeddings;
 #### 5. Vector Query Functionality
 Verify pgvector cosine distance operations and HNSW indexing:
 ```sql
--- Test distance operator (<->)
-SELECT id, embedding <-> embedding AS distance FROM search_embeddings LIMIT 1;
+-- Test cosine distance operator (<=>)
+SELECT id, embedding <=> embedding AS distance FROM search_embeddings LIMIT 1;
+-- Verify HNSW index
+SELECT i.relname, am.amname FROM pg_index ix JOIN pg_class i ON i.oid = ix.indexrelid JOIN pg_class t ON t.oid = ix.indrelid JOIN pg_am am ON i.relam = am.oid WHERE t.relname = 'search_embeddings' AND am.amname = 'hnsw';
 ```
 
 ### Step 6: Cleanup Isolated Target
