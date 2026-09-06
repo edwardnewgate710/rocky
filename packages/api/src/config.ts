@@ -8,6 +8,7 @@
 import type { CorsConfig } from './http/security';
 import { resolveTrustProxyEnv, type TrustProxy } from './http/client-ip';
 
+/** Trusted proxy contract type re-exported for API server configuration. */
 export type { TrustProxy };
 
 /** Fully-resolved API configuration. */

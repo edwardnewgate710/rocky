@@ -364,6 +364,12 @@ function writeResult(res: ServerResponse, result: HandlerResult): void {
   res.end(payload);
 }
 
+/**
+ * Normalizes an HTTP header value that may be a single string, array of strings, or undefined.
+ *
+ * @param value - Raw header value from IncomingHttpHeaders.
+ * @returns The first header string if present, or undefined if absent.
+ */
 function headerString(value: string | string[] | undefined): string | undefined {
   if (value === undefined) return undefined;
   return Array.isArray(value) ? value[0] : value;

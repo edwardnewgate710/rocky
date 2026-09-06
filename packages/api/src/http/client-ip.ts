@@ -13,10 +13,10 @@
 import { isIP } from 'node:net';
 import type { IncomingHttpHeaders } from 'node:http';
 
-/** Trusted proxy configuration: boolean toggle or positive hop count. */
+/** Trusted proxy configuration: boolean toggle (true = 1 hop, false = direct socket) or positive integer hop count. */
 export type TrustProxy = boolean | number;
 
-/** Request interface containing headers and socket peer address. */
+/** Minimal HTTP request interface containing headers and TCP socket peer address needed for IP resolution. */
 export interface ClientIpRequestLike {
   readonly headers: IncomingHttpHeaders;
   readonly socket: {
@@ -30,6 +30,9 @@ export interface ClientIpRequestLike {
  * - Trims whitespace and strips surrounding IPv6 brackets (`[2001:db8::1]` -> `2001:db8::1`).
  * - Lowers case for IPv6 hex characters.
  * - Returns null if input is undefined, empty, or not a valid IPv4/IPv6 address.
+ *
+ * @param raw - Raw IP string from socket or forwarded header.
+ * @returns Canonical IP string, or null if the input is missing or invalid.
  */
 export function normalizeIp(raw: string | undefined | null): string | null {
   if (!raw) return null;
@@ -57,6 +60,9 @@ export function normalizeIp(raw: string | undefined | null): string | null {
 
 /**
  * Splits an X-Forwarded-For header into trimmed IP entries from left to right.
+ *
+ * @param header - Raw header value from request headers (string, array of strings, or undefined).
+ * @returns Array of non-empty, trimmed IP strings in leftmost-to-rightmost order.
  */
 export function parseForwardedFor(header: string | string[] | undefined): string[] {
   if (!header) return [];
@@ -72,7 +78,10 @@ export function parseForwardedFor(header: string | string[] | undefined): string
  * - undefined, "", "0", "false" -> false (0 hops, direct connection)
  * - "true" -> true (1 hop)
  * - "1", "2", ... -> number (exact hop count)
- * Throws if the value is invalid.
+ *
+ * @param val - Environment variable string value.
+ * @returns Parsed TrustProxy configuration (boolean or positive hop count).
+ * @throws Error if the value is not a boolean string or non-negative integer.
  */
 export function resolveTrustProxyEnv(val: string | undefined): TrustProxy {
   if (val === undefined || val === '') return false;
@@ -91,17 +100,23 @@ export function resolveTrustProxyEnv(val: string | undefined): TrustProxy {
 /**
  * Resolves the authentic client IP address according to the explicit trusted-hop contract.
  *
- * - When trustProxy is false or <= 0:
+ * Security & Trust-boundary semantics:
+ * - Direct connection (`trustProxy` is false or <= 0):
  *   Derives identity strictly from the direct TCP peer socket (`socket.remoteAddress`).
- *   Any forwarded headers are ignored.
- *
- * - When trustProxy is true or > 0:
+ *   Any forwarded headers are ignored to prevent forged client identity.
+ * - Reverse proxy (`trustProxy` is true or > 0):
  *   Trusts `hops` proxy layers (where `true` means 1 hop).
  *   Reads `X-Forwarded-For` from right to left, selecting the entry `hops` places
- *   from the socket peer.
+ *   from the socket peer (`entries[entries.length - hops]`).
  *   Entries to the left of the trusted boundary are discarded as untrusted client input.
- *   If the header is absent, empty, or has fewer entries than configured hops,
- *   falls back safely to the direct socket remoteAddress.
+ * - Short forged chain defense:
+ *   If the header is absent, empty, or has fewer entries than configured hops (`entries.length < hops`),
+ *   the chain could not have traversed the required trusted reverse proxies.
+ *   The forwarded header is rejected and identity falls back safely to the direct socket peer address.
+ *
+ * @param req - HTTP request-like object containing headers and socket peer address.
+ * @param trustProxy - Trusted proxy configuration (boolean or positive hop count, default: false).
+ * @returns Canonical client IP string, or null if unresolvable.
  */
 export function resolveClientIp(
   req: ClientIpRequestLike,

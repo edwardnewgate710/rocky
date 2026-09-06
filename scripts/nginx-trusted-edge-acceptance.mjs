@@ -25,6 +25,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const repoRoot = resolve(__dirname, '..');
 
+/**
+ * Probes whether the Docker daemon is reachable and responding.
+ * Used to conditionally execute or skip real-container Nginx acceptance tests.
+ *
+ * @returns True if Docker CLI successfully reports daemon availability, false otherwise.
+ */
 function isDockerAvailable() {
   try {
     execSync('docker info', { stdio: 'ignore', timeout: 4000 });
@@ -34,6 +40,11 @@ function isDockerAvailable() {
   }
 }
 
+/**
+ * Allocates an available ephemeral TCP port on loopback (127.0.0.1).
+ *
+ * @returns Promise resolving to an unallocated port number.
+ */
 async function getFreePort() {
   return new Promise((resolvePort, reject) => {
     const srv = createServer();
@@ -49,12 +60,26 @@ async function getFreePort() {
   });
 }
 
+/**
+ * Polls an HTTP endpoint until it answers with HTTP 2xx or the deadline expires.
+ *
+ * Bounded deadline contract:
+ * - Computes the exact remaining duration against the declared deadline on each iteration.
+ * - Ceases polling immediately if no time remains (remaining <= 0).
+ * - Bounds each request with `AbortSignal.timeout(remaining)` so stalled responses
+ *   cannot overshoot the overall deadline.
+ *
+ * @param url - Health URL to probe.
+ * @param timeoutMs - Maximum total duration in milliseconds to poll before rejecting.
+ * @throws Error if the endpoint fails to return HTTP 2xx within the deadline.
+ */
 async function waitForHealth(url, timeoutMs = 15_000) {
   const deadline = Date.now() + timeoutMs;
   let lastErr;
   while (Date.now() < deadline) {
     try {
-      const remaining = Math.max(100, deadline - Date.now());
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
       const res = await fetch(url, { signal: AbortSignal.timeout(remaining) });
       if (res.ok) return;
       lastErr = new Error(`HTTP ${res.status}`);
@@ -67,6 +92,58 @@ async function waitForHealth(url, timeoutMs = 15_000) {
 }
 
 const dockerAvailable = isDockerAvailable();
+
+describe('waitForHealth deadline enforcement', () => {
+  test('timeout signal never exceeds the remaining deadline', async () => {
+    const origTimeout = AbortSignal.timeout;
+    const requestedTimeouts = [];
+    AbortSignal.timeout = (ms) => {
+      requestedTimeouts.push(ms);
+      return origTimeout.call(AbortSignal, ms);
+    };
+
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({ ok: false, status: 503 });
+
+    try {
+      const timeoutMs = 50;
+      await assert.rejects(
+        () => waitForHealth('http://127.0.0.1:9', timeoutMs),
+        /did not become ready within 50ms/,
+      );
+
+      assert.ok(requestedTimeouts.length > 0, 'at least one health check should be attempted');
+      for (const t of requestedTimeouts) {
+        assert.ok(
+          t <= timeoutMs,
+          `AbortSignal.timeout(${t}) exceeded declared deadline timeoutMs (${timeoutMs})`,
+        );
+      }
+    } finally {
+      AbortSignal.timeout = origTimeout;
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  test('does not issue a fetch when remaining deadline is non-positive', async () => {
+    let fetchCalled = false;
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async () => {
+      fetchCalled = true;
+      return { ok: false, status: 503 };
+    };
+
+    try {
+      await assert.rejects(
+        () => waitForHealth('http://127.0.0.1:9', 0),
+        /did not become ready within 0ms/,
+      );
+      assert.equal(fetchCalled, false, 'fetch should not be called when remaining deadline is <= 0');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+});
 
 describe('Real Nginx Path Acceptance: Trusted Edge Contract', { skip: !dockerAvailable }, () => {
   let apiPort;
