@@ -372,12 +372,25 @@ export class InMemorySeeksRepository implements SeeksRepository {
   constructor(
     private readonly clock: Clock = systemClock,
     private readonly games?: GamesRepository,
+    private readonly users?: UsersRepository,
   ) {}
 
+  /**
+   * Creates a new in-memory seek, resolving creatorHandle from the users repository if available.
+   *
+   * @param seek - The seek specification
+   * @returns The created SeekRow with creatorHandle
+   */
   async create(seek: NewSeek): Promise<SeekRow> {
+    let creatorHandle = seek.creatorHandle ?? null;
+    if (!creatorHandle && this.users) {
+      const user = await this.users.findById(seek.creatorId);
+      creatorHandle = user?.handle ?? null;
+    }
     const row: SeekRow = {
       id: seek.id,
       creatorId: seek.creatorId,
+      creatorHandle,
       variant: seek.variant,
       timeControl: seek.timeControl,
       rated: seek.rated,
@@ -393,10 +406,33 @@ export class InMemorySeeksRepository implements SeeksRepository {
     return row;
   }
 
+  /**
+   * Looks up a seek by id, lazily enriching creatorHandle from the users repository if missing.
+   *
+   * @param id - Seek identifier
+   * @returns SeekRow if found, or null
+   */
   async findById(id: string): Promise<SeekRow | null> {
-    return this.byId.get(id) ?? null;
+    const existing = this.byId.get(id);
+    if (!existing) return null;
+    if (!existing.creatorHandle && this.users) {
+      const user = await this.users.findById(existing.creatorId);
+      if (user?.handle) {
+        const enriched = { ...existing, creatorHandle: user.handle };
+        this.byId.set(id, enriched);
+        return enriched;
+      }
+    }
+    return existing;
   }
 
+  /**
+   * Lists active unaccepted seeks within TTL, enriching with creatorHandle.
+   *
+   * @param limit - Maximum number of open seeks to return
+   * @param creatorId - Optional user ID of the requesting creator
+   * @returns Active open seeks, including latest match receipt for creatorId if active
+   */
   async listOpen(limit: number, creatorId?: string): Promise<SeekRow[]> {
     const now = this.clock.now();
     const fiveMinsAgo = now - 5 * 60 * 1000;
@@ -406,7 +442,15 @@ export class InMemorySeeksRepository implements SeeksRepository {
       .sort((a, b) => (this.order.get(a.id) ?? 0) - (this.order.get(b.id) ?? 0))
       .slice(0, limit);
 
-    if (!creatorId) return open;
+    const enrich = async (s: SeekRow): Promise<SeekRow> => {
+      if (s.creatorHandle || !this.users) return s;
+      const user = await this.users.findById(s.creatorId);
+      return user?.handle ? { ...s, creatorHandle: user.handle } : s;
+    };
+
+    const enrichedOpen = await Promise.all(open.map(enrich));
+
+    if (!creatorId) return enrichedOpen;
 
     const matchedCandidates = rows
       .filter(
@@ -436,7 +480,8 @@ export class InMemorySeeksRepository implements SeeksRepository {
       break;
     }
 
-    return latestMatch ? [latestMatch, ...open] : open;
+    const enrichedLatest = latestMatch ? await enrich(latestMatch) : undefined;
+    return enrichedLatest ? [enrichedLatest, ...enrichedOpen] : enrichedOpen;
   }
 
   async remove(id: string): Promise<boolean> {
@@ -779,9 +824,9 @@ export interface InMemoryRepositories extends Repositories {
 /** Construct a fresh set of in-memory repositories sharing a clock. */
 export function createInMemoryRepositories(clock: Clock = systemClock): InMemoryRepositories {
   const games = new InMemoryGamesRepository();
-  const seeks = new InMemorySeeksRepository(clock, games);
-  const events = new InMemoryEventStore(() => clock.now());
   const users = new InMemoryUsersRepository(clock);
+  const seeks = new InMemorySeeksRepository(clock, games, users);
+  const events = new InMemoryEventStore(() => clock.now());
   
   return {
     events,

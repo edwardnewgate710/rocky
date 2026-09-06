@@ -1192,6 +1192,14 @@ export function buildRouter(deps: RouteDeps): Router {
       }
 
       const seeks = await repos.seeks.listOpen(limit, ctx.auth?.userId);
+      // Fallback: If any seek lacks creatorHandle (e.g. custom or legacy repository), batch-resolve from users
+      const missingCreatorIds = [...new Set(seeks.filter((s) => !s.creatorHandle).map((s) => s.creatorId))];
+      if (missingCreatorIds.length > 0) {
+        const users = await Promise.all(missingCreatorIds.map((id) => repos.users.findById(id)));
+        const userMap = new Map(users.filter((u): u is NonNullable<typeof u> => u !== null).map((u) => [u.id, u.handle]));
+        const enrichedSeeks = seeks.map((s) => s.creatorHandle ? s : { ...s, creatorHandle: userMap.get(s.creatorId) ?? null });
+        return json(200, enrichedSeeks.map(seekView));
+      }
       return json(200, seeks.map(seekView));
     },
   );
@@ -1223,6 +1231,7 @@ export function buildRouter(deps: RouteDeps): Router {
       const seek = await repos.seeks.create({
         id: ids.next(),
         creatorId: identity.userId,
+        creatorHandle: identity.handle,
         variant,
         timeControl,
         rated,
@@ -1230,7 +1239,7 @@ export function buildRouter(deps: RouteDeps): Router {
         minRating: minRating ?? null,
         maxRating: maxRating ?? null,
       });
-      return json(201, seekView(seek));
+      return json(201, seekView({ ...seek, creatorHandle: seek.creatorHandle ?? identity.handle }));
     },
   );
 
@@ -1371,7 +1380,8 @@ export function buildRouter(deps: RouteDeps): Router {
       });
 
       if (!updatedSeek) throw HttpError.notFound('seek not found or already accepted');
-      return json(200, seekView(updatedSeek));
+      const creatorHandle = updatedSeek.creatorHandle ?? seek.creatorHandle ?? (await repos.users.findById(seek.creatorId))?.handle ?? null;
+      return json(200, seekView({ ...updatedSeek, creatorHandle }));
     },
   );
 

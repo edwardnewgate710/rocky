@@ -20,6 +20,7 @@ function makeSeek(overrides: Partial<SeekView> = {}): SeekView {
   return {
     id: 's1',
     creatorId: 'u1',
+    creatorHandle: null,
     variant: 'standard' as Variant,
     speed: 'blitz',
     timeControl: { initialMs: 180_000, incrementMs: 2_000, delayMs: 0, kind: 'increment' },
@@ -335,6 +336,66 @@ test('refresh resolves player names via graphql and passes them to onSeeks', asy
   assert.ok(receivedNames);
   assert.equal(receivedNames.get('p1')?.handle, 'handle-p1');
 });
+
+test('refresh delivers opponent handle in seeks and names when graphql is absent', async () => {
+  const seeks = [makeSeek({ id: 's1', creatorId: 'p1', creatorHandle: 'handle-p1' })];
+  const client = makeFakeClient(seeks) as unknown as GambitClient; // Note: client.graphql is undefined
+  let receivedSeeks: readonly SeekView[] = [];
+  let receivedNames: ReadonlyMap<string, SocialPlayer> | undefined;
+
+  const ctrl = new LobbyController({
+    client,
+    callbacks: {
+      onSeeks: (s, names) => {
+        receivedSeeks = s;
+        receivedNames = names;
+      },
+      onCreatePending: () => {},
+      onError: () => {},
+    },
+  });
+
+  await ctrl.refresh();
+  assert.equal(receivedSeeks.length, 1);
+  assert.equal(receivedSeeks[0]?.creatorHandle, 'handle-p1');
+  assert.ok(receivedNames);
+  assert.equal(receivedNames.get('p1')?.handle, 'handle-p1');
+});
+
+test('refresh delivers opponent handle in seeks when graphql fails', async () => {
+  const seeks = [makeSeek({ id: 's1', creatorId: 'p1', creatorHandle: 'handle-p1' })];
+  const fake = makeFakeClient(seeks);
+  const fakeWithFailingGql = {
+    ...fake,
+    graphql: {
+      resolvePlayers: async () => {
+        throw new Error('GraphQL service 503 unavailable');
+      },
+    },
+  };
+  const client = fakeWithFailingGql as unknown as GambitClient;
+  let receivedSeeks: readonly SeekView[] = [];
+  let receivedNames: ReadonlyMap<string, SocialPlayer> | undefined;
+
+  const ctrl = new LobbyController({
+    client,
+    callbacks: {
+      onSeeks: (s, names) => {
+        receivedSeeks = s;
+        receivedNames = names;
+      },
+      onCreatePending: () => {},
+      onError: () => {},
+    },
+  });
+
+  await ctrl.refresh();
+  assert.equal(receivedSeeks.length, 1);
+  assert.equal(receivedSeeks[0]?.creatorHandle, 'handle-p1');
+  assert.ok(receivedNames);
+  assert.equal(receivedNames.get('p1')?.handle, 'handle-p1');
+});
+
 
 test('refresh: older refresh completing after a newer refresh does not overwrite state or notify callbacks', async () => {
   const firstResolve = deferred<readonly SeekView[]>();

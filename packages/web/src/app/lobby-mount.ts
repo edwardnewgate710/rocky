@@ -9,9 +9,15 @@ import { formatTimeControl, renderEmpty } from './render-helpers.js';
 
 /**
  * Render a seek list into a DOM element. Each seek is a row with variant,
- * speed, time control, and — only on the viewer's own seeks — a cancel button
+ * speed, time control, opponent handle (derived directly from seek.creatorHandle
+ * or names map fallback), and — only on the viewer's own seeks — a cancel button
  * (`currentUserId`). Cancelling someone else's seek is a 403, so the affordance
  * is owner-only. An empty list renders a first-run empty state.
+ *
+ * @param container - Target DOM container element
+ * @param seeks - List of active open seeks to render
+ * @param currentUserId - ID of currently signed-in user or null if anonymous
+ * @param names - Optional fallback map of player identity resolved via read layer
  */
 export function renderSeeks(
   container: HTMLElement,
@@ -69,14 +75,15 @@ export function renderSeeks(
       main.appendChild(info);
 
       const player = names?.get(seek.creatorId);
+      const opponentHandle = seek.creatorHandle ?? player?.handle ?? null;
       const opponentEl = doc.createElement('span');
       opponentEl.className = 'seek-opponent';
 
-      if (player?.handle) {
+      if (opponentHandle) {
         const link = doc.createElement('a');
         link.className = 'row-link';
-        link.setAttribute('href', `/profile/${player.handle}`);
-        link.textContent = player.handle;
+        link.setAttribute('href', `/profile/${opponentHandle}`);
+        link.textContent = opponentHandle;
         opponentEl.appendChild(link);
       } else {
         opponentEl.textContent = shortId(seek.creatorId);
@@ -114,7 +121,7 @@ export function renderSeeks(
       acceptBtn.dataset.seekId = seek.id;
       acceptBtn.setAttribute(
         'aria-label',
-        player?.handle ? `Accept seek from ${player.handle}` : 'Accept seek',
+        opponentHandle ? `Accept seek from ${opponentHandle}` : 'Accept seek',
       );
       row.appendChild(acceptBtn);
     }

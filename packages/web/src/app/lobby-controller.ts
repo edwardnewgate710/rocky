@@ -101,14 +101,28 @@ export class LobbyController {
       if (!this.isCurrent(generation)) return;
 
       const openSeeks = seeks.filter((s) => s.gameId === null);
-      let names: ReadonlyMap<string, SocialPlayer> = new Map();
+      const namesMap = new Map<string, SocialPlayer>();
+
+      // Populate from REST seek.creatorHandle so normal runtime never depends on GraphQL
+      for (const seek of openSeeks) {
+        if (seek.creatorHandle) {
+          namesMap.set(seek.creatorId, { id: seek.creatorId, handle: seek.creatorHandle });
+        }
+      }
+
+      // Optional read-layer enrichment for any creator IDs not yet known
       try {
-        const creatorIds = [...new Set(openSeeks.map((s) => s.creatorId))];
-        if (creatorIds.length > 0 && this.client.graphql?.resolvePlayers) {
-          names = await this.client.graphql.resolvePlayers(creatorIds);
+        const unresolvedIds = [
+          ...new Set(openSeeks.filter((s) => !namesMap.has(s.creatorId)).map((s) => s.creatorId)),
+        ];
+        if (unresolvedIds.length > 0 && this.client.graphql?.resolvePlayers) {
+          const gqlNames = await this.client.graphql.resolvePlayers(unresolvedIds);
+          for (const [id, player] of gqlNames) {
+            namesMap.set(id, player);
+          }
         }
       } catch {
-        // Graceful degradation when player handle resolution fails
+        // Graceful degradation when optional read-layer player handle resolution fails
       }
 
       if (!this.isCurrent(generation)) return;
@@ -122,7 +136,7 @@ export class LobbyController {
       }
 
       // Filter out matched seeks before passing to the UI
-      this.callbacks.onSeeks(openSeeks, names);
+      this.callbacks.onSeeks(openSeeks, namesMap);
     } catch (err) {
       if (this.isCurrent(generation)) {
         this.callbacks.onError(err instanceof Error ? err.message : String(err));

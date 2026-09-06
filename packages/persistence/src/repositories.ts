@@ -285,6 +285,12 @@ export const SEEK_TTL_MS = 10 * 60 * 1000;
 export interface SeekRow {
   readonly id: string;
   readonly creatorId: string;
+  /**
+   * Human-readable handle of the seek creator. Resolved from user repository or database
+   * join, ensuring opponent identity is available without relying on optional GraphQL.
+   * Null when the creator is missing, unresolvable, or deleted.
+   */
+  readonly creatorHandle?: string | null;
   readonly variant: Variant;
   readonly timeControl: TimeControl;
   readonly rated: boolean;
@@ -299,6 +305,8 @@ export interface SeekRow {
 export interface NewSeek {
   readonly id: string;
   readonly creatorId: string;
+  /** Optional creator handle if known at seek creation time. */
+  readonly creatorHandle?: string | null;
   readonly variant: Variant;
   readonly timeControl: TimeControl;
   readonly rated: boolean;

@@ -168,6 +168,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     required: [
       'id',
       'creatorId',
+      'creatorHandle',
       'variant',
       'speed',
       'timeControl',
@@ -180,6 +181,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
     properties: {
       id: { type: 'string', format: 'uuid' },
       creatorId: { type: 'string', format: 'uuid' },
+      creatorHandle: nullableString,
       variant: { type: 'string', enum: [...VARIANTS] },
       speed: { type: 'string' },
       timeControl: { $ref: '#/components/schemas/TimeControl' },

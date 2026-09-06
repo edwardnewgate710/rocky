@@ -166,7 +166,7 @@ test('optional and nullable are independent axes, and the migration moved only o
  * field is added or removed, and that is the point: a migration that silently dropped nullability
  * from a field would otherwise leave every remaining field still well-formed.
  */
-test('every nullable schema in the document is well-formed, and there are 63 of them', async () => {
+test('every nullable schema in the document is well-formed, and there are 64 of them', async () => {
   const { doc, close } = await schemas();
   try {
     const nullables: { path: string; schema: JsonSchema }[] = [];
@@ -184,7 +184,7 @@ test('every nullable schema in the document is well-formed, and there are 63 of 
     };
     walk(doc, '$');
 
-    assert.equal(nullables.length, 63, `nullable field count changed: ${nullables.length}`);
+    assert.equal(nullables.length, 64, `nullable field count changed: ${nullables.length}`);
 
     for (const { path, schema } of nullables) {
       const types = schema.type as readonly string[];

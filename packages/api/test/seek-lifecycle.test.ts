@@ -145,3 +145,80 @@ test('cleanup purges expired abandoned seeks as well as accepted receipts', asyn
     await h.close();
   }
 });
+
+test('list open seek returns human-readable creatorHandle without optional GraphQL', async () => {
+  const h = await startHarness();
+  try {
+    const creator = await h.makeUser('magnus_carlsen', ['user']);
+
+    const createRes = await h.json('POST', '/v1/seeks', {
+      token: creator.token,
+      body: {
+        variant: 'standard',
+        timeControl: { initialMs: 300_000, incrementMs: 0, delayMs: 0, kind: 'sudden_death' },
+        rated: false,
+      },
+    });
+    assert.equal(createRes.status, 201);
+    assert.equal(createRes.body.creatorHandle, 'magnus_carlsen');
+
+    // Listing open seeks must directly contain creatorHandle
+    const listRes = await h.json('GET', '/v1/seeks');
+    assert.equal(listRes.status, 200);
+    const found = listRes.body.find((s: { id: string }) => s.id === createRes.body.id);
+    assert.ok(found, 'seek must be in open seeks list');
+    assert.equal(found.creatorHandle, 'magnus_carlsen', 'seek in listOpen must have creatorHandle');
+  } finally {
+    await h.close();
+  }
+});
+
+test('accepting seek returns creatorHandle in match view', async () => {
+  const h = await startHarness();
+  try {
+    const creator = await h.makeUser('hikaru_nakamura', ['user']);
+    const acceptor = await h.makeUser('acceptor_player', ['user']);
+
+    const createRes = await h.json('POST', '/v1/seeks', {
+      token: creator.token,
+      body: {
+        variant: 'standard',
+        timeControl: { initialMs: 180_000, incrementMs: 2_000, delayMs: 0, kind: 'increment' },
+        rated: false,
+      },
+    });
+    assert.equal(createRes.status, 201);
+
+    const acceptRes = await h.json('POST', `/v1/seeks/${createRes.body.id}/accept`, {
+      token: acceptor.token,
+    });
+    assert.equal(acceptRes.status, 200);
+    assert.equal(acceptRes.body.creatorHandle, 'hikaru_nakamura', 'accepted seek must have creatorHandle');
+  } finally {
+    await h.close();
+  }
+});
+
+test('seek with unresolvable or deleted user falls back to null creatorHandle', async () => {
+  const h = await startHarness();
+  try {
+    // Create seek with a synthetic/nonexistent creatorId directly in repos
+    const syntheticId = '018f0000-0000-7000-8000-000000000099';
+    const seek = await h.repos.seeks.create({
+      id: '018f0000-0000-7000-8000-000000000001',
+      creatorId: syntheticId,
+      variant: 'standard',
+      timeControl: { initialMs: 300_000, incrementMs: 0, delayMs: 0, kind: 'sudden_death' },
+      rated: false,
+    });
+    assert.equal(seek.creatorHandle, null, 'unresolvable creator must have null creatorHandle');
+
+    const listRes = await h.json('GET', '/v1/seeks');
+    assert.equal(listRes.status, 200);
+    const found = listRes.body.find((s: { id: string }) => s.id === seek.id);
+    assert.ok(found);
+    assert.equal(found.creatorHandle, null, 'unresolvable creator in REST API must fall back to null');
+  } finally {
+    await h.close();
+  }
+});

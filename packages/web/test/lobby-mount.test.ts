@@ -339,6 +339,7 @@ function makeSeek(overrides: Partial<SeekView> = {}): SeekView {
   return {
     id: 'seek-1',
     creatorId: 'user-1',
+    creatorHandle: null,
     variant: 'standard' as Variant,
     speed: 'blitz',
     timeControl: { initialMs: 180_000, incrementMs: 2_000, delayMs: 0, kind: 'increment' },
@@ -627,6 +628,7 @@ test('renderSeeks: falls back to shortId when opponent handle is unresolved', ()
   const seek = makeSeek({
     id: 's-other',
     creatorId: '01a073ad-6e90-7000-8f14-45b38ea957c1',
+    creatorHandle: null,
   });
 
   renderSeeks(container, [seek], 'user-me', new Map());
@@ -636,6 +638,33 @@ test('renderSeeks: falls back to shortId when opponent handle is unresolved', ()
   const opponent = row.querySelector('.seek-opponent');
   assert.ok(opponent);
   assert.ok(opponent.textContent?.includes('01a073ad'));
+  const acceptBtn = row.querySelector<FakeDOMElement>('.seek-accept');
+  assert.equal(acceptBtn?.getAttribute('aria-label'), 'Accept seek');
+});
+
+test('renderSeeks: renders opponent handle directly from seek.creatorHandle when GraphQL is unavailable (empty names)', () => {
+  const { doc } = createTestDoc();
+  const container = doc.createElement('div') as unknown as HTMLElement & FakeDOMElement;
+  const seek = makeSeek({
+    id: 's-other',
+    creatorId: 'user-them',
+    creatorHandle: 'challenger99',
+  });
+
+  // No names map passed (GraphQL unavailable or unconfigured)
+  renderSeeks(container, [seek], 'user-me');
+
+  const row = container.children[0];
+  assert.ok(row);
+  const opponent = row.querySelector('.seek-opponent');
+  assert.ok(opponent, 'seek row must render opponent identity');
+  const link = opponent.querySelector('a.row-link');
+  assert.ok(link, 'opponent handle should be a profile link');
+  assert.equal(link.textContent, 'challenger99');
+  assert.equal(link.getAttribute('href'), '/profile/challenger99');
+
+  const acceptBtn = row.querySelector<FakeDOMElement>('.seek-accept');
+  assert.equal(acceptBtn?.getAttribute('aria-label'), 'Accept seek from challenger99');
 });
 
 test('mountLobby: wires delegated cancel button click to lobby.cancelSeek', async () => {
