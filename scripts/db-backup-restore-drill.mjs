@@ -840,6 +840,8 @@ export async function runBackupRestoreDrill(options = {}) {
           '-U', parsedSource.user,
           '-d', parsedSource.database,
           '-F', isCustom ? 'c' : 'p',
+          '--no-owner',
+          '--no-acl',
           '-f', backupPath,
         ];
         if (snapshotId && isCustom) {
@@ -859,6 +861,8 @@ export async function runBackupRestoreDrill(options = {}) {
           '-U', parsedSource.user,
           '-d', parsedSource.database,
           '-F', isCustom ? 'c' : 'p',
+          '--no-owner',
+          '--no-acl',
           '-f', `/work/${backupFileName}`,
         ];
         if (snapshotId && isCustom) {
