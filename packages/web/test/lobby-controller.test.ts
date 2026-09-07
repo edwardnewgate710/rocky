@@ -304,37 +304,68 @@ test('currentSeeks returns the last fetched list', async () => {
   assert.equal(ctrl.currentSeeks.length, 3);
 });
 
-test('refresh resolves player names via graphql and passes them to onSeeks', async () => {
+test('refresh republishes seeks when background graphql resolution adds player names', async () => {
+  const pendingNames = deferred<ReadonlyMap<string, SocialPlayer>>();
   const seeks = [makeSeek({ id: 's1', creatorId: 'p1' })];
   const fake = makeFakeClient(seeks);
   const fakeWithGql = {
     ...fake,
     graphql: {
-      resolvePlayers: async (ids: readonly string[]) => {
-        const map = new Map<string, SocialPlayer>();
-        for (const id of ids) {
-          map.set(id, {
-            id,
-            handle: `handle-${id}`,
-          });
-        }
-        return map;
-      },
+      resolvePlayers: async () => pendingNames.promise,
     },
   };
   const client = fakeWithGql as unknown as GambitClient;
-  let receivedNames: ReadonlyMap<string, SocialPlayer> | undefined;
+  const receivedNames: Array<ReadonlyMap<string, SocialPlayer> | undefined> = [];
   const ctrl = new LobbyController({
     client,
     callbacks: {
-      onSeeks: (_s, names) => { receivedNames = names; },
+      onSeeks: (_s, names) => { receivedNames.push(names); },
       onCreatePending: () => {},
       onError: () => {},
     },
   });
   await ctrl.refresh();
-  assert.ok(receivedNames);
-  assert.equal(receivedNames.get('p1')?.handle, 'handle-p1');
+  assert.equal(receivedNames.length, 1);
+  assert.equal(receivedNames[0]?.has('p1'), false);
+
+  pendingNames.resolve(new Map([['p1', { id: 'p1', handle: 'handle-p1' }]]));
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(receivedNames.length, 2);
+  assert.equal(receivedNames[1]?.get('p1')?.handle, 'handle-p1');
+});
+
+test('refresh publishes REST seeks before optional graphql resolution settles', async () => {
+  const pendingNames = deferred<ReadonlyMap<string, SocialPlayer>>();
+  const graphqlStarted = deferred<void>();
+  const seeks = [makeSeek({ id: 's1', creatorId: 'p1', creatorHandle: null })];
+  const client = {
+    ...makeFakeClient(seeks),
+    graphql: {
+      resolvePlayers: async () => {
+        graphqlStarted.resolve();
+        return pendingNames.promise;
+      },
+    },
+  } as unknown as GambitClient;
+  const delivered: Array<readonly SeekView[]> = [];
+  const ctrl = new LobbyController({
+    client,
+    callbacks: {
+      onSeeks: (published) => { delivered.push(published); },
+      onCreatePending: () => {},
+      onError: () => {},
+    },
+  });
+
+  const refresh = ctrl.refresh();
+  await graphqlStarted.promise;
+  try {
+    assert.deepEqual(delivered.map((published) => published.map((seek) => seek.id)), [['s1']]);
+  } finally {
+    pendingNames.resolve(new Map());
+    await refresh;
+  }
 });
 
 test('refresh delivers opponent handle in seeks and names when graphql is absent', async () => {
@@ -442,7 +473,7 @@ test('refresh: older refresh completing after a newer refresh does not overwrite
   assert.equal(deliveredSeeks.length, 1);
 });
 
-test('refresh: deferred player resolution from older refresh cannot overwrite newer seek data', async () => {
+test('refresh: stale background player resolution cannot overwrite newer seek data', async () => {
   const firstGql = deferred<ReadonlyMap<string, SocialPlayer>>();
   const secondGql = deferred<ReadonlyMap<string, SocialPlayer>>();
   let listCalls = 0;
@@ -476,24 +507,26 @@ test('refresh: deferred player resolution from older refresh cannot overwrite ne
   });
 
   const r1 = ctrl.refresh();
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await r1;
 
   const r2 = ctrl.refresh();
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await r2;
+
+  assert.deepEqual(delivered.map(({ seeks }) => seeks[0]?.id), ['s1', 's2']);
 
   const names2 = new Map<string, SocialPlayer>([['p2', { id: 'p2', handle: 'handle-p2' }]]);
   secondGql.resolve(names2);
-  await r2;
+  await new Promise<void>((resolve) => setImmediate(resolve));
 
   assert.equal(ctrl.currentSeeks[0]?.id, 's2');
-  assert.equal(delivered.length, 1);
-  assert.equal(delivered[0]?.seeks[0]?.id, 's2');
-  assert.equal(delivered[0]?.names?.get('p2')?.handle, 'handle-p2');
+  assert.equal(delivered.length, 3);
+  assert.equal(delivered[2]?.seeks[0]?.id, 's2');
+  assert.equal(delivered[2]?.names?.get('p2')?.handle, 'handle-p2');
 
   const names1 = new Map<string, SocialPlayer>([['p1', { id: 'p1', handle: 'handle-p1' }]]);
   firstGql.resolve(names1);
-  await r1;
+  await new Promise<void>((resolve) => setImmediate(resolve));
 
   assert.equal(ctrl.currentSeeks[0]?.id, 's2');
-  assert.equal(delivered.length, 1);
+  assert.equal(delivered.length, 3);
 });

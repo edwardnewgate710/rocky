@@ -95,7 +95,7 @@ export class LobbyController {
     return this.seeks;
   }
 
-  /** Fetch the seek list once and notify callbacks. */
+  /** Fetch and publish the seek list, then optionally enrich unresolved creator names. */
   async refresh(): Promise<void> {
     if (this.disposed) return;
     const generation = ++this.requestGeneration;
@@ -113,23 +113,6 @@ export class LobbyController {
         }
       }
 
-      // Optional read-layer enrichment for any creator IDs not yet known
-      try {
-        const unresolvedIds = [
-          ...new Set(openSeeks.filter((s) => !namesMap.has(s.creatorId)).map((s) => s.creatorId)),
-        ];
-        if (unresolvedIds.length > 0 && this.client.graphql?.resolvePlayers) {
-          const gqlNames = await this.client.graphql.resolvePlayers(unresolvedIds);
-          for (const [id, player] of gqlNames) {
-            namesMap.set(id, player);
-          }
-        }
-      } catch {
-        // Graceful degradation when optional read-layer player handle resolution fails
-      }
-
-      if (!this.isCurrent(generation)) return;
-
       this.seeks = seeks;
 
       // Look for a matched seek (our backend only returns them if we are the creator)
@@ -140,6 +123,34 @@ export class LobbyController {
 
       // Filter out matched seeks before passing to the UI
       this.callbacks.onSeeks(openSeeks, namesMap);
+
+      const unresolvedIds = [
+        ...new Set(openSeeks.filter((s) => !namesMap.has(s.creatorId)).map((s) => s.creatorId)),
+      ];
+      const graphql = this.client.graphql;
+      if (unresolvedIds.length > 0 && graphql?.resolvePlayers) {
+        void (async () => {
+          let gqlNames: ReadonlyMap<string, SocialPlayer>;
+          try {
+            gqlNames = await graphql.resolvePlayers(unresolvedIds);
+          } catch {
+            return;
+          }
+          if (!this.isCurrent(generation)) return;
+
+          const enrichedNames = new Map(namesMap);
+          for (const [id, player] of gqlNames) {
+            enrichedNames.set(id, player);
+          }
+          if (enrichedNames.size > namesMap.size) {
+            this.callbacks.onSeeks(openSeeks, enrichedNames);
+          }
+        })().catch((err: unknown) => {
+          if (this.isCurrent(generation)) {
+            this.callbacks.onError(err instanceof Error ? err.message : String(err));
+          }
+        });
+      }
     } catch (err) {
       if (this.isCurrent(generation)) {
         this.callbacks.onError(err instanceof Error ? err.message : String(err));
