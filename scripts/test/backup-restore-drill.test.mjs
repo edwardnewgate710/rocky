@@ -588,25 +588,23 @@ test('tooling: resolvePgTooling accepts options and detects native or docker run
   assert.ok(plainTooling.type === 'native' || plainTooling.type === 'docker');
 });
 
-test('pg_restore: parsePgRestoreError treats "does not exist" warnings as benign', () => {
+test('pg_restore: parsePgRestoreError treats non-error warnings as benign', () => {
   const err = new Error('Command failed: pg_restore exit code 1');
   err.status = 1;
   err.stderr = Buffer.from(
     'pg_restore: warning: errors ignored on restore: 1\n' +
-    'pg_restore: error: could not execute query: ERROR:  schema "public" does not exist\n' +
-    'pg_restore: error: could not execute query: ERROR:  role "postgres" does not exist'
+    'pg_restore: warning: could not execute query: ERROR:  schema "public" does not exist'
   );
   
   const notice = parsePgRestoreError(err);
   assert.ok(notice.includes('does not exist'));
 });
 
-test('pg_restore: parsePgRestoreError throws on real errors', () => {
+test('pg_restore: parsePgRestoreError throws on real errors including missing objects', () => {
   const err = new Error('Command failed: pg_restore exit code 1');
   err.status = 1;
   err.stderr = Buffer.from(
     'pg_restore: warning: errors ignored on restore: 1\n' +
-    'pg_restore: error: could not execute query: ERROR:  syntax error at or near "SELECT"\n' +
     'pg_restore: error: could not execute query: ERROR:  role "postgres" does not exist'
   );
   

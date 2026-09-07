@@ -380,7 +380,7 @@ export function parsePgRestoreError(err) {
     if (stderrStr) {
       const lines = stderrStr.split('\n');
       const hasRealError = lines.some(line => {
-        return line.includes('pg_restore: error:') && !/does not exist|no existe/i.test(line);
+        return line.includes('pg_restore: error:');
       });
       if (hasRealError) {
         throw err;
@@ -908,6 +908,8 @@ export async function runBackupRestoreDrill(options = {}) {
           '-d', parsedTarget.database,
           '--clean',
           '--if-exists',
+          '--no-owner',
+          '--no-acl',
           backupPath,
         ];
         try {
@@ -942,6 +944,8 @@ export async function runBackupRestoreDrill(options = {}) {
           '-d', parsedTarget.database,
           '--clean',
           '--if-exists',
+          '--no-owner',
+          '--no-acl',
           `/work/${backupFileName}`,
         ];
         try {
