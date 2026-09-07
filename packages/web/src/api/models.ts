@@ -1232,6 +1232,7 @@ export type GameReviewClassification =
   | 'brilliant' | 'great' | 'best' | 'excellent' | 'good' | 'book'
   | 'inaccuracy' | 'mistake' | 'miss' | 'blunder' | 'missed_win';
 
+/** A single assessed player move as returned by the game-review API. */
 export interface GameReviewMove {
   readonly ply: number;
   readonly san: string;
@@ -1241,6 +1242,12 @@ export interface GameReviewMove {
   readonly classification: GameReviewClassification;
 }
 
+/**
+ * The complete or partial game-review API response.
+ *
+ * Discriminated on `isPartial`: when false the review covers every player move; when true it was
+ * capped at the server move limit and `cutoffReason` names the cause.
+ */
 export type GameReviewResponse = {
   readonly gameId: string;
   readonly variant: string;

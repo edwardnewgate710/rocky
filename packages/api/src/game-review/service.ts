@@ -27,6 +27,7 @@ export const DEFAULT_GAME_REVIEW_DEADLINE_MS = 120_000;
 /** Exact evidence policy required to compare the played move with one alternative. */
 export const GAME_REVIEW_ANALYSIS_LIMITS = { multiPv: 2 } as const satisfies RequestedAnalysisLimits;
 
+/** Pluggable adapter that predicts whether a move was a mistake given engine evidence. */
 export interface MoveAssessmentService {
   predict(
     input: MistakePredictionInput,
@@ -34,6 +35,7 @@ export interface MoveAssessmentService {
   ): Promise<MistakePredictionOutcome>;
 }
 
+/** A single assessed player move produced by the review engine. */
 export interface GameReviewMove {
   readonly ply: number;
   readonly san: string;
@@ -43,6 +45,12 @@ export interface GameReviewMove {
   readonly classification: GameReviewClassification;
 }
 
+/**
+ * The complete outcome of one engine-grounded player review.
+ *
+ * Discriminated on `isPartial`: when false the entire game was analysed; when true the review was
+ * capped at {@link MAX_REVIEWED_PLAYER_MOVES} and `cutoffReason` names the cause.
+ */
 export type GameReviewOutcome = {
   readonly gameId: string;
   readonly variant: string;
@@ -58,6 +66,7 @@ export type GameReviewOutcome = {
   | { readonly isPartial: true; readonly cutoffReason: 'move_limit' }
 );
 
+/** Construction-time wiring for {@link GameReviewService}. */
 export interface GameReviewServiceOptions {
   readonly archive: FinishedGameReviewArchive;
   readonly analysis: AnalysisPort;
