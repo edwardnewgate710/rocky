@@ -84,6 +84,8 @@ export function renderSearchPrompt(container: HTMLElement): void {
  * (ADR-0132 §5). It says the feature is off rather than issuing a request that is guaranteed to
  * answer 503 and showing the visitor the server's refusal — a 503 reads as "broken", and this is
  * not broken, it is configured.
+ *
+ * @param container - The DOM element to render into.
  */
 export function renderSearchUnavailable(container: HTMLElement): void {
   renderEmpty(container, {
@@ -103,6 +105,8 @@ export function renderSearchUnavailable(container: HTMLElement): void {
  *
  * Reload rather than a retry button, because `loadCapabilities` memoises for the page's lifetime
  * with deliberately no reset seam: within this page there is nothing left to retry.
+ *
+ * @param container - The DOM element to render into.
  */
 export function renderSearchUndetermined(container: HTMLElement): void {
   renderEmpty(container, {

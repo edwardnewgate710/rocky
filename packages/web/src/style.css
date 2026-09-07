@@ -470,6 +470,19 @@ a.button:hover {
   background-color: var(--panel);
   box-shadow: var(--lift);
 }
+/* Light theme: --panel is 5 % opacity and imperceptible against a pale background.
+   Promote to --panel-strong (8 %) so the hover affordance is visible.
+   Must match both entry points (explicit .light and OS preference without a class). */
+@media (prefers-color-scheme: light) {
+  :root:not(.light):not(.dark) button:not(:disabled):hover,
+  :root:not(.light):not(.dark) a.button:hover {
+    background-color: var(--panel-strong);
+  }
+}
+:root.light button:not(:disabled):hover,
+:root.light a.button:hover {
+  background-color: var(--panel-strong);
+}
 button:focus-visible,
 a.button:focus-visible { outline: 3px solid var(--sel); }
 button:disabled {
