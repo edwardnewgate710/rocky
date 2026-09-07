@@ -5,6 +5,11 @@ import { BoardInteraction } from '../src/core/interaction.js';
 import { StaticMoveOracle } from '../src/ports/move-oracle.js';
 import type { Square } from '../src/core/board.js';
 
+/**
+ * Minimal in-memory DOM node used by board-a11y tests. Supports attribute get/set,
+ * class list, basic event dispatching, and CSS selector matching so that
+ * `BoardView` can render and have its ARIA attributes inspected without a browser.
+ */
 class FakeDOMNode {
   readonly attributes = new Map<string, string>();
   readonly dataset: Record<string, string> = {};
@@ -293,6 +298,12 @@ class FakeDocument {
   }
 }
 
+/**
+ * Convenience factory that wires together a `FakeBoardRoot`, a `StaticMoveOracle`,
+ * a `BoardInteraction`, and a `BoardView` for a given FEN position. The default
+ * starting position exposes legal moves from e2 and b1, which is sufficient for
+ * the majority of ARIA-attribute assertions.
+ */
 function createHarness(fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1') {
   const root = new FakeBoardRoot();
   const oracle = new StaticMoveOracle({

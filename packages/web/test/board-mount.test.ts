@@ -62,6 +62,12 @@ test('remounting a board does not stack listeners on the same element', () => {
   assert.equal(flip.liveCount('click'), 0);
 });
 
+/**
+ * Extract the visible text from every coordinate label of the given kind
+ * (`"rank"` or `"file"`) from a rendered board's HTML string.
+ * Used to verify that coordinate labels appear in the correct order after
+ * board orientation changes.
+ */
 function coordinateValues(html: string, kind: 'rank' | 'file'): string[] {
   return [...html.matchAll(new RegExp(`cb-coordinate cb-${kind}[^>]*>([^<]+)<`, 'g'))]
     .map((match) => match[1]!);

@@ -38,6 +38,11 @@ const COLOR_NAMES: Record<string, string> = {
   b: 'black',
 };
 
+/**
+ * Build the accessible label for a grid cell: square name plus piece description,
+ * or `"<sq>, empty"` when there is no piece. Screen readers announce this as the
+ * cell's name, so it must unambiguously identify both location and occupant.
+ */
 function squareAccessibleLabel(sq: Square, piece?: Piece): string {
   if (!piece) return `${sq}, empty`;
   const color = COLOR_NAMES[piece.color] ?? piece.color;
@@ -55,16 +60,26 @@ function pieceClass(color: string, role: string): string {
 }
 const DRAG_THRESHOLD = 6;
 
+/** A resolved user gesture: either a committed move or a queued premove. */
 export type ResolvedMove =
   | { readonly kind: 'move'; readonly move: Premove }
   | { readonly kind: 'premove'; readonly premove: Premove };
 
+/** Construction-time options for {@link BoardView}. */
 export interface BoardViewOptions {
   readonly interaction: BoardInteraction;
   readonly orientation?: Color;
   readonly onResult?: (result: ResolvedMove) => void;
 }
 
+/**
+ * DOM-rendering layer for the interactive chess board.
+ *
+ * Turns {@link BoardInteraction} state into a grid of ARIA-annotated cells and converts
+ * pointer/keyboard gestures back into interaction calls. All decisions (legality,
+ * promotion, premoves) live in the injected `BoardInteraction`; this class is
+ * presentation-only. Emits resolved moves/premoves via `onResult`.
+ */
 export class BoardView {
   private readonly root: HTMLElement;
   private readonly interaction: BoardInteraction;
@@ -93,6 +108,7 @@ export class BoardView {
     this.cancelPromotion();
   };
 
+  /** Mount the board into `root`, attaching all pointer and keyboard listeners. */
   constructor(root: HTMLElement, options: BoardViewOptions) {
     this.root = root;
     this.interaction = options.interaction;
@@ -141,15 +157,18 @@ export class BoardView {
     this.render();
   }
 
+  /** Inform the interaction layer whose turn it is, enabling or disabling move input. */
   setTurn(myTurn: boolean): void {
     this.interaction.setTurn(myTurn);
   }
 
+  /** Toggle the board between white-at-bottom and black-at-bottom orientations. */
   flip(): void {
     this.orientation = this.orientation === 'white' ? 'black' : 'white';
     this.render();
   }
 
+  /** The color whose pieces appear at the bottom of the board. */
   get orientationColor(): Color {
     return this.orientation;
   }
