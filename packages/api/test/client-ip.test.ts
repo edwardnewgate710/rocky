@@ -126,27 +126,31 @@ describe('client-ip: resolveClientIp', () => {
     assert.equal(resolveClientIp(reqSpoofedTwoHops, 2), '203.0.113.1');
   });
 
-  test('falls back safely when header is absent, empty, or has fewer hops', () => {
+  test('returns null when header is absent or has fewer entries than configured hops', () => {
+    // Missing header with 1 configured hop: short chain → null (not socket IP, which would be
+    // the proxy address and would allow rate-limit bypass by a forged short chain)
     const reqMissing = {
       headers: {},
       socket: { remoteAddress: '198.51.100.99' },
     };
-    assert.equal(resolveClientIp(reqMissing, 1), '198.51.100.99');
+    assert.equal(resolveClientIp(reqMissing, 1), null);
 
     const reqFewerHops = {
       headers: { 'x-forwarded-for': '203.0.113.1' },
       socket: { remoteAddress: '10.244.0.10' },
     };
-    // 2 hops requested, but only 1 entry present: insufficient hops, falls back to direct socket peer
-    assert.equal(resolveClientIp(reqFewerHops, 2), '10.244.0.10');
+    // 2 hops requested, but only 1 entry present: chain too short → null
+    assert.equal(resolveClientIp(reqFewerHops, 2), null);
   });
 
-  test('falls back to socket IP when candidate in header is invalid IP', () => {
+  test('returns null when candidate in forwarded header is not a valid IP', () => {
+    // Chain has exactly 1 entry (= trustedHopCount), so it passes the length check,
+    // but normalizeIp returns null for the invalid value → resolveClientIp returns null.
     const reqMalformed = {
       headers: { 'x-forwarded-for': 'invalid-not-an-ip' },
       socket: { remoteAddress: '198.51.100.88' },
     };
-    assert.equal(resolveClientIp(reqMalformed, true), '198.51.100.88');
+    assert.equal(resolveClientIp(reqMalformed, true), null);
   });
 
   test('normalizes socket IP when IPv4-mapped IPv6 is used', () => {

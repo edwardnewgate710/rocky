@@ -118,6 +118,7 @@ class SharedSecretTokenVerifier implements TokenVerifier {
     });
   }
 
+  /** Verifies the access token and returns the userId, or null and fires onFailure if invalid. */
   verify(token: string): { readonly userId: string } | null {
     const identity = this.tokens.identify(token);
     if (!identity) {
@@ -128,6 +129,13 @@ class SharedSecretTokenVerifier implements TokenVerifier {
   }
 }
 
+/**
+ * Bootstrap entry point for the realtime gateway service.
+ *
+ * Reads configuration from environment variables, initialises all subsystems
+ * (event log, pub/sub, command router, optional workers), starts the WebSocket
+ * server and HTTP health/metrics server, and wires graceful-shutdown handlers.
+ */
 async function main(): Promise<void> {
   const port = Number(process.env['PORT'] ?? 4175);
   const healthPort = Number(process.env['HEALTH_PORT'] ?? port + 1);
@@ -719,6 +727,14 @@ void main().catch((err: unknown) => {
   process.exit(1);
 });
 
+/**
+ * Reads an environment variable as a positive integer, falling back to `fallback` when absent.
+ *
+ * @param name - The environment variable name.
+ * @param fallback - Default value used when the variable is not set.
+ * @returns Parsed positive integer value.
+ * @throws Error if the value is present but not a safe positive integer.
+ */
 function positiveIntEnv(name: string, fallback: number): number {
   const parsed = Number(process.env[name] ?? fallback);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
@@ -727,6 +743,18 @@ function positiveIntEnv(name: string, fallback: number): number {
   return parsed;
 }
 
+/**
+ * Checks whether an incoming WebSocket upgrade origin is permitted.
+ *
+ * Non-browser clients (e.g. native apps, curl) omit the `Origin` header; those are always
+ * allowed. When an explicit allow-list is configured, the origin must be in the set.
+ * Otherwise the origin's host must equal the HTTP `Host` header (same-origin policy).
+ *
+ * @param origin - The `Origin` header value from the upgrade request, or undefined.
+ * @param hostHeader - The `Host` header value from the upgrade request, or undefined.
+ * @param allowed - Explicit set of allowed origin strings (empty = same-origin check).
+ * @returns `true` if the origin is permitted, `false` otherwise.
+ */
 function originAllowed(origin: string | undefined, hostHeader: string | undefined, allowed: ReadonlySet<string>): boolean {
   if (!origin) return true; // Non-browser clients do not send Origin.
   if (allowed.size > 0) return allowed.has(origin);

@@ -73,9 +73,14 @@ const KNOWN_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 
 const LATENCY_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10];
 
 /**
- * Bound metric-label cardinality: `req.method` is client-controlled, so an
+ * Normalizes an HTTP method string into one of the known method tokens or `OTHER`.
+ *
+ * Bounds metric-label cardinality: `req.method` is client-controlled, so an
  * attacker could otherwise mint an unbounded number of `method="…"` series on
- * the failure path. Map any unrecognized token to `OTHER`.
+ * the failure path. Maps any unrecognized token to `OTHER`.
+ *
+ * @param method - Raw HTTP method string from the incoming request (may be undefined).
+ * @returns Uppercase known method name, or `"OTHER"` for unrecognized tokens.
  */
 function normalizeMethod(method: string | undefined): string {
   if (method === undefined) return 'OTHER';
@@ -83,6 +88,12 @@ function normalizeMethod(method: string | undefined): string {
   return KNOWN_METHODS.has(upper) ? upper : 'OTHER';
 }
 
+/**
+ * Splits a URL pathname into non-empty path segments, discarding leading/trailing slashes.
+ *
+ * @param path - The URL pathname to split (e.g. `/v1/users/:handle`).
+ * @returns Array of path segments in order (e.g. `["v1", "users", ":handle"]`).
+ */
 function splitPath(path: string): string[] {
   return path.split('/').filter((s) => s.length > 0);
 }
@@ -101,18 +112,23 @@ export class Router {
     return this;
   }
 
+  /** Shorthand for {@link add} with method `GET`. */
   get(path: string, doc: RouteDoc, auth: AuthPolicy, handler: Handler): this {
     return this.add({ method: 'GET', path, doc, auth, handler });
   }
+  /** Shorthand for {@link add} with method `POST`. */
   post(path: string, doc: RouteDoc, auth: AuthPolicy, handler: Handler): this {
     return this.add({ method: 'POST', path, doc, auth, handler });
   }
+  /** Shorthand for {@link add} with method `PUT`. */
   put(path: string, doc: RouteDoc, auth: AuthPolicy, handler: Handler): this {
     return this.add({ method: 'PUT', path, doc, auth, handler });
   }
+  /** Shorthand for {@link add} with method `PATCH`. */
   patch(path: string, doc: RouteDoc, auth: AuthPolicy, handler: Handler): this {
     return this.add({ method: 'PATCH', path, doc, auth, handler });
   }
+  /** Shorthand for {@link add} with method `DELETE`. */
   delete(path: string, doc: RouteDoc, auth: AuthPolicy, handler: Handler): this {
     return this.add({ method: 'DELETE', path, doc, auth, handler });
   }

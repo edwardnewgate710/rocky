@@ -40,6 +40,14 @@ function requireHeader(response, name, expected) {
   }
 }
 
+/**
+ * Polls a health URL until it returns HTTP 2xx or the deadline elapses.
+ *
+ * @param {string} url - The health-check URL to poll.
+ * @param {string} name - Human-readable service name for log messages.
+ * @returns {Promise<true>} Resolves when the service is healthy.
+ * @throws {Error} When the service does not become healthy within TIMEOUT_MS.
+ */
 async function waitForHealth(url, name) {
   const deadline = Date.now() + TIMEOUT_MS;
   while (Date.now() < deadline) {

@@ -112,7 +112,8 @@ export function resolveTrustProxyEnv(val: string | undefined): TrustProxy {
  * - Short forged chain defense:
  *   If the header is absent, empty, or has fewer entries than configured hops (`entries.length < hops`),
  *   the chain could not have traversed the required trusted reverse proxies.
- *   The forwarded header is rejected and identity falls back safely to the direct socket peer address.
+ *   `null` is returned so the caller can decide the appropriate fallback; using `socketIp` here would
+ *   misidentify the proxy address as the client and allow per-IP rate-limit bypass.
  *
  * @param req - HTTP request-like object containing headers and socket peer address.
  * @param trustProxy - Trusted proxy configuration (boolean or positive hop count, default: false).
@@ -137,14 +138,15 @@ export function resolveClientIp(
   }
 
   const entries = parseForwardedFor(req.headers['x-forwarded-for']);
-  if (entries.length >= hops) {
-    const targetIndex = entries.length - hops;
-    const candidate = entries[targetIndex];
-    const normalized = normalizeIp(candidate);
-    if (normalized) {
-      return normalized;
-    }
+  // Reject short forged chains: if fewer entries than expected hops are present,
+  // the request did not traverse all required trusted proxies. Returning null
+  // (instead of socketIp) prevents callers from misidentifying the proxy's address
+  // as the client, which would undermine per-IP rate limiting.
+  if (entries.length < hops) {
+    return null;
   }
 
-  return socketIp;
+  const targetIndex = entries.length - hops;
+  const candidate = entries[targetIndex];
+  return normalizeIp(candidate);
 }
