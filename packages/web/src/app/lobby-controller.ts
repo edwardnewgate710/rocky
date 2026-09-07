@@ -39,6 +39,7 @@ export interface LobbyCallbacks {
   onGameMatched?: (gameId: string) => void;
 }
 
+/** Construction-time wiring for {@link LobbyController}. */
 export interface LobbyControllerOptions {
   readonly client: GambitClient;
   readonly callbacks: LobbyCallbacks;
@@ -73,6 +74,7 @@ export class LobbyController {
   private requestGeneration = 0;
   private disposed = false;
 
+  /** Wire up a new controller from options; does not start the refresh timer. */
   constructor(opts: LobbyControllerOptions) {
     this.client = opts.client;
     this.callbacks = opts.callbacks;
@@ -83,6 +85,7 @@ export class LobbyController {
     this._clearInterval = opts.clearInterval ?? ((id) => clearInterval(id));
   }
 
+  /** Returns true when this generation is still the live request and the controller is alive. */
   private isCurrent(generation: number): boolean {
     return !this.disposed && generation === this.requestGeneration;
   }
