@@ -414,6 +414,15 @@ export class AuthService {
     return transitioned;
   }
 
+  /**
+   * Initiate a password-reset flow for the account identified by handle or email.
+   *
+   * Always resolves successfully regardless of whether the handle or email exists
+   * (anti-enumeration). If a matching account with a verified email is found, a
+   * single-use reset token is issued (replacing any active prior token) and a
+   * password-reset email is dispatched asynchronously in a fire-and-forget manner.
+   * The audit record is written whether or not a matching user is found.
+   */
   async requestPasswordReset(handleOrEmail: string, meta: RequestMeta): Promise<void> {
     const isEmail = handleOrEmail.includes('@');
     let user: UserRow | null = null;
@@ -466,6 +475,13 @@ export class AuthService {
     }
   }
 
+  /**
+   * Complete a password-reset flow: consume the single-use token, update the
+   * password hash, and revoke all existing refresh sessions for the account so
+   * that every device must re-authenticate with the new password.
+   *
+   * Throws `401` if the token is invalid, already consumed, or expired.
+   */
   async confirmPasswordReset(token: string, newPassword: string, meta: RequestMeta): Promise<void> {
     const tokenHash = createHash('sha256').update(token).digest('hex');
     const consumed = await this.repos.identityTokens.consume(
@@ -484,6 +500,12 @@ export class AuthService {
     await this.audit(meta, consumed.userId, 'auth.password_reset.confirm', consumed.userId);
   }
 
+  /**
+   * Consume an email-verification token and mark the associated address as verified.
+   *
+   * Throws `401` if the token is invalid, already consumed, or expired.
+   * Does not rotate sessions — the user remains signed in on all devices.
+   */
   async verifyEmail(token: string, meta: RequestMeta): Promise<void> {
     const tokenHash = createHash('sha256').update(token).digest('hex');
     const consumed = await this.repos.identityTokens.consumeEmailVerification(

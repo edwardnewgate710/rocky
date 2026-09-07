@@ -104,6 +104,13 @@ export interface SessionResetOptions {
   readonly token?: string;
 }
 
+/**
+ * Type-guard that narrows `val` to {@link AuthResponse}.
+ *
+ * Performs a structural duck-type check rather than a branded type check so
+ * it works across serialization boundaries (e.g. postMessage payloads from
+ * peer tabs where the prototype chain is lost).
+ */
 function isAuthResponse(val: unknown): val is AuthResponse {
   if (!val || typeof val !== 'object') return false;
   const cand = val as Record<string, unknown>;
@@ -115,6 +122,13 @@ function isAuthResponse(val: unknown): val is AuthResponse {
   );
 }
 
+/**
+ * Returns `true` when running in a real browser (not Node.js or Deno).
+ *
+ * Used to gate the automatic `BroadcastChannel` creation so that the
+ * `SessionManager` can be imported in server-side / test environments without
+ * throwing on `window` or `BroadcastChannel` access.
+ */
 function isBrowserEnvironment(): boolean {
   return (
     typeof window !== 'undefined' &&
@@ -123,6 +137,7 @@ function isBrowserEnvironment(): boolean {
   );
 }
 
+/** Construction-time options for {@link SessionManager}. */
 export interface SessionManagerOptions {
   readonly refresh: RefreshFn;
   readonly store?: TokenStore;
@@ -133,6 +148,18 @@ export interface SessionManagerOptions {
   readonly channel?: SessionChannel | null;
 }
 
+/**
+ * Manages authentication token storage, proactive refresh, and cross-tab session synchronization.
+ *
+ * The manager maintains a single in-flight refresh promise so concurrent callers coalesce onto
+ * one request. A monotonic `sessionGeneration` counter ensures that stale refresh responses from
+ * a prior session never overwrite a freshly adopted or cleared session.
+ *
+ * Cross-tab synchronization is done through a BroadcastChannel: adoption events broadcast the
+ * new session to peer tabs, and reset events (logout/invalidation) propagate the cleared state.
+ * The `adoptedHandler` is only invoked for genuine cross-tab messages — never for local API calls
+ * — via the private {@link adoptFromChannel} method, preventing double-adoption.
+ */
 export class SessionManager {
   private readonly store: TokenStore;
   private readonly doRefresh: RefreshFn;
@@ -151,6 +178,7 @@ export class SessionManager {
   private sessionGeneration = 0;
   private channel: SessionChannel | null = null;
 
+  /** Initialize the session manager; opens the BroadcastChannel if running in a browser context. */
   constructor(options: SessionManagerOptions) {
     this.store = options.store ?? new MemoryTokenStore();
     this.doRefresh = options.refresh;
@@ -189,7 +217,7 @@ export class SessionManager {
     if (!data || typeof data !== 'object') return;
     const msg = data as Record<string, unknown>;
     if (msg['type'] === 'session_adopted' && isAuthResponse(msg['auth'])) {
-      this.adopt(msg['auth'], false);
+      this.adoptFromChannel(msg['auth']);
     } else if (msg['type'] === 'session_reset') {
       const cause = typeof msg['cause'] === 'string' ? msg['cause'] : 'logout';
       if (cause === 'invalidation') {
@@ -245,12 +273,30 @@ export class SessionManager {
         // Channel closed or in error state.
       }
     }
-    this.adoptedHandler?.(session);
     return session;
   }
 
   /**
-   * Register the handler for when a session is adopted (including via peer tab broadcast).
+   * Adopt a session received from a peer tab via cross-tab channel broadcast.
+   *
+   * Unlike the general-purpose {@link adopt} (used for local API calls), this
+   * method additionally fires `adoptedHandler` to synchronize controller
+   * identity. It never re-broadcasts, because the message already originated
+   * from a peer tab — re-broadcasting would create a loop across all open tabs.
+   *
+   * This separation ensures that `adoptedHandler` is ONLY invoked for genuine
+   * cross-tab adoption events, never for local login, register, or refresh
+   * calls where the controller already drives the session update directly.
+   */
+  private adoptFromChannel(auth: AuthResponse): void {
+    const session = this.adopt(auth, false);
+    this.adoptedHandler?.(session);
+  }
+
+  /**
+   * Register the handler invoked when a session is adopted from a peer tab via
+   * cross-tab channel broadcast. It is NOT called for local login, register, or
+   * refresh calls — those are handled directly by the controller.
    */
   onAdopted(handler: (session: StoredSession) => void): void {
     this.adoptedHandler = handler;

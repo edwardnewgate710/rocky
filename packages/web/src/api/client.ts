@@ -262,6 +262,13 @@ export class AuthApi {
     this.session = session;
   }
 
+  /**
+   * Register a new account and adopt the returned session locally.
+   *
+   * Sends `credentials: 'include'` so the browser accepts the `Set-Cookie`
+   * response header for the httpOnly refresh cookie. The access token is stored
+   * in-memory only via `SessionManager.adopt()` — never in `localStorage`.
+   */
   async register(body: RegisterRequest): Promise<AuthResponse> {
     // M12 inc 2: send credentials so the browser accepts the Set-Cookie.
     const auth = await this.execute<AuthResponse>({
@@ -274,6 +281,13 @@ export class AuthApi {
     return auth;
   }
 
+  /**
+   * Authenticate with handle and password and adopt the returned session locally.
+   *
+   * Sends `credentials: 'include'` so the browser accepts the `Set-Cookie`
+   * response header for the httpOnly refresh cookie. The access token is stored
+   * in-memory only via `SessionManager.adopt()` — never in `localStorage`.
+   */
   async login(body: LoginRequest): Promise<AuthResponse> {
     // M12 inc 2: send credentials so the browser accepts the Set-Cookie.
     const auth = await this.execute<AuthResponse>({

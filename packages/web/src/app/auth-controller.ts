@@ -317,6 +317,13 @@ export class AuthController {
     return this.session;
   }
 
+  /**
+   * Persist the current session's handle and userId to storage.
+   *
+   * Only handle and userId are written — never the access or refresh token.
+   * Called after every successful `adoptSession` to keep the persisted state
+   * in sync so that `restore()` can rebuild the UI on the next page load.
+   */
   private persist(): void {
     if (!this.storage || !this.session) return;
     try {
@@ -331,6 +338,14 @@ export class AuthController {
     }
   }
 
+  /**
+   * Remove the persisted session entry from storage.
+   *
+   * Called on logout, invalidation, and failed restore to ensure the persisted
+   * state does not cause a spurious restore attempt on the next page load.
+   * Storage failures are silently swallowed — if storage is unavailable the
+   * stale entry will be ignored on next restore because the cookie will be gone.
+   */
   private clearPersisted(): void {
     if (!this.storage) return;
     try {
