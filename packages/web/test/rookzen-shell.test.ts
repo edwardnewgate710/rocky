@@ -12,6 +12,7 @@ const HTML_TEMPLATE = readFileSync(resolve(PACKAGE_ROOT, 'index.html'), 'utf8');
 const CSS = readFileSync(resolve(PACKAGE_ROOT, 'src/style.css'), 'utf8');
 const MANIFEST = JSON.parse(readFileSync(resolve(PACKAGE_ROOT, 'public/manifest.webmanifest'), 'utf8'));
 
+/** Converts a six-digit sRGB hex color to its WCAG relative luminance in the range 0–1. */
 function relativeLuminance(hex: string): number {
   const clean = hex.replace('#', '');
   const r = parseInt(clean.substring(0, 2), 16) / 255;
@@ -21,6 +22,7 @@ function relativeLuminance(hex: string): number {
   return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
 }
 
+/** Calculates the WCAG contrast ratio between two six-digit sRGB hex colors. */
 function contrastRatio(hex1: string, hex2: string): number {
   const l1 = relativeLuminance(hex1);
   const l2 = relativeLuminance(hex2);
