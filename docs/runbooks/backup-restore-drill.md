@@ -171,11 +171,14 @@ SELECT extname, extversion FROM pg_extension WHERE extname IN ('citext', 'vector
 ```
 
 #### 2. Schema Migrations Ledger
-Verify that all migrations are present and checksums match the source:
+Run the same query against the source and restored databases:
 ```sql
-SELECT count(*) FROM schema_migrations WHERE state = 'applied';
--- Must match count of migration files in packages/persistence/migrations/ (e.g. 31)
+SELECT version, name, checksum, state
+FROM schema_migrations
+ORDER BY version;
 ```
+The two ordered result sets must match exactly, and every row must have
+`state = 'applied'`.
 
 #### 3. Append-Only Trigger Verification
 Verify that the `game_events` immutability trigger is active by testing an `UPDATE`:
@@ -222,10 +225,14 @@ WHERE t.oid = 'public.search_embeddings'::regclass
 
 ### Step 6: Cleanup Isolated Target
 
-After verification succeeds, drop the temporary drill database:
+After verification succeeds, reconnect to the administrative `postgres`
+database before dropping the temporary drill database. PostgreSQL cannot drop
+the database used by the current session, even with `WITH (FORCE)`:
 
-```sql
-DROP DATABASE "gambit_backup_drill_restore_<timestamp>" WITH (FORCE);
+```bash
+psql -h "${PGHOST:-localhost}" -p "${PGPORT:-5432}" -U "${PGUSER:-gambit}" -d postgres -c "
+  DROP DATABASE \"${TARGET_DB}\" WITH (FORCE);
+"
 ```
 
 ---
