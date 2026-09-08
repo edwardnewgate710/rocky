@@ -1490,6 +1490,12 @@ export function mistakePredictionView(
   };
 }
 
+/**
+ * Stable wire representation of a completed-game review.
+ *
+ * Move counts cover only the requesting player's moves. A partial response contains the analyzed
+ * prefix and requires the `move_limit` cutoff reason; a complete response cannot expose one.
+ */
 export type GameReviewView = {
   readonly gameId: string;
   readonly variant: string;

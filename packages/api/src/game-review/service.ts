@@ -111,7 +111,14 @@ export class GameReviewService {
       && this.analysis.supportsMultiPv(variant, GAME_REVIEW_ANALYSIS_LIMITS.multiPv);
   }
 
-  /** Produce one ownership-checked, quota-admitted review or fail without returning partial data. */
+  /**
+   * Produce one ownership-checked, quota-admitted review.
+   *
+   * `onAccepted` runs exactly once after ownership, variant, and non-empty-game validation but
+   * before engine work. Games over the move budget return the first
+   * {@link MAX_REVIEWED_PLAYER_MOVES} player moves with explicit partial-review metadata;
+   * cancellation or deadline failures return no interrupted engine result.
+   */
   async review(
     input: { readonly gameId: string; readonly userId: string; readonly signal: AbortSignal },
     onAccepted: () => Promise<void>,
