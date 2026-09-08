@@ -200,7 +200,7 @@ export async function validateTargetIsolation(sourceUrl, targetUrl, options = {}
 
   const source = parseDatabaseUrl(sourceUrl);
   const target = parseDatabaseUrl(targetUrl);
-  
+
   if (!/^[a-zA-Z0-9_-]+$/.test(target.database)) {
     throw new Error('Invalid target database name format');
   }
@@ -679,7 +679,7 @@ export async function verifyRestoredDatabase(sourceBaseline, targetPool, options
       // Test vector operator syntax and index validity
       const testVec = `[${new Array(256).fill(0.1).join(',')}]`;
       await targetPool.query('SELECT $1::vector(256) <=> $1::vector(256) AS dist', [testVec]);
-      
+
       const idxRes = await targetPool.query(`
         SELECT i.relname AS index_name, am.amname AS access_method, ix.indisvalid, ix.indisready
         FROM pg_index ix
@@ -691,7 +691,7 @@ export async function verifyRestoredDatabase(sourceBaseline, targetPool, options
       if (!idxRes.rows.some(index => index.indisvalid === true && index.indisready === true)) {
         throw new Error('Valid and ready HNSW index missing on search_embeddings table');
       }
-      
+
       recordCheck('pgvector Functionality', true, 'Vector cosine operator (<=>) and HNSW index functional');
     } catch (err) {
       const msg = `Vector functionality verification failed: ${err.message}`;

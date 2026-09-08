@@ -129,7 +129,7 @@ test('isolation: generateIsolatedDbName generates prefixed unique name', async (
 test('isolation: validateTargetIsolation rejects malicious injection payloads in target URL', async () => {
   const source = 'postgres://gambit:pass@localhost:5432/gambit';
   const maliciousTarget = 'postgres://gambit:pass@localhost:5432/test" OR 1=1; DROP DATABASE production; --';
-  
+
   await assert.rejects(
     async () => await validateTargetIsolation(source, maliciousTarget, { allowCustomTargetName: true }),
     /Invalid target database name format/
@@ -577,7 +577,7 @@ test('cli: parseArgs defaults to safe isolated target when not specified', () =>
 
 test('tooling: resolvePgTooling accepts options and detects native or docker runner', () => {
   const mockExec = (cmd, args) => { return Buffer.from('mock version'); };
-  
+
   const customTooling = resolvePgTooling({ format: 'custom', execSyncFn: mockExec });
   assert.ok(customTooling.type === 'native' || customTooling.type === 'docker');
   assert.equal(typeof customTooling.runDump, 'function');
@@ -595,7 +595,7 @@ test('pg_restore: parsePgRestoreError rejects nonzero status even with warning-o
     'pg_restore: warning: errors ignored on restore: 1\n' +
     'pg_restore: warning: could not execute query: ERROR:  schema "public" does not exist'
   );
-  
+
   assert.throws(() => parsePgRestoreError(err), error => error === err);
 });
 
@@ -606,7 +606,7 @@ test('pg_restore: parsePgRestoreError throws on real errors including missing ob
     'pg_restore: warning: errors ignored on restore: 1\n' +
     'pg_restore: error: could not execute query: ERROR:  role "postgres" does not exist'
   );
-  
+
   assert.throws(() => parsePgRestoreError(err), /Command failed/);
 });
 
