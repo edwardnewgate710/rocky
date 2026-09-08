@@ -86,7 +86,8 @@ async function waitForHealth(url, timeoutMs = 15_000) {
     } catch (err) {
       lastErr = err;
     }
-    await new Promise((r) => setTimeout(r, 150));
+    const delay = Math.max(0, Math.min(150, deadline - Date.now()));
+    if (delay > 0) await new Promise((r) => setTimeout(r, delay));
   }
   throw new Error(`Service at ${url} did not become ready within ${timeoutMs}ms (last: ${lastErr?.message})`);
 }
@@ -94,6 +95,35 @@ async function waitForHealth(url, timeoutMs = 15_000) {
 const dockerAvailable = isDockerAvailable();
 
 describe('waitForHealth deadline enforcement', () => {
+  test('retry sleep never exceeds the remaining deadline', async () => {
+    const originalNow = Date.now;
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalFetch = globalThis.fetch;
+    let now = 1_000;
+    const requestedDelays = [];
+    Date.now = () => now;
+    globalThis.fetch = async () => ({ ok: false, status: 503 });
+    globalThis.setTimeout = (callback, delay = 0, ...args) => {
+      const milliseconds = Number(delay);
+      requestedDelays.push(milliseconds);
+      now += milliseconds;
+      callback(...args);
+      return 0;
+    };
+
+    try {
+      await assert.rejects(
+        () => waitForHealth('http://127.0.0.1:9', 50),
+        /did not become ready within 50ms/,
+      );
+      assert.deepEqual(requestedDelays, [50]);
+    } finally {
+      Date.now = originalNow;
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test('timeout signal never exceeds the remaining deadline', async () => {
     const origTimeout = AbortSignal.timeout;
     const requestedTimeouts = [];

@@ -139,4 +139,3 @@ describe('resolveConfig trustProxy', () => {
     assert.equal(cfgDisabled.trustProxy, false);
   });
 });
-
