@@ -154,6 +154,7 @@ export class AuthService {
   private readonly webauthn: { rpId: string; origins: readonly string[] };
   private readonly refreshGracePeriodMs: number;
 
+  /** Compose authentication dependencies and enforce the bounded refresh-collision policy. */
   constructor(deps: {
     repos: Repositories;
     hasher: PasswordHasher;
