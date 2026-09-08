@@ -351,6 +351,7 @@ export class Router {
   }
 }
 
+/** Serialize a handler result to the Node response while preserving status and declared headers. */
 function writeResult(res: ServerResponse, result: HandlerResult): void {
   if (result.headers) {
     for (const [k, v] of Object.entries(result.headers)) res.setHeader(k, v);

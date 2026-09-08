@@ -29,10 +29,12 @@ const apiUrl = process.env['API_URL'] ?? 'http://localhost:8080';
 const wsUrl = process.env['WS_URL'] ?? 'ws://localhost:3000/ws';
 const webUrl = process.env['WEB_URL'] ?? 'http://localhost:3000';
 
+/** Emit one consistently prefixed smoke-test progress message. */
 function log(msg) {
   console.log(`[smoke] ${msg}`);
 }
 
+/** Assert an exact response-header contract at the public web edge. */
 function requireHeader(response, name, expected) {
   const actual = response.headers.get(name);
   if (actual !== expected) {
@@ -40,6 +42,7 @@ function requireHeader(response, name, expected) {
   }
 }
 
+/** Register a smoke-test account and return the authenticated API response body. */
 async function registerUser(handle, password) {
   const res = await fetch(`${apiUrl}/v1/auth/register`, {
     method: 'POST',
@@ -55,6 +58,7 @@ async function registerUser(handle, password) {
   return body;
 }
 
+/** Publish the standard smoke-test seek using the supplied bearer token. */
 async function createSeek(token) {
   const res = await fetch(`${apiUrl}/v1/seeks`, {
     method: 'POST',
@@ -83,6 +87,7 @@ async function createSeek(token) {
   return body;
 }
 
+/** Accept a published seek and return its provisioned-game response body. */
 async function acceptSeek(token, seekId) {
   const res = await fetch(`${apiUrl}/v1/seeks/${encodeURIComponent(seekId)}/accept`, {
     method: 'POST',
@@ -98,6 +103,10 @@ async function acceptSeek(token, seekId) {
   return body;
 }
 
+/**
+ * Resolve after the authenticated socket receives the target game's initial state.
+ * Reject on protocol errors, premature close, or the bounded handshake deadline.
+ */
 function waitForWs(url, token, gameId) {
   return new Promise((resolve, reject) => {
     const deadline = Date.now() + 15_000;
@@ -149,6 +158,7 @@ function waitForWs(url, token, gameId) {
   });
 }
 
+/** Run the public-edge health, header, REST, and WebSocket smoke journey end to end. */
 async function main() {
   log(`API: ${apiUrl}`);
   log(`WS:  ${wsUrl}`);
