@@ -261,4 +261,3 @@ test('accept defers entirely to storage layer to avoid split-brain under clock s
     await h.close();
   }
 });
-
