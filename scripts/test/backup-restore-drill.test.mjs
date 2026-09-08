@@ -525,7 +525,7 @@ test('verification engine: passes when all structural and functional checks succ
         throw error;
       }
       if (text.includes('search_embeddings')) {
-        return { rows: [{ index_name: 'search_embeddings_hnsw_idx', access_method: 'hnsw' }] };
+        return { rows: [{ index_name: 'search_embeddings_hnsw_idx', access_method: 'hnsw', indisvalid: true, indisready: true }] };
       }
       return { rows: [] };
     },
@@ -588,7 +588,7 @@ test('tooling: resolvePgTooling accepts options and detects native or docker run
   assert.ok(plainTooling.type === 'native' || plainTooling.type === 'docker');
 });
 
-test('pg_restore: parsePgRestoreError treats non-error warnings as benign', () => {
+test('pg_restore: parsePgRestoreError rejects nonzero status even with warning-only diagnostics', () => {
   const err = new Error('Command failed: pg_restore exit code 1');
   err.status = 1;
   err.stderr = Buffer.from(
@@ -596,8 +596,7 @@ test('pg_restore: parsePgRestoreError treats non-error warnings as benign', () =
     'pg_restore: warning: could not execute query: ERROR:  schema "public" does not exist'
   );
   
-  const notice = parsePgRestoreError(err);
-  assert.ok(notice.includes('does not exist'));
+  assert.throws(() => parsePgRestoreError(err), error => error === err);
 });
 
 test('pg_restore: parsePgRestoreError throws on real errors including missing objects', () => {

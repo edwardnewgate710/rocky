@@ -63,6 +63,19 @@ The script will automatically:
 | `--json` | `false` | Output drill report in JSON format |
 | `--help` | `false` | Show help message |
 
+The backup path must not already exist. The drill reserves a new file exclusively
+and removes only the file it created. Target names are limited to 63 ASCII bytes;
+generated names retain their isolation marker and unique suffix within that limit.
+Connection URL query parameters are restricted to `sslmode`, `sslcert`, `sslkey`,
+and `sslrootcert`, so the JavaScript client and PostgreSQL tools use the same
+host, port, and credentials.
+
+Both dump formats use the source transaction's exported snapshot. Snapshot export
+or row-count failures abort the drill. Every nonzero restore exit is fatal,
+including warning-only or localized diagnostics. Cleanup is attempted after a
+failure; a failed database drop or backup removal also fails the drill, and combined
+restore and cleanup failures are reported together.
+
 ### 2.3 Retaining the Target Database for Forensic Inspection
 
 When diagnosing schema discrepancies or inspecting restore behavior, instruct the drill to keep the restored database:
@@ -214,7 +227,14 @@ DROP DATABASE "gambit_backup_drill_restore_<timestamp>" WITH (FORCE);
 1. **Never Overwrite Source:** The drill script explicitly compares the normalized source and target URLs. If the host, port, and database name match, execution aborts immediately.
 2. **Protected Databases:** Destructive commands will refuse to drop databases named `gambit`, `postgres`, `template1`, `production`, `master`, or `main`.
 3. **Naming Convention:** Target databases must contain an isolation indicator (`drill`, `restore`, `disposable`, `test`, or `isolated`) unless the `--allow-custom-target-name` flag is explicitly provided.
-4. **Credential Security:** Database URLs are masked in all logs and console output (`postgres://user:***@host:port/db`). Passwords are passed via environment variables (`PGPASSWORD`), never exposed in `ps` process arguments.
+4. **Credential Security:** Database URLs and known connection passwords are masked in diagnostics. PostgreSQL tool subprocesses receive passwords through `PGPASSWORD`. Prefer setting `DATABASE_URL` when invoking the drill; a URL supplied through `--source-url` or `--target-url` is still visible in the drill process's arguments.
+
+The structural checks require the append-only trigger on `public.game_events`
+and a valid, ready HNSW index on `public.search_embeddings`; identically named
+objects on another relation do not satisfy verification. The tests in
+`scripts/test/backup-restore-safety.test.mjs` exercise orchestration and failure
+paths without contacting a database. The separate live integration test remains
+opt-in through `DATABASE_URL`; use a disposable, migrated database for that test.
 
 ---
 

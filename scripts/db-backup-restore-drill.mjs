@@ -112,11 +112,37 @@ export function sanitizeDatabaseUrl(urlString) {
     if (parsed.password) {
       parsed.password = '***';
     }
+    for (const key of parsed.searchParams.keys()) {
+      if (/password|secret|token/i.test(key)) parsed.searchParams.set(key, '***');
+    }
+    parsed.hash = '';
     return parsed.toString();
   } catch {
     // Regex fallback for partially malformed or non-standard connection strings
     return urlString.replace(/(:\/\/)([^:@]+)(?::([^@]+))?(@)/, '$1$2:***$4');
   }
+}
+
+/** Redact known connection secrets and embedded URLs from process diagnostics. */
+function sanitizeDiagnostic(message, urls) {
+  let result = String(message).replace(/postgres(?:ql)?:\/\/[^\s]+/gi, sanitizeDatabaseUrl);
+  const secrets = new Set();
+  for (const url of urls) {
+    try {
+      const parsed = new URL(url);
+      if (parsed.password) {
+        secrets.add(parsed.password);
+        secrets.add(decodeURIComponent(parsed.password));
+      }
+      for (const [key, value] of parsed.searchParams) {
+        if (value && /password|secret|token/i.test(key)) secrets.add(value);
+      }
+    } catch { /* Invalid URLs are handled by argument validation. */ }
+  }
+  for (const secret of [...secrets].sort((a, b) => b.length - a.length)) {
+    result = result.replaceAll(secret, '***');
+  }
+  return result;
 }
 
 /**
@@ -125,18 +151,20 @@ export function sanitizeDatabaseUrl(urlString) {
 export function generateIsolatedDbName(base = 'gambit') {
   const timestamp = Date.now();
   const random = Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, '0');
-  return `${base}_backup_drill_restore_${timestamp}_${random}`;
+  const suffix = `_backup_drill_restore_${timestamp}_${random}`;
+  const prefix = base.replace(/[^a-zA-Z0-9_-]/g, '_') || 'gambit';
+  return `${prefix.slice(0, 63 - suffix.length)}${suffix}`;
 }
 
 export function parseDatabaseUrl(urlString) {
   const parsed = new URL(urlString);
   const dbName = parsed.pathname.replace(/^\//, '') || 'postgres';
   const sslParams = {};
+  const supportedQueryParams = new Set(['sslmode', 'sslcert', 'sslkey', 'sslrootcert']);
   for (const [key, value] of parsed.searchParams.entries()) {
-    if (key.startsWith('ssl')) {
-      const envKey = 'PG' + key.toUpperCase();
-      sslParams[envKey] = value;
-    }
+    if (!supportedQueryParams.has(key)) throw new Error('Unsupported database URL query parameter; only sslmode, sslcert, sslkey, and sslrootcert are allowed');
+    const envKey = 'PG' + key.toUpperCase();
+    sslParams[envKey] = value;
   }
   return {
     host: parsed.hostname || 'localhost',
@@ -175,6 +203,9 @@ export async function validateTargetIsolation(sourceUrl, targetUrl, options = {}
   
   if (!/^[a-zA-Z0-9_-]+$/.test(target.database)) {
     throw new Error('Invalid target database name format');
+  }
+  if (Buffer.byteLength(target.database, 'utf8') > 63) {
+    throw new Error('Target database name must not exceed 63 bytes');
   }
 
   // 1. URLs must not be identical
@@ -371,24 +402,9 @@ export function resolvePgTooling(options = {}) {
 }
 
 /**
- * Parse pg_restore errors to distinguish harmless drop-if-not-exists warnings from real failures.
+ * Reject every failed pg_restore invocation, regardless of diagnostic language or content.
  */
 export function parsePgRestoreError(err) {
-  const status = err?.status ?? err?.code;
-  if (status === 1 || err?.message?.includes('exit code 1')) {
-    const stderrStr = err?.stderr ? err.stderr.toString().trim() : '';
-    if (stderrStr) {
-      const lines = stderrStr.split('\n');
-      const hasRealError = lines.some(line => {
-        return line.includes('pg_restore: error:');
-      });
-      if (hasRealError) {
-        throw err;
-      }
-      return stderrStr;
-    }
-    return '';
-  }
   throw err;
 }
 
@@ -425,14 +441,10 @@ export async function collectSourceBaseline(pool, existingClient = null) {
     const tables = tableRes.rows.map((r) => r.tablename);
 
     // 4. Row counts across critical tables
-    const rowCounts = {};
+    const rowCounts = Object.create(null);
     for (const table of tables) {
-      try {
-        const countRes = await client.query(`SELECT COUNT(*) AS count FROM "${table}"`);
-        rowCounts[table] = parseInt(countRes.rows[0].count, 10);
-      } catch {
-        // Non-readable table or view
-      }
+      const countRes = await client.query(`SELECT COUNT(*) AS count FROM "${table.replace(/"/g, '""')}"`);
+      rowCounts[table] = parseInt(countRes.rows[0].count, 10);
     }
 
     // 5. Sample records for integrity comparison
@@ -589,7 +601,7 @@ export async function verifyRestoredDatabase(sourceBaseline, targetPool, options
   // Check 4: Row Counts
   for (const [table, expectedCount] of Object.entries(sourceBaseline.rowCounts)) {
     if (!targetTables.has(table)) continue;
-    const countRes = await targetPool.query(`SELECT COUNT(*) AS count FROM "${table}"`);
+    const countRes = await targetPool.query(`SELECT COUNT(*) AS count FROM "${table.replace(/"/g, '""')}"`);
     const actualCount = parseInt(countRes.rows[0].count, 10);
     if (actualCount !== expectedCount) {
       const msg = `Row count mismatch for table "${table}": source had ${expectedCount}, restored has ${actualCount}`;
@@ -635,14 +647,14 @@ export async function verifyRestoredDatabase(sourceBaseline, targetPool, options
       } else {
         // Table was empty; verify trigger registration in pg_trigger catalog
         const trigRes = await client.query(
-          "SELECT tgname FROM pg_trigger WHERE tgname = 'game_events_block_mutate' AND tgenabled = 'O'",
+          "SELECT tgname FROM pg_trigger WHERE tgrelid = 'public.game_events'::regclass AND tgname = 'game_events_block_mutate' AND tgenabled = 'O'",
         );
         triggerActive = trigRes.rows.length > 0;
       }
     } catch (err) {
       if (
         err.message &&
-        (err.message.includes('game_events is append-only') || err.code === 'P0001')
+        err.message.includes('game_events is append-only') && err.code === 'P0001'
       ) {
         triggerActive = true;
       } else {
@@ -669,15 +681,15 @@ export async function verifyRestoredDatabase(sourceBaseline, targetPool, options
       await targetPool.query('SELECT $1::vector(256) <=> $1::vector(256) AS dist', [testVec]);
       
       const idxRes = await targetPool.query(`
-        SELECT i.relname AS index_name, am.amname AS access_method
+        SELECT i.relname AS index_name, am.amname AS access_method, ix.indisvalid, ix.indisready
         FROM pg_index ix
         JOIN pg_class i ON i.oid = ix.indexrelid
         JOIN pg_class t ON t.oid = ix.indrelid
         JOIN pg_am am ON i.relam = am.oid
-        WHERE t.relname = 'search_embeddings' AND am.amname = 'hnsw'
+        WHERE t.oid = 'public.search_embeddings'::regclass AND am.amname = 'hnsw'
       `);
-      if (idxRes.rows.length === 0) {
-        throw new Error('HNSW index missing on search_embeddings table');
+      if (!idxRes.rows.some(index => index.indisvalid === true && index.indisready === true)) {
+        throw new Error('Valid and ready HNSW index missing on search_embeddings table');
       }
       
       recordCheck('pgvector Functionality', true, 'Vector cosine operator (<=>) and HNSW index functional');
@@ -776,7 +788,7 @@ export async function runBackupRestoreDrill(options = {}) {
   const parsedSource = parseDatabaseUrl(options.sourceUrl);
   const targetUrl = options.targetUrl || urlWithDatabase(
     options.sourceUrl,
-    `${parsedSource.database}_backup_drill_restore_${Date.now()}_${Math.floor(Math.random() * 0xffff).toString(16)}`,
+    options.targetDbName || generateIsolatedDbName(parsedSource.database),
   );
   const parsedTarget = parseDatabaseUrl(targetUrl);
 
@@ -792,6 +804,9 @@ export async function runBackupRestoreDrill(options = {}) {
   let targetPool = null;
   let adminClient = null;
   let targetCreatedByThisRun = false;
+  let backupCreatedByThisRun = false;
+  let drillError = null;
+  const cleanupErrors = [];
 
   const rawBackupPath =
     options.backupFile ||
@@ -803,35 +818,38 @@ export async function runBackupRestoreDrill(options = {}) {
 
   const log = (msg) => {
     if (!options.json) {
-      console.log(`[drill] ${msg}`);
+      console.log(`[drill] ${sanitizeDiagnostic(msg, [options.sourceUrl, targetUrl])}`);
     }
   };
 
   try {
+    // Reserve the destination exclusively before any tool can overwrite it.
+    const backupFd = openSync(backupPath, 'wx', 0o600);
+    backupCreatedByThisRun = true;
+    closeSync(backupFd);
+    const tooling = resolvePgTooling(options);
+    const isCustom = (options.format || 'custom') === 'custom';
     // 1. Capture source baseline and export snapshot
     log(`Capturing source baseline from ${report.source}...`);
     const baselineClient = await sourcePool.connect();
     let snapshotId = null;
     let sourceBaseline = null;
+    let baselineError = null;
+    const baselineCleanupErrors = [];
     try {
       await baselineClient.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
-      try {
-        const snapRes = await baselineClient.query('SELECT pg_export_snapshot() AS snap');
-        snapshotId = snapRes.rows[0]?.snap || null;
-      } catch {
-        // Snapshot export might not be supported in some test or replica configurations
-      }
+      const snapRes = await baselineClient.query('SELECT pg_export_snapshot() AS snap');
+      snapshotId = snapRes.rows[0]?.snap;
+      if (!snapshotId) throw new Error('Source did not provide an exported snapshot; refusing an inconsistent drill');
       sourceBaseline = await collectSourceBaseline(sourcePool, baselineClient);
       log(`Source baseline captured: ${sourceBaseline.tables.length} tables, ${sourceBaseline.migrations.length} migrations.`);
 
       // 2. Resolve tooling
-      const tooling = resolvePgTooling(options);
       log(`Resolved PostgreSQL tooling (${tooling.type})...`);
 
       // 3. Perform backup using pg_dump
       log(`Creating ${options.format || 'custom'} backup to ${backupPath}...`);
       const dumpStart = Date.now();
-      const isCustom = (options.format || 'custom') === 'custom';
 
       if (tooling.type === 'native') {
         const dumpArgs = [
@@ -844,7 +862,7 @@ export async function runBackupRestoreDrill(options = {}) {
           '--no-acl',
           '-f', backupPath,
         ];
-        if (snapshotId && isCustom) {
+        if (snapshotId) {
           dumpArgs.push(`--snapshot=${snapshotId}`);
         }
         tooling.runDump(dumpArgs, { PGPASSWORD: parsedSource.password, ...parsedSource.sslParams });
@@ -865,16 +883,30 @@ export async function runBackupRestoreDrill(options = {}) {
           '--no-acl',
           '-f', `/work/${backupFileName}`,
         ];
-        if (snapshotId && isCustom) {
+        if (snapshotId) {
           dumpArgs.push(`--snapshot=${snapshotId}`);
         }
         tooling.runDump(dumpArgs, { PGPASSWORD: parsedSource.password, ...parsedSource.sslParams }, backupDir);
       }
       report.timings.backupMs = Date.now() - dumpStart;
       log(`Backup completed in ${report.timings.backupMs}ms.`);
+    } catch (err) {
+      baselineError = err;
     } finally {
-      await baselineClient.query('ROLLBACK').catch(() => {});
-      baselineClient.release();
+      await baselineClient.query('ROLLBACK').catch(err => baselineCleanupErrors.push(err));
+      try {
+        baselineClient.release();
+      } catch (err) {
+        baselineCleanupErrors.push(err);
+      }
+    }
+    const baselineErrors = [...(baselineError ? [baselineError] : []), ...baselineCleanupErrors];
+    if (baselineErrors.length === 1) throw baselineErrors[0];
+    if (baselineErrors.length > 1) {
+      throw new AggregateError(
+        baselineErrors,
+        'Source baseline, dump, or transaction cleanup failed: ' + baselineErrors.map(error => error?.message || String(error)).join('; '),
+      );
     }
 
     // 4. Validate backup file
@@ -914,13 +946,13 @@ export async function runBackupRestoreDrill(options = {}) {
           '--if-exists',
           '--no-owner',
           '--no-acl',
+          '--exit-on-error',
           backupPath,
         ];
         try {
           tooling.runRestore(restoreArgs, { PGPASSWORD: parsedTarget.password, ...parsedTarget.sslParams });
         } catch (err) {
-          const notice = parsePgRestoreError(err);
-          if (notice) log(`pg_restore notice: ${notice}`);
+          parsePgRestoreError(err);
         }
       } else {
         const psqlArgs = [
@@ -950,13 +982,13 @@ export async function runBackupRestoreDrill(options = {}) {
           '--if-exists',
           '--no-owner',
           '--no-acl',
+          '--exit-on-error',
           `/work/${backupFileName}`,
         ];
         try {
           tooling.runRestore(restoreArgs, { PGPASSWORD: parsedTarget.password, ...parsedTarget.sslParams }, backupDir);
         } catch (err) {
-          const notice = parsePgRestoreError(err);
-          if (notice) log(`pg_restore notice: ${notice}`);
+          parsePgRestoreError(err);
         }
       } else {
         const psqlArgs = [
@@ -983,11 +1015,13 @@ export async function runBackupRestoreDrill(options = {}) {
 
     log(`Verification passed: ${verifyResult.checks.length} checks succeeded.`);
     report.success = true;
+  } catch (err) {
+    drillError = err;
   } finally {
     // Teardown connections
-    await sourcePool.end().catch(() => {});
+    await sourcePool.end().catch(err => cleanupErrors.push(err));
     if (targetPool) {
-      await targetPool.end().catch(() => {});
+      await targetPool.end().catch(err => cleanupErrors.push(err));
     }
 
     // Teardown target database if not keeping
@@ -998,20 +1032,29 @@ export async function runBackupRestoreDrill(options = {}) {
           await adminClient.query(`DROP DATABASE IF EXISTS "` + parsedTarget.database.replace(/"/g, '""') + `" WITH (FORCE)`);
           log('Target database dropped.');
         } catch (err) {
-          log(`Warning: Failed to drop isolated target database: ${err.message}`);
-          report.success = false;
-          throw err;
+          cleanupErrors.push(err);
         }
       }
-      await adminClient.end().catch(() => {});
+      await adminClient.end().catch(err => cleanupErrors.push(err));
     }
 
     // Remove backup file if not keeping
-    if (!options.keepBackup && existsSync(backupPath)) {
+    if (!options.keepBackup && backupCreatedByThisRun && existsSync(backupPath)) {
       try {
         unlinkSync(backupPath);
-      } catch {}
+      } catch (err) {
+        cleanupErrors.push(err);
+      }
     }
+  }
+
+  const errors = [...(drillError ? [drillError] : []), ...cleanupErrors];
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) {
+    throw new AggregateError(
+      errors,
+      'Backup/restore drill and cleanup failures: ' + errors.map(error => error?.message || String(error)).join('; '),
+    );
   }
 
   report.timings.totalMs = Date.now() - startTime;
@@ -1025,7 +1068,13 @@ const isDirectExecution =
   process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
 if (isDirectExecution) {
-  const args = parseArgs(process.argv.slice(2));
+  let args;
+  try {
+    args = parseArgs(process.argv.slice(2));
+  } catch {
+    console.error('Invalid drill arguments. Check database URLs and use --format custom or plain.');
+    process.exit(1);
+  }
 
   if (args.help || !args.sourceUrl) {
     console.log(`
@@ -1077,8 +1126,7 @@ Options:
       console.error('\n========================================');
       console.error('❌ BACKUP & RESTORE DRILL FAILED');
       console.error('========================================');
-      console.error(`Error: ${err.message}`);
-      if (err.stack) console.error(err.stack);
+      console.error(`Error: ${sanitizeDiagnostic(err.message, [args.sourceUrl, args.targetUrl])}`);
       console.error('========================================\n');
       process.exit(1);
     });
