@@ -209,7 +209,15 @@ Verify pgvector cosine distance operations and HNSW indexing:
 -- Test cosine distance operator (<=>)
 SELECT id, embedding <=> embedding AS distance FROM search_embeddings LIMIT 1;
 -- Verify HNSW index
-SELECT i.relname, am.amname FROM pg_index ix JOIN pg_class i ON i.oid = ix.indexrelid JOIN pg_class t ON t.oid = ix.indrelid JOIN pg_am am ON i.relam = am.oid WHERE t.relname = 'search_embeddings' AND am.amname = 'hnsw';
+SELECT i.relname, am.amname, ix.indisvalid, ix.indisready
+FROM pg_index ix
+JOIN pg_class i ON i.oid = ix.indexrelid
+JOIN pg_class t ON t.oid = ix.indrelid
+JOIN pg_am am ON i.relam = am.oid
+WHERE t.oid = 'public.search_embeddings'::regclass
+  AND am.amname = 'hnsw'
+  AND ix.indisvalid = true
+  AND ix.indisready = true;
 ```
 
 ### Step 6: Cleanup Isolated Target
