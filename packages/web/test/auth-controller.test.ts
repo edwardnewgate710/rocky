@@ -2,9 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AuthController } from '../src/app/auth-controller.js';
 import type { AuthSession } from '../src/app/auth-controller.js';
-import type { GambitClient } from '../src/api/client.js';
-import type { LoginRequest, RegisterRequest } from '../src/api/models.js';
+import { GambitClient } from '../src/api/client.js';
+import type { AuthResponse, LoginRequest, RegisterRequest } from '../src/api/models.js';
 import type { StoredSession, KeyValueStorage } from '../src/net/session.js';
+import { MemoryTokenStore } from '../src/net/session.js';
+import { json } from './support/fake-transport.js';
 
 function makeFakeStorage(): KeyValueStorage {
   const store = new Map<string, string>();
@@ -520,25 +522,20 @@ test('password reset clearance wins over an in-flight session restore', async ()
 
   let releaseRefresh!: () => void;
   const refreshGate = new Promise<void>((resolve) => { releaseRefresh = resolve; });
-  let currentAccessToken: string | undefined;
-  let client: any;
   const refreshed = {
     user: { id: 'u1', handle: 'alice', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] },
     tokens: { accessToken: 'late-token', tokenType: 'Bearer', expiresIn: 900, refreshExpiresAt: '2030-01-01T00:00:00Z' },
   };
-  client = makeFakeClient({
-    refresh: async () => {
-      await refreshGate;
-      client.session.adopt(refreshed);
-      return refreshed;
+  const client = new GambitClient({
+    baseUrl: 'https://api.test',
+    now: () => 1000,
+    transport: {
+      async send() {
+        await refreshGate;
+        return json(200, refreshed);
+      },
     },
   });
-  client.session = {
-    get current() { return currentAccessToken ? { tokens: { accessToken: currentAccessToken } } : null; },
-    adopt: (auth: any) => { currentAccessToken = auth.tokens.accessToken; },
-    reset: () => { currentAccessToken = undefined; },
-    onInvalidated: () => {},
-  };
 
   const sessions: (AuthSession | null)[] = [];
   const ctrl = new AuthController({
@@ -560,6 +557,44 @@ test('password reset clearance wins over an in-flight session restore', async ()
   assert.equal(client.session.current, null);
   assert.equal(storage.getItem('gambit-session'), null);
   assert.deepEqual(sessions, [null]);
+  ctrl.dispose();
+});
+
+test('a cancelled restore continuation does not reset a subsequently adopted session', async () => {
+  const storage = makeFakeStorage();
+  storage.setItem('gambit-session', JSON.stringify({ handle: 'alice', userId: 'u1' }));
+  const user = { id: 'u1', handle: 'alice', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] } as const;
+  const tokens = { accessToken: 'restore', tokenType: 'Bearer', expiresIn: 900, refreshExpiresAt: '2030-01-01T00:00:00Z' } as const;
+  const tokenStore = new MemoryTokenStore();
+  let ctrl!: AuthController;
+  const client = new GambitClient({
+    baseUrl: 'https://api.test',
+    now: () => 1000,
+    transport: { send: async () => json(200, { user, tokens }) },
+    tokenStore: {
+      load: () => tokenStore.load(),
+      clear: () => tokenStore.clear(),
+      save(session) {
+        tokenStore.save(session);
+        if (session.tokens.accessToken === 'restore') {
+          // Change the lifecycle after the API saves, before the controller resumes.
+          queueMicrotask(() => {
+            ctrl.clearLocalSession();
+            client.session.adopt({ user, tokens: { ...tokens, accessToken: 'newer' } });
+          });
+        }
+      },
+    },
+  });
+  ctrl = new AuthController({
+    client,
+    storage,
+    callbacks: { onSessionChange: () => {}, onPending: () => {}, onError: () => {} },
+  });
+
+  assert.equal(await ctrl.restore(), null);
+  assert.equal(client.session.current?.tokens.accessToken, 'newer');
+  ctrl.dispose();
 });
 
 test('dispose ignores future calls', async () => {
@@ -574,6 +609,52 @@ test('dispose ignores future calls', async () => {
   assert.equal(changes, 0);
   assert.equal(ctrl.isAuthenticated(), false);
 });
+
+for (const outcome of ['success', 'failure'] as const) {
+  test(`cancelled restore ${outcome} leaves the newer login intact`, async () => {
+    const storage = makeFakeStorage();
+    storage.setItem('gambit-session', JSON.stringify({ handle: 'alice', userId: 'u1' }));
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => { finish = resolve; });
+    const newer: AuthResponse = {
+      user: { id: 'u2', handle: 'bob', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] },
+      tokens: { accessToken: 'newer-login', tokenType: 'Bearer', expiresIn: 900, refreshExpiresAt: '2030-01-01T00:00:00Z' },
+    };
+    const client = new GambitClient({
+      baseUrl: 'https://api.test',
+      now: () => 1000,
+      transport: {
+        async send(request) {
+          if (request.url.endsWith('/refresh')) {
+            await gate;
+            return outcome === 'success'
+              ? json(200, { ...newer, tokens: { ...newer.tokens, accessToken: 'obsolete-restore' } })
+              : json(401, { error: { code: 'unauthenticated', message: 'rotation lost', requestId: 'restore' } });
+          }
+          return json(200, newer);
+        },
+      },
+    });
+    const changes: (AuthSession | null)[] = [];
+    const ctrl = new AuthController({
+      client,
+      storage,
+      callbacks: { onSessionChange: (session) => { changes.push(session); }, onPending: () => {}, onError: () => {} },
+    });
+
+    const restoring = ctrl.restore();
+    ctrl.clearLocalSession();
+    await ctrl.login('bob', 'password');
+    finish();
+
+    assert.equal(await restoring, null, 'a cancelled operation must not adopt another operation\'s result');
+    assert.equal(client.session.current?.tokens.accessToken, 'newer-login');
+    assert.deepEqual(ctrl.currentSession, { handle: 'bob', userId: 'u2' });
+    assert.deepEqual(JSON.parse(storage.getItem('gambit-session')!), { handle: 'bob', userId: 'u2' });
+    assert.deepEqual(changes, [null, { handle: 'bob', userId: 'u2' }]);
+    ctrl.dispose();
+  });
+}
 
 test('M2: isAuthenticated gates create-seek path', async () => {
   const client = makeFakeClient() as any;

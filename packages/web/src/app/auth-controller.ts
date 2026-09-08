@@ -161,13 +161,12 @@ export class AuthController {
         try {
           const refreshed = await this.client.auth.refresh();
           if (this.disposed || generation !== this.sessionGeneration) {
-            // AuthApi.refresh adopts before returning. A password reset may have
-            // invalidated the local session while the network request was in flight.
-            this.client.session.reset();
+            // The manager guards adoption; this obsolete continuation owns no session to clear.
             return null;
           }
           return this.adoptSession(refreshed.user);
         } catch {
+          if (this.disposed || generation !== this.sessionGeneration) return null;
           // If another concurrent tab refreshed/restored while this request was in flight:
           if (this.client.session.isAuthenticated && this.client.session.current) {
             return this.adoptSession(this.client.session.current.user);

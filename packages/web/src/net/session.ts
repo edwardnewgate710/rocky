@@ -148,6 +148,72 @@ export interface SessionManagerOptions {
   readonly channel?: SessionChannel | null;
 }
 
+/** Mutation classes ordered so security-sensitive logout wins a concurrent adoption. */
+type SessionMutationKind = 'invalidation' | 'adoption' | 'logout';
+
+/** Causal revision attached to each cross-tab mutation. */
+interface SessionRevision {
+  readonly clock: Readonly<Record<string, number>>;
+  readonly source: string;
+  readonly kind: SessionMutationKind;
+}
+
+const MUTATION_PRIORITY: Readonly<Record<SessionMutationKind, number>> = {
+  invalidation: 0,
+  adoption: 1,
+  logout: 2,
+};
+
+/** Validate a revision received across the untyped BroadcastChannel boundary. */
+function isSessionRevision(value: unknown): value is SessionRevision {
+  if (!value || typeof value !== 'object') return false;
+  const revision = value as Record<string, unknown>;
+  const clock = revision['clock'];
+  if (!clock || typeof clock !== 'object' || Array.isArray(clock)) return false;
+  const clockEntries = Object.entries(clock as Record<string, unknown>);
+  return (
+    typeof revision['source'] === 'string' &&
+    revision['source'].length > 0 &&
+    clockEntries.length > 0 &&
+    clockEntries.every(([source, counter]) => source.length > 0 && Number.isSafeInteger(counter) && (counter as number) > 0) &&
+    Number.isSafeInteger((clock as Record<string, unknown>)[revision['source']]) &&
+    (revision['kind'] === 'invalidation' || revision['kind'] === 'adoption' || revision['kind'] === 'logout')
+  );
+}
+
+/** Determine whether one vector clock is before, after, equal to, or concurrent with another. */
+function compareCausality(
+  left: Readonly<Record<string, number>>,
+  right: Readonly<Record<string, number>>,
+): 'before' | 'after' | 'equal' | 'concurrent' {
+  let leftAhead = false;
+  let rightAhead = false;
+  for (const source of new Set([...Object.keys(left), ...Object.keys(right)])) {
+    leftAhead ||= (left[source] ?? 0) > (right[source] ?? 0);
+    rightAhead ||= (right[source] ?? 0) > (left[source] ?? 0);
+  }
+  if (leftAhead && rightAhead) return 'concurrent';
+  if (leftAhead) return 'after';
+  if (rightAhead) return 'before';
+  return 'equal';
+}
+
+/** Break ties between concurrent mutations so every tab converges on the same event. */
+function compareConcurrentRevisions(left: SessionRevision, right: SessionRevision): number {
+  const priority = MUTATION_PRIORITY[left.kind] - MUTATION_PRIORITY[right.kind];
+  if (priority !== 0) return priority;
+  const sourceProgress = left.clock[left.source]! - right.clock[right.source]!;
+  if (sourceProgress !== 0) return sourceProgress;
+  if (left.source === right.source) return 0;
+  return left.source < right.source ? -1 : 1;
+}
+
+/** Create a per-tab tie-breaker for concurrently produced channel revisions. */
+function createChannelSource(): string {
+  if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID();
+  return `${Date.now()}-${Math.random()}`;
+}
+
 /**
  * Manages authentication token storage, proactive refresh, and cross-tab session synchronization.
  *
@@ -157,6 +223,8 @@ export interface SessionManagerOptions {
  *
  * Cross-tab synchronization is done through a BroadcastChannel: adoption events broadcast the
  * new session to peer tabs, and reset events (logout/invalidation) propagate the cleared state.
+ * Causal revisions order delayed messages; explicit logout outranks a concurrent adoption, while
+ * an adoption created after observing that logout has a larger revision and can sign in again.
  * The `adoptedHandler` is only invoked for genuine cross-tab messages — never for local API calls
  * — via the private {@link adoptFromChannel} method, preventing double-adoption.
  */
@@ -169,6 +237,9 @@ export class SessionManager {
   private adoptedHandler: ((session: StoredSession) => void) | null = null;
   private resetHandler: (() => void) | null = null;
   private refreshInFlight: Promise<StoredSession> | null = null;
+  private readonly channelSource = createChannelSource();
+  private channelClock: Record<string, number> = {};
+  private lastChannelRevision: SessionRevision | null = null;
   /**
    * Monotonically increasing generation counter tracking local session lifecycle changes
    * (resets, adoptions, and disposals). In-flight refreshes capture the generation at initiation
@@ -206,34 +277,117 @@ export class SessionManager {
    * Handle incoming cross-tab channel events.
    *
    * Enforces ordering and freshness invariants:
-   * - `session_adopted`: Adopts fresh auth tokens received from a peer tab without re-broadcasting.
+   * - `session_adopted`: Adopts fresh auth tokens received from a peer tab without re-broadcasting,
+   *   unless its causal revision predates the last accepted mutation.
    * - `session_reset`:
-   *   - If cause is 'invalidation' (involuntary failed refresh from a peer), verifies whether this
-   *     manager already holds an active, non-expired successor session. A legitimate concurrent
-   *     refresh loser must never invalidate the winner's valid session.
+   *   - If cause is 'invalidation' (involuntary failed refresh from a peer), preserves an in-flight
+   *     refresh or a different-token successor, even when that successor still needs refresh. A
+   *     legitimate concurrent refresh loser must never invalidate the winner's session.
    *   - If cause is 'logout' (or unspecified legacy), unconditionally clears the session.
    */
   private handleChannelMessage(data: unknown): void {
     if (!data || typeof data !== 'object') return;
     const msg = data as Record<string, unknown>;
     if (msg['type'] === 'session_adopted' && isAuthResponse(msg['auth'])) {
-      this.adoptFromChannel(msg['auth']);
+      this.handleChannelAdoption(msg['auth'], msg['revision']);
     } else if (msg['type'] === 'session_reset') {
-      const cause = typeof msg['cause'] === 'string' ? msg['cause'] : 'logout';
-      if (cause === 'invalidation') {
-        const current = this.store.load();
-        const resetToken = typeof msg['token'] === 'string' ? msg['token'] : undefined;
-        // If this manager holds an active, non-expired session that has already rotated
-        // beyond the failed token (or is a valid successor), do NOT clear it.
-        if (current && !this.isAccessTokenExpired(current)) {
-          if (!resetToken || current.tokens.accessToken !== resetToken) {
-            return;
-          }
-        }
-      }
-      this.reset(false);
-      this.resetHandler?.();
+      this.handleChannelReset(msg);
     }
+  }
+
+  /** Apply a peer adoption only when its revision is newer than local session state. */
+  private handleChannelAdoption(auth: AuthResponse, untrustedRevision: unknown): void {
+    if (untrustedRevision !== undefined && !isSessionRevision(untrustedRevision)) return;
+    const revision = isSessionRevision(untrustedRevision) ? untrustedRevision : null;
+    if (!this.acceptIncomingRevision(revision, 'adoption')) return;
+    this.adoptFromChannel(auth);
+  }
+
+  /** Apply a peer reset after both causal-order and refresh-race checks succeed. */
+  private handleChannelReset(message: Record<string, unknown>): void {
+    const cause = message['cause'] === 'invalidation' ? 'invalidation' : 'logout';
+    const kind: SessionMutationKind = cause;
+    const untrustedRevision = message['revision'];
+    if (untrustedRevision !== undefined && !isSessionRevision(untrustedRevision)) return;
+    const revision = isSessionRevision(untrustedRevision) ? untrustedRevision : null;
+    if (revision && revision.kind !== kind) return;
+    if (revision) this.observeChannelClock(revision.clock);
+    if (cause === 'invalidation' && this.shouldPreserveAgainstInvalidation(message['token'])) return;
+    if (!this.acceptIncomingRevision(revision, kind)) return;
+    this.applyReset();
+    this.resetHandler?.();
+  }
+
+  /** Preserve a local request or rotated successor from a peer's failed refresh. */
+  private shouldPreserveAgainstInvalidation(untrustedToken: unknown): boolean {
+    if (this.refreshInFlight) return true;
+    const current = this.store.load();
+    const resetToken = typeof untrustedToken === 'string' ? untrustedToken : undefined;
+    return current !== null && (!resetToken || current.tokens.accessToken !== resetToken);
+  }
+
+  /** Advance the local logical clock and record a mutation that originated in this tab. */
+  private nextChannelRevision(kind: SessionMutationKind): SessionRevision {
+    this.channelClock[this.channelSource] = (this.channelClock[this.channelSource] ?? 0) + 1;
+    const revision = {
+      clock: { ...this.channelClock },
+      source: this.channelSource,
+      kind,
+    } as const;
+    this.lastChannelRevision = revision;
+    return revision;
+  }
+
+  /** Merge observed causal history without accepting the peer's state mutation. */
+  private observeChannelClock(observed: Readonly<Record<string, number>>): void {
+    for (const [source, counter] of Object.entries(observed)) {
+      this.channelClock[source] = Math.max(this.channelClock[source] ?? 0, counter);
+    }
+  }
+
+  /** Accept only a causally newer peer mutation, with a conservative rolling-upgrade fallback. */
+  private acceptIncomingRevision(
+    revision: SessionRevision | null,
+    legacyKind: SessionMutationKind,
+  ): boolean {
+    if (!revision) {
+      // A new client that has explicitly logged out must not be resurrected by
+      // a delayed adoption from an older client that cannot prove freshness.
+      if (legacyKind === 'adoption' && this.lastChannelRevision?.kind === 'logout') return false;
+      this.nextChannelRevision(legacyKind);
+      return true;
+    }
+    if (revision.kind !== legacyKind) return false;
+    this.observeChannelClock(revision.clock);
+    if (this.lastChannelRevision) {
+      const causality = compareCausality(revision.clock, this.lastChannelRevision.clock);
+      if (causality === 'before' || causality === 'equal') return false;
+      if (causality === 'concurrent' && compareConcurrentRevisions(revision, this.lastChannelRevision) <= 0) {
+        return false;
+      }
+    }
+    this.lastChannelRevision = revision;
+    return true;
+  }
+
+  /** Clear the local session and invalidate asynchronous work without creating a channel event. */
+  private applyReset(): void {
+    this.sessionGeneration++;
+    this.store.clear();
+    this.refreshInFlight = null;
+  }
+
+  /** Store one validated auth response without deciding its cross-tab revision. */
+  private storeAuth(auth: AuthResponse): StoredSession {
+    this.sessionGeneration++;
+    this.refreshInFlight = null;
+    const session: StoredSession = {
+      user: auth.user,
+      tokens: auth.tokens,
+      accessTokenExpiresAt: this.now() + auth.tokens.expiresIn * 1000,
+    };
+    this.store.save(session);
+    return session;
   }
 
   /**
@@ -258,17 +412,11 @@ export class SessionManager {
    * Optionally broadcasts a `session_adopted` message to notify peer tabs.
    */
   adopt(auth: AuthResponse, broadcast = true): StoredSession {
-    this.sessionGeneration++;
-    this.refreshInFlight = null;
-    const session: StoredSession = {
-      user: auth.user,
-      tokens: auth.tokens,
-      accessTokenExpiresAt: this.now() + auth.tokens.expiresIn * 1000,
-    };
-    this.store.save(session);
+    const revision = this.nextChannelRevision('adoption');
+    const session = this.storeAuth(auth);
     if (broadcast && this.channel) {
       try {
-        this.channel.postMessage({ type: 'session_adopted', auth });
+        this.channel.postMessage({ type: 'session_adopted', auth, revision });
       } catch {
         // Channel closed or in error state.
       }
@@ -289,7 +437,7 @@ export class SessionManager {
    * calls where the controller already drives the session update directly.
    */
   private adoptFromChannel(auth: AuthResponse): void {
-    const session = this.adopt(auth, false);
+    const session = this.storeAuth(auth);
     this.adoptedHandler?.(session);
   }
 
@@ -335,16 +483,15 @@ export class SessionManager {
     const currentToken = this.store.load()?.tokens.accessToken;
     const token = typeof options === 'object' && options.token !== undefined ? options.token : currentToken;
 
-    this.sessionGeneration++;
-    this.store.clear();
-    this.refreshInFlight = null;
+    const revision = this.nextChannelRevision(cause === 'invalidation' ? 'invalidation' : 'logout');
+    this.applyReset();
     if (broadcast && this.channel) {
       try {
         this.channel.postMessage({
           type: 'session_reset',
           cause,
           token,
-          generation: this.sessionGeneration,
+          revision,
         });
       } catch {
         // Channel closed or in error state.
@@ -392,6 +539,20 @@ export class SessionManager {
     if (!this.isAccessTokenExpired(session)) return session.tokens.accessToken;
     const refreshed = await this.refreshNow();
     return refreshed.tokens.accessToken;
+  }
+
+  /**
+   * Restore from the httpOnly cookie, including when no in-memory session exists.
+   * Discard the response before saving or broadcasting if a reset, adoption, or
+   * disposal has superseded this request.
+   */
+  async restore(): Promise<StoredSession> {
+    const generation = this.sessionGeneration;
+    const auth = await this.doRefresh();
+    if (generation !== this.sessionGeneration) {
+      throw new NoSessionError('session changed while restore was in flight');
+    }
+    return this.adopt(auth);
   }
 
   /**

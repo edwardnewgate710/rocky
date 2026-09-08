@@ -248,6 +248,183 @@ function createMockChannelPair(): [SessionChannel, SessionChannel] {
   return [ch1, ch2];
 }
 
+/** Hold cross-tab delivery until the test explicitly advances that boundary. */
+function queuedChannels() {
+  const toFirst: unknown[] = [];
+  const toSecond: unknown[] = [];
+  const first: SessionChannel = {
+    onmessage: null,
+    postMessage: (message) => { toSecond.push(message); },
+    close: () => {},
+  };
+  const second: SessionChannel = {
+    onmessage: null,
+    postMessage: (message) => { toFirst.push(message); },
+    close: () => {},
+  };
+  return {
+    first,
+    second,
+    deliverFirst: () => {
+      for (const data of toFirst.splice(0)) first.onmessage?.(new MessageEvent('message', { data }));
+    },
+    deliverSecond: () => {
+      for (const data of toSecond.splice(0)) second.onmessage?.(new MessageEvent('message', { data }));
+    },
+  };
+}
+
+test('loser invalidation cannot cancel the winner refresh still waiting for its response', async () => {
+  const channels = queuedChannels();
+  let finish!: (auth: AuthResponse) => void;
+  const winner = new SessionManager({
+    refresh: () => new Promise((resolve) => { finish = resolve; }),
+    now: () => 1000,
+    channel: channels.first,
+  });
+  const loser = new SessionManager({
+    refresh: async () => { throw new Error('rotation lost'); },
+    now: () => 1000,
+    channel: channels.second,
+  });
+  winner.adopt(authResponse('old', 'old-refresh', 1), false);
+  loser.adopt(authResponse('old', 'old-refresh', 1), false);
+
+  const pending = winner.refreshNow();
+  await assert.rejects(loser.refreshNow(), /rotation lost/);
+  channels.deliverFirst();
+  finish(authResponse('winner', 'winner-refresh'));
+
+  assert.equal((await pending).tokens.accessToken, 'winner');
+  channels.deliverSecond();
+  assert.equal(winner.current?.tokens.accessToken, 'winner');
+  assert.equal(loser.current?.tokens.accessToken, 'winner');
+  winner.dispose();
+  loser.dispose();
+});
+
+test('delayed invalidation preserves a successor whose access token needs refreshing', async () => {
+  const channels = queuedChannels();
+  const winner = new SessionManager({ refresh: async () => authResponse('next'), now: () => 1000, channel: channels.first });
+  const loser = new SessionManager({ refresh: async () => { throw new Error('lost'); }, now: () => 1000, channel: channels.second });
+  winner.adopt(authResponse('successor', 'successor-refresh', 1), false);
+  loser.adopt(authResponse('old', 'old-refresh', 1), false);
+
+  await assert.rejects(loser.refreshNow(), /lost/);
+  channels.deliverFirst();
+
+  assert.equal(winner.current?.tokens.accessToken, 'successor');
+  assert.equal((await winner.refreshNow()).tokens.accessToken, 'next');
+  winner.dispose();
+  loser.dispose();
+});
+
+test('an adoption queued before explicit logout cannot resurrect the logged-out peer', () => {
+  const channels = queuedChannels();
+  const first = new SessionManager({ refresh: async () => authResponse(), now: () => 1000, channel: channels.first });
+  const second = new SessionManager({ refresh: async () => authResponse(), now: () => 1000, channel: channels.second });
+  first.adopt(authResponse('old'), false);
+  second.adopt(authResponse('old'), false);
+
+  first.adopt(authResponse('queued-successor'));
+  second.reset();
+  channels.deliverSecond();
+  channels.deliverFirst();
+
+  assert.equal(second.current, null);
+  assert.equal(first.current, null);
+  first.dispose();
+  second.dispose();
+});
+
+test('explicit logout beats a concurrent adoption despite asymmetric local revision counts', () => {
+  const channels = queuedChannels();
+  const first = new SessionManager({ refresh: async () => authResponse(), now: () => 1000, channel: channels.first });
+  const second = new SessionManager({ refresh: async () => authResponse(), now: () => 1000, channel: channels.second });
+  first.adopt(authResponse('first-1'), false);
+  first.adopt(authResponse('first-2'), false);
+  first.adopt(authResponse('first-3'), false);
+  second.adopt(authResponse('second-1'), false);
+
+  first.adopt(authResponse('concurrent-adoption'));
+  second.reset();
+  channels.deliverSecond();
+  channels.deliverFirst();
+
+  assert.equal(first.current, null);
+  assert.equal(second.current, null);
+  first.dispose();
+  second.dispose();
+});
+
+test('a login causally after peer logout can authenticate both tabs again', () => {
+  const channels = queuedChannels();
+  const first = new SessionManager({ refresh: async () => authResponse(), now: () => 1000, channel: channels.first });
+  const second = new SessionManager({ refresh: async () => authResponse(), now: () => 1000, channel: channels.second });
+  first.adopt(authResponse('old'), false);
+  second.adopt(authResponse('old'), false);
+
+  first.adopt(authResponse('obsolete-adoption'));
+  second.reset();
+  channels.deliverFirst();
+  first.adopt(authResponse('later-login'));
+  channels.deliverSecond();
+
+  assert.equal(first.current?.tokens.accessToken, 'later-login');
+  assert.equal(second.current?.tokens.accessToken, 'later-login');
+  first.dispose();
+  second.dispose();
+});
+
+test('channel messages with malformed revisions cannot mutate session state', () => {
+  const channel: SessionChannel = { onmessage: null, postMessage: () => {}, close: () => {} };
+  const manager = new SessionManager({ refresh: async () => authResponse(), now: () => 1000, channel });
+  manager.adopt(authResponse('current'), false);
+  const malformedRevision = { clock: {}, source: 'peer', kind: 'adoption' };
+
+  channel.onmessage?.(new MessageEvent('message', {
+    data: { type: 'session_adopted', auth: authResponse('untrusted'), revision: malformedRevision },
+  }));
+  channel.onmessage?.(new MessageEvent('message', {
+    data: { type: 'session_reset', cause: 'logout', revision: malformedRevision },
+  }));
+
+  assert.equal(manager.current?.tokens.accessToken, 'current');
+  manager.dispose();
+});
+
+test('a revision whose kind contradicts its message cannot poison a later logout', () => {
+  let posted: unknown;
+  const channel: SessionChannel = {
+    onmessage: null,
+    postMessage: (message) => { posted = message; },
+    close: () => {},
+  };
+  const manager = new SessionManager({ refresh: async () => authResponse(), now: () => 1000, channel });
+  manager.adopt(authResponse('current'), false);
+
+  channel.onmessage?.(new MessageEvent('message', {
+    data: {
+      type: 'session_reset',
+      cause: 'logout',
+      revision: { clock: { peer: 100 }, source: 'peer', kind: 'adoption' },
+    },
+  }));
+  manager.adopt(authResponse('local-successor'));
+  assert.ok(posted, 'local adoption should publish its revision');
+
+  channel.onmessage?.(new MessageEvent('message', {
+    data: {
+      type: 'session_reset',
+      cause: 'logout',
+      revision: { clock: { peer: 2 }, source: 'peer', kind: 'logout' },
+    },
+  }));
+
+  assert.equal(manager.current, null);
+  manager.dispose();
+});
+
 test('two session managers synchronize adoption across tabs via channel', async () => {
   const [ch1, ch2] = createMockChannelPair();
   const mgr1 = new SessionManager({ refresh: async () => authResponse(), now: () => 1000, channel: ch1 });
