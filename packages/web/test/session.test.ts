@@ -393,6 +393,21 @@ test('channel messages with malformed revisions cannot mutate session state', ()
   manager.dispose();
 });
 
+test('channel adoption rejects a nonnumeric or non-finite token lifetime', () => {
+  const channel: SessionChannel = { onmessage: null, postMessage: () => {}, close: () => {} };
+  const manager = new SessionManager({ refresh: async () => authResponse(), now: () => 1000, channel });
+  manager.adopt(authResponse('current'), false);
+
+  for (const expiresIn of ['900', Number.NaN, Number.POSITIVE_INFINITY]) {
+    const candidate = authResponse('untrusted');
+    channel.onmessage?.(new MessageEvent('message', {
+      data: { type: 'session_adopted', auth: { ...candidate, tokens: { ...candidate.tokens, expiresIn } } },
+    }));
+    assert.equal(manager.current?.tokens.accessToken, 'current');
+  }
+  manager.dispose();
+});
+
 test('a revision whose kind contradicts its message cannot poison a later logout', () => {
   let posted: unknown;
   const channel: SessionChannel = {

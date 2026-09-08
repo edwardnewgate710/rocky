@@ -140,6 +140,8 @@ function parseCollectedClientData(
 
 /** Default grace window in milliseconds for near-simultaneous refreshes (e.g. multi-tab or network retries). */
 export const DEFAULT_REFRESH_GRACE_PERIOD_MS = 10_000;
+/** Maximum tolerated collision window; larger values would weaken rotated-token reuse detection. */
+const MAX_REFRESH_GRACE_PERIOD_MS = 60_000;
 
 export class AuthService {
   private readonly repos: Repositories;
@@ -171,7 +173,17 @@ export class AuthService {
     this.refreshTtlSec = deps.refreshTtlSec;
     this.emailSender = deps.emailSender;
     this.webauthn = deps.webauthn;
-    this.refreshGracePeriodMs = deps.refreshGracePeriodMs ?? DEFAULT_REFRESH_GRACE_PERIOD_MS;
+    const refreshGracePeriodMs = deps.refreshGracePeriodMs ?? DEFAULT_REFRESH_GRACE_PERIOD_MS;
+    if (
+      !Number.isFinite(refreshGracePeriodMs) ||
+      refreshGracePeriodMs < 0 ||
+      refreshGracePeriodMs > MAX_REFRESH_GRACE_PERIOD_MS
+    ) {
+      throw new RangeError(
+        `refreshGracePeriodMs must be finite and between 0 and ${MAX_REFRESH_GRACE_PERIOD_MS}`,
+      );
+    }
+    this.refreshGracePeriodMs = refreshGracePeriodMs;
   }
 
   /** Create an account, grant the base `user` role, and start a session. */

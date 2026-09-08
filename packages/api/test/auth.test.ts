@@ -1,6 +1,37 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { startHarness } from './helpers';
+import { AuthService } from '../src/auth/service';
+import { ScryptPasswordHasher } from '../src/auth/password';
+import { AccessTokenService } from '../src/auth/tokens';
+import { createInMemoryRepositories } from '../src/fakes';
+import { InMemoryEmailSender } from '../src/ports/email';
+import { ManualClock } from '../src/ports/clock';
+import { uuidv7Generator } from '../src/ports/ids';
+import { START_MS, TEST_SECRET, startHarness } from './helpers';
+
+/** Construct the auth service at a chosen refresh-collision grace boundary. */
+function authServiceWithGrace(refreshGracePeriodMs: number): AuthService {
+  const clock = new ManualClock(START_MS);
+  return new AuthService({
+    repos: createInMemoryRepositories(clock),
+    hasher: new ScryptPasswordHasher({ N: 1024 }),
+    tokens: new AccessTokenService({ secret: TEST_SECRET, ttlSec: 900, clock, ids: uuidv7Generator }),
+    clock,
+    ids: uuidv7Generator,
+    refreshTtlSec: 3_600,
+    emailSender: new InMemoryEmailSender(),
+    webauthn: { rpId: 'localhost', origins: ['http://localhost'] },
+    refreshGracePeriodMs,
+  });
+}
+
+test('refresh grace configuration rejects values that could disable reuse detection', () => {
+  for (const invalid of [-1, Number.NaN, Number.POSITIVE_INFINITY, 60_001]) {
+    assert.throws(() => authServiceWithGrace(invalid), RangeError);
+  }
+  assert.doesNotThrow(() => authServiceWithGrace(0));
+  assert.doesNotThrow(() => authServiceWithGrace(60_000));
+});
 
 test('register issues tokens and grants the base user role', async () => {
   const h = await startHarness();

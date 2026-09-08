@@ -114,11 +114,14 @@ export interface SessionResetOptions {
 function isAuthResponse(val: unknown): val is AuthResponse {
   if (!val || typeof val !== 'object') return false;
   const cand = val as Record<string, unknown>;
+  const tokens = cand['tokens'];
   return (
     typeof cand['user'] === 'object' &&
     cand['user'] !== null &&
-    typeof cand['tokens'] === 'object' &&
-    cand['tokens'] !== null
+    typeof tokens === 'object' &&
+    tokens !== null &&
+    typeof (tokens as Record<string, unknown>)['expiresIn'] === 'number' &&
+    Number.isFinite((tokens as Record<string, unknown>)['expiresIn'])
   );
 }
 
