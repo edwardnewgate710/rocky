@@ -201,7 +201,7 @@ export class GameReviewService {
         totalPlayerMoves,
         analyzedPlayerMoves: reviewed.length,
       };
-      
+
       return isPartial
         ? { ...base, isPartial: true, cutoffReason: 'move_limit' as const }
         : { ...base, isPartial: false };
