@@ -59,6 +59,7 @@ const timeControl: JsonSchema = {
   additionalProperties: false,
 };
 
+/** Shared OpenAPI component schemas used by route contracts and generated API documentation. */
 export const COMPONENT_SCHEMAS: ComponentSchemas = {
   Error: {
     type: 'object',

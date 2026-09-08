@@ -254,6 +254,7 @@ class FakeDOMElement {
   }
 }
 
+/** Match the limited selector grammar exercised by the lobby mount's fake DOM. */
 function matchesSelector(node: FakeDOMElement, selector: string): boolean {
   if (selector.startsWith('input[name="') && selector.endsWith('"]:checked')) {
     const name = selector.slice('input[name="'.length, -'"]:checked'.length);
@@ -335,6 +336,7 @@ function createTestDoc(): {
   return { doc, elements };
 }
 
+/** Build a valid lobby seek fixture with concise per-test overrides. */
 function makeSeek(overrides: Partial<SeekView> = {}): SeekView {
   return {
     id: 'seek-1',

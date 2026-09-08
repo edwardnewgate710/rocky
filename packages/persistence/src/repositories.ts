@@ -282,6 +282,7 @@ export type SeekColor = 'white' | 'black' | 'random';
  */
 export const SEEK_TTL_MS = 10 * 60 * 1000;
 
+/** Persisted seek plus its optional acceptance receipt and denormalized creator handle. */
 export interface SeekRow {
   readonly id: string;
   readonly creatorId: string;
@@ -302,6 +303,7 @@ export interface SeekRow {
   readonly acceptedAt: Date | null;
 }
 
+/** Values required to publish a new open seek before any acceptance receipt exists. */
 export interface NewSeek {
   readonly id: string;
   readonly creatorId: string;

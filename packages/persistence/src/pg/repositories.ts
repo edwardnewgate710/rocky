@@ -551,6 +551,7 @@ export class PgGamesRepository implements GamesRepository {
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Return whether a repository identifier is a canonical hyphenated UUID. */
 function isCanonicalUuid(value: string): boolean {
   return UUID_PATTERN.test(value);
 }

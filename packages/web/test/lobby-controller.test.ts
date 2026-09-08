@@ -16,6 +16,7 @@ function deferred<T>(): {
   };
 }
 
+/** Build a complete seek view while letting each controller test override only relevant fields. */
 function makeSeek(overrides: Partial<SeekView> = {}): SeekView {
   return {
     id: 's1',

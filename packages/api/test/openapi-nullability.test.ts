@@ -21,6 +21,7 @@ import type { JsonSchema } from '../src/openapi/types';
 
 type Schemas = Record<string, JsonSchema>;
 
+/** Start an API harness and expose its OpenAPI schemas with an owned async cleanup callback. */
 async function schemas(): Promise<{ doc: any; s: Schemas; close: () => Promise<void> }> {
   const h = await startHarness();
   const doc = h.server.openapiDocument() as any;

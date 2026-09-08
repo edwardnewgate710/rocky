@@ -364,6 +364,10 @@ export class InMemoryGamesRepository implements GamesRepository {
   }
 }
 
+/**
+ * Deterministic in-memory seek store that mirrors open-seek ordering, expiry, and
+ * single-winner acceptance semantics used by the PostgreSQL implementation.
+ */
 export class InMemorySeeksRepository implements SeeksRepository {
   private readonly byId = new Map<string, SeekRow>();
   private seq = 0;
