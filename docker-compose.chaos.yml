@@ -29,6 +29,7 @@ services:
       HEALTH_PORT: "4176"
       HOST: "0.0.0.0"
       NODE_ENV: production
+      TRUST_PROXY: "1"
       REDIS_URL: redis://redis:6379
       NODE_ID: "node2"
       OWNERSHIP_LEASE_TTL_SEC: "6"

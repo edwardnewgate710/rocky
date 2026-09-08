@@ -105,3 +105,37 @@ describe('resolveConfig cookieSecure', () => {
     );
   });
 });
+
+describe('resolveConfig trustProxy', () => {
+  it('defaults trustProxy to false when input and env are omitted', () => {
+    const cfg = resolveConfig({ accessTokenSecret: SECRET }, {});
+    assert.equal(cfg.trustProxy, false);
+  });
+
+  it('resolves TRUST_PROXY hop count from environment', () => {
+    const cfg = resolveConfig({ accessTokenSecret: SECRET }, { TRUST_PROXY: '2' });
+    assert.equal(cfg.trustProxy, 2);
+  });
+
+  it('resolves TRUST_PROXY boolean from environment', () => {
+    const cfgTrue = resolveConfig({ accessTokenSecret: SECRET }, { TRUST_PROXY: 'true' });
+    assert.equal(cfgTrue.trustProxy, true);
+
+    const cfgFalse = resolveConfig({ accessTokenSecret: SECRET }, { TRUST_PROXY: 'false' });
+    assert.equal(cfgFalse.trustProxy, false);
+  });
+
+  it('preserves programmatic trustProxy override over environment variable', () => {
+    const cfg = resolveConfig(
+      { accessTokenSecret: SECRET, trustProxy: 1 },
+      { TRUST_PROXY: '2' },
+    );
+    assert.equal(cfg.trustProxy, 1);
+
+    const cfgDisabled = resolveConfig(
+      { accessTokenSecret: SECRET, trustProxy: false },
+      { TRUST_PROXY: '2' },
+    );
+    assert.equal(cfgDisabled.trustProxy, false);
+  });
+});
