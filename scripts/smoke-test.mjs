@@ -20,15 +20,14 @@
 import WebSocket from 'ws';
 import { pathToFileURL } from 'node:url';
 
+import { waitForHealth } from './lib/wait-for-health.mjs';
+
 const apiUrl = process.env['API_URL'] ?? 'http://localhost:8080';
 // Exercise the same nginx upgrade path a real browser uses, not the gateway's
 // direct host port. Supplying Origin below also verifies the production
 // same-origin guard and proxy Host forwarding.
 const wsUrl = process.env['WS_URL'] ?? 'ws://localhost:3000/ws';
 const webUrl = process.env['WEB_URL'] ?? 'http://localhost:3000';
-
-const TIMEOUT_MS = 60_000;
-const POLL_INTERVAL = 2_000;
 
 function log(msg) {
   console.log(`[smoke] ${msg}`);
@@ -39,42 +38,6 @@ function requireHeader(response, name, expected) {
   if (actual !== expected) {
     throw new Error(`GET ${webUrl}/ returned ${name}: ${actual ?? '<missing>'}; expected ${expected}`);
   }
-}
-
-/**
- * Polls a health URL until it returns HTTP 2xx or the deadline elapses.
- *
- * @param {string} url - The health-check URL to poll.
- * @param {string} name - Human-readable service name for log messages.
- * @param {{ timeoutMs?: number, pollInterval?: number, now?: () => number,
- *   fetch?: typeof globalThis.fetch, sleep?: (delayMs: number) => Promise<void> }} [options]
- *   Deadline and dependency overrides used by deterministic tests.
- * @returns {Promise<true>} Resolves when the service is healthy.
- * @throws {Error} When the service does not become healthy within the configured timeout.
- */
-export async function waitForHealth(url, name, options = {}) {
-  const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
-  const pollInterval = options.pollInterval ?? POLL_INTERVAL;
-  const now = options.now ?? Date.now;
-  const fetchHealth = options.fetch ?? globalThis.fetch;
-  const sleep = options.sleep ?? ((delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)));
-  const deadline = now() + timeoutMs;
-  while (now() < deadline) {
-    try {
-      const remaining = deadline - now();
-      if (remaining <= 0) break;
-      const res = await fetchHealth(url, { signal: AbortSignal.timeout(remaining) });
-      if (res.ok) {
-        log(`✓ ${name} healthy`);
-        return true;
-      }
-    } catch {
-      // not ready yet
-    }
-    const delay = Math.max(0, Math.min(pollInterval, deadline - now()));
-    if (delay > 0) await sleep(delay);
-  }
-  throw new Error(`✗ ${name} did not become healthy within ${timeoutMs / 1000}s`);
 }
 
 async function registerUser(handle, password) {
@@ -193,8 +156,8 @@ async function main() {
 
   // 1. Wait for health
   log('Waiting for services to be healthy...');
-  await waitForHealth(`${apiUrl}/v1/health`, 'API');
-  await waitForHealth(webUrl, 'Web');
+  await waitForHealth(`${apiUrl}/v1/health`, 'API', { log });
+  await waitForHealth(webUrl, 'Web', { log });
   // Gateway health is on port+1 inside the container, but from outside we
   // can check the WS port is listening by attempting a connection later.
   log('');

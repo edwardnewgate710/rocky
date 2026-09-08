@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { waitForHealth } from '../smoke-test.mjs';
+import { waitForHealth } from '../lib/wait-for-health.mjs';
 
 test('waitForHealth caps its polling delay at the remaining deadline', async () => {
   let now = 0;
