@@ -210,6 +210,7 @@ interface MockChannel extends SessionChannel {
   peer: MockChannel | null;
 }
 
+/** Create two asynchronous in-memory channels connected as browser-tab peers. */
 function createMockChannelPair(): [SessionChannel, SessionChannel] {
   const ch1: MockChannel = {
     peer: null,
@@ -247,6 +248,28 @@ function createMockChannelPair(): [SessionChannel, SessionChannel] {
   ch2.peer = ch1;
   return [ch1, ch2];
 }
+
+test('dispose detaches the channel handler before closing a custom channel', () => {
+  const channel: SessionChannel = {
+    onmessage: null,
+    postMessage: () => {},
+    close(): void {
+      this.onmessage?.(new MessageEvent('message', {
+        data: { type: 'session_adopted', auth: authResponse('queued-after-dispose') },
+      }));
+    },
+  };
+  const manager = new SessionManager({
+    refresh: async () => authResponse(),
+    now: () => 1000,
+    channel,
+  });
+
+  manager.dispose();
+
+  assert.equal(channel.onmessage, null);
+  assert.equal(manager.current, null);
+});
 
 /** Hold cross-tab delivery until the test explicitly advances that boundary. */
 function queuedChannels() {

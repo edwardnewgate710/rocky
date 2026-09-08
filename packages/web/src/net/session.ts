@@ -510,6 +510,7 @@ export class SessionManager {
     this.sessionGeneration++;
     this.refreshInFlight = null;
     if (this.channel) {
+      this.channel.onmessage = null;
       this.channel.close();
       this.channel = null;
     }

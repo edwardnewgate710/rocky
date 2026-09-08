@@ -8,6 +8,7 @@ import type { StoredSession, KeyValueStorage } from '../src/net/session.js';
 import { MemoryTokenStore } from '../src/net/session.js';
 import { json } from './support/fake-transport.js';
 
+/** Provide isolated Web Storage semantics for each controller test. */
 function makeFakeStorage(): KeyValueStorage {
   const store = new Map<string, string>();
   return {
@@ -45,6 +46,7 @@ function makeFakeSession(): FakeSession {
   };
 }
 
+/** Compose a minimal Gambit client double with overridable controller dependencies. */
 function makeFakeClient(overrides: Record<string, unknown> = {}) {
   return {
     session: makeFakeSession(),
