@@ -9,7 +9,7 @@ import WebSocket from 'ws';
 const gatewayDir = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const serveScript = resolve(gatewayDir, 'dist/serve.js');
 
-// Helper to get an unused ephemeral port
+/** Releases the reservation before returning, so the test process must bind the port immediately. */
 async function getFreePort(): Promise<number> {
   return new Promise((resolvePort, reject) => {
     const srv = createServer();
@@ -25,6 +25,7 @@ async function getFreePort(): Promise<number> {
   });
 }
 
+/** Waits for the gateway health endpoint without exceeding the declared deadline. */
 async function waitForHealth(healthPort: number, timeoutMs = 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -38,7 +39,8 @@ async function waitForHealth(healthPort: number, timeoutMs = 10_000): Promise<vo
     } catch {
       // wait
     }
-    await new Promise((r) => setTimeout(r, 100));
+    const delay = Math.max(0, Math.min(100, deadline - Date.now()));
+    if (delay > 0) await new Promise((r) => setTimeout(r, delay));
   }
   throw new Error(`Health check failed on port ${healthPort} within ${timeoutMs}ms`);
 }
