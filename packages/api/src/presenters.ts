@@ -1469,6 +1469,12 @@ export interface MistakePredictionView {
   readonly depth: number;
 }
 
+/**
+ * Present one engine-backed mistake prediction through the public wire contract.
+ *
+ * Explicit `null` values are preserved, while `bestLine` is copied so the response does not share
+ * the source outcome's analysis array.
+ */
 export function mistakePredictionView(
   outcome: import('./analysis/mistake-prediction-service.js').MistakePredictionOutcome,
 ): MistakePredictionView {
