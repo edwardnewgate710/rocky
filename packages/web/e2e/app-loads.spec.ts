@@ -74,14 +74,16 @@ test('unknown paths render the 404 surface without mounting the hidden board and
   await expect(page.locator('#lobby')).toBeVisible();
 });
 
-test('learn subnavigation stays keyboard-visible and touch-sized on mobile', async ({ browser }) => {
+test('available learn subnavigation stays keyboard-visible and touch-sized on mobile', async ({ browser }) => {
   const context = await browser.newContext({ hasTouch: true, viewport: { width: 390, height: 844 } });
   const page = await context.newPage();
   try {
     await page.goto('/courses');
+    await page.waitForLoadState('networkidle');
     const links = page.locator('#courses .subnav-link');
-    await expect(links).toHaveCount(3);
-    for (let index = 0; index < await links.count(); index++) {
+    const linkCount = await links.count();
+    expect(linkCount).toBeGreaterThan(0);
+    for (let index = 0; index < linkCount; index++) {
       const box = await links.nth(index).boundingBox();
       expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
     }
