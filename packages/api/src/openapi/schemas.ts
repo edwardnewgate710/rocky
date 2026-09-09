@@ -34,6 +34,20 @@ const TERMINAL_REASONS = [
 ] as const;
 const RESULT_STRINGS = ['1-0', '0-1', '1/2-1/2'] as const;
 
+/** Build the strict all-classification summary shared by complete and partial review variants. */
+function gameReviewSummarySchema(): JsonSchema {
+  const properties: Record<string, JsonSchema> = {};
+  for (const classification of GAME_REVIEW_CLASSIFICATIONS) {
+    properties[classification] = { type: 'integer', minimum: 0 };
+  }
+  return {
+    type: 'object',
+    required: [...GAME_REVIEW_CLASSIFICATIONS],
+    properties,
+    additionalProperties: false,
+  };
+}
+
 /** Shared shape for a decided position's outcome. */
 const terminalOutcomeSchema: JsonSchema = {
   type: 'object',
@@ -2199,17 +2213,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
               additionalProperties: false,
             },
           },
-          summary: {
-            type: 'object',
-            required: [...GAME_REVIEW_CLASSIFICATIONS],
-            properties: Object.fromEntries(
-              GAME_REVIEW_CLASSIFICATIONS.map((classification) => [
-                classification,
-                { type: 'integer', minimum: 0 },
-              ]),
-            ),
-            additionalProperties: false,
-          },
+          summary: gameReviewSummarySchema(),
           isPartial: { type: 'boolean', enum: [false] },
           totalPlayerMoves: { type: 'integer', minimum: 0 },
           analyzedPlayerMoves: { type: 'integer', minimum: 0 },
@@ -2253,17 +2257,7 @@ export const COMPONENT_SCHEMAS: ComponentSchemas = {
               additionalProperties: false,
             },
           },
-          summary: {
-            type: 'object',
-            required: [...GAME_REVIEW_CLASSIFICATIONS],
-            properties: Object.fromEntries(
-              GAME_REVIEW_CLASSIFICATIONS.map((classification) => [
-                classification,
-                { type: 'integer', minimum: 0 },
-              ]),
-            ),
-            additionalProperties: false,
-          },
+          summary: gameReviewSummarySchema(),
           isPartial: { type: 'boolean', enum: [true] },
           totalPlayerMoves: { type: 'integer', minimum: 0 },
           analyzedPlayerMoves: { type: 'integer', minimum: 0 },

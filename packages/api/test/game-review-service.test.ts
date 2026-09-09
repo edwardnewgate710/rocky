@@ -218,6 +218,29 @@ test('completed-game review provides bounded partial review for overlong games w
   );
 });
 
+test('completed-game review at the move limit remains complete', async () => {
+  const moves = Array.from({ length: MAX_REVIEWED_PLAYER_MOVES }, (_, index) => ({
+    ply: index * 2 + 1,
+    uci: 'e2e4',
+    san: 'e4',
+    by: 'w' as const,
+    fenBefore: FEN,
+  }));
+  const { service } = build(game({ moves }));
+
+  const result = await service.review({
+    gameId: '00000000-0000-4000-8000-000000000001',
+    userId: 'white-player',
+    signal: new AbortController().signal,
+  }, async () => undefined);
+
+  assert.equal(result.isPartial, false);
+  assert.equal(result.totalPlayerMoves, MAX_REVIEWED_PLAYER_MOVES);
+  assert.equal(result.analyzedPlayerMoves, MAX_REVIEWED_PLAYER_MOVES);
+  assert.equal(result.cutoffReason, undefined);
+  assert.equal(result.moves.length, MAX_REVIEWED_PLAYER_MOVES);
+});
+
 test('completed-game review of a normal-length game marks isPartial as false', async () => {
   const { service, assessed } = build(game());
   let charged = 0;
