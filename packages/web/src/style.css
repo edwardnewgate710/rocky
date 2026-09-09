@@ -195,9 +195,8 @@ body {
    viewport column with the stacked sidebar and collapsed to 115px at 390×844. Let the page scroll
    vertically instead: width establishes the square and the sidebar follows below it. */
 .cb-board {
-  display: grid;
-  grid-template-columns: repeat(8, 1fr);
-  grid-template-rows: repeat(8, 1fr);
+  display: flex;
+  flex-direction: column;
   aspect-ratio: 1 / 1;
   width: 100%;
   height: auto;
@@ -229,7 +228,12 @@ body {
     min-height: 0;
   }
 }
+.cb-row {
+  display: flex;
+  flex: 1;
+}
 .cb-sq {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
