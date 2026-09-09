@@ -29,6 +29,12 @@ export const GAME_REVIEW_ANALYSIS_LIMITS = { multiPv: 2 } as const satisfies Req
 
 /** Pluggable adapter that predicts whether a move was a mistake given engine evidence. */
 export interface MoveAssessmentService {
+  /**
+   * Assess one played move from request-scoped evidence.
+   *
+   * When supplied, `onAccepted` runs after the adapter's validation and before any engine work it
+   * owns; Game Review omits it because the outer review request already owns quota admission.
+   */
   predict(
     input: MistakePredictionInput,
     onAccepted?: () => Promise<void>,
