@@ -5,7 +5,7 @@
  * key-value store (localStorage in production, a fake in tests). The
  * controller exposes callbacks for theme changes and provides the current
  * theme as a value. It never touches the DOM directly; the bootstrap layer
- * applies the `dark` class to the document element.
+ * applies the active theme class to the document element.
  */
 import type { KeyValueStorage } from '../net/session.js';
 
@@ -29,7 +29,7 @@ export interface ThemeToggleOptions {
   readonly storage?: KeyValueStorage;
   /** Storage key for the theme preference. */
   readonly storageKey?: string;
-  /** Initial theme override (takes precedence over storage/system). */
+  /** Initial theme override (takes precedence over storage and the product default). */
   readonly initial?: Theme;
 }
 

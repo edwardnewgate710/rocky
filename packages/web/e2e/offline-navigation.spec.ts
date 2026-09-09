@@ -1,5 +1,5 @@
 /**
- * Offline navigation check — verifies SW provides offline shell.
+ * Offline navigation check — verifies the Rookzen service worker provides its offline shell.
  *
  * This spec runs without backends (only needs vite preview).
  *

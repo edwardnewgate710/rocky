@@ -5,7 +5,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * Accessibility (a11y) tests for the Gambit web frontend.
+ * Accessibility (a11y) tests for the Rookzen web frontend.
  *
  * These tests validate the ARIA structure, keyboard navigation support,
  * and semantic HTML in the real index.html — not a hand-maintained copy.
@@ -64,10 +64,7 @@ test('buttons have aria-label or text content', () => {
 });
 
 test('nav links are present for play and profile', () => {
-  assert.ok(
-    HTML_TEMPLATE.includes('href="/" data-route="lobby">Play</a>') ||
-      HTML_TEMPLATE.includes('href="/" data-route="lobby">Lobby</a>'),
-  );
+  assert.ok(HTML_TEMPLATE.includes('href="/" data-route="lobby">Play</a>'));
   assert.ok(HTML_TEMPLATE.includes('href="/profile" data-route="profile">Profile</a>'));
 });
 

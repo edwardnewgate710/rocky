@@ -11,6 +11,9 @@ const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..'
 const HTML_TEMPLATE = readFileSync(resolve(PACKAGE_ROOT, 'index.html'), 'utf8');
 const CSS = readFileSync(resolve(PACKAGE_ROOT, 'src/style.css'), 'utf8');
 const MANIFEST = JSON.parse(readFileSync(resolve(PACKAGE_ROOT, 'public/manifest.webmanifest'), 'utf8'));
+const SERVICE_WORKER = readFileSync(resolve(PACKAGE_ROOT, 'public/sw.js'), 'utf8');
+const PRODUCT = readFileSync(resolve(PACKAGE_ROOT, 'PRODUCT.md'), 'utf8');
+const DESIGN = readFileSync(resolve(PACKAGE_ROOT, 'DESIGN.md'), 'utf8');
 
 /** Converts a six-digit sRGB hex color to its WCAG relative luminance in the range 0–1. */
 function relativeLuminance(hex: string): number {
@@ -69,7 +72,7 @@ test('shell: light theme defines proper stone & deep burgundy derivatives', () =
   assert.match(CSS, /--light-accent-hover\s*:\s*#72373F/i, 'Deep burgundy #72373F as light accent hover');
 });
 
-test('shell: primary hover state meets WCAG AA >= 4.5:1 contrast against #E9E4DE in dark and light themes', () => {
+test('shell: primary hover state meets WCAG AA >= 4.5:1 contrast in dark and explicit light themes', () => {
   // Dark theme root
   const darkHoverMatch = CSS.match(/--accent-hover\s*:\s*(#[0-9a-fA-F]{6})/i);
   assert.ok(darkHoverMatch, 'must define --accent-hover token in :root');
@@ -101,16 +104,18 @@ test('shell: primary hover state meets WCAG AA >= 4.5:1 contrast against #E9E4DE
   );
   assert.notEqual(lightHoverHex.toLowerCase(), lightRestHex.toLowerCase(), 'light hover must be visually distinct from rest');
 
-  // Both light entry points must bind --accent-hover to var(--light-accent-hover)
-  assert.match(
-    CSS,
-    /@media\s*\(prefers-color-scheme:\s*light\)[\s\S]*?:root:not\(\.light\):not\(\.dark\)[\s\S]*?--accent-hover:\s*var\(--light-accent-hover\);/,
-    'prefers-color-scheme: light entry point must assign --accent-hover',
-  );
   assert.match(
     CSS,
     /:root\.light[\s\S]*?--accent-hover:\s*var\(--light-accent-hover\);/,
     ':root.light entry point must assign --accent-hover',
+  );
+});
+
+test('shell: CSS default remains dark regardless of the operating-system preference', () => {
+  assert.doesNotMatch(
+    CSS,
+    /@media\s*\(prefers-color-scheme:\s*light\)/,
+    'dark-first CSS must not switch unclassified documents to light before bootstrap runs',
   );
 });
 
@@ -193,6 +198,21 @@ test('shell: manifest raster PNG icon assets are updated to Rookzen brand colors
   assert.deepEqual(center512, [233, 228, 222, 255], 'icon-512 center must be Rookzen stone #E9E4DE');
 });
 
+test('shell: install icons do not claim maskable safe-area support they do not provide', () => {
+  const icons = MANIFEST.icons as Array<{ purpose?: string }>;
+  assert.ok(icons.length > 0);
+  for (const icon of icons) assert.equal(icon.purpose, 'any');
+});
+
+test('shell: the Rookzen asset deployment invalidates the old PWA cache and precaches its icons', () => {
+  const version = SERVICE_WORKER.match(/const CACHE_VERSION = '([^']+)'/)?.[1];
+  assert.ok(version, 'service worker must define a cache version');
+  assert.notEqual(version, 'gambit-v3', 'the pre-Rookzen cache must be invalidated');
+  for (const asset of ['/icon.svg', '/icon-192.png', '/icon-512.png']) {
+    assert.match(SERVICE_WORKER, new RegExp(`['\"]${asset.replace('.', '\\.') }['\"]`));
+  }
+});
+
 test('shell: learn subnavigation connects Courses, Endgame Trainer, and Studies', () => {
   assert.match(HTML_TEMPLATE, /<section id="courses"[\s\S]*?<nav class="subnav"/, 'courses has learn subnav');
   assert.match(HTML_TEMPLATE, /<section id="endgames"[\s\S]*?<nav class="subnav"/, 'endgames has learn subnav');
@@ -203,6 +223,13 @@ test('shell: 404 not-found route has dedicated surface with return affordance', 
   assert.ok(HTML_TEMPLATE.includes('id="not-found"'), 'index.html must have #not-found surface');
   assert.match(HTML_TEMPLATE, /id="not-found"[\s\S]*?Page not found/);
   assert.match(HTML_TEMPLATE, /id="not-found"[\s\S]*?href="\/" data-route="lobby"/);
+});
+
+test('shell: learn subnavigation links meet the coarse-pointer target floor', () => {
+  assert.match(
+    CSS,
+    /@media\s*\(pointer:\s*coarse\)[\s\S]*?\.subnav-link[\s\S]*?min-height:\s*44px/,
+  );
 });
 
 test('shell: not-found route activates #not-found surface and hides game controls', () => {
@@ -233,4 +260,12 @@ test('shell: not-found route activates #not-found surface and hides game control
 
 test('shell: font-family includes Source Sans 3 candidate with safe fallbacks', () => {
   assert.match(CSS, /font-family\s*:[^;]*'Source Sans 3'/);
+});
+
+test('shell: authoritative web product and design contracts describe Rookzen Palette C', () => {
+  assert.match(PRODUCT, /Rookzen/);
+  assert.doesNotMatch(PRODUCT, /Gambit exists/);
+  assert.match(DESIGN, /name:\s*Rookzen/);
+  assert.match(DESIGN, /#934A54/i);
+  assert.doesNotMatch(DESIGN, /Grandmaster Teal|#20b2aa/i);
 });

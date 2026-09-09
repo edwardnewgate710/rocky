@@ -355,6 +355,12 @@ export function bootstrap(
 
   applyRouteSurface(doc, route);
 
+  // The not-found page is a complete route surface. Keep the global shell controllers alive, but
+  // do not fall through to the legacy standalone-board fallback hidden inside #game-main.
+  if (route.name === 'not-found') {
+    return createBootstrapped(app, auth, theme, {});
+  }
+
   // --- Game view ---
   const boardEl = doc.getElementById('board');
   if (boardEl && gameId) {
