@@ -138,6 +138,11 @@ function parseCollectedClientData(
   return { clientDataJSON, challenge: parsed.challenge };
 }
 
+/** Default grace window in milliseconds for near-simultaneous refreshes (e.g. multi-tab or network retries). */
+export const DEFAULT_REFRESH_GRACE_PERIOD_MS = 10_000;
+/** Maximum tolerated collision window; larger values would weaken rotated-token reuse detection. */
+const MAX_REFRESH_GRACE_PERIOD_MS = 60_000;
+
 export class AuthService {
   private readonly repos: Repositories;
   private readonly hasher: PasswordHasher;
@@ -147,8 +152,9 @@ export class AuthService {
   private readonly refreshTtlSec: number;
   private readonly emailSender: EmailSender;
   private readonly webauthn: { rpId: string; origins: readonly string[] };
+  private readonly refreshGracePeriodMs: number;
 
-
+  /** Compose authentication dependencies and enforce the bounded refresh-collision policy. */
   constructor(deps: {
     repos: Repositories;
     hasher: PasswordHasher;
@@ -158,7 +164,7 @@ export class AuthService {
     refreshTtlSec: number;
     emailSender: EmailSender;
     webauthn: { rpId: string; origins: readonly string[] };
-
+    refreshGracePeriodMs?: number;
   }) {
     this.repos = deps.repos;
     this.hasher = deps.hasher;
@@ -168,7 +174,17 @@ export class AuthService {
     this.refreshTtlSec = deps.refreshTtlSec;
     this.emailSender = deps.emailSender;
     this.webauthn = deps.webauthn;
-
+    const refreshGracePeriodMs = deps.refreshGracePeriodMs ?? DEFAULT_REFRESH_GRACE_PERIOD_MS;
+    if (
+      !Number.isFinite(refreshGracePeriodMs) ||
+      refreshGracePeriodMs < 0 ||
+      refreshGracePeriodMs > MAX_REFRESH_GRACE_PERIOD_MS
+    ) {
+      throw new RangeError(
+        `refreshGracePeriodMs must be finite and between 0 and ${MAX_REFRESH_GRACE_PERIOD_MS}`,
+      );
+    }
+    this.refreshGracePeriodMs = refreshGracePeriodMs;
   }
 
   /** Create an account, grant the base `user` role, and start a session. */
@@ -238,6 +254,11 @@ export class AuthService {
    * - It was **rotated away** by a legitimate refresh, and a live successor is holding the account.
    *   Something is replaying a token the real client already exchanged, so the whole account is
    *   burned — this is the reuse detection the rotation scheme exists for.
+   *   To prevent false-positive account burns under near-simultaneous multi-tab refreshes or immediate
+   *   network retries, presentations within `[0, refreshGracePeriodMs]` of rotation are tolerated
+   *   (rejected with 401 without burning the account). Presentations with negative elapsed time
+   *   (e.g. wall clock rollback or NTP skew) or elapsed time exceeding the grace window are strictly
+   *   treated as illegitimate and trigger the full session chain burn.
    * - It was **deliberately revoked**, by {@link revokeSession} or {@link logout}. Then the browser
    *   presenting it is simply the one the user just signed out, doing what any client does when its
    *   access token expires. Burning the account here would mean that revoking one session signs the
@@ -251,6 +272,7 @@ export class AuthService {
     session: SessionRow,
     now: number,
     meta: RequestMeta,
+    isConcurrentRotation = false,
   ): Promise<never> {
     const sessions = await this.repos.sessions.listForUser(session.userId);
     // The whole descending chain, not just the direct successor: after two refreshes the successor
@@ -259,14 +281,28 @@ export class AuthService {
     const rotatedAway = sessions.some(
       (s) => descendants.has(s.id) && !s.revokedAt && s.expiresAt.getTime() > now,
     );
-    if (rotatedAway) {
-      await this.revokeAllForUser(session.userId, now);
-      await this.audit(meta, session.userId, 'auth.refresh.reuse', session.id);
+    if (rotatedAway && !isConcurrentRotation) {
+      const rotatedAt = session.revokedAt ? session.revokedAt.getTime() : 0;
+      const elapsed = now - rotatedAt;
+      // Legitimate concurrent/retry refresh can only happen forward within [0, gracePeriodMs].
+      // A negative elapsed time (e.g. wall clock rollback/skew) must NOT extend or reopen the grace
+      // window; any presentation outside [0, gracePeriodMs] triggers the reuse security response.
+      if (elapsed < 0 || elapsed > this.refreshGracePeriodMs) {
+        await this.revokeAllForUser(session.userId, now);
+        await this.audit(meta, session.userId, 'auth.refresh.reuse', session.id);
+      }
     }
     throw HttpError.unauthorized('refresh token has been revoked');
   }
 
-  /** Rotate a refresh token, detecting reuse of an already-rotated token. */
+  /**
+   * Rotate a refresh token, detecting reuse of an already-rotated token.
+   *
+   * Concurrent state transitions are explicitly handled:
+   * - A grace period applies to newly rotated sessions to tolerate benign races (e.g. multi-tab refresh).
+   * - Presentations outside the grace window trigger the full session chain burn (reuse detection).
+   * - If a session was explicitly logged out, a concurrent refresh attempt correctly throws 401 without burning all sessions.
+   */
   async refresh(refreshToken: string, meta: RequestMeta): Promise<AuthResult> {
     const hash = hashRefreshToken(refreshToken);
     const session = await this.repos.sessions.findByRefreshHash(hash);
@@ -298,7 +334,7 @@ export class AuthService {
       throw HttpError.unauthorized('refresh token has expired');
     }
     if (rotation.status === 'revoked') {
-      await this.rejectRevokedRefresh(rotation.previous, now, meta);
+      await this.rejectRevokedRefresh(rotation.previous, now, meta, true);
     }
     await this.audit(meta, user.id, 'auth.refresh', session.id);
     return { user, roles, tokens: prepared.tokens };
@@ -391,6 +427,15 @@ export class AuthService {
     return transitioned;
   }
 
+  /**
+   * Initiate a password-reset flow for the account identified by handle or email.
+   *
+   * Always resolves successfully regardless of whether the handle or email exists
+   * (anti-enumeration). If a matching account with a verified email is found, a
+   * single-use reset token is issued (replacing any active prior token) and a
+   * password-reset email is dispatched asynchronously in a fire-and-forget manner.
+   * The audit record is written whether or not a matching user is found.
+   */
   async requestPasswordReset(handleOrEmail: string, meta: RequestMeta): Promise<void> {
     const isEmail = handleOrEmail.includes('@');
     let user: UserRow | null = null;
@@ -443,6 +488,13 @@ export class AuthService {
     }
   }
 
+  /**
+   * Complete a password-reset flow: consume the single-use token, update the
+   * password hash, and revoke all existing refresh sessions for the account so
+   * that every device must re-authenticate with the new password.
+   *
+   * Throws `401` if the token is invalid, already consumed, or expired.
+   */
   async confirmPasswordReset(token: string, newPassword: string, meta: RequestMeta): Promise<void> {
     const tokenHash = createHash('sha256').update(token).digest('hex');
     const consumed = await this.repos.identityTokens.consume(
@@ -461,6 +513,12 @@ export class AuthService {
     await this.audit(meta, consumed.userId, 'auth.password_reset.confirm', consumed.userId);
   }
 
+  /**
+   * Consume an email-verification token and mark the associated address as verified.
+   *
+   * Throws `401` if the token is invalid, already consumed, or expired.
+   * Does not rotate sessions — the user remains signed in on all devices.
+   */
   async verifyEmail(token: string, meta: RequestMeta): Promise<void> {
     const tokenHash = createHash('sha256').update(token).digest('hex');
     const consumed = await this.repos.identityTokens.consumeEmailVerification(

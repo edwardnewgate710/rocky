@@ -89,6 +89,10 @@ export class AuthController {
   private readonly storage: KeyValueStorage | undefined;
   private readonly storageKey: string;
   private session: AuthSession | null = null;
+  /**
+   * Logical generation counter protecting async operations (e.g. restore/login) from applying
+   * stale results if the controller is reset or invalidated while a network call is in flight.
+   */
   private sessionGeneration = 0;
   private disposed = false;
 
@@ -103,8 +107,26 @@ export class AuthController {
     // that session goes away without the user asking — an expired refresh token, or the session
     // revoked from another device — the mirror has to go with it. Otherwise the header and account
     // controls keep showing a signed-in user whose every protected request 401s, until a reload.
+    // Clears controller state without re-calling `session.reset()` to avoid broadcasting a spurious logout.
     this.client.session.onInvalidated(() => {
-      if (!this.disposed) this.clearLocalSession();
+      if (!this.disposed) this.clearControllerSession();
+    });
+
+    // Peer-tab adoption: when another tab signs in or restores, mirror the new user session here.
+    // Internal deduplication in `adoptSession` ensures this does not re-emit onSessionChange
+    // when local authentication or background token rotation occurs.
+    this.client.session.onAdopted?.((session) => {
+      if (!this.disposed) {
+        this.adoptSession(session.user);
+      }
+    });
+
+    // Cross-tab reset: when another tab explicitly logs out or clears the session, clear local
+    // state, remove persisted storage credentials, and inform the UI via onSessionChange(null).
+    this.client.session.onReset?.(() => {
+      if (!this.disposed) {
+        this.clearControllerSession();
+      }
     });
   }
 
@@ -139,13 +161,16 @@ export class AuthController {
         try {
           const refreshed = await this.client.auth.refresh();
           if (this.disposed || generation !== this.sessionGeneration) {
-            // AuthApi.refresh adopts before returning. A password reset may have
-            // invalidated the local session while the network request was in flight.
-            this.client.session.reset();
+            // The manager guards adoption; this obsolete continuation owns no session to clear.
             return null;
           }
           return this.adoptSession(refreshed.user);
         } catch {
+          if (this.disposed || generation !== this.sessionGeneration) return null;
+          // If another concurrent tab refreshed/restored while this request was in flight:
+          if (this.client.session.isAuthenticated && this.client.session.current) {
+            return this.adoptSession(this.client.session.current.user);
+          }
           // Cookie expired or absent — clear persisted state and return null.
           this.clearPersisted();
           return null;
@@ -230,28 +255,58 @@ export class AuthController {
     } catch {
       // Server-side logout failure is non-fatal — clear locally regardless.
     } finally {
-      this.session = null;
-      this.clearPersisted();
-      this.callbacks.onSessionChange(null);
+      this.clearControllerSession();
       this.callbacks.onPending(false);
     }
   }
 
-  /** Clear local session state without issuing server logout (e.g. after password reset confirm). */
-  clearLocalSession(): void {
+  /**
+   * Clear local controller session state, storage, and notify UI subscribers without
+   * invoking `SessionManager.reset()`.
+   *
+   * Concurrent state transitions:
+   * Used when `SessionManager` has already cleared or invalidated its own session state
+   * (e.g. via `onInvalidated` or `onReset`) so that the controller does not re-trigger
+   * `SessionManager.reset()` and inadvertently broadcast a secondary `session_reset`
+   * message with `cause: 'logout'`.
+   */
+  private clearControllerSession(): void {
     this.sessionGeneration++;
     this.session = null;
     this.clearPersisted();
-    this.client.session.reset();
     this.callbacks.onSessionChange(null);
+  }
+
+  /** Clear local session state without issuing server logout (e.g. after password reset confirm). */
+  clearLocalSession(): void {
+    this.clearControllerSession();
+    this.client.session.reset();
   }
 
   /** Permanently dispose the controller. */
   dispose(): void {
     this.disposed = true;
+    this.client.session.dispose?.();
   }
 
+  /**
+   * Adopt user identity into local controller state and notify UI subscribers.
+   *
+   * Concurrent state transitions:
+   * Deduplicates by checking whether the controller already holds the exact same user
+   * session (matching handle and userId). This prevents duplicate `onSessionChange` events,
+   * redundant storage persistence, and unnecessary downstream UI re-renders when:
+   * 1. `client.auth.login/register/refresh` internally calls `session.adopt(auth)` (which triggers
+   *    the controller's `onAdopted` listener) and then returns `result` to the controller method
+   *    which calls `adoptSession(result.user)`.
+   * 2. Background token refreshes rotate credentials in memory for the currently signed-in user.
+   *
+   * Peer-tab adoptions for a newly signed-in user or different identity still transition cleanly.
+   */
   private adoptSession(user: { handle: string; id: string }): AuthSession {
+    if (this.session && this.session.userId === user.id && this.session.handle === user.handle) {
+      return this.session;
+    }
     this.session = {
       handle: user.handle,
       userId: user.id,
@@ -261,6 +316,13 @@ export class AuthController {
     return this.session;
   }
 
+  /**
+   * Persist the current session's handle and userId to storage.
+   *
+   * Only handle and userId are written — never the access or refresh token.
+   * Called after every successful `adoptSession` to keep the persisted state
+   * in sync so that `restore()` can rebuild the UI on the next page load.
+   */
   private persist(): void {
     if (!this.storage || !this.session) return;
     try {
@@ -275,6 +337,14 @@ export class AuthController {
     }
   }
 
+  /**
+   * Remove the persisted session entry from storage.
+   *
+   * Called on logout, invalidation, and failed restore to ensure the persisted
+   * state does not cause a spurious restore attempt on the next page load.
+   * Storage failures are silently swallowed — if storage is unavailable the
+   * stale entry will be ignored on next restore because the cookie will be gone.
+   */
   private clearPersisted(): void {
     if (!this.storage) return;
     try {

@@ -262,6 +262,13 @@ export class AuthApi {
     this.session = session;
   }
 
+  /**
+   * Register a new account and adopt the returned session locally.
+   *
+   * Sends `credentials: 'include'` so the browser accepts the `Set-Cookie`
+   * response header for the httpOnly refresh cookie. The access token is stored
+   * in-memory only via `SessionManager.adopt()` — never in `localStorage`.
+   */
   async register(body: RegisterRequest): Promise<AuthResponse> {
     // M12 inc 2: send credentials so the browser accepts the Set-Cookie.
     const auth = await this.execute<AuthResponse>({
@@ -274,6 +281,13 @@ export class AuthApi {
     return auth;
   }
 
+  /**
+   * Authenticate with handle and password and adopt the returned session locally.
+   *
+   * Sends `credentials: 'include'` so the browser accepts the `Set-Cookie`
+   * response header for the httpOnly refresh cookie. The access token is stored
+   * in-memory only via `SessionManager.adopt()` — never in `localStorage`.
+   */
   async login(body: LoginRequest): Promise<AuthResponse> {
     // M12 inc 2: send credentials so the browser accepts the Set-Cookie.
     const auth = await this.execute<AuthResponse>({
@@ -291,19 +305,12 @@ export class AuthApi {
    *
    * M12 inc 2: this is the reload-restore path — it must work when there is NO
    * in-memory session yet, using only the httpOnly refresh cookie. It therefore
-   * POSTs directly with `credentials: 'include'` and adopts the result, rather
-   * than delegating to `session.refreshNow()` (which requires a pre-existing
-   * session to read a body refresh token). The session-based `refreshNow()`
+   * uses `session.restore()` to send the cookie and guard adoption against
+   * concurrent session changes. The session-based `refreshNow()`
    * remains the single-flight path used by 401-recovery, where a session exists.
    */
   async refresh(): Promise<AuthResponse> {
-    const auth = await this.execute<AuthResponse>({
-      method: 'POST',
-      path: '/v1/auth/refresh',
-      credentials: 'include',
-    });
-    this.session.adopt(auth);
-    return auth;
+    return this.session.restore();
   }
 
   /**

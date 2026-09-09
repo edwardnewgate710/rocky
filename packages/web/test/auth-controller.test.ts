@@ -2,10 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AuthController } from '../src/app/auth-controller.js';
 import type { AuthSession } from '../src/app/auth-controller.js';
-import type { GambitClient } from '../src/api/client.js';
-import type { LoginRequest, RegisterRequest } from '../src/api/models.js';
+import { GambitClient } from '../src/api/client.js';
+import type { AuthResponse, LoginRequest, RegisterRequest } from '../src/api/models.js';
+import type { StoredSession, KeyValueStorage } from '../src/net/session.js';
+import { MemoryTokenStore } from '../src/net/session.js';
+import { json } from './support/fake-transport.js';
 
-function makeFakeStorage() {
+/** Provide isolated Web Storage semantics for each controller test. */
+function makeFakeStorage(): KeyValueStorage {
   const store = new Map<string, string>();
   return {
     getItem: (key: string) => store.get(key) ?? null,
@@ -14,19 +18,35 @@ function makeFakeStorage() {
   };
 }
 
+interface FakeSession {
+  resets: number;
+  invalidate: (() => void) | null;
+  resetCallback: (() => void) | null;
+  adoptedCallback: ((session: StoredSession) => void) | null;
+  reset(): void;
+  onInvalidated(handler: () => void): void;
+  onReset(handler: () => void): void;
+  onAdopted(handler: (session: StoredSession) => void): void;
+}
+
 /**
- * The fake exposes the invalidation handler the controller registers, so a test can fire the one
- * thing `SessionManager` would fire — a refresh that failed — without driving a real refresh.
+ * The fake exposes the invalidation, reset, and adoption handlers the controller registers,
+ * so a test can fire the callbacks `SessionManager` would fire without driving real network/channel events.
  */
-function makeFakeSession() {
+function makeFakeSession(): FakeSession {
   return {
     resets: 0,
-    invalidate: null as null | (() => void),
+    invalidate: null,
+    resetCallback: null,
+    adoptedCallback: null,
     reset(): void { this.resets++; },
     onInvalidated(handler: () => void): void { this.invalidate = handler; },
+    onReset(handler: () => void): void { this.resetCallback = handler; },
+    onAdopted(handler: (session: StoredSession) => void): void { this.adoptedCallback = handler; },
   };
 }
 
+/** Compose a minimal Gambit client double with overridable controller dependencies. */
 function makeFakeClient(overrides: Record<string, unknown> = {}) {
   return {
     session: makeFakeSession(),
@@ -197,12 +217,16 @@ test('logout clears session and calls onSessionChange(null)', async () => {
  * hint: without this the header and account controls kept showing a signed-in user whose every
  * protected request answered 401.
  */
-test('a session invalidated by a failed refresh stops the UI showing a signed-in user', async () => {
+test('a session invalidated by a failed refresh stops the UI showing a signed-in user without re-calling client.session.reset()', async () => {
   const storage = makeFakeStorage();
-  const client = makeFakeClient() as any;
+  const fakeSession = makeFakeSession();
+  const client = {
+    ...makeFakeClient(),
+    session: fakeSession,
+  };
   const sessions: (AuthSession | null)[] = [];
   const ctrl = new AuthController({
-    client,
+    client: client as unknown as GambitClient,
     callbacks: {
       onSessionChange: (s) => { sessions.push(s); },
       onPending: () => {},
@@ -212,15 +236,180 @@ test('a session invalidated by a failed refresh stops the UI showing a signed-in
   });
   await ctrl.login('alice', 'pw');
   assert.equal(ctrl.isAuthenticated(), true);
+  assert.equal(fakeSession.resets, 0);
 
   // Exactly what SessionManager does when a refresh fails.
-  assert.ok(client.session.invalidate, 'the controller registered for invalidation');
-  client.session.invalidate();
+  assert.ok(fakeSession.invalidate, 'the controller registered for invalidation');
+  fakeSession.invalidate();
 
   assert.equal(ctrl.isAuthenticated(), false);
   assert.equal(ctrl.currentSession, null);
   assert.equal(sessions[sessions.length - 1], null, 'the UI was told to drop the session');
   assert.equal(storage.getItem('gambit-session'), null, 'the persisted hint went too');
+  assert.equal(fakeSession.resets, 0, 'must not trigger client.session.reset() again on invalidation');
+});
+
+test('when session is reset on another tab (onReset), AuthController clears local state and storage without calling client.session.reset()', async () => {
+  const storage = makeFakeStorage();
+  const fakeSession = makeFakeSession();
+  const client = {
+    ...makeFakeClient(),
+    session: fakeSession,
+  };
+  const sessions: (AuthSession | null)[] = [];
+  const ctrl = new AuthController({
+    client: client as unknown as GambitClient,
+    callbacks: {
+      onSessionChange: (s) => { sessions.push(s); },
+      onPending: () => {},
+      onError: () => {},
+    },
+    storage,
+  });
+  await ctrl.login('alice', 'pw');
+  assert.equal(ctrl.isAuthenticated(), true);
+  assert.equal(storage.getItem('gambit-session') !== null, true);
+  assert.equal(fakeSession.resets, 0);
+
+  // Trigger the cross-tab reset callback
+  assert.ok(fakeSession.resetCallback, 'the controller registered for onReset');
+  fakeSession.resetCallback();
+
+  assert.equal(ctrl.isAuthenticated(), false);
+  assert.equal(ctrl.currentSession, null);
+  assert.equal(sessions[sessions.length - 1], null, 'the UI was told to drop the session');
+  assert.equal(storage.getItem('gambit-session'), null, 'the persisted state was cleared');
+  assert.equal(fakeSession.resets, 0, 'must not trigger client.session.reset() again');
+});
+
+test('local login produces exactly one onSessionChange and one storage write when session.adopt fires onAdopted', async () => {
+  const storage = makeFakeStorage();
+  let setItemCalls = 0;
+  const instrumentedStorage: KeyValueStorage = {
+    getItem: (k: string) => storage.getItem(k),
+    setItem: (k: string, v: string) => {
+      setItemCalls++;
+      storage.setItem(k, v);
+    },
+    removeItem: (k: string) => storage.removeItem(k),
+  };
+
+  const sessions: (AuthSession | null)[] = [];
+  const fakeSession = makeFakeSession();
+  const client = {
+    session: fakeSession,
+    auth: {
+      login: async () => {
+        const res = {
+          user: { id: 'u1', handle: 'alice', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] as const },
+          tokens: { accessToken: 'tok-1', tokenType: 'Bearer' as const, expiresIn: 900, refreshToken: 'ref-1', refreshExpiresAt: '2030-01-01T00:00:00Z' },
+        };
+        // In real GambitClient, AuthApi.login calls session.adopt(auth) which fires onAdopted
+        fakeSession.adoptedCallback?.({
+          user: res.user,
+          tokens: res.tokens,
+          accessTokenExpiresAt: 2000,
+        });
+        return res;
+      },
+    },
+  };
+
+  const ctrl = new AuthController({
+    client: client as unknown as GambitClient,
+    callbacks: {
+      onSessionChange: (s) => { sessions.push(s); },
+      onPending: () => {},
+      onError: () => {},
+    },
+    storage: instrumentedStorage,
+  });
+
+  const session = await ctrl.login('alice', 'pw');
+  assert.ok(session);
+  assert.equal(session.handle, 'alice');
+  assert.equal(session.userId, 'u1');
+  assert.equal(sessions.length, 1, 'must have exactly one onSessionChange notification');
+  assert.equal(setItemCalls, 1, 'must have exactly one storage write');
+});
+
+test('peer tab adoption updates AuthController with exactly one onSessionChange notification', async () => {
+  const storage = makeFakeStorage();
+  const sessions: (AuthSession | null)[] = [];
+  const fakeSession = makeFakeSession();
+  const client = {
+    session: fakeSession,
+    auth: {},
+  };
+
+  const ctrl = new AuthController({
+    client: client as unknown as GambitClient,
+    callbacks: {
+      onSessionChange: (s) => { sessions.push(s); },
+      onPending: () => {},
+      onError: () => {},
+    },
+    storage,
+  });
+
+  assert.equal(ctrl.isAuthenticated(), false);
+
+  // Peer tab adopts
+  assert.ok(fakeSession.adoptedCallback, 'controller registered onAdopted');
+  fakeSession.adoptedCallback({
+    user: { id: 'u2', handle: 'bob', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] as const },
+    tokens: { accessToken: 'tok-peer', tokenType: 'Bearer' as const, expiresIn: 900, refreshToken: 'ref-peer', refreshExpiresAt: '2030-01-01T00:00:00Z' },
+    accessTokenExpiresAt: 2000,
+  });
+
+  assert.equal(ctrl.isAuthenticated(), true);
+  assert.equal(ctrl.currentSession?.handle, 'bob');
+  assert.equal(ctrl.currentSession?.userId, 'u2');
+  assert.equal(sessions.length, 1, 'peer adoption triggers exactly one onSessionChange');
+  assert.deepEqual(sessions[0], { handle: 'bob', userId: 'u2' });
+});
+
+test('background token refresh for same user does not re-emit onSessionChange', async () => {
+  const sessions: (AuthSession | null)[] = [];
+  const fakeSession = makeFakeSession();
+  const client = {
+    session: fakeSession,
+    auth: {
+      login: async () => {
+        const res = {
+          user: { id: 'u1', handle: 'alice', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] as const },
+          tokens: { accessToken: 'tok-1', tokenType: 'Bearer' as const, expiresIn: 900, refreshToken: 'ref-1', refreshExpiresAt: '2030-01-01T00:00:00Z' },
+        };
+        fakeSession.adoptedCallback?.({
+          user: res.user,
+          tokens: res.tokens,
+          accessTokenExpiresAt: 2000,
+        });
+        return res;
+      },
+    },
+  };
+
+  const ctrl = new AuthController({
+    client: client as unknown as GambitClient,
+    callbacks: {
+      onSessionChange: (s) => { sessions.push(s); },
+      onPending: () => {},
+      onError: () => {},
+    },
+  });
+
+  await ctrl.login('alice', 'pw');
+  assert.equal(sessions.length, 1);
+
+  // Background token refresh rotates tokens but user remains alice
+  fakeSession.adoptedCallback?.({
+    user: { id: 'u1', handle: 'alice', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] as const },
+    tokens: { accessToken: 'tok-refreshed', tokenType: 'Bearer' as const, expiresIn: 900, refreshToken: 'ref-2', refreshExpiresAt: '2030-01-01T00:00:00Z' },
+    accessTokenExpiresAt: 3000,
+  });
+
+  assert.equal(sessions.length, 1, 'must NOT emit another onSessionChange for same user refresh');
 });
 
 test('M12 inc 2: restore takes identity from cookie refresh, not storage', async () => {
@@ -335,25 +524,20 @@ test('password reset clearance wins over an in-flight session restore', async ()
 
   let releaseRefresh!: () => void;
   const refreshGate = new Promise<void>((resolve) => { releaseRefresh = resolve; });
-  let currentAccessToken: string | undefined;
-  let client: any;
   const refreshed = {
     user: { id: 'u1', handle: 'alice', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] },
     tokens: { accessToken: 'late-token', tokenType: 'Bearer', expiresIn: 900, refreshExpiresAt: '2030-01-01T00:00:00Z' },
   };
-  client = makeFakeClient({
-    refresh: async () => {
-      await refreshGate;
-      client.session.adopt(refreshed);
-      return refreshed;
+  const client = new GambitClient({
+    baseUrl: 'https://api.test',
+    now: () => 1000,
+    transport: {
+      async send() {
+        await refreshGate;
+        return json(200, refreshed);
+      },
     },
   });
-  client.session = {
-    get current() { return currentAccessToken ? { tokens: { accessToken: currentAccessToken } } : null; },
-    adopt: (auth: any) => { currentAccessToken = auth.tokens.accessToken; },
-    reset: () => { currentAccessToken = undefined; },
-    onInvalidated: () => {},
-  };
 
   const sessions: (AuthSession | null)[] = [];
   const ctrl = new AuthController({
@@ -375,6 +559,44 @@ test('password reset clearance wins over an in-flight session restore', async ()
   assert.equal(client.session.current, null);
   assert.equal(storage.getItem('gambit-session'), null);
   assert.deepEqual(sessions, [null]);
+  ctrl.dispose();
+});
+
+test('a cancelled restore continuation does not reset a subsequently adopted session', async () => {
+  const storage = makeFakeStorage();
+  storage.setItem('gambit-session', JSON.stringify({ handle: 'alice', userId: 'u1' }));
+  const user = { id: 'u1', handle: 'alice', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] } as const;
+  const tokens = { accessToken: 'restore', tokenType: 'Bearer', expiresIn: 900, refreshExpiresAt: '2030-01-01T00:00:00Z' } as const;
+  const tokenStore = new MemoryTokenStore();
+  let ctrl!: AuthController;
+  const client = new GambitClient({
+    baseUrl: 'https://api.test',
+    now: () => 1000,
+    transport: { send: async () => json(200, { user, tokens }) },
+    tokenStore: {
+      load: () => tokenStore.load(),
+      clear: () => tokenStore.clear(),
+      save(session) {
+        tokenStore.save(session);
+        if (session.tokens.accessToken === 'restore') {
+          // Change the lifecycle after the API saves, before the controller resumes.
+          queueMicrotask(() => {
+            ctrl.clearLocalSession();
+            client.session.adopt({ user, tokens: { ...tokens, accessToken: 'newer' } });
+          });
+        }
+      },
+    },
+  });
+  ctrl = new AuthController({
+    client,
+    storage,
+    callbacks: { onSessionChange: () => {}, onPending: () => {}, onError: () => {} },
+  });
+
+  assert.equal(await ctrl.restore(), null);
+  assert.equal(client.session.current?.tokens.accessToken, 'newer');
+  ctrl.dispose();
 });
 
 test('dispose ignores future calls', async () => {
@@ -389,6 +611,52 @@ test('dispose ignores future calls', async () => {
   assert.equal(changes, 0);
   assert.equal(ctrl.isAuthenticated(), false);
 });
+
+for (const outcome of ['success', 'failure'] as const) {
+  test(`cancelled restore ${outcome} leaves the newer login intact`, async () => {
+    const storage = makeFakeStorage();
+    storage.setItem('gambit-session', JSON.stringify({ handle: 'alice', userId: 'u1' }));
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => { finish = resolve; });
+    const newer: AuthResponse = {
+      user: { id: 'u2', handle: 'bob', country: null, createdAt: '2026-01-01T00:00:00Z', roles: ['user'] },
+      tokens: { accessToken: 'newer-login', tokenType: 'Bearer', expiresIn: 900, refreshExpiresAt: '2030-01-01T00:00:00Z' },
+    };
+    const client = new GambitClient({
+      baseUrl: 'https://api.test',
+      now: () => 1000,
+      transport: {
+        async send(request) {
+          if (request.url.endsWith('/refresh')) {
+            await gate;
+            return outcome === 'success'
+              ? json(200, { ...newer, tokens: { ...newer.tokens, accessToken: 'obsolete-restore' } })
+              : json(401, { error: { code: 'unauthenticated', message: 'rotation lost', requestId: 'restore' } });
+          }
+          return json(200, newer);
+        },
+      },
+    });
+    const changes: (AuthSession | null)[] = [];
+    const ctrl = new AuthController({
+      client,
+      storage,
+      callbacks: { onSessionChange: (session) => { changes.push(session); }, onPending: () => {}, onError: () => {} },
+    });
+
+    const restoring = ctrl.restore();
+    ctrl.clearLocalSession();
+    await ctrl.login('bob', 'password');
+    finish();
+
+    assert.equal(await restoring, null, 'a cancelled operation must not adopt another operation\'s result');
+    assert.equal(client.session.current?.tokens.accessToken, 'newer-login');
+    assert.deepEqual(ctrl.currentSession, { handle: 'bob', userId: 'u2' });
+    assert.deepEqual(JSON.parse(storage.getItem('gambit-session')!), { handle: 'bob', userId: 'u2' });
+    assert.deepEqual(changes, [null, { handle: 'bob', userId: 'u2' }]);
+    ctrl.dispose();
+  });
+}
 
 test('M2: isAuthenticated gates create-seek path', async () => {
   const client = makeFakeClient() as any;

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { GambitClient } from '../src/api/client.js';
 import type { RetryPolicy } from '../src/net/retry.js';
 import { RequestAbortedError, UnauthorizedError } from '../src/net/errors.js';
+import { NoSessionError } from '../src/net/session.js';
 import type { HttpRequest, HttpTransport } from '../src/ports/http.js';
 import { abortableHang, FakeTransport, empty, json } from './support/fake-transport.js';
 import type { AuthResponse, GameReviewResponse, SelfUser } from '../src/api/models.js';
@@ -157,6 +158,29 @@ test('register adopts the session', async () => {
   assert.equal(res.tokens.accessToken, 'tok-R');
   assert.equal(c.session.isAuthenticated, true);
 });
+
+for (const transition of ['reset', 'adopt', 'dispose'] as const) {
+  test(`cookie restore discards its response after ${transition}`, async () => {
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => { finish = resolve; });
+    const c = make({
+      async send() {
+        await gate;
+        return json(200, auth('obsolete-restore'));
+      },
+    });
+
+    const restore = c.auth.refresh();
+    if (transition === 'reset') c.session.reset();
+    if (transition === 'adopt') c.session.adopt(auth('newer-login'));
+    if (transition === 'dispose') c.session.dispose();
+    finish();
+
+    await assert.rejects(restore, NoSessionError);
+    assert.equal(c.session.current?.tokens.accessToken, transition === 'adopt' ? 'newer-login' : undefined);
+    c.session.dispose();
+  });
+}
 
 test('games.createVsBot posts to /v1/games/bot with auth and returns summary', async () => {
   const summary = {
