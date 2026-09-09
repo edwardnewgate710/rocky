@@ -171,7 +171,15 @@ SELECT extname, extversion FROM pg_extension WHERE extname IN ('citext', 'vector
 ```
 
 #### 2. Schema Migrations Ledger
-Run the same query against the source and restored databases:
+Confirm that the migrations ledger exists in both the source and restored
+databases before comparing it:
+```sql
+SELECT to_regclass('public.schema_migrations') IS NOT NULL AS present;
+```
+Both queries must return `present = true`. If either database is missing the
+table, stop the drill and investigate before continuing.
+
+Then run the same query against the source and restored databases:
 ```sql
 SELECT version, name, checksum, state
 FROM schema_migrations
