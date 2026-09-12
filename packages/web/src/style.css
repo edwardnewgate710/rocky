@@ -539,6 +539,8 @@ a.button.primary:active {
   overflow-x: auto;
 }
 .subnav-link {
+  flex: 0 0 auto;
+  white-space: nowrap;
   padding: 6px 12px;
   border-radius: 6px;
   color: var(--muted);
@@ -739,6 +741,7 @@ a.button.primary:active {
 .team,
 .forum,
 .thread,
+.courses,
 .course,
 .lesson,
 .endgames,
