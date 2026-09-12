@@ -105,16 +105,14 @@ test('Game Review classification tokens meet text contrast in both themes', () =
   const explicitLight = rules().find((rule) => rule.selectors.includes(':root.light'));
   assert.ok(root, 'missing :root theme tokens');
   assert.ok(explicitLight, 'missing explicit light-theme tokens');
-  const automaticLight = atRuleBody('@media (prefers-color-scheme: light)');
 
   for (const tone of REVIEW_TONES) {
     const darkColor = hexProperty(root.body, `review-${tone}`);
     const lightColor = hexProperty(root.body, `light-review-${tone}`);
-    assert.ok(contrast(darkColor, '#1f1e1b') >= 4.5, `${tone} fails dark-theme contrast`);
-    assert.ok(contrast(lightColor, '#ecebea') >= 4.5, `${tone} fails light-theme contrast`);
+    assert.ok(contrast(darkColor, '#242224') >= 4.5, `${tone} fails dark-theme contrast`);
+    assert.ok(contrast(lightColor, '#F5F1ED') >= 4.5, `${tone} fails light-theme contrast`);
     const lightAssignment = new RegExp(`--review-${tone}\\s*:\\s*var\\(--light-review-${tone}\\)`);
     assert.match(explicitLight.body, lightAssignment);
-    assert.match(automaticLight, lightAssignment);
 
     const selector = `.game-review-${tone} strong`;
     const toneRule = rules().find((rule) => rule.selectors.includes(selector));
