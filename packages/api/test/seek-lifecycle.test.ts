@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import { SEEK_TTL_MS } from '@chess-platform/persistence';
 import { startHarness } from './helpers';
 
+const MATCH_RECEIPT_TTL_MS = 5 * 60 * 1000;
+
 test('abandoned seek expires deterministically and is omitted from listOpen', async () => {
   const h = await startHarness();
   try {
@@ -66,6 +68,50 @@ test('expired seek cannot be accepted', async () => {
   }
 });
 
+test('seek expiry uses an exact inclusive ten-minute boundary for listing, acceptance, and cleanup', async () => {
+  const h = await startHarness();
+  try {
+    const creator = await h.makeUser('creator-boundary', ['user']);
+    const acceptor = await h.makeUser('acceptor-boundary', ['user']);
+    const createSeek = async (): Promise<string> => {
+      const response = await h.json('POST', '/v1/seeks', {
+        token: creator.token,
+        body: {
+          variant: 'standard',
+          timeControl: { initialMs: 300_000, incrementMs: 0, delayMs: 0, kind: 'sudden_death' },
+          rated: false,
+        },
+      });
+      assert.equal(response.status, 201);
+      return response.body.id as string;
+    };
+
+    const listedSeekId = await createSeek();
+    const acceptedSeekId = await createSeek();
+    h.clock.advance(SEEK_TTL_MS - 1);
+
+    const beforeBoundary = await h.json('GET', '/v1/seeks');
+    assert.ok(beforeBoundary.body.some((seek: { id: string }) => seek.id === listedSeekId));
+    assert.ok(beforeBoundary.body.some((seek: { id: string }) => seek.id === acceptedSeekId));
+
+    h.clock.advance(1);
+    const atBoundary = await h.json('GET', '/v1/seeks');
+    assert.ok(!atBoundary.body.some((seek: { id: string }) => seek.id === listedSeekId));
+    assert.ok(!atBoundary.body.some((seek: { id: string }) => seek.id === acceptedSeekId));
+
+    const acceptResponse = await h.json('POST', `/v1/seeks/${acceptedSeekId}/accept`, {
+      token: acceptor.token,
+    });
+    assert.equal(acceptResponse.status, 404);
+
+    await h.repos.seeks.cleanup(new Date(h.clock.now()));
+    assert.equal(await h.repos.seeks.findById(listedSeekId), null);
+    assert.equal(await h.repos.seeks.findById(acceptedSeekId), null);
+  } finally {
+    await h.close();
+  }
+});
+
 test('creator is not redirected to an already-ended game', async () => {
   const h = await startHarness();
   try {
@@ -116,7 +162,7 @@ test('creator is not redirected to an already-ended game', async () => {
   }
 });
 
-test('cleanup purges expired abandoned seeks as well as accepted receipts', async () => {
+test('cleanup purges expired abandoned seeks', async () => {
   const h = await startHarness();
   try {
     const creator = await h.makeUser('creator-cleanup', ['user']);
@@ -141,6 +187,43 @@ test('cleanup purges expired abandoned seeks as well as accepted receipts', asyn
     // Seek row should be purged from database entirely
     const row = await h.repos.seeks.findById(seekId);
     assert.equal(row, null, 'expired abandoned seek must be purged by cleanup');
+  } finally {
+    await h.close();
+  }
+});
+
+test('accepted match receipts remain visible before five minutes and expire and clean up at the boundary', async () => {
+  const h = await startHarness();
+  try {
+    const creator = await h.makeUser('creator-receipt-ttl', ['user']);
+    const acceptor = await h.makeUser('acceptor-receipt-ttl', ['user']);
+    const seekResponse = await h.json('POST', '/v1/seeks', {
+      token: creator.token,
+      body: {
+        variant: 'standard',
+        timeControl: { initialMs: 180_000, incrementMs: 2_000, delayMs: 0, kind: 'increment' },
+        rated: false,
+      },
+    });
+    assert.equal(seekResponse.status, 201);
+
+    const acceptResponse = await h.json('POST', `/v1/seeks/${seekResponse.body.id}/accept`, {
+      token: acceptor.token,
+    });
+    assert.equal(acceptResponse.status, 200);
+    const gameId = acceptResponse.body.gameId as string;
+
+    h.clock.advance(MATCH_RECEIPT_TTL_MS - 1);
+    await h.repos.seeks.cleanup(new Date(h.clock.now()));
+    assert.ok(await h.repos.seeks.findById(seekResponse.body.id));
+    const beforeBoundary = await h.json('GET', '/v1/seeks', { token: creator.token });
+    assert.ok(beforeBoundary.body.some((seek: { gameId: string | null }) => seek.gameId === gameId));
+
+    h.clock.advance(1);
+    const atBoundary = await h.json('GET', '/v1/seeks', { token: creator.token });
+    assert.ok(!atBoundary.body.some((seek: { gameId: string | null }) => seek.gameId === gameId));
+    await h.repos.seeks.cleanup(new Date(h.clock.now()));
+    assert.equal(await h.repos.seeks.findById(seekResponse.body.id), null);
   } finally {
     await h.close();
   }
@@ -218,6 +301,43 @@ test('seek with unresolvable or deleted user falls back to null creatorHandle', 
     const found = listRes.body.find((s: { id: string }) => s.id === seek.id);
     assert.ok(found);
     assert.equal(found.creatorHandle, null, 'unresolvable creator in REST API must fall back to null');
+  } finally {
+    await h.close();
+  }
+});
+
+test('resolved null creator handles do not trigger repeated user lookups', async () => {
+  const h = await startHarness();
+  try {
+    let findByIdCalls = 0;
+    let findByIdsCalls = 0;
+    const originalFindById = h.repos.users.findById.bind(h.repos.users);
+    const originalFindByIds = h.repos.users.findByIds.bind(h.repos.users);
+    h.repos.users.findById = async (id) => {
+      findByIdCalls += 1;
+      return originalFindById(id);
+    };
+    h.repos.users.findByIds = async (ids) => {
+      findByIdsCalls += 1;
+      return originalFindByIds(ids);
+    };
+
+    const seek = await h.repos.seeks.create({
+      id: '018f0000-0000-7000-8000-000000000002',
+      creatorId: '018f0000-0000-7000-8000-000000000098',
+      creatorHandle: null,
+      variant: 'standard',
+      timeControl: { initialMs: 300_000, incrementMs: 0, delayMs: 0, kind: 'sudden_death' },
+      rated: false,
+    });
+    assert.equal(seek.creatorHandle, null);
+
+    assert.ok(await h.repos.seeks.findById(seek.id));
+    await h.json('GET', '/v1/seeks');
+    await h.json('GET', '/v1/seeks');
+
+    assert.equal(findByIdCalls, 0, 'explicit null is already a resolved absence');
+    assert.equal(findByIdsCalls, 0, 'list polling must not retry a resolved absence');
   } finally {
     await h.close();
   }

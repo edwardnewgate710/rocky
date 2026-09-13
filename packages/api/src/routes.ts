@@ -1193,11 +1193,21 @@ export function buildRouter(deps: RouteDeps): Router {
 
       const seeks = await repos.seeks.listOpen(limit, ctx.auth?.userId);
       // Fallback: If any seek lacks creatorHandle (e.g. custom or legacy repository), batch-resolve from users
-      const missingCreatorIds = [...new Set(seeks.filter((s) => !s.creatorHandle).map((s) => s.creatorId))];
+      const missingCreatorIds = [
+        ...new Set(
+          seeks
+            .filter((s) => s.creatorHandle === undefined)
+            .map((s) => s.creatorId),
+        ),
+      ];
       if (missingCreatorIds.length > 0) {
         const users = await repos.users.findByIds(missingCreatorIds);
         const userMap = new Map(users.map((u) => [u.id, u.handle]));
-        const enrichedSeeks = seeks.map((s) => s.creatorHandle ? s : { ...s, creatorHandle: userMap.get(s.creatorId) ?? null });
+        const enrichedSeeks = seeks.map((s) =>
+          s.creatorHandle !== undefined
+            ? s
+            : { ...s, creatorHandle: userMap.get(s.creatorId) ?? null },
+        );
         return json(200, enrichedSeeks.map(seekView));
       }
       return json(200, seeks.map(seekView));

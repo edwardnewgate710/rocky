@@ -25,7 +25,16 @@ export function renderSeeks(
   currentUserId: string | null,
   names?: ReadonlyMap<string, SocialPlayer>,
 ): void {
-  container.innerHTML = '';
+  const doc = container.ownerDocument ?? document;
+  const active = doc.activeElement;
+  const focusedControl = active instanceof HTMLElement && container.contains(active) && active.dataset.seekId
+    ? {
+        seekId: active.dataset.seekId,
+        className: ['seek-cancel', 'seek-accept', 'row-link'].find((name) => active.classList.contains(name)) ?? null,
+      }
+    : null;
+
+  container.replaceChildren();
   if (seeks.length === 0) {
     renderEmpty(container, {
       mark: '♟',
@@ -34,7 +43,6 @@ export function renderSeeks(
     });
     return;
   }
-  const doc = container.ownerDocument ?? document;
   for (const seek of seeks) {
     const owned = currentUserId !== null && seek.creatorId === currentUserId;
     const row = doc.createElement('div');
@@ -83,6 +91,8 @@ export function renderSeeks(
         const link = doc.createElement('a');
         link.className = 'row-link';
         link.setAttribute('href', `/profile/${opponentHandle}`);
+        link.setAttribute('data-route', 'profile');
+        link.dataset.seekId = seek.id;
         link.textContent = opponentHandle;
         opponentEl.appendChild(link);
       } else {
@@ -121,12 +131,18 @@ export function renderSeeks(
       acceptBtn.dataset.seekId = seek.id;
       acceptBtn.setAttribute(
         'aria-label',
-        opponentHandle ? `Accept seek from ${opponentHandle}` : 'Accept seek',
+        opponentHandle ? `Play — accept seek from ${opponentHandle}` : 'Play — accept seek',
       );
       row.appendChild(acceptBtn);
     }
 
     container.appendChild(row);
+  }
+
+  if (focusedControl?.className) {
+    const replacement = [...container.querySelectorAll<HTMLElement>(`.${focusedControl.className}`)]
+      .find((candidate) => candidate.dataset.seekId === focusedControl.seekId);
+    replacement?.focus();
   }
 }
 
@@ -143,6 +159,7 @@ interface MountedLobby {
   readonly lobby: LobbyController;
   readonly setCreateGameAuthenticated: (authenticated: boolean) => void;
   readonly setPlayBotAuthenticated: (authenticated: boolean) => void;
+  readonly onSessionChange: () => void;
 }
 
 /**
@@ -161,6 +178,8 @@ export function mountLobby(deps: LobbyMountDependencies): MountedLobby {
   let panel: CreateGamePanel | null = null;
   let playBotDialog: PlayBotDialog | null = null;
   let routeActive = true;
+  let renderedSeeks: readonly SeekView[] = [];
+  let renderedNames: ReadonlyMap<string, SocialPlayer> | undefined;
 
   function handleSeekAction(event: Event): void {
     if (!routeActive) return;
@@ -178,6 +197,8 @@ export function mountLobby(deps: LobbyMountDependencies): MountedLobby {
     client,
     callbacks: {
       onSeeks: (seeks, names) => {
+        renderedSeeks = seeks;
+        renderedNames = names;
         if (seekListEl) renderSeeks(seekListEl, seeks, client.session.current?.user.id ?? null, names);
       },
       onCreatePending: (pending) => {
@@ -265,9 +286,22 @@ export function mountLobby(deps: LobbyMountDependencies): MountedLobby {
     if (routeActive) playBotDialog?.setAuthenticated(authenticated);
   }
 
+  /** Re-render cached seeks after auth restoration changes which rows belong to the viewer. */
+  function onSessionChange(): void {
+    if (routeActive && seekListEl) {
+      renderSeeks(
+        seekListEl,
+        renderedSeeks,
+        client.session.current?.user.id ?? null,
+        renderedNames,
+      );
+    }
+  }
+
   return {
     lobby,
     setCreateGameAuthenticated,
     setPlayBotAuthenticated,
+    onSessionChange,
   };
 }

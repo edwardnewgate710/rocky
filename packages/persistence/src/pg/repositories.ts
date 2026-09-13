@@ -726,7 +726,7 @@ export class PgSeekAcceptor implements SeekAcceptor {
       await client.query('COMMIT');
       return toSeek(seekRes.rows[0]!);
     } catch (err) {
-      await client.query('ROLLBACK');
+      await rollback(client);
       throw err;
     } finally {
       client.release();

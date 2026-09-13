@@ -386,9 +386,9 @@ export class InMemorySeeksRepository implements SeeksRepository {
    * @returns The created SeekRow with creatorHandle
    */
   async create(seek: NewSeek): Promise<SeekRow> {
-    let creatorHandle = seek.creatorHandle ?? null;
-    if (!creatorHandle && this.users) {
-      const user = await this.users.findById(seek.creatorId);
+    let creatorHandle = seek.creatorHandle;
+    if (creatorHandle === undefined) {
+      const user = this.users ? await this.users.findById(seek.creatorId) : null;
       creatorHandle = user?.handle ?? null;
     }
     const row: SeekRow = {
@@ -419,13 +419,11 @@ export class InMemorySeeksRepository implements SeeksRepository {
   async findById(id: string): Promise<SeekRow | null> {
     const existing = this.byId.get(id);
     if (!existing) return null;
-    if (!existing.creatorHandle && this.users) {
+    if (existing.creatorHandle === undefined && this.users) {
       const user = await this.users.findById(existing.creatorId);
-      if (user?.handle) {
-        const enriched = { ...existing, creatorHandle: user.handle };
-        this.byId.set(id, enriched);
-        return enriched;
-      }
+      const enriched = { ...existing, creatorHandle: user?.handle ?? null };
+      this.byId.set(id, enriched);
+      return enriched;
     }
     return existing;
   }
@@ -479,7 +477,13 @@ export class InMemorySeeksRepository implements SeeksRepository {
       if (latestCandidate) candidatesToEnrich.push(latestCandidate);
     }
 
-    const missingIds = [...new Set(candidatesToEnrich.filter((s) => !s.creatorHandle).map((s) => s.creatorId))];
+    const missingIds = [
+      ...new Set(
+        candidatesToEnrich
+          .filter((s) => s.creatorHandle === undefined)
+          .map((s) => s.creatorId),
+      ),
+    ];
     const userMap = new Map<string, string>();
     if (this.users && missingIds.length > 0) {
       const users = await this.users.findByIds(missingIds);
@@ -489,9 +493,9 @@ export class InMemorySeeksRepository implements SeeksRepository {
     }
 
     const enrich = (s: SeekRow): SeekRow => {
-      if (s.creatorHandle) return s;
+      if (s.creatorHandle !== undefined) return s;
       const handle = userMap.get(s.creatorId);
-      return handle ? { ...s, creatorHandle: handle } : s;
+      return { ...s, creatorHandle: handle ?? null };
     };
 
     const enrichedOpen = open.map(enrich);
