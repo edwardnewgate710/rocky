@@ -661,14 +661,14 @@ export class PgSeeksRepository implements SeeksRepository {
   /**
    * Purges expired open seeks past SEEK_TTL_INTERVAL and old accepted receipts.
    *
-   * @param at - Current timestamp for cleanup comparison
+   * @param _at - Accepted for repository parity; PostgreSQL uses its own clock consistently
    */
-  async cleanup(at: Date): Promise<void> {
+  async cleanup(_at: Date): Promise<void> {
     await this.pool.query(
       `DELETE FROM seeks
-       WHERE (game_id IS NOT NULL AND accepted_at <= $1 - interval '5 minutes')
-          OR (game_id IS NULL AND created_at <= $1 - $2::interval)`,
-      [at, SEEK_TTL_INTERVAL],
+       WHERE (game_id IS NOT NULL AND accepted_at <= NOW() - interval '5 minutes')
+          OR (game_id IS NULL AND created_at <= NOW() - $1::interval)`,
+      [SEEK_TTL_INTERVAL],
     );
   }
 }
